@@ -656,22 +656,40 @@ penalized_rewards = token_level_rewards - beta * kl   # (64, 512)
 
 #### 7b. GAE Backward Pass (from `core_algos.py:compute_gae_advantage_return`)
 
+GAE estimates how much better an action was than the critic expected, interpolating between
+one-step TD (low variance, high bias) and full Monte Carlo (low bias, high variance) via `lam`:
+
+```
+delta_t = r_t + gamma * V(t+1) - V(t)          # TD residual: how wrong was V at step t
+
+A_t^GAE = delta_t + (gamma*lam) * delta_{t+1} + (gamma*lam)^2 * delta_{t+2} + ...
+        = delta_t + gamma * lam * A_{t+1}^GAE  # recursive form
+```
+
+- `lam=0`: pure one-step TD — only `delta_t`, ignores future steps
+- `lam=1`: full Monte Carlo — sums all future TD residuals, equivalent to return minus baseline
+- `lam=0.95`: standard choice, mostly low-bias with variance reduction
+
+Because `A_t` depends on `A_{t+1}`, the loop runs **backward** from t=T to t=0:
+
 ```python
-# Pseudocode matching verl's implementation
 nextvalues = 0
 lastgaelam = 0
 advantages = []
 
 for t in reversed(range(R=512)):
-    delta = penalized_rewards[:, t] + gamma * nextvalues - values[:, t]  # (64,)
-    lastgaelam = delta + gamma * lam * lastgaelam * response_mask[:, t]  # (64,)
-    nextvalues  = values[:, t] * response_mask[:, t]                     # (64,)
+    delta = penalized_rewards[:, t] + gamma * nextvalues - values[:, t]  # (64,)  TD residual
+    lastgaelam = delta + gamma * lam * lastgaelam * response_mask[:, t]  # (64,)  recursive GAE
+    nextvalues  = values[:, t] * response_mask[:, t]                     # (64,)  carry V(t) as V(t+1)
     advantages.append(lastgaelam)
 
 advantages = stack(reversed(advantages))  # (64, 512)  float32
-returns     = advantages + values          # (64, 512)  float32
+returns     = advantages + values          # (64, 512)  float32   target for critic regression
 advantages  = whiten(advantages, response_mask)  # zero mean, unit variance
 ```
+
+`response_mask` zeros the recurrence at padding positions and after EOS so the advantage
+does not leak across sequence boundaries.
 
 Typical values:  `gamma=1.0`, `lam=0.95` (standard PPO).
 
