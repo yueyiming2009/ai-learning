@@ -74,7 +74,7 @@ each update sees too little data and has high gradient variance.
 **What PPO epochs (E) means**
 
 E is how many full passes over the collected rollout batch are made before discarding it and
-running a new rollout. With E=2 and M=16:
+running a new rollout. With E=1 and M=16 (the values used in this document):
 
 ```
 Collect rollout batch: 64 sequences   ← 1 expensive generation
@@ -85,14 +85,10 @@ Epoch 1 (shuffle, then split into mini-batches of 16):
   update on seqs [...]          → gradient update 3
   update on seqs [...]          → gradient update 4
 
-Epoch 2 (reshuffle the same 64 sequences):
-  update on seqs [...]          → gradient update 5
-  ...                           → gradient updates 6, 7, 8
-
 Discard batch → collect new rollout
 ```
 
-Total gradient updates per rollout = (B_seq / M) × E = (64 / 16) × 2 = 8.
+Total gradient updates per rollout = (B_seq / M) × E = (64 / 16) × 1 = 4.
 
 The tension with increasing E: after each gradient update π_new drifts further from π_old
 (the policy that collected the rollouts). PPO's clipped surrogate loss
