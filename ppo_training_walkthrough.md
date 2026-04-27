@@ -61,13 +61,23 @@ During training with FSDP the parameters are further sharded across DP ranks (se
 
 **Why mini-batches?** Rollout is ~100× more expensive than a training step (autoregressive
 generation is sequential; training is parallel). Mini-batches amortize that cost: collect 64
-sequences once, extract multiple gradient updates cheaply. With M=16 and E=1 you get 4
+sequences once, then extract multiple gradient updates cheaply. With M=16 and E=1 you get 4
 updates per rollout instead of 1.
 
+Multiple gradient updates on the same batch are beneficial because a single gradient step
+under-exploits the collected experience — the gradient estimated from one pass is noisy and
+the policy barely moves. Doing several steps lets the policy climb further up the advantage
+landscape of the current batch, extracting more signal per expensive rollout. This is the
+same intuition as running multiple SGD steps on a fixed dataset rather than discarding it
+after one pass.
+
 **What PPO epoch (E) means**: one full pass over the collected rollout batch. With E=1, each
-of the 64 sequences is used for exactly one gradient update then discarded. Increasing E
-squeezes more updates from the same rollout but risks destabilizing training as π_new drifts
-away from the π_old that collected the data. E=1 is standard for LLM RL.
+of the 64 sequences is seen exactly once before the batch is discarded. Increasing E squeezes
+more updates from the same rollout but risks destabilizing training: each gradient step moves
+π_new further from the π_old that collected the data, making the importance ratios
+`π_new/π_old` in the clipped surrogate loss increasingly inaccurate. E=1 is standard for
+LLM RL (e.g. GRPO); E=3–4 is used in classic RL environments where per-update drift is
+smaller.
 
 Per-DP-rank sizes derived from the above:
 
