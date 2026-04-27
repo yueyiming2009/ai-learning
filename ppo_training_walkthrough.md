@@ -552,8 +552,19 @@ After the final layer, collect log probs for response tokens only:
 log_probs_local :  (4, R=512, V/TP=16000)   per TP rank
 ```
 
-To obtain per-token log probs without materializing the full vocab dimension,
-each TP rank computes its partial log-sum and a local AllReduce is done:
+To obtain per-token log probs without materializing the full V=32000 vocab, three small
+AllReduce calls are made across the TP group (all on `(4, 512)` tensors, negligible volume):
+```
+# 1. AllReduce (MAX): global max logit per token for numerical stability
+m_global = AllReduce(max(logits_local, dim=-1), op=MAX)   # (4, 512)
+
+# 2. AllReduce (SUM): global softmax normalizer
+sum_global = AllReduce(exp(logits_local - m_global).sum(-1), op=SUM)  # (4, 512)
+
+# Each rank computes log prob for the target token if it falls in its vocab slice,
+# 0 otherwise, then AllReduce (SUM) picks up the one non-zero contribution
+log_prob_token = AllReduce(log_prob_of_target_in_local_slice, op=SUM)  # (4, 512)
+```
 ```
 old_log_probs :  (4, 512)   float32   per micro-batch
 ```
