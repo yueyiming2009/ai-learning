@@ -59,42 +59,15 @@ During training with FSDP the parameters are further sharded across DP ranks (se
 | M | PPO mini-batch size (global) | 16 |
 | E | PPO epochs | 1 |
 
-**Why M=16 and not M=64 (the full batch)?**
+**Why mini-batches?** Rollout is ~100× more expensive than a training step (autoregressive
+generation is sequential; training is parallel). Mini-batches amortize that cost: collect 64
+sequences once, extract multiple gradient updates cheaply. With M=16 and E=1 you get 4
+updates per rollout instead of 1.
 
-Rollout (autoregressive generation) is sequential — tokens are produced one at a time, each
-requiring a full forward pass. Training is parallel — all tokens in a sequence are processed
-simultaneously via teacher-forcing. This makes rollout ~100× more expensive per token than
-a training forward-backward pass.
-
-The mini-batch design amortizes that cost: collect 64 sequences once (expensive), then extract
-multiple gradient updates from them (cheap). With M=16 and E=1 you get 4 gradient updates per
-rollout. If you set M=64 you'd get only 1. If you set M=4 you'd still get only 4 per rollout but
-each update sees too little data and has high gradient variance.
-
-**What PPO epochs (E) means**
-
-E is how many full passes over the collected rollout batch are made before discarding it and
-running a new rollout. With E=1 and M=16 (the values used in this document):
-
-```
-Collect rollout batch: 64 sequences   ← 1 expensive generation
-
-Epoch 1 (shuffle, then split into mini-batches of 16):
-  update on seqs [3,7,12,...]   → gradient update 1
-  update on seqs [0,5,9,...]    → gradient update 2
-  update on seqs [...]          → gradient update 3
-  update on seqs [...]          → gradient update 4
-
-Discard batch → collect new rollout
-```
-
-Total gradient updates per rollout = (B_seq / M) × E = (64 / 16) × 1 = 4.
-
-The tension with increasing E: after each gradient update π_new drifts further from π_old
-(the policy that collected the rollouts). PPO's clipped surrogate loss
-`clip(π_new/π_old, 1−ε, 1+ε)` tolerates small drift, but beyond a few epochs the
-importance ratios become inaccurate and training destabilizes. In LLM RL, E=1 is common
-(e.g. GRPO); E=3–4 is typical in classic RL environments where per-update drift is smaller.
+**What PPO epoch (E) means**: one full pass over the collected rollout batch. With E=1, each
+of the 64 sequences is used for exactly one gradient update then discarded. Increasing E
+squeezes more updates from the same rollout but risks destabilizing training as π_new drifts
+away from the π_old that collected the data. E=1 is standard for LLM RL.
 
 Per-DP-rank sizes derived from the above:
 
