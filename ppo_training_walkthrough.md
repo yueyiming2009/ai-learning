@@ -235,6 +235,57 @@ verl's hybrid engine reuses the same physical GPUs for both rollout (inference) 
 training (gradient update).  After each training step the updated parameters are
 AllGathered from FSDP shards to reconstruct the full TP-sharded model for rollout.
 
+### 2.6 Flash Attention
+
+Standard attention writes the full `(seq, seq)` score matrix to HBM (GPU high-bandwidth
+memory), which becomes the bottleneck for long sequences:
+
+```
+# Standard attention — naive
+S = Q @ K.T        →  (batch, heads, seq, seq)   written to HBM   ← bottleneck
+A = softmax(S)     →  (batch, heads, seq, seq)   read back from HBM
+out = A @ V        →  (batch, heads, seq, d)
+```
+
+Memory: O(seq²). In this example (prefill, per TP rank):
+```
+(16, 16 heads, 512, 512)  bfloat16  =  128 MB   ← materialized in HBM
+```
+
+**Flash attention** (Dao et al. 2022) is an IO-aware exact rewrite of the same computation.
+It tiles Q, K, V into blocks that fit in SRAM (fast on-chip memory) and fuses softmax +
+matmul into a single CUDA kernel, so the score matrix is never written to HBM.
+
+**Online softmax trick** — the key insight is that softmax can be computed incrementally.
+For a row of scores `[s_1, s_2, ..., s_n]`, maintain running statistics:
+
+```
+m_i = max(s_1, ..., s_i)          ← running max (for numerical stability)
+l_i = sum(exp(s_j - m_i))         ← running normalizer
+
+# When a new tile of scores arrives, update:
+m_new = max(m_old, m_tile)
+l_new = l_old * exp(m_old - m_new) + sum(exp(s_tile - m_new))
+out   = (out_old * l_old * exp(m_old - m_new) + exp(s_tile - m_new) @ V_tile) / l_new
+```
+
+This lets each tile of K/V be processed and discarded without ever assembling the full matrix.
+
+**Kernel structure**:
+
+```
+for each block of Q (fits in SRAM):
+    m = -inf,  l = 0,  out = 0          ← init running stats
+    for each block of K, V (streamed from HBM):
+        s = Q_block @ K_block.T         ← (block_q, block_kv) stays in SRAM
+        m, l, out = update(m, l, out, s, V_block)   ← online softmax update
+    write out_block to HBM              ← only output written to HBM
+```
+
+Memory: O(seq) instead of O(seq²). No communication added — attention remains local within
+each TP rank. The backward pass recomputes tiles on the fly from saved Q/K/V rather than
+storing the score matrix, trading HBM memory for extra recompute.
+
 ---
 
 ## 3. Model Parameter Memory Layout (per GPU)
