@@ -96,32 +96,71 @@ Per-DP-rank sizes derived from the above:
 ### 2.1 Tensor Parallelism (TP=2)
 
 The model weights inside each transformer layer are split across the two GPUs of a DP rank.
-verl uses the Megatron column-parallel / row-parallel convention:
+verl uses the Megatron-LM column-parallel / row-parallel convention, designed so each
+sub-layer needs only **one AllReduce** regardless of how many matrix multiplies it contains.
 
-* **Column-parallel linear** — weight matrix `W` shaped `(H, K)` is split along the output dimension.
-  Each TP rank holds `W_local` shaped `(H, K//TP)` and produces a partial output of shape `(…, K//TP)`.
-  **No communication required** after this step.
+* **Column-parallel** — split `W` along the output dimension. Each TP rank holds `(H, K//TP)`
+  and produces a partial output `(…, K//TP)`. No communication needed.
+* **Row-parallel** — split `W` along the input dimension. Each TP rank holds `(K//TP, H)`
+  and produces a partial sum `(…, H)`. **AllReduce (sum)** across the TP group combines them.
 
-* **Row-parallel linear** — weight `W` shaped `(K, H)` is split along the input dimension.
-  Each TP rank holds `W_local` shaped `(K//TP, H)` and produces a partial sum of shape `(…, H)`.
-  **AllReduce across the TP group** is needed to add the partial sums.
+The key insight is that column-parallel and row-parallel are always paired:
+column-parallel produces a partial output that feeds directly into row-parallel,
+so only one AllReduce is needed at the end of the pair, not after each multiply.
 
-For a transformer layer with TP=2, the splits are:
+**Attention** applies this pattern to QKV and O. With TP=2, each rank owns 16 of 32 heads:
+
+```
+x : (16, 512, H=4096)   — same on both TP ranks
+
+# Column-parallel: split output (heads) across TP ranks, no comm
+W_Q_local : (4096, 2048)    Q_local = x @ W_Q_local  → (16, 512, 2048)
+W_K_local : (4096, 2048)    K_local = x @ W_K_local  → (16, 512, 2048)
+W_V_local : (4096, 2048)    V_local = x @ W_V_local  → (16, 512, 2048)
+
+# Local attention over 16 heads, no comm
+Q_local : (16, 16 heads, 512, 128)
+attn_out : (16, 16 heads, 512, 128)  →  concat  →  (16, 512, 2048)
+
+# Row-parallel: split input (local head outputs) across TP ranks
+W_O_local : (2048, 4096)    partial = attn_out @ W_O_local  → (16, 512, 4096)
+                             AllReduce (sum) across TP group
+out : (16, 512, 4096)       — full hidden, same on both ranks
+```
+
+W_O is `(2048, 4096)` because its input dimension is the concatenated local heads
+`(16 heads × 128 = 2048)`, not the full hidden size.
+
+**FFN** applies the same pattern to gate/up and down:
+
+```
+# Column-parallel gate + up, no comm
+W_gate_local : (4096, 5504)   gate = x @ W_gate_local  → (16, 512, 5504)
+W_up_local   : (4096, 5504)   up   = x @ W_up_local    → (16, 512, 5504)
+hidden = SiLU(gate) * up                               → (16, 512, 5504)
+
+# Row-parallel down
+W_down_local : (5504, 4096)   partial = hidden @ W_down_local  → (16, 512, 4096)
+                               AllReduce (sum) across TP group
+out : (16, 512, 4096)
+```
+
+Full weight table with TP=2:
 
 | Weight | Shape (full) | Shape per TP rank | Parallel type |
 |--------|-------------|-------------------|---------------|
-| W_Q | (H, H) = (4096, 4096) | (4096, 2048) | column |
-| W_K | (H, H) | (4096, 2048) | column |
-| W_V | (H, H) | (4096, 2048) | column |
-| W_O | (H, H) | (2048, 4096) | row → **AllReduce** |
-| W_gate | (H, F) = (4096, 11008) | (4096, 5504) | column |
-| W_up | (H, F) | (4096, 5504) | column |
-| W_down | (F, H) = (11008, 4096) | (5504, 4096) | row → **AllReduce** |
-| Embed | (V, H) = (32000, 4096) | (16000, 4096) | vocab-column |
+| W_Q | (4096, 4096) | (4096, 2048) | column |
+| W_K | (4096, 4096) | (4096, 2048) | column |
+| W_V | (4096, 4096) | (4096, 2048) | column |
+| W_O | (4096, 4096) | (2048, 4096) | row → **AllReduce** |
+| W_gate | (4096, 11008) | (4096, 5504) | column |
+| W_up | (4096, 11008) | (4096, 5504) | column |
+| W_down | (11008, 4096) | (5504, 4096) | row → **AllReduce** |
+| Embed | (32000, 4096) | (16000, 4096) | vocab-column |
 
-Each transformer layer therefore requires exactly **2 AllReduce calls** during a forward pass
-(one after W_O, one after W_down).  The same pattern repeats during the backward pass,
-for a total of **4 AllReduce calls per layer per forward-backward pass**.
+Each transformer layer requires exactly **2 AllReduce calls** per forward pass
+(one after W_O, one after W_down), and 2 more during the backward pass —
+**4 AllReduce calls per layer per forward-backward pass**.
 
 ### 2.2 Data Parallelism (DP=4, FSDP)
 
