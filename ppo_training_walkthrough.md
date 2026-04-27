@@ -431,12 +431,17 @@ Q = x @ W_Q_local  →  (16, 1, 2048)       per TP rank
 K = x @ W_K_local  →  (16, 1, 2048)
 V = x @ W_V_local  →  (16, 1, 2048)
 
+# Reshape into heads (no-op view, no learned params)
+Q = Q.view(16, 16 heads, 1, 128)   →  (16, 16, 1,   128)
+K = K.view(16, 16,       1, 128)   →  (16, 16, 1,   128)
+V = V.view(16, 16,       1, 128)   →  (16, 16, 1,   128)
+
 # Append to KV cache
 K_cache :  (16, 16, P+t, 128)  [grows each step]
 V_cache :  (16, 16, P+t, 128)
 
 # Attention: query against full prefix
-scores = Q_reshaped @ K_cache.T  →  (16, 16, 1, P+t)
+scores = Q @ K_cache.T  →  (16, 16, 1, P+t)   ← 1 query attends to all past positions
 attn   = softmax(scores) @ V_cache  →  (16, 16, 1, 128)  →  (16, 1, 2048)
 
 # Row-parallel output projection
