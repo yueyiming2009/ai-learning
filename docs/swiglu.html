@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SwiGLU — Forward &amp; Backward Pass</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #6d28d9;
+      --accent-light: #f5f3ff;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #3b0764 0%, #6d28d9 60%, #7c3aed 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.85;
+      font-size: 0.97rem;
+      max-width: 560px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: #374151;
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: #374151; }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: #fafafa; }
+
+    /* ── Step boxes ──────────────────────────── */
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    /* ── Callout / note ──────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: #1e40af;
+    }
+    .note::before { content: '💡 '; }
+
+    /* ── Result / boxed equation ─────────────── */
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #16a34a;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Summary card ────────────────────────── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .summary-card {
+      background: var(--accent-light);
+      border: 1px solid #ddd6fe;
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .summary-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    /* ── Footer ──────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    /* ── Responsive ──────────────────────────── */
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="#">SwiGLU</a>
+  <div class="nav-links">
+    <a href="#notation">Notation</a>
+    <a href="#swish">Swish</a>
+    <a href="#forward">Forward</a>
+    <a href="#backward">Backward</a>
+    <a href="#weights">Weight grads</a>
+    <a href="#summary">Summary</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">ML Math</span>
+  <h1>SwiGLU</h1>
+  <p>Forward and backward pass for the Swish-Gated Linear Unit used in LLaMA, PaLM, and most modern transformer FFN layers.</p>
+</div>
+
+<div class="page-wrap">
+
+  <h2 id="notation">Notation</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symbol</th><th>Description</th></tr>
+      <tr><td>\(\mathbf{x} \in \mathbb{R}^d\)</td><td>Input token embedding (one token; batch/sequence dimensions suppressed)</td></tr>
+      <tr><td>\(W_g, W_v \in \mathbb{R}^{d \times n}\)</td><td>Gate and value projection weights; \(n\) is the FFN hidden width</td></tr>
+      <tr><td>\(W_o \in \mathbb{R}^{n \times d}\)</td><td>Output (down) projection weights</td></tr>
+      <tr><td>\(\mathbf{u} = \mathbf{x}W_g \in \mathbb{R}^n\)</td><td>Gate pre-activation</td></tr>
+      <tr><td>\(\mathbf{v} = \mathbf{x}W_v \in \mathbb{R}^n\)</td><td>Value pre-activation</td></tr>
+      <tr><td>\(\sigma(z)\)</td><td>Sigmoid: \(1/(1+e^{-z})\)</td></tr>
+      <tr><td>\(\mathrm{Swish}(z)\)</td><td>Swish / SiLU: \(z\,\sigma(z)\), applied element-wise</td></tr>
+      <tr><td>\(\mathbf{h} \in \mathbb{R}^n\)</td><td>Gated hidden state: \(\mathrm{Swish}(\mathbf{u}) \odot \mathbf{v}\)</td></tr>
+      <tr><td>\(\mathbf{y} \in \mathbb{R}^d\)</td><td>FFN output: \(\mathbf{h}\,W_o\)</td></tr>
+      <tr><td>\(d\mathbf{y},\, d\mathbf{h},\, d\mathbf{u},\, d\mathbf{v},\, d\mathbf{x}\)</td><td>Upstream and downstream gradients \(\partial L / \partial (\cdot)\)</td></tr>
+    </table>
+  </div>
+
+  <h2 id="swish">1. Swish Activation and Its Derivative</h2>
+  <p>Swish (also called SiLU) is a smooth, non-monotone gating function:</p>
+  \[
+    \mathrm{Swish}(z) = z\,\sigma(z) = \frac{z}{1+e^{-z}}
+  \]
+  <p>Its derivative follows from the product rule:</p>
+  \[
+    \mathrm{Swish}'(z)
+      = \sigma(z) + z\,\sigma(z)\bigl(1 - \sigma(z)\bigr)
+      = \sigma(z) + \mathrm{Swish}(z)\bigl(1 - \sigma(z)\bigr)
+  \]
+
+  <div class="note">
+    Both \(\sigma(z)\) and \(\mathrm{Swish}(z)\) are already computed in the forward pass, so the backward pass reuses them for free — no additional transcendental functions required.
+  </div>
+
+  <h2 id="forward">2. Forward Pass</h2>
+  <ol>
+    <li><strong>Gate pre-activation</strong> &nbsp; \(\mathbf{u} = \mathbf{x}W_g\)</li>
+    <li><strong>Value pre-activation</strong> &nbsp; \(\mathbf{v} = \mathbf{x}W_v\)</li>
+    <li>
+      <strong>SwiGLU gate</strong>
+      \[
+        h_i = \mathrm{Swish}(u_i)\cdot v_i = u_i\,\sigma(u_i)\cdot v_i
+      \]
+    </li>
+    <li><strong>Output projection</strong> &nbsp; \(\mathbf{y} = \mathbf{h}\,W_o\)</li>
+  </ol>
+
+  <div class="note">
+    In LLaMA, the gate projection is sometimes called <em>gate_proj</em>, the value projection <em>up_proj</em>, and the output projection <em>down_proj</em>. The hidden width is typically set to \(\tfrac{2}{3} \cdot 4d\) (rounded to a multiple of 64) so that parameter count matches a standard \(4d\) FFN after adding the extra gate path.
+  </div>
+
+  <h2 id="backward">3. Backward Pass — Activations</h2>
+
+  <div class="step">
+    <div class="step-label">Step A — Gradient through the output projection</div>
+    <p>Since \(\mathbf{y} = \mathbf{h}W_o\), the Jacobian \(\partial \mathbf{y}/\partial \mathbf{h} = W_o^\top\):</p>
+    \[
+      d\mathbf{h} = d\mathbf{y}\,W_o^\top \in \mathbb{R}^n
+    \]
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step B — Gradient through the gate (element-wise product)</div>
+    <p>Each output \(h_i = \mathrm{Swish}(u_i)\cdot v_i\) depends on \(u_i\) and \(v_i\) independently:</p>
+    \[
+      \frac{\partial h_i}{\partial u_i} = \mathrm{Swish}'(u_i)\cdot v_i
+      \qquad
+      \frac{\partial h_i}{\partial v_i} = \mathrm{Swish}(u_i)
+    \]
+    <p>Applying the chain rule element-wise:</p>
+    \[
+      du_i = dh_i \cdot v_i \cdot \mathrm{Swish}'(u_i)
+      \qquad
+      dv_i = dh_i \cdot \mathrm{Swish}(u_i)
+    \]
+  </div>
+
+  <div class="result">
+    <div class="result-label">Gate gradients (vectorized)</div>
+    \[
+      d\mathbf{u} = d\mathbf{h} \odot \mathbf{v} \odot \mathrm{Swish}'(\mathbf{u})
+      \qquad\qquad
+      d\mathbf{v} = d\mathbf{h} \odot \mathrm{Swish}(\mathbf{u})
+    \]
+  </div>
+
+  <p>Expanding \(\mathrm{Swish}'(\mathbf{u})\):</p>
+  \[
+    \mathrm{Swish}'(\mathbf{u})
+      = \boldsymbol{\sigma}(\mathbf{u}) + \mathrm{Swish}(\mathbf{u})\odot\bigl(\mathbf{1} - \boldsymbol{\sigma}(\mathbf{u})\bigr)
+  \]
+
+  <div class="step">
+    <div class="step-label">Step C — Gradient through the input projections</div>
+    <p>Both gate and value paths flow back through \(\mathbf{x}\), so their contributions add:</p>
+    \[
+      d\mathbf{x} = d\mathbf{u}\,W_g^\top \;+\; d\mathbf{v}\,W_v^\top \in \mathbb{R}^d
+    \]
+  </div>
+
+  <h2 id="weights">4. Weight Gradients</h2>
+  <p>The three projection matrices each receive one gradient contribution. For a single token, the weight gradients are outer products; accumulated over a batch \((N)\) and sequence \((L)\):</p>
+
+  \[
+    dW_g = \mathbf{x}^\top\, d\mathbf{u} \in \mathbb{R}^{d \times n}
+    \qquad\qquad
+    dW_v = \mathbf{x}^\top\, d\mathbf{v} \in \mathbb{R}^{d \times n}
+  \]
+  \[
+    dW_o = \mathbf{h}^\top\, d\mathbf{y} \in \mathbb{R}^{n \times d}
+  \]
+
+  <p>In matrix form across the full batch (stacking tokens into rows):</p>
+  \[
+    dW_g = X^\top \, dU, \qquad dW_v = X^\top \, dV, \qquad dW_o = H^\top \, dY
+  \]
+
+  <h2 id="summary">5. Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">Swish'(u)</div>
+      <p>\(\sigma(\mathbf{u}) + \mathrm{Swish}(\mathbf{u})\odot(1-\sigma(\mathbf{u}))\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">dh</div>
+      <p>\(d\mathbf{y}\,W_o^\top\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">du</div>
+      <p>\(d\mathbf{h}\odot\mathbf{v}\odot\mathrm{Swish}'(\mathbf{u})\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">dv</div>
+      <p>\(d\mathbf{h}\odot\mathrm{Swish}(\mathbf{u})\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">dx</div>
+      <p>\(d\mathbf{u}\,W_g^\top + d\mathbf{v}\,W_v^\top\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Weight grads</div>
+      <p>\(dW_g = X^\top dU\), &nbsp;\(dW_v = X^\top dV\), &nbsp;\(dW_o = H^\top dY\)</p>
+    </div>
+  </div>
+
+  <div class="table-wrap" style="margin-top: 2em;">
+    <table>
+      <tr><th>Quantity</th><th>Formula</th><th>Shape</th></tr>
+      <tr><td>Forward: \(\mathbf{h}\)</td><td>\(\mathrm{Swish}(\mathbf{x}W_g)\odot(\mathbf{x}W_v)\)</td><td>\(\mathbb{R}^n\)</td></tr>
+      <tr><td>Forward: \(\mathbf{y}\)</td><td>\(\mathbf{h}\,W_o\)</td><td>\(\mathbb{R}^d\)</td></tr>
+      <tr><td>\(d\mathbf{h}\)</td><td>\(d\mathbf{y}\,W_o^\top\)</td><td>\(\mathbb{R}^n\)</td></tr>
+      <tr><td>\(d\mathbf{u}\)</td><td>\(d\mathbf{h}\odot\mathbf{v}\odot\mathrm{Swish}'(\mathbf{u})\)</td><td>\(\mathbb{R}^n\)</td></tr>
+      <tr><td>\(d\mathbf{v}\)</td><td>\(d\mathbf{h}\odot\mathrm{Swish}(\mathbf{u})\)</td><td>\(\mathbb{R}^n\)</td></tr>
+      <tr><td>\(d\mathbf{x}\)</td><td>\(d\mathbf{u}\,W_g^\top + d\mathbf{v}\,W_v^\top\)</td><td>\(\mathbb{R}^d\)</td></tr>
+    </table>
+  </div>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; SwiGLU forward and backward pass
+</footer>
+
+</body>
+</html>
