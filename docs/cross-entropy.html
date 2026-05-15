@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cross Entropy — Forward &amp; Backward Pass</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #dc2626;
+      --accent-light: #fff5f5;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #7f1d1d 0%, #dc2626 60%, #ef4444 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.85;
+      font-size: 0.97rem;
+      max-width: 560px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: #374151;
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: #374151; }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: #fafafa; }
+
+    /* ── Step boxes ──────────────────────────── */
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    /* ── Callout / note ──────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: #1e40af;
+    }
+    .note::before { content: '💡 '; }
+
+    /* ── Result / boxed equation ─────────────── */
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #16a34a;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Summary card ────────────────────────── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .summary-card {
+      background: var(--accent-light);
+      border: 1px solid #fecaca;
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .summary-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    /* ── Footer ──────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    /* ── Responsive ──────────────────────────── */
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="#">Cross Entropy</a>
+  <div class="nav-links">
+    <a href="#notation">Notation</a>
+    <a href="#forward">Forward</a>
+    <a href="#stability">Stability</a>
+    <a href="#backward">Backward</a>
+    <a href="#batch">Batch</a>
+    <a href="#summary">Summary</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">ML Math</span>
+  <h1>Cross Entropy</h1>
+  <p>Forward and backward pass for the softmax + cross-entropy loss used in language model next-token prediction and multi-class classification.</p>
+</div>
+
+<div class="page-wrap">
+
+  <h2 id="notation">Notation</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symbol</th><th>Description</th></tr>
+      <tr><td>\(\mathbf{z} \in \mathbb{R}^V\)</td><td>Logits (raw pre-softmax scores); \(V\) is the vocabulary or class count</td></tr>
+      <tr><td>\(\mathbf{p} \in \mathbb{R}^V\)</td><td>Softmax probabilities: \(p_i = e^{z_i} / \sum_j e^{z_j}\)</td></tr>
+      <tr><td>\(S = \sum_j e^{z_j}\)</td><td>Partition function (normalization denominator)</td></tr>
+      <tr><td>\(k\)</td><td>Index of the true class</td></tr>
+      <tr><td>\(\mathbf{y} \in \{0,1\}^V\)</td><td>One-hot target: \(y_i = \mathbf{1}[i = k]\)</td></tr>
+      <tr><td>\(L\)</td><td>Scalar cross-entropy loss</td></tr>
+      <tr><td>\(d\mathbf{z}\)</td><td>Gradient \(\partial L / \partial \mathbf{z}\)</td></tr>
+    </table>
+  </div>
+
+  <h2 id="forward">1. Forward Pass</h2>
+
+  <h3>Step 1 — Softmax</h3>
+  <p>Convert logits to a probability distribution over all \(V\) classes:</p>
+  \[
+    p_i = \frac{e^{z_i}}{S}, \qquad S = \sum_{j=1}^{V} e^{z_j}
+  \]
+  <p>By construction \(p_i > 0\) and \(\sum_i p_i = 1\), so \(\mathbf{p}\) is a valid probability distribution.</p>
+
+  <h3>Step 2 — Cross-entropy loss</h3>
+  <p>Measure the log-loss against the one-hot target:</p>
+  \[
+    L = -\sum_{i=1}^{V} y_i \log p_i = -\log p_k
+  \]
+  <p>Because only the true-class term survives the sum, the loss reduces to the negative log-probability assigned to the correct class.</p>
+
+  <div class="result">
+    <div class="result-label">Forward pass</div>
+    \[
+      L = -\log p_k = -z_k + \log \sum_{j} e^{z_j}
+    \]
+  </div>
+
+  <div class="note">
+    The rewrite \(-z_k + \log S\) is exact and free of any division — useful both for intuition (loss = how much the partition function exceeds the true-class score) and for numerically stable implementations.
+  </div>
+
+  <h2 id="stability">2. Numerical Stability</h2>
+  <p>Computing \(e^{z_i}\) directly overflows for large logits. The standard fix subtracts the maximum logit before exponentiating. Let \(m = \max_j z_j\):</p>
+  \[
+    p_i = \frac{e^{z_i - m}}{\sum_j e^{z_j - m}}
+  \]
+  <p>This is mathematically identical to the original (the \(e^{-m}\) factors cancel), but the largest exponent is now \(0\), keeping all values in \((0,\, 1]\).</p>
+
+  <div class="note">
+    PyTorch's <code>F.cross_entropy</code> and JAX's <code>optax.softmax_cross_entropy</code> both apply this shift internally. You rarely need to implement it by hand, but understanding it is important for writing numerically stable custom kernels.
+  </div>
+
+  <h2 id="backward">3. Backward Pass</h2>
+  <p>We want \(\partial L / \partial z_i\) for each logit. The derivation goes through the Jacobian of softmax.</p>
+
+  <div class="step">
+    <div class="step-label">Step A — Softmax Jacobian</div>
+    <p>Differentiating \(p_k = e^{z_k}/S\) with respect to \(z_i\):</p>
+    <p><em>Case \(i = k\)</em> (same index):</p>
+    \[
+      \frac{\partial p_k}{\partial z_k}
+        = \frac{e^{z_k} S - e^{z_k} \cdot e^{z_k}}{S^2}
+        = p_k - p_k^2 = p_k(1 - p_k)
+    \]
+    <p><em>Case \(i \ne k\)</em> (different index):</p>
+    \[
+      \frac{\partial p_k}{\partial z_i}
+        = \frac{0 \cdot S - e^{z_k} \cdot e^{z_i}}{S^2}
+        = -p_k\, p_i
+    \]
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step B — Chain rule through the log</div>
+    <p>Since \(L = -\log p_k\):</p>
+    \[
+      \frac{\partial L}{\partial z_i}
+        = -\frac{1}{p_k} \cdot \frac{\partial p_k}{\partial z_i}
+    \]
+    <p><em>Case \(i = k\)</em>:</p>
+    \[
+      \frac{\partial L}{\partial z_k}
+        = -\frac{1}{p_k} \cdot p_k(1-p_k) = -(1-p_k) = p_k - 1
+    \]
+    <p><em>Case \(i \ne k\)</em>:</p>
+    \[
+      \frac{\partial L}{\partial z_i}
+        = -\frac{1}{p_k} \cdot (-p_k\, p_i) = p_i
+    \]
+  </div>
+
+  <p>Combining both cases using the one-hot label \(y_i\):</p>
+
+  <div class="result">
+    <div class="result-label">Key result — gradient of the combined loss</div>
+    \[
+      \frac{\partial L}{\partial z_i} = p_i - y_i
+    \]
+    \[
+      d\mathbf{z} = \mathbf{p} - \mathbf{y}
+    \]
+  </div>
+
+  <p>This remarkably clean formula is one of the most important in deep learning. The gradient at each logit is simply how much probability the model assigned minus what it should have assigned. No intermediate Jacobian matrices or division by \(p_k\) remain in the final expression.</p>
+
+  <div class="note">
+    This simplicity is not a coincidence. Cross entropy is the natural loss for softmax because they are conjugate in the exponential family — the log in the loss exactly cancels the exp in the softmax, leaving a linear residual.
+  </div>
+
+  <h2 id="batch">4. Batch Formulation</h2>
+  <p>In practice, loss is averaged over a mini-batch of \(N\) examples. Let \(Z \in \mathbb{R}^{N \times V}\) be the logit matrix and \(k_1, \ldots, k_N\) the true class indices.</p>
+
+  \[
+    L = -\frac{1}{N}\sum_{n=1}^{N} \log p_{n,k_n}
+  \]
+
+  <p>Softmax is applied row-wise to produce \(P \in \mathbb{R}^{N \times V}\). The gradient follows immediately:</p>
+
+  \[
+    \frac{\partial L}{\partial Z} = \frac{1}{N}(P - Y)
+  \]
+
+  <p>where \(Y \in \mathbb{R}^{N \times V}\) is the batch of one-hot labels. The \(1/N\) factor comes from averaging the loss — it simply scales every gradient row uniformly.</p>
+
+  <div class="note">
+    In language modelling the sequence dimension is typically folded into the batch, so the effective \(N\) is \(\text{batch} \times \text{sequence length}\). The same formula applies without modification.
+  </div>
+
+  <h2 id="summary">5. Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">Softmax</div>
+      <p>\(p_i = e^{z_i} / \sum_j e^{z_j}\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Loss</div>
+      <p>\(L = -\log p_k = -z_k + \log S\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">dz (single)</div>
+      <p>\(d\mathbf{z} = \mathbf{p} - \mathbf{y}\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">dZ (batch)</div>
+      <p>\(dZ = \tfrac{1}{N}(P - Y)\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Stable forward</div>
+      <p>Subtract \(m = \max_j z_j\) before exp</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Why it's clean</div>
+      <p>Log and exp cancel; cross entropy is the natural loss for softmax</p>
+    </div>
+  </div>
+
+  <div class="table-wrap" style="margin-top: 2em;">
+    <table>
+      <tr><th>Quantity</th><th>Formula</th><th>Shape</th></tr>
+      <tr><td>Softmax \(\mathbf{p}\)</td><td>\(e^{\mathbf{z}} / \sum_j e^{z_j}\)</td><td>\(\mathbb{R}^V\)</td></tr>
+      <tr><td>Loss \(L\)</td><td>\(-\log p_k\)</td><td>scalar</td></tr>
+      <tr><td>Gradient \(d\mathbf{z}\) (true class \(k\))</td><td>\(p_k - 1\)</td><td>scalar (entry \(k\))</td></tr>
+      <tr><td>Gradient \(d\mathbf{z}\) (other classes)</td><td>\(p_i\)</td><td>scalar (entry \(i \ne k\))</td></tr>
+      <tr><td>Gradient \(d\mathbf{z}\) (vectorized)</td><td>\(\mathbf{p} - \mathbf{y}\)</td><td>\(\mathbb{R}^V\)</td></tr>
+      <tr><td>Batch gradient \(dZ\)</td><td>\(\tfrac{1}{N}(P - Y)\)</td><td>\(\mathbb{R}^{N \times V}\)</td></tr>
+    </table>
+  </div>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; Cross entropy forward and backward pass
+</footer>
+
+</body>
+</html>
