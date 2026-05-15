@@ -6,11 +6,11 @@ Personal notes and worked derivations for ML systems and algorithms.
 
 Rendered math pages are published via GitHub Pages (configure Settings → Pages → `main` / `/docs`).
 
-| Page | URL |
+| Page | Link |
 |---|---|
-| Index | `/` |
-| LayerNorm gradient | `/layernorm-gradient.html` |
-| RMSNorm gradient | `/rmsnorm-gradient.html` |
+| Index | [yueyiming2009.github.io/ai-learning](https://yueyiming2009.github.io/ai-learning) |
+| LayerNorm gradient | [layernorm-gradient.html](https://yueyiming2009.github.io/ai-learning/layernorm-gradient.html) |
+| RMSNorm gradient | [rmsnorm-gradient.html](https://yueyiming2009.github.io/ai-learning/rmsnorm-gradient.html) |
 
 ## Contents
 
