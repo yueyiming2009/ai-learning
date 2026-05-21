@@ -380,7 +380,29 @@
     p(y_w \succ y_l \mid x) = \frac{\exp r_\phi(x,y_w)}{\exp r_\phi(x,y_w) + \exp r_\phi(x,y_l)}
       = \sigma\big(r_\phi(x,y_w) - r_\phi(x,y_l)\big)
   \]
-  <p>Fitting \(\phi\) by maximum likelihood over the comparison dataset \(\mathcal{D}\) gives a binary-classification (logistic) loss:</p>
+  <p>Bradley–Terry gives the probability of a <em>single</em> comparison. To turn it into a training loss we fit \(\phi\) by <strong>maximum likelihood</strong> over the whole comparison dataset \(\mathcal{D}\), in three steps.</p>
+
+  <div class="step">
+    <div class="step-label">Step 1 — Likelihood of the dataset</div>
+    <p>Each example in \(\mathcal{D}\) is already labeled so that \(y_w\) is the human-preferred answer. Assuming examples are independent, the probability of observing <em>all</em> the labels is the product of the per-comparison probabilities:</p>
+    \[
+      \mathcal{P}(\phi) = \prod_{(x,y_w,y_l)\in\mathcal{D}} p(y_w \succ y_l \mid x)
+        = \prod_{(x,y_w,y_l)\in\mathcal{D}} \sigma\big(r_\phi(x,y_w) - r_\phi(x,y_l)\big)
+    \]
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step 2 — Take the log</div>
+    <p>Maximizing \(\mathcal{P}\) is the same as maximizing \(\log\mathcal{P}\) (the log is monotonic), and the log turns the product into a sum — easier to optimize and numerically stable:</p>
+    \[
+      \log \mathcal{P}(\phi) = \sum_{(x,y_w,y_l)\in\mathcal{D}} \log \sigma\big(r_\phi(x,y_w) - r_\phi(x,y_l)\big)
+    \]
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step 3 — Negate and average</div>
+    <p>Flip the sign to turn "maximize log-likelihood" into "minimize a loss," and average over the dataset (the \(\tfrac{1}{|\mathcal{D}|}\sum\) is written as an expectation \(\mathbb{E}_{\mathcal{D}}\)):</p>
+  </div>
 
   <div class="result">
     <div class="result-label">Reward model loss</div>
