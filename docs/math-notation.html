@@ -431,6 +431,22 @@
     KL is the standard way to penalize a trained model for straying from a reference, and it underlies cross entropy: minimizing cross entropy between predictions and labels is equivalent to minimizing a KL divergence.
   </div>
 
+  <h3>Forward vs. reverse KL</h3>
+  <p>Because KL is asymmetric, swapping the arguments gives a genuinely different quantity. When fitting a model \(q_\theta\) to a target \(p\), the two orderings have names and distinct behaviors:</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th></th><th>Forward KL</th><th>Reverse KL</th></tr>
+      <tr><td>Written</td><td>\(\mathrm{KL}(p \,\|\, q_\theta)\)</td><td>\(\mathrm{KL}(q_\theta \,\|\, p)\)</td></tr>
+      <tr><td>Expectation under</td><td>the target \(p\)</td><td>the model \(q_\theta\)</td></tr>
+      <tr><td>Behavior</td><td><em>Mass-covering</em> — \(q\) spreads to cover every mode of \(p\)</td><td><em>Mode-seeking</em> — \(q\) locks onto one mode and ignores the rest</td></tr>
+      <tr><td>Penalizes</td><td>\(q\!\approx\!0\) where \(p\!>\!0\) (missing mass)</td><td>\(q\!>\!0\) where \(p\!\approx\!0\) (spurious mass)</td></tr>
+    </table>
+  </div>
+  <p>The intuition is in <em>which distribution weights the log-ratio</em>. Forward KL averages \(\log\tfrac{p}{q}\) over \(p\), so wherever \(p\) has mass but \(q\) doesn't, the ratio blows up — \(q\) is forced to cover all of \(p\). Reverse KL averages \(\log\tfrac{q}{p}\) over \(q\), so \(q\) is only penalized where <em>it</em> puts mass; it can safely ignore parts of \(p\) by placing no mass there, concentrating on a single high-probability region.</p>
+  <div class="note">
+    Maximum-likelihood / cross-entropy training minimizes the <strong>forward</strong> KL (hence mass-covering, why language models can be over-broad). Variational inference and the RL KL penalties on the <a href="rlhf.html" style="color:#1e40af;">RLHF</a> / <a href="grpo.html" style="color:#1e40af;">GRPO</a> pages use the <strong>reverse</strong> KL \(\mathrm{KL}(\pi_\theta\,\|\,\pi_{\text{ref}})\) — the model's own samples weight the penalty.
+  </div>
+
   <h2 id="misc">9. A few more symbols you'll meet</h2>
   <div class="table-wrap">
     <table>
