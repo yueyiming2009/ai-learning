@@ -308,16 +308,50 @@
   \]
   <p>DPO's key observation: this objective has a <em>closed-form optimum</em>, and that optimum lets us express the reward in terms of the policy itself — eliminating the separate RL loop.</p>
 
+  <div class="note">
+    <strong>Closed-form</strong> means the optimum can be written as an explicit formula you evaluate directly, rather than one you must reach by an iterative search (as PPO does). Crucially, because the optimum is an explicit equation, we can later rearrange it algebraically to express the reward through the policy.
+  </div>
+
   <h3>Closed-form optimal policy</h3>
   <p>Writing the objective per-prompt and expanding the KL term:</p>
   \[
     \max_{\pi}\; \mathbb{E}_{y\sim\pi}\!\left[\, r(x,y) - \beta \log\frac{\pi(y\mid x)}{\pi_{\text{ref}}(y\mid x)} \right]
   \]
-  <p>Dividing by \(\beta\) and flipping the sign to a minimization, this is a KL divergence against a Gibbs distribution:</p>
-  \[
-    \min_{\pi}\; \mathbb{E}_{y\sim\pi}\!\left[ \log\frac{\pi(y\mid x)}{\tfrac{1}{Z(x)}\pi_{\text{ref}}(y\mid x)\,e^{r(x,y)/\beta}} \right] - \log Z(x)
-  \]
-  <p>where \(Z(x) = \sum_y \pi_{\text{ref}}(y\mid x)\,e^{r(x,y)/\beta}\). A KL divergence is minimized (to zero) exactly when the two distributions match, giving the optimal policy:</p>
+  <p>We now massage this into a single KL divergence in four small steps.</p>
+
+  <div class="step">
+    <div class="step-label">Step 1 — Divide by \(\beta\) and minimize</div>
+    <p>Scaling the objective by the positive constant \(1/\beta\) does not change which \(\pi\) is optimal. Dividing through, then negating to turn the \(\max\) into a \(\min\):</p>
+    \[
+      \min_{\pi}\; \mathbb{E}_{y\sim\pi}\!\left[\, \log\frac{\pi(y\mid x)}{\pi_{\text{ref}}(y\mid x)} - \frac{1}{\beta}\,r(x,y) \right]
+    \]
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step 2 — Fold the reward into the log</div>
+    <p>Write the reward term as a logarithm, \(\tfrac{1}{\beta} r(x,y) = \log e^{\,r(x,y)/\beta}\), and combine the two logs into one ratio:</p>
+    \[
+      \min_{\pi}\; \mathbb{E}_{y\sim\pi}\!\left[\, \log\frac{\pi(y\mid x)}{\pi_{\text{ref}}(y\mid x)\,e^{\,r(x,y)/\beta}} \right]
+    \]
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step 3 — Normalize the denominator</div>
+    <p>The denominator \(\pi_{\text{ref}}\,e^{r/\beta}\) is not yet a probability distribution (it doesn't sum to 1). Define the <em>partition function</em> that normalizes it, \(Z(x) = \sum_y \pi_{\text{ref}}(y\mid x)\,e^{r(x,y)/\beta}\), and divide the denominator by it. Since \(\pi_{\text{ref}}\,e^{r/\beta} = Z(x)\cdot\big[\tfrac{1}{Z(x)}\pi_{\text{ref}}\,e^{r/\beta}\big]\), this introduces a \(-\log Z(x)\) term, which leaves the expectation because it does not depend on \(y\):</p>
+    \[
+      \min_{\pi}\; \mathbb{E}_{y\sim\pi}\!\left[ \log\frac{\pi(y\mid x)}{\tfrac{1}{Z(x)}\pi_{\text{ref}}(y\mid x)\,e^{r(x,y)/\beta}} \right] - \log Z(x)
+    \]
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step 4 — Recognize the KL divergence</div>
+    <p>The denominator is now the normalized <em>Gibbs distribution</em> \(\pi^*(y\mid x) = \tfrac{1}{Z(x)}\pi_{\text{ref}}\,e^{r/\beta}\), so the bracketed expectation is exactly \(\mathrm{KL}\big(\pi(\cdot\mid x)\,\|\,\pi^*(\cdot\mid x)\big)\). Because \(\log Z(x)\) is independent of \(\pi\), the problem reduces to:</p>
+    \[
+      \min_{\pi}\; \mathrm{KL}\big(\pi(\cdot\mid x)\,\|\,\pi^*(\cdot\mid x)\big)
+    \]
+  </div>
+
+  <p>A KL divergence is minimized (to zero) exactly when the two distributions match, i.e. \(\pi = \pi^*\). This gives the optimal policy:</p>
 
   <div class="result">
     <div class="result-label">Optimal policy</div>
