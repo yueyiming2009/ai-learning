@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reading ML Math Notation — Expectation, Sampling &amp; KL</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #4f46e5;
+      --accent-light: #eef2ff;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #1e1b4b 0%, #4338ca 60%, #6366f1 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.85;
+      font-size: 0.97rem;
+      max-width: 560px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: #374151;
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: #374151; }
+    code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: #fafafa; }
+
+    /* ── Step boxes ──────────────────────────── */
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    /* ── Callout / note ──────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: #1e40af;
+    }
+    .note::before { content: '💡 '; }
+
+    /* ── Result / boxed equation ─────────────── */
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #16a34a;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Plain-English read box ──────────────── */
+    .read {
+      background: var(--accent-light);
+      border: 1px solid #c7d2fe;
+      border-radius: 8px;
+      padding: 14px 18px;
+      margin: 1.2em 0;
+    }
+    .read-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+    .read p { margin: 0.3em 0; }
+
+    /* ── Summary card ────────────────────────── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .summary-card {
+      background: var(--accent-light);
+      border: 1px solid #c7d2fe;
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .summary-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    /* ── Footer ──────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    /* ── Responsive ──────────────────────────── */
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="#">Math Notation</a>
+  <div class="nav-links">
+    <a href="index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#target">The formula</a>
+    <a href="#function">Functions</a>
+    <a href="#bar">Conditional bar</a>
+    <a href="#dist">Distributions</a>
+    <a href="#sample">Sampling</a>
+    <a href="#expect">Expectation</a>
+    <a href="#argmax">max over a function</a>
+    <a href="#kl">KL divergence</a>
+    <a href="#assemble">Full read</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Foundations</span>
+  <h1>Reading ML Math Notation</h1>
+  <p>A symbol-by-symbol decoding of probability and expectation notation, built around one real objective — the KL-constrained RLHF formula from the DPO page.</p>
+</div>
+
+<div class="page-wrap">
+
+  <h2 id="target">The formula we're decoding</h2>
+  <p>This is the RLHF objective from the <a href="dpo-loss.html" style="color:var(--accent);">DPO page</a>. It looks dense, but it is built from only a handful of reusable pieces. We'll learn each piece, then read the whole thing in plain English at the end.</p>
+  \[
+    \max_{\pi}\; \mathbb{E}_{x\sim\mathcal{D},\, y\sim\pi(\cdot\mid x)}\big[\,r(x,y)\,\big]
+      \;-\; \beta\, \mathrm{KL}\!\big(\pi(\cdot\mid x)\,\|\,\pi_{\text{ref}}(\cdot\mid x)\big)
+  \]
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Piece</th><th>Reads as</th><th>Section</th></tr>
+      <tr><td>\(\max_{\pi}\)</td><td>"choose the function \(\pi\) that makes the following as large as possible"</td><td>§6</td></tr>
+      <tr><td>\(\mathbb{E}_{\,\cdot}[\,\cdot\,]\)</td><td>"the average value of …, weighted by probability"</td><td>§5</td></tr>
+      <tr><td>\(x\sim\mathcal{D}\)</td><td>"\(x\) is drawn from the data distribution \(\mathcal{D}\)"</td><td>§3–4</td></tr>
+      <tr><td>\(y\sim\pi(\cdot\mid x)\)</td><td>"\(y\) is sampled from the policy, given \(x\)"</td><td>§2–4</td></tr>
+      <tr><td>\(r(x,y)\)</td><td>"the reward of completion \(y\) for prompt \(x\)"</td><td>§1</td></tr>
+      <tr><td>\(\beta\)</td><td>a fixed number (a knob), the KL weight</td><td>§1</td></tr>
+      <tr><td>\(\mathrm{KL}(\,\cdot\,\|\,\cdot\,)\)</td><td>"how far apart two distributions are"</td><td>§7</td></tr>
+    </table>
+  </div>
+
+  <h2 id="function">1. Functions and their arguments</h2>
+  <p>The most basic notation: \(f(x)\) means "the function \(f\) applied to input \(x\)." A function is just a rule that maps inputs to an output.</p>
+  <ul>
+    <li>\(r(x,y)\) — a function of <em>two</em> arguments. Feed it a prompt \(x\) and a completion \(y\); it returns a single number (the reward).</li>
+    <li>\(\beta\) — a lone Greek letter with no parentheses is a <em>constant</em>: one fixed number you set ahead of time, like a hyperparameter. Multiplying by \(\beta\) just scales whatever follows.</li>
+  </ul>
+  <div class="note">
+    Greek letters are a convention, not magic. Lowercase letters near the start (\(\alpha,\beta,\gamma\)) are usually scalar knobs; \(\pi,\theta,\phi\) usually name models or their parameters; \(\sigma\) often means the sigmoid or a standard deviation. Context decides.
+  </div>
+
+  <h2 id="bar">2. The conditional bar \(\;\mid\;\)</h2>
+  <p>In \(\pi(y \mid x)\), the vertical bar reads "<strong>given</strong>." The whole thing is "the probability of \(y\) <em>given</em> \(x\)" — i.e. how likely the model is to produce completion \(y\) when it has already seen prompt \(x\).</p>
+  \[
+    \underbrace{\pi}_{\text{the model}}(\,\underbrace{y}_{\text{what we ask about}} \mid \underbrace{x}_{\text{what is fixed/known}}\,)
+  \]
+  <p>Everything <em>left</em> of the bar is the thing whose probability we want; everything <em>right</em> of the bar is treated as fixed background. For a language model: \(x\) is the prompt (given), \(y\) is a candidate response (we score its probability).</p>
+
+  <h2 id="dist">3. Distributions and the \(\;\cdot\;\) placeholder</h2>
+  <p>A <em>probability distribution</em> assigns a probability to every possible outcome. Two notations show up in the formula:</p>
+
+  <h3>Calligraphic letters like \(\mathcal{D}\)</h3>
+  <p>\(\mathcal{D}\) (script "D") names a distribution — here the <em>data distribution</em>, the population of prompts you might encounter. You don't compute with \(\mathcal{D}\) directly; you draw samples from it.</p>
+
+  <h3>The dot \(\cdot\) as "the whole distribution"</h3>
+  <p>Compare two things:</p>
+  <ul>
+    <li>\(\pi(y \mid x)\) — a single <em>number</em>: the probability of one specific \(y\).</li>
+    <li>\(\pi(\cdot \mid x)\) — the entire <em>distribution</em> over all possible \(y\). The dot is a blank standing in for "any value," so \(\pi(\cdot\mid x)\) means "the whole probability function, for every \(y\), given \(x\)."</li>
+  </ul>
+  <div class="note">
+    Think of \(\pi(\cdot \mid x)\) as the full bar chart of probabilities over every completion, while \(\pi(y\mid x)\) is the height of one single bar. We need the whole chart when we sample from it (§4) or compare it against another chart (§7).
+  </div>
+
+  <h2 id="sample">4. Sampling: the tilde \(\;\sim\;\)</h2>
+  <p>\(x \sim \mathcal{D}\) reads "\(x\) is <strong>drawn from</strong> (sampled according to) the distribution \(\mathcal{D}\)." It tells you \(x\) is <em>random</em>, and which distribution governs how often each value appears.</p>
+  <ul>
+    <li>\(x \sim \mathcal{D}\) — pick a prompt at random from the data.</li>
+    <li>\(y \sim \pi(\cdot\mid x)\) — having fixed that \(x\), let the model generate a completion \(y\) according to its own probabilities. (Note it samples from the <em>whole</em> distribution \(\pi(\cdot\mid x)\) — hence the dot.)</li>
+  </ul>
+  <p>When you see \(\sim\), ask: "which symbol is the random one, and what's its distribution?" Everything else in the expression is, for the moment, held fixed.</p>
+
+  <h2 id="expect">5. Expectation \(\;\mathbb{E}\;\)</h2>
+  <p>\(\mathbb{E}\) (blackboard-bold "E") is the <strong>expected value</strong> — a probability-weighted average. The subscript says <em>what is random</em>; the brackets hold the quantity being averaged.</p>
+  \[
+    \mathbb{E}_{x\sim\mathcal{D}}\big[\, f(x) \,\big]
+      \;=\; \sum_{x} \underbrace{\mathcal{D}(x)}_{\text{how likely } x \text{ is}} \cdot \underbrace{f(x)}_{\text{value at } x}
+      \qquad\Big(\text{or } \int \mathcal{D}(x)\,f(x)\,dx \text{ if continuous}\Big)
+  \]
+  <p>In words: run \(f\) on every possible \(x\), weight each result by how probable that \(x\) is, and add them up. Likely values count more; rare values count less.</p>
+
+  <div class="step">
+    <div class="step-label">Concrete example</div>
+    <p>A fair die, \(f(x)=x\) (the face value). Each face has probability \(1/6\):</p>
+    \[
+      \mathbb{E}[x] = \tfrac16(1) + \tfrac16(2) + \cdots + \tfrac16(6) = 3.5
+    \]
+    <p>The "expected" value 3.5 is the long-run average — even though you can never roll a 3.5. That's the key intuition: expectation is an average, not a prediction of any single outcome.</p>
+  </div>
+
+  <p>Our formula stacks two sources of randomness in the subscript:</p>
+  \[
+    \mathbb{E}_{x\sim\mathcal{D},\; y\sim\pi(\cdot\mid x)}\big[\, r(x,y) \,\big]
+  \]
+  <p>Read it as a nested process: <em>first</em> draw a prompt \(x\) from the data, <em>then</em> draw a completion \(y\) from the model given that \(x\), evaluate the reward \(r(x,y)\), and average over many such draws. It's the model's <em>average reward</em>.</p>
+
+  <h2 id="argmax">6. Maximizing over a function: \(\;\max_{\pi}\;\)</h2>
+  <p>\(\max_{\pi}\, g(\pi)\) means "the largest value \(g\) can take as we vary \(\pi\)." The subscript names <em>what we're allowed to change</em>.</p>
+  <p>The twist here: \(\pi\) is not a number — it's an entire <em>policy</em> (a whole probability distribution over completions, for every prompt). So we are searching over the space of all possible policies for the one that scores highest. The closely related \(\arg\max_\pi\) returns the <em>winning \(\pi\) itself</em> rather than the score.</p>
+  <div class="note">
+    In practice \(\pi\) is a neural network with parameters \(\theta\), so "varying \(\pi\)" really means "adjusting \(\theta\) by gradient steps." The notation states the <em>goal</em>; training is how we approximately reach it.
+  </div>
+
+  <h2 id="kl">7. KL divergence \(\;\mathrm{KL}(p \,\|\, q)\;\)</h2>
+  <p>The double bar \(\|\) separates two distributions being compared. \(\mathrm{KL}(p \,\|\, q)\) measures <strong>how different distribution \(p\) is from distribution \(q\)</strong> — a kind of (asymmetric) distance.</p>
+  \[
+    \mathrm{KL}(p \,\|\, q) \;=\; \mathbb{E}_{x\sim p}\!\left[\log \frac{p(x)}{q(x)}\right] \;=\; \sum_x p(x)\,\log\frac{p(x)}{q(x)}
+  \]
+  <p>Properties worth memorizing:</p>
+  <ul>
+    <li>\(\mathrm{KL}(p\,\|\,q) \ge 0\) always, and \(= 0\) <em>exactly</em> when \(p\) and \(q\) are identical.</li>
+    <li>It is <em>asymmetric</em>: \(\mathrm{KL}(p\,\|\,q) \neq \mathrm{KL}(q\,\|\,p)\) in general. Order matters.</li>
+    <li>Notice it is itself an expectation (§5) of a log-ratio — the same log-ratio that reappears as the implicit reward on the DPO page.</li>
+  </ul>
+  <p>In the objective, \(\mathrm{KL}(\pi(\cdot\mid x)\,\|\,\pi_{\text{ref}}(\cdot\mid x))\) measures how far the trained policy's distribution has drifted from the reference model's distribution — for a given prompt \(x\). Subtracting \(\beta\) times this penalizes drifting too far.</p>
+
+  <h2 id="assemble">8. Reading the whole formula</h2>
+  <p>Now reassemble. Each labeled piece maps to a clause of one English sentence:</p>
+  \[
+    \underbrace{\max_{\pi}}_{\text{(6)}}\;
+    \underbrace{\mathbb{E}_{x\sim\mathcal{D},\, y\sim\pi(\cdot\mid x)}}_{\text{(3,4,5)}}
+    \big[\,\underbrace{r(x,y)}_{\text{(1)}}\,\big]
+      \;-\; \underbrace{\beta}_{\text{(1)}}\,
+      \underbrace{\mathrm{KL}\!\big(\pi(\cdot\mid x)\,\|\,\pi_{\text{ref}}(\cdot\mid x)\big)}_{\text{(2,7)}}
+  \]
+
+  <div class="read">
+    <div class="read-label">In plain English</div>
+    <p>"Find the policy \(\pi\) that makes its <strong>average reward as large as possible</strong> — where the average is taken over prompts drawn from the data and completions the policy generates for them — <strong>while not drifting too far</strong> from the reference model, with \(\beta\) controlling how much that drift is penalized."</p>
+  </div>
+
+  <p>Two competing forces, traded off by \(\beta\): the expectation term <em>pulls</em> the policy toward high-reward behavior; the KL term <em>tethers</em> it to the reference so it stays fluent and doesn't exploit the reward. That tension is the heart of RLHF — and the closed-form solution to this exact objective is what makes the <a href="dpo-loss.html" style="color:var(--accent);">DPO derivation</a> possible.</p>
+
+  <h2 id="summary">Cheat sheet</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">\(f(x)\)</div>
+      <p>Function applied to input \(x\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">\(p(y\mid x)\)</div>
+      <p>Probability of \(y\) <em>given</em> \(x\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">\(p(\cdot \mid x)\)</div>
+      <p>The whole distribution, not one value</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">\(\mathcal{D}\)</div>
+      <p>A named distribution (script letter)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">\(x \sim p\)</div>
+      <p>\(x\) is randomly drawn from \(p\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">\(\mathbb{E}_{x\sim p}[f]\)</div>
+      <p>Probability-weighted average of \(f\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">\(\max_\pi\)</div>
+      <p>Optimize over the function/policy \(\pi\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">\(\mathrm{KL}(p\,\|\,q)\)</div>
+      <p>How far \(p\) is from \(q\); \(\ge 0\), asymmetric</p>
+    </div>
+  </div>
+
+  <div class="table-wrap" style="margin-top: 2em;">
+    <table>
+      <tr><th>When you see…</th><th>Ask yourself</th></tr>
+      <tr><td>A subscript on \(\mathbb{E}\) or \(\sum\)</td><td>What is random / what am I summing over?</td></tr>
+      <tr><td>A vertical bar \(\mid\)</td><td>What's being asked about (left) vs. held fixed (right)?</td></tr>
+      <tr><td>A dot \(\cdot\) in an argument slot</td><td>Whole distribution, or single value?</td></tr>
+      <tr><td>A tilde \(\sim\)</td><td>Which symbol is the random draw, from what?</td></tr>
+      <tr><td>\(\max\) / \(\arg\max\) with a subscript</td><td>What am I free to vary — and do I want the score or the winner?</td></tr>
+      <tr><td>A double bar \(\|\)</td><td>Two distributions compared; order matters.</td></tr>
+    </table>
+  </div>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; Reading probability, expectation, and KL notation
+</footer>
+
+</body>
+</html>
