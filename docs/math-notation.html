@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Reading ML Math Notation — Expectation, Sampling &amp; KL</title>
+  <title>Reading ML Math Notation — A Practical Reference</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -291,93 +291,92 @@
   <a class="nav-brand" href="#">Math Notation</a>
   <div class="nav-links">
     <a href="index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
-    <a href="#target">The formula</a>
-    <a href="#function">Functions</a>
+    <a href="#objects">Objects</a>
+    <a href="#sumprod">Sums &amp; products</a>
     <a href="#bar">Conditional bar</a>
     <a href="#dist">Distributions</a>
     <a href="#sample">Sampling</a>
     <a href="#expect">Expectation</a>
-    <a href="#argmax">max over a function</a>
+    <a href="#optim">Optimization</a>
     <a href="#kl">KL divergence</a>
-    <a href="#assemble">Full read</a>
+    <a href="#misc">More symbols</a>
+    <a href="#example">Worked example</a>
   </div>
 </nav>
 
 <div class="hero">
   <span class="hero-pill">Foundations</span>
   <h1>Reading ML Math Notation</h1>
-  <p>A symbol-by-symbol decoding of probability and expectation notation, built around one real objective — the KL-constrained RLHF formula from the DPO page.</p>
+  <p>A practical, symbol-by-symbol reference for the probability and optimization notation that shows up across machine-learning papers — with a worked example at the end.</p>
 </div>
 
 <div class="page-wrap">
 
-  <h2 id="target">The formula we're decoding</h2>
-  <p>This is the RLHF objective from the <a href="dpo-loss.html" style="color:var(--accent);">DPO page</a>. It looks dense, but it is built from only a handful of reusable pieces. We'll learn each piece, then read the whole thing in plain English at the end.</p>
-  \[
-    \max_{\pi}\; \mathbb{E}_{x\sim\mathcal{D},\, y\sim\pi(\cdot\mid x)}\big[\,r(x,y)\,\big]
-      \;-\; \beta\, \mathrm{KL}\!\big(\pi(\cdot\mid x)\,\|\,\pi_{\text{ref}}(\cdot\mid x)\big)
-  \]
+  <p>Most ML equations reuse the same small vocabulary of symbols. Once you can read each piece on its own, even dense objectives become a sentence you can translate. This page builds that vocabulary one symbol at a time, then applies all of it to a real objective in <a href="#example" style="color:var(--accent);">§9</a>.</p>
 
-  <div class="table-wrap">
-    <table>
-      <tr><th>Piece</th><th>Reads as</th><th>Section</th></tr>
-      <tr><td>\(\max_{\pi}\)</td><td>"choose the function \(\pi\) that makes the following as large as possible"</td><td>§6</td></tr>
-      <tr><td>\(\mathbb{E}_{\,\cdot}[\,\cdot\,]\)</td><td>"the average value of …, weighted by probability"</td><td>§5</td></tr>
-      <tr><td>\(x\sim\mathcal{D}\)</td><td>"\(x\) is drawn from the data distribution \(\mathcal{D}\)"</td><td>§3–4</td></tr>
-      <tr><td>\(y\sim\pi(\cdot\mid x)\)</td><td>"\(y\) is sampled from the policy, given \(x\)"</td><td>§2–4</td></tr>
-      <tr><td>\(r(x,y)\)</td><td>"the reward of completion \(y\) for prompt \(x\)"</td><td>§1</td></tr>
-      <tr><td>\(\beta\)</td><td>a fixed number (a knob), the KL weight</td><td>§1</td></tr>
-      <tr><td>\(\mathrm{KL}(\,\cdot\,\|\,\cdot\,)\)</td><td>"how far apart two distributions are"</td><td>§7</td></tr>
-    </table>
-  </div>
-
-  <h2 id="function">1. Functions and their arguments</h2>
-  <p>The most basic notation: \(f(x)\) means "the function \(f\) applied to input \(x\)." A function is just a rule that maps inputs to an output.</p>
+  <h2 id="objects">1. The basic objects: scalars, vectors, functions</h2>
+  <p>Before any operation, know <em>what kind of thing</em> a symbol is.</p>
   <ul>
-    <li>\(r(x,y)\) — a function of <em>two</em> arguments. Feed it a prompt \(x\) and a completion \(y\); it returns a single number (the reward).</li>
-    <li>\(\beta\) — a lone Greek letter with no parentheses is a <em>constant</em>: one fixed number you set ahead of time, like a hyperparameter. Multiplying by \(\beta\) just scales whatever follows.</li>
+    <li><strong>Scalar</strong> — a single number, usually lowercase italic: \(a,\, x,\, \beta\). A lone Greek letter with no parentheses is typically a fixed constant (a hyperparameter knob).</li>
+    <li><strong>Vector</strong> — an ordered list of numbers, often bold or arrowed: \(\mathbf{x}\), \(\vec{x}\). "\(\mathbf{x}\in\mathbb{R}^n\)" reads "\(\mathbf{x}\) is a vector of \(n\) real numbers."</li>
+    <li><strong>Matrix</strong> — a 2-D grid, usually uppercase: \(W \in \mathbb{R}^{m\times n}\) ("\(m\) rows, \(n\) columns").</li>
+    <li><strong>Function</strong> — a rule mapping inputs to an output: \(f(x)\) is "\(f\) applied to \(x\)." It can take several arguments, \(r(x,y)\), and return a scalar, vector, or anything else.</li>
   </ul>
   <div class="note">
-    Greek letters are a convention, not magic. Lowercase letters near the start (\(\alpha,\beta,\gamma\)) are usually scalar knobs; \(\pi,\theta,\phi\) usually name models or their parameters; \(\sigma\) often means the sigmoid or a standard deviation. Context decides.
+    The blackboard-bold \(\mathbb{R}\) means "the real numbers." So \(f:\mathbb{R}^n \to \mathbb{R}\) is shorthand for "\(f\) takes an \(n\)-vector and returns one number." The arrow \(\to\) describes the function's type, not a limit.
+  </div>
+  <div class="note">
+    Letter conventions are just habits, not rules: \(\alpha,\beta,\gamma,\lambda\) tend to be scalar weights; \(\theta,\phi,\mathbf{w}\) tend to be learnable parameters; \(\pi,\,p,\,q\) tend to be distributions; \(\sigma\) is often the sigmoid or a standard deviation. Always confirm from context.
   </div>
 
-  <h2 id="bar">2. The conditional bar \(\;\mid\;\)</h2>
-  <p>In \(\pi(y \mid x)\), the vertical bar reads "<strong>given</strong>." The whole thing is "the probability of \(y\) <em>given</em> \(x\)" — i.e. how likely the model is to produce completion \(y\) when it has already seen prompt \(x\).</p>
+  <h2 id="sumprod">2. Sums and products: \(\;\sum\;\) and \(\;\prod\;\)</h2>
+  <p>The capital sigma \(\sum\) means "add up"; the capital pi \(\prod\) means "multiply together." The decorations tell you the index variable and its range.</p>
   \[
-    \underbrace{\pi}_{\text{the model}}(\,\underbrace{y}_{\text{what we ask about}} \mid \underbrace{x}_{\text{what is fixed/known}}\,)
+    \sum_{i=1}^{n} a_i \;=\; a_1 + a_2 + \cdots + a_n
+    \qquad\qquad
+    \prod_{i=1}^{n} a_i \;=\; a_1 \cdot a_2 \cdots a_n
   \]
-  <p>Everything <em>left</em> of the bar is the thing whose probability we want; everything <em>right</em> of the bar is treated as fixed background. For a language model: \(x\) is the prompt (given), \(y\) is a candidate response (we score its probability).</p>
+  <p>Read the subscript as "start here" and the superscript as "stop here." The body to the right is evaluated once per index value. A subscript with a condition, like \(\sum_{i \,:\, y_i = 1}\), means "sum over every \(i\) that satisfies the condition."</p>
+  <div class="note">
+    Logs turn products into sums: \(\log \prod_i a_i = \sum_i \log a_i\). This is why log-likelihoods (sums) are preferred over raw likelihoods (products) — they avoid numerical underflow and are easier to differentiate.
+  </div>
 
-  <h2 id="dist">3. Distributions and the \(\;\cdot\;\) placeholder</h2>
-  <p>A <em>probability distribution</em> assigns a probability to every possible outcome. Two notations show up in the formula:</p>
+  <h2 id="bar">3. The conditional bar \(\;\mid\;\)</h2>
+  <p>In a probability like \(p(y \mid x)\), the vertical bar reads "<strong>given</strong>": "the probability of \(y\) given \(x\)." Everything <em>left</em> of the bar is what you're asking about; everything <em>right</em> is treated as fixed, known background.</p>
+  \[
+    \underbrace{p}_{\text{a distribution}}(\,\underbrace{y}_{\text{asked about}} \mid \underbrace{x}_{\text{held fixed}}\,)
+  \]
+  <p>Example: for a language model, \(p(y \mid x)\) is how likely response \(y\) is once the prompt \(x\) is already fixed. The same bar appears inside expectations and divergences to signal conditioning.</p>
 
-  <h3>Calligraphic letters like \(\mathcal{D}\)</h3>
-  <p>\(\mathcal{D}\) (script "D") names a distribution — here the <em>data distribution</em>, the population of prompts you might encounter. You don't compute with \(\mathcal{D}\) directly; you draw samples from it.</p>
+  <h2 id="dist">4. Distributions and the \(\;\cdot\;\) placeholder</h2>
+  <p>A <em>probability distribution</em> assigns a probability to every possible outcome. Two notational habits matter:</p>
 
-  <h3>The dot \(\cdot\) as "the whole distribution"</h3>
-  <p>Compare two things:</p>
+  <h3>Named distributions (often calligraphic)</h3>
+  <p>A script letter such as \(\mathcal{D}\) names a distribution as a whole — e.g. "the data distribution." You usually don't evaluate \(\mathcal{D}\) at a point; you <em>draw samples</em> from it (§5). Lowercase \(p,\,q\) name distributions you do evaluate, as in \(p(x)\).</p>
+
+  <h3>The dot \(\cdot\) means "the whole distribution"</h3>
   <ul>
-    <li>\(\pi(y \mid x)\) — a single <em>number</em>: the probability of one specific \(y\).</li>
-    <li>\(\pi(\cdot \mid x)\) — the entire <em>distribution</em> over all possible \(y\). The dot is a blank standing in for "any value," so \(\pi(\cdot\mid x)\) means "the whole probability function, for every \(y\), given \(x\)."</li>
+    <li>\(p(y \mid x)\) — a single <em>number</em>: the probability of one specific \(y\).</li>
+    <li>\(p(\cdot \mid x)\) — the entire <em>distribution</em> over all possible \(y\). The dot is a blank standing for "any value," so this is "the whole probability function, for every \(y\), given \(x\)."</li>
   </ul>
   <div class="note">
-    Think of \(\pi(\cdot \mid x)\) as the full bar chart of probabilities over every completion, while \(\pi(y\mid x)\) is the height of one single bar. We need the whole chart when we sample from it (§4) or compare it against another chart (§7).
+    Picture \(p(\cdot \mid x)\) as the full bar chart of probabilities over every outcome, while \(p(y\mid x)\) is the height of one single bar. You need the whole chart whenever you sample from it (§5) or compare it against another chart (§8).
   </div>
 
-  <h2 id="sample">4. Sampling: the tilde \(\;\sim\;\)</h2>
-  <p>\(x \sim \mathcal{D}\) reads "\(x\) is <strong>drawn from</strong> (sampled according to) the distribution \(\mathcal{D}\)." It tells you \(x\) is <em>random</em>, and which distribution governs how often each value appears.</p>
+  <h2 id="sample">5. Sampling: the tilde \(\;\sim\;\)</h2>
+  <p>\(x \sim \mathcal{D}\) reads "\(x\) is <strong>drawn from</strong> (distributed according to) \(\mathcal{D}\)." It signals that \(x\) is <em>random</em> and names the distribution governing how often each value appears.</p>
   <ul>
-    <li>\(x \sim \mathcal{D}\) — pick a prompt at random from the data.</li>
-    <li>\(y \sim \pi(\cdot\mid x)\) — having fixed that \(x\), let the model generate a completion \(y\) according to its own probabilities. (Note it samples from the <em>whole</em> distribution \(\pi(\cdot\mid x)\) — hence the dot.)</li>
+    <li>\(x \sim \mathcal{D}\) — pick \(x\) at random from the data distribution.</li>
+    <li>\(y \sim p(\cdot\mid x)\) — having fixed \(x\), draw \(y\) from the conditional distribution (note the dot: you sample from the <em>whole</em> distribution, not a single value).</li>
   </ul>
-  <p>When you see \(\sim\), ask: "which symbol is the random one, and what's its distribution?" Everything else in the expression is, for the moment, held fixed.</p>
+  <p>Whenever you see \(\sim\), ask: "which symbol is the random one, and what's its distribution?" Everything else is, for the moment, held fixed.</p>
 
-  <h2 id="expect">5. Expectation \(\;\mathbb{E}\;\)</h2>
+  <h2 id="expect">6. Expectation \(\;\mathbb{E}\;\)</h2>
   <p>\(\mathbb{E}\) (blackboard-bold "E") is the <strong>expected value</strong> — a probability-weighted average. The subscript says <em>what is random</em>; the brackets hold the quantity being averaged.</p>
   \[
-    \mathbb{E}_{x\sim\mathcal{D}}\big[\, f(x) \,\big]
-      \;=\; \sum_{x} \underbrace{\mathcal{D}(x)}_{\text{how likely } x \text{ is}} \cdot \underbrace{f(x)}_{\text{value at } x}
-      \qquad\Big(\text{or } \int \mathcal{D}(x)\,f(x)\,dx \text{ if continuous}\Big)
+    \mathbb{E}_{x\sim p}\big[\, f(x) \,\big]
+      \;=\; \sum_{x} \underbrace{p(x)}_{\text{how likely } x \text{ is}} \cdot \underbrace{f(x)}_{\text{value at } x}
+      \qquad\Big(\text{or } \int p(x)\,f(x)\,dx \text{ if continuous}\Big)
   \]
   <p>In words: run \(f\) on every possible \(x\), weight each result by how probable that \(x\) is, and add them up. Likely values count more; rare values count less.</p>
 
@@ -387,57 +386,91 @@
     \[
       \mathbb{E}[x] = \tfrac16(1) + \tfrac16(2) + \cdots + \tfrac16(6) = 3.5
     \]
-    <p>The "expected" value 3.5 is the long-run average — even though you can never roll a 3.5. That's the key intuition: expectation is an average, not a prediction of any single outcome.</p>
+    <p>The "expected" value 3.5 is the long-run average — even though you can never roll a 3.5. Expectation is an average, not a prediction of any single outcome.</p>
   </div>
 
-  <p>Our formula stacks two sources of randomness in the subscript:</p>
+  <p>Subscripts can stack to express several sources of randomness, evaluated as a nested process — draw the first variable, then the next, then average:</p>
   \[
-    \mathbb{E}_{x\sim\mathcal{D},\; y\sim\pi(\cdot\mid x)}\big[\, r(x,y) \,\big]
+    \mathbb{E}_{x\sim\mathcal{D},\; y\sim p(\cdot\mid x)}\big[\, f(x,y) \,\big]
   \]
-  <p>Read it as a nested process: <em>first</em> draw a prompt \(x\) from the data, <em>then</em> draw a completion \(y\) from the model given that \(x\), evaluate the reward \(r(x,y)\), and average over many such draws. It's the model's <em>average reward</em>.</p>
-
-  <h2 id="argmax">6. Maximizing over a function: \(\;\max_{\pi}\;\)</h2>
-  <p>\(\max_{\pi}\, g(\pi)\) means "the largest value \(g\) can take as we vary \(\pi\)." The subscript names <em>what we're allowed to change</em>.</p>
-  <p>The twist here: \(\pi\) is not a number — it's an entire <em>policy</em> (a whole probability distribution over completions, for every prompt). So we are searching over the space of all possible policies for the one that scores highest. The closely related \(\arg\max_\pi\) returns the <em>winning \(\pi\) itself</em> rather than the score.</p>
   <div class="note">
-    In practice \(\pi\) is a neural network with parameters \(\theta\), so "varying \(\pi\)" really means "adjusting \(\theta\) by gradient steps." The notation states the <em>goal</em>; training is how we approximately reach it.
+    A subscript is often dropped when "obvious from context," e.g. \(\mathbb{E}[f(x)]\). When in doubt, restore it — naming the distribution removes most ambiguity in a derivation.
   </div>
 
-  <h2 id="kl">7. KL divergence \(\;\mathrm{KL}(p \,\|\, q)\;\)</h2>
-  <p>The double bar \(\|\) separates two distributions being compared. \(\mathrm{KL}(p \,\|\, q)\) measures <strong>how different distribution \(p\) is from distribution \(q\)</strong> — a kind of (asymmetric) distance.</p>
+  <h2 id="optim">7. Optimization: \(\;\max,\; \min,\; \arg\max\;\)</h2>
+  <p>\(\max_{z}\, g(z)\) is "the largest value \(g\) takes as \(z\) varies"; \(\min_z\) is the smallest. The subscript names <em>what you're allowed to change</em>.</p>
+  <ul>
+    <li>\(\max_z g(z)\) / \(\min_z g(z)\) — return the best <em>value</em> of \(g\).</li>
+    <li>\(\arg\max_z g(z)\) / \(\arg\min_z g(z)\) — return the <em>\(z\) that achieves</em> it (the winner, not the score).</li>
+  </ul>
+  <p>The variable need not be a number. If \(\pi\) is a whole function (e.g. a policy or distribution), \(\max_\pi\) searches over the entire <em>space of functions</em> for the best one.</p>
+  <div class="note">
+    In practice the optimized object is a neural network with parameters \(\theta\), so "vary \(\pi\)" really means "adjust \(\theta\) by gradient steps." The notation states the <em>goal</em>; training is how we approximately reach it.
+  </div>
+
+  <h2 id="kl">8. Comparing distributions: KL divergence \(\;\mathrm{KL}(p \,\|\, q)\;\)</h2>
+  <p>The double bar \(\|\) separates two distributions being compared. \(\mathrm{KL}(p \,\|\, q)\) measures <strong>how different \(p\) is from \(q\)</strong> — a kind of asymmetric "distance."</p>
   \[
     \mathrm{KL}(p \,\|\, q) \;=\; \mathbb{E}_{x\sim p}\!\left[\log \frac{p(x)}{q(x)}\right] \;=\; \sum_x p(x)\,\log\frac{p(x)}{q(x)}
   \]
   <p>Properties worth memorizing:</p>
   <ul>
     <li>\(\mathrm{KL}(p\,\|\,q) \ge 0\) always, and \(= 0\) <em>exactly</em> when \(p\) and \(q\) are identical.</li>
-    <li>It is <em>asymmetric</em>: \(\mathrm{KL}(p\,\|\,q) \neq \mathrm{KL}(q\,\|\,p)\) in general. Order matters.</li>
-    <li>Notice it is itself an expectation (§5) of a log-ratio — the same log-ratio that reappears as the implicit reward on the DPO page.</li>
+    <li>It is <em>asymmetric</em>: \(\mathrm{KL}(p\,\|\,q) \neq \mathrm{KL}(q\,\|\,p)\) in general — order matters.</li>
+    <li>It is itself an expectation (§6) of a log-ratio, so it combines several pieces from this page at once.</li>
   </ul>
-  <p>In the objective, \(\mathrm{KL}(\pi(\cdot\mid x)\,\|\,\pi_{\text{ref}}(\cdot\mid x))\) measures how far the trained policy's distribution has drifted from the reference model's distribution — for a given prompt \(x\). Subtracting \(\beta\) times this penalizes drifting too far.</p>
+  <div class="note">
+    KL is the standard way to penalize a trained model for straying from a reference, and it underlies cross entropy: minimizing cross entropy between predictions and labels is equivalent to minimizing a KL divergence.
+  </div>
 
-  <h2 id="assemble">8. Reading the whole formula</h2>
-  <p>Now reassemble. Each labeled piece maps to a clause of one English sentence:</p>
+  <h2 id="misc">9. A few more symbols you'll meet</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symbol</th><th>Reads as</th><th>Note</th></tr>
+      <tr><td>\(\propto\)</td><td>"is proportional to"</td><td>Equal up to a constant factor (often a normalizer)</td></tr>
+      <tr><td>\(\triangleq\) or \(:=\)</td><td>"is defined as"</td><td>Introduces a definition, not a derived equality</td></tr>
+      <tr><td>\(\in\)</td><td>"is an element of"</td><td>\(x \in \mathbb{R}^n\): \(x\) lives in that set</td></tr>
+      <tr><td>\(\nabla_\theta f\)</td><td>"gradient of \(f\) w.r.t. \(\theta\)"</td><td>Vector of partial derivatives; points uphill</td></tr>
+      <tr><td>\(\|\mathbf{x}\|\)</td><td>"the norm (length) of \(\mathbf{x}\)"</td><td>\(\|\mathbf{x}\|_2 = \sqrt{\sum_i x_i^2}\)</td></tr>
+      <tr><td>\(\mathbf{1}[\,\cdot\,]\)</td><td>"1 if true, else 0"</td><td>Indicator function; turns a condition into a number</td></tr>
+      <tr><td>\(\odot\)</td><td>"elementwise product"</td><td>Multiply matching entries (Hadamard product)</td></tr>
+      <tr><td>\(\hat{x}\)</td><td>"estimate / predicted \(x\)"</td><td>A hat usually marks a model's guess of a true quantity</td></tr>
+    </table>
+  </div>
+
+  <h2 id="example">10. Worked example: the RLHF objective</h2>
+  <p>Here is a real, dense objective — the KL-constrained RLHF objective from the <a href="dpo-loss.html" style="color:var(--accent);">DPO page</a>. Nothing in it is new; it is just the pieces above stacked together.</p>
   \[
-    \underbrace{\max_{\pi}}_{\text{(6)}}\;
-    \underbrace{\mathbb{E}_{x\sim\mathcal{D},\, y\sim\pi(\cdot\mid x)}}_{\text{(3,4,5)}}
-    \big[\,\underbrace{r(x,y)}_{\text{(1)}}\,\big]
-      \;-\; \underbrace{\beta}_{\text{(1)}}\,
-      \underbrace{\mathrm{KL}\!\big(\pi(\cdot\mid x)\,\|\,\pi_{\text{ref}}(\cdot\mid x)\big)}_{\text{(2,7)}}
+    \underbrace{\max_{\pi}}_{\text{§7}}\;
+    \underbrace{\mathbb{E}_{x\sim\mathcal{D},\, y\sim\pi(\cdot\mid x)}}_{\text{§4,5,6}}
+    \big[\,\underbrace{r(x,y)}_{\text{§1}}\,\big]
+      \;-\; \underbrace{\beta}_{\text{§1}}\,
+      \underbrace{\mathrm{KL}\!\big(\pi(\cdot\mid x)\,\|\,\pi_{\text{ref}}(\cdot\mid x)\big)}_{\text{§3,8}}
   \]
+
+  <p>Translate left to right:</p>
+  <ul>
+    <li>\(\max_\pi\) — <em>choose the policy \(\pi\)</em> that makes the rest as large as possible (§7).</li>
+    <li>\(\mathbb{E}_{x\sim\mathcal{D},\,y\sim\pi(\cdot\mid x)}[\,r(x,y)\,]\) — the policy's <em>average reward</em>: draw a prompt \(x\) from the data, draw a response \(y\) from the policy given \(x\), score it with \(r\), and average (§4–6).</li>
+    <li>\(-\,\beta\,\mathrm{KL}(\pi(\cdot\mid x)\,\|\,\pi_{\text{ref}}(\cdot\mid x))\) — <em>minus a penalty</em> for how far the policy's distribution has drifted from the reference model's, scaled by the knob \(\beta\) (§1, 3, 8).</li>
+  </ul>
 
   <div class="read">
     <div class="read-label">In plain English</div>
-    <p>"Find the policy \(\pi\) that makes its <strong>average reward as large as possible</strong> — where the average is taken over prompts drawn from the data and completions the policy generates for them — <strong>while not drifting too far</strong> from the reference model, with \(\beta\) controlling how much that drift is penalized."</p>
+    <p>"Find the policy \(\pi\) that makes its <strong>average reward as large as possible</strong> — over prompts from the data and responses the policy generates — <strong>while not drifting too far</strong> from the reference model, with \(\beta\) controlling how strongly that drift is penalized."</p>
   </div>
 
-  <p>Two competing forces, traded off by \(\beta\): the expectation term <em>pulls</em> the policy toward high-reward behavior; the KL term <em>tethers</em> it to the reference so it stays fluent and doesn't exploit the reward. That tension is the heart of RLHF — and the closed-form solution to this exact objective is what makes the <a href="dpo-loss.html" style="color:var(--accent);">DPO derivation</a> possible.</p>
+  <p>Two competing forces, traded off by \(\beta\): the expectation term <em>pulls</em> toward high-reward behavior; the KL term <em>tethers</em> the policy to the reference so it stays well-behaved. Read this way, the equation is a sentence — which is the whole point of learning the notation.</p>
 
-  <h2 id="summary">Cheat sheet</h2>
+  <h2>Cheat sheet</h2>
   <div class="summary-grid">
     <div class="summary-card">
-      <div class="summary-card-label">\(f(x)\)</div>
-      <p>Function applied to input \(x\)</p>
+      <div class="summary-card-label">\(f(x)\), \(\mathbf{x}\in\mathbb{R}^n\)</div>
+      <p>Function applied to \(x\); \(\mathbf{x}\) is an \(n\)-vector</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">\(\sum\), \(\prod\)</div>
+      <p>Add up / multiply over an index range</p>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">\(p(y\mid x)\)</div>
@@ -448,10 +481,6 @@
       <p>The whole distribution, not one value</p>
     </div>
     <div class="summary-card">
-      <div class="summary-card-label">\(\mathcal{D}\)</div>
-      <p>A named distribution (script letter)</p>
-    </div>
-    <div class="summary-card">
       <div class="summary-card-label">\(x \sim p\)</div>
       <p>\(x\) is randomly drawn from \(p\)</p>
     </div>
@@ -460,8 +489,8 @@
       <p>Probability-weighted average of \(f\)</p>
     </div>
     <div class="summary-card">
-      <div class="summary-card-label">\(\max_\pi\)</div>
-      <p>Optimize over the function/policy \(\pi\)</p>
+      <div class="summary-card-label">\(\max,\,\arg\max\)</div>
+      <p>Best value vs. the winner that achieves it</p>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">\(\mathrm{KL}(p\,\|\,q)\)</div>
@@ -472,11 +501,12 @@
   <div class="table-wrap" style="margin-top: 2em;">
     <table>
       <tr><th>When you see…</th><th>Ask yourself</th></tr>
-      <tr><td>A subscript on \(\mathbb{E}\) or \(\sum\)</td><td>What is random / what am I summing over?</td></tr>
-      <tr><td>A vertical bar \(\mid\)</td><td>What's being asked about (left) vs. held fixed (right)?</td></tr>
+      <tr><td>A bold/uppercase letter or \(\mathbb{R}^n\)</td><td>Scalar, vector, or matrix — what shape?</td></tr>
+      <tr><td>A subscript on \(\sum\), \(\prod\), or \(\mathbb{E}\)</td><td>What's the index / what is random — and over what range?</td></tr>
+      <tr><td>A vertical bar \(\mid\)</td><td>What's asked about (left) vs. held fixed (right)?</td></tr>
       <tr><td>A dot \(\cdot\) in an argument slot</td><td>Whole distribution, or single value?</td></tr>
       <tr><td>A tilde \(\sim\)</td><td>Which symbol is the random draw, from what?</td></tr>
-      <tr><td>\(\max\) / \(\arg\max\) with a subscript</td><td>What am I free to vary — and do I want the score or the winner?</td></tr>
+      <tr><td>\(\max\) / \(\arg\max\) with a subscript</td><td>What can I vary — and do I want the score or the winner?</td></tr>
       <tr><td>A double bar \(\|\)</td><td>Two distributions compared; order matters.</td></tr>
     </table>
   </div>
@@ -484,7 +514,7 @@
 </div>
 
 <footer>
-  Personal ML notes &nbsp;·&nbsp; Reading probability, expectation, and KL notation
+  Personal ML notes &nbsp;·&nbsp; A practical reference for reading ML math notation
 </footer>
 
 </body>
