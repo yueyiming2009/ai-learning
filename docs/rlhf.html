@@ -451,23 +451,84 @@
   </div>
 
   <h2 id="pg">4. Policy Gradient Foundations</h2>
-  <p>How do you maximize an expected reward when the thing you sample from, \(\pi_\theta\), is what you're differentiating? The <strong>policy gradient theorem</strong> (the log-derivative / REINFORCE trick) gives the answer. For an objective \(J(\theta) = \mathbb{E}_{\tau\sim\pi_\theta}[R(\tau)]\) over trajectories \(\tau\):</p>
+  <p>How do you maximize an expected reward when the thing you sample from, \(\pi_\theta\), is what you're differentiating? The <strong>policy gradient theorem</strong> (the log-derivative / REINFORCE trick) gives the answer. A trajectory is \(\tau = (s_0, a_0, s_1, a_1, \ldots, s_T)\) with return \(R(\tau)\), and the objective is the expected return:</p>
+  \[
+    J(\theta) = \mathbb{E}_{\tau\sim\pi_\theta}[R(\tau)] = \sum_\tau \pi_\theta(\tau)\, R(\tau)
+  \]
 
   <div class="step">
-    <div class="step-label">The log-derivative trick</div>
-    <p>Using \(\nabla_\theta \pi_\theta = \pi_\theta \,\nabla_\theta \log \pi_\theta\), the gradient of the expectation turns back into an expectation we can sample:</p>
+    <div class="step-label">Step 1 — Differentiate</div>
+    <p>Only the trajectory probability depends on \(\theta\) (the return is just a number once \(\tau\) is fixed), so:</p>
     \[
-      \nabla_\theta\, \mathbb{E}_{\tau\sim\pi_\theta}[R(\tau)]
-        = \mathbb{E}_{\tau\sim\pi_\theta}\!\left[ R(\tau)\, \nabla_\theta \log \pi_\theta(\tau) \right]
+      \nabla_\theta J(\theta) = \sum_\tau \nabla_\theta \pi_\theta(\tau)\, R(\tau)
+    \]
+    <p>This is not yet an expectation — \(\nabla_\theta \pi_\theta(\tau)\) can't be estimated by sampling. We must get it back to the form \(\sum_\tau \pi_\theta(\tau)[\cdots]\).</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step 2 — The log-derivative trick</div>
+    <p>From \(\nabla_\theta \log \pi_\theta(\tau) = \tfrac{\nabla_\theta \pi_\theta(\tau)}{\pi_\theta(\tau)}\), rearrange to \(\nabla_\theta \pi_\theta(\tau) = \pi_\theta(\tau)\,\nabla_\theta \log \pi_\theta(\tau)\) and substitute:</p>
+    \[
+      \nabla_\theta J(\theta)
+        = \sum_\tau \pi_\theta(\tau)\,\nabla_\theta \log \pi_\theta(\tau)\,R(\tau)
+        = \mathbb{E}_{\tau\sim\pi_\theta}\!\big[R(\tau)\,\nabla_\theta \log \pi_\theta(\tau)\big]
+    \]
+    <p>An expectation under \(\pi_\theta\) again — and we already sample \(\tau\sim\pi_\theta\) during rollouts, so it is now estimable.</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step 3 — Only the policy terms survive</div>
+    <p>The trajectory probability factorizes into the initial state, the per-step policy, and the environment dynamics:</p>
+    \[
+      \pi_\theta(\tau) = p(s_0)\prod_{t} \pi_\theta(a_t\mid s_t)\, P(s_{t+1}\mid s_t, a_t)
+    \]
+    <p>Taking \(\log\) (product → sum) then \(\nabla_\theta\): the initial-state term \(p(s_0)\) and the dynamics \(P(s_{t+1}\mid s_t,a_t)\) do not depend on \(\theta\) — the agent controls neither — so they vanish, leaving only the policy:</p>
+    \[
+      \nabla_\theta \log \pi_\theta(\tau) = \sum_t \nabla_\theta \log \pi_\theta(a_t\mid s_t)
     \]
   </div>
 
-  <p>Applied per token and replacing the raw return with the <em>advantage</em> \(\hat A_t\) (§5) to reduce variance:</p>
+  <p>Combining gives the <strong>policy gradient theorem</strong> (REINFORCE form):</p>
+  \[
+    \nabla_\theta J(\theta) = \mathbb{E}\!\left[\sum_t \nabla_\theta \log \pi_\theta(a_t\mid s_t)\;R(\tau)\right]
+  \]
+  <p>Each action's score function \(\nabla\log\pi_\theta(a_t\mid s_t)\) points in the direction that makes \(a_t\) more likely; weighting it by the return reinforces actions from good trajectories and suppresses those from bad ones.</p>
+
+  <h3>From return to advantage</h3>
+  <p>This estimator is correct but <em>high-variance</em> — it credits every action with the whole trajectory's return, including luck it had nothing to do with. Three refinements sharpen it, each keeping the gradient unbiased.</p>
+
+  <div class="step">
+    <div class="step-label">A — Reward-to-go (causality)</div>
+    <p>An action \(a_t\) cannot affect rewards collected before it: \(\mathbb{E}[\nabla\log\pi_\theta(a_t\mid s_t)\, r_{t'}] = 0\) for \(t' < t\). Dropping those past rewards leaves the expectation unchanged but cuts variance. Replace \(R(\tau)\) with the reward-to-go \(G_t = \sum_{t'\ge t} r_{t'}\):</p>
+    \[
+      \nabla_\theta J = \mathbb{E}\!\left[\sum_t \nabla_\theta \log \pi_\theta(a_t\mid s_t)\;G_t\right]
+    \]
+  </div>
+
+  <div class="step">
+    <div class="step-label">B — Subtract a baseline</div>
+    <p>For any \(b(s_t)\) depending on the state but not the action, its contribution is exactly zero (the policy sums to 1, so its gradient sums to 0):</p>
+    \[
+      \mathbb{E}_{a_t\sim\pi_\theta}\!\big[\nabla_\theta\log\pi_\theta(a_t\mid s_t)\,b(s_t)\big]
+        = b(s_t)\,\nabla_\theta\!\!\sum_{a_t}\pi_\theta(a_t\mid s_t) = b(s_t)\,\nabla_\theta 1 = 0
+    \]
+    <p>So we may subtract a baseline for free (unbiased), and a good one slashes variance: \(\nabla_\theta J = \mathbb{E}[\sum_t \nabla\log\pi_\theta(a_t\mid s_t)\,(G_t - b(s_t))]\).</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">C — Baseline = value ⟹ advantage</div>
+    <p>The natural baseline is the expected return from the state, the value function \(V(s_t) = \mathbb{E}[G_t\mid s_t]\). Then \(G_t - V(s_t)\) measures how much better \(a_t\) did than <em>average</em> from \(s_t\) — exactly the <strong>advantage</strong>, since \(Q(s_t,a_t) = \mathbb{E}[G_t\mid s_t,a_t]\):</p>
+    \[
+      \hat A_t \approx G_t - V(s_t), \qquad A_t = Q(s_t,a_t) - V(s_t)
+    \]
+  </div>
+
+  <p>Substituting yields the form used throughout RLHF:</p>
   \[
     \nabla_\theta J(\theta)
       = \mathbb{E}\!\left[ \sum_{t} \hat A_t \, \nabla_\theta \log \pi_\theta(a_t \mid s_t) \right]
   \]
-  <p>Intuition: push up the log-probability of actions that did better than expected (\(\hat A_t > 0\)), push down those that did worse. The advantage, not the raw reward, is the teaching signal.</p>
+  <p>Intuition: push up the log-probability of actions that did better than expected (\(\hat A_t > 0\)), push down those that did worse. Subtracting \(V\) strips out the "this state was just generically good/bad" component, leaving a signal about the <em>action</em>. The advantage, not the raw reward, is the teaching signal — and §5 is how \(\hat A_t\) is actually estimated.</p>
 
   <h2 id="gae">5. Value Function and Advantage</h2>
   <p>The <em>advantage</em> \(A_t\) measures how much better action \(a_t\) was than the average action from state \(s_t\). It needs a baseline — the <strong>value function</strong> \(V_\psi(s)\), a second head (the <em>critic</em>) predicting expected return from \(s\). The one-step TD error is:</p>
