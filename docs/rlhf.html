@@ -433,17 +433,21 @@
   <p>This is the <em>same</em> objective DPO starts from — DPO solves it in closed form, whereas standard RLHF optimizes it directly with reinforcement learning. The rest of this page is how that direct optimization works.</p>
 
   <h3>Folding the KL into a per-token reward</h3>
-  <p>In practice the KL term is not computed in closed form; it is absorbed into the reward signal. Estimating the KL by its single-sample log-ratio, the effective reward for a generated sequence becomes:</p>
+  <p>In practice the KL is not computed exactly, because written as a sum, \(\mathrm{KL} = \sum_y \pi_\theta(y\mid x)\log\frac{\pi_\theta(y\mid x)}{\pi_{\text{ref}}(y\mid x)}\), it ranges over <em>every possible completion</em> \(y\) — \(|\text{vocab}|^{\text{length}}\) sequences, far too many to enumerate (the same wall as \(Z(x)\) on the DPO page).</p>
+  <p>But the very same quantity is an <em>expectation</em>, \(\mathrm{KL} = \mathbb{E}_{y\sim\pi_\theta}\big[\log\frac{\pi_\theta(y\mid x)}{\pi_{\text{ref}}(y\mid x)}\big]\), and RLHF is already sampling \(y\sim\pi_\theta\) to generate rollouts. So the log-ratio on that one sampled sequence is a free, unbiased Monte-Carlo estimate of the KL. Absorbing it into the reward gives the effective reward:</p>
   \[
     R(x,y) = r_\phi(x,y) \;-\; \beta \log\frac{\pi_\theta(y\mid x)}{\pi_{\text{ref}}(y\mid x)}
   \]
-  <p>Decomposed token by token, the reward model contributes a single <em>terminal</em> reward at the final token, while the KL penalty is applied as a dense per-token shaping reward:</p>
+  <p>Because generation is autoregressive, \(\pi(y\mid x) = \prod_t \pi(a_t\mid s_t)\), and \(\log\) of a product is a sum — so the sequence log-ratio splits exactly into per-token log-ratios, \(\log\frac{\pi_\theta(y\mid x)}{\pi_{\text{ref}}(y\mid x)} = \sum_t \log\frac{\pi_\theta(a_t\mid s_t)}{\pi_{\text{ref}}(a_t\mid s_t)}\). The reward model then contributes a single <em>terminal</em> reward at the final token, while the KL penalty becomes a dense per-token shaping reward:</p>
   \[
     R_t = \underbrace{\mathbf{1}[t = T]\, r_\phi(x,y)}_{\text{terminal RM reward}}
         \;-\; \underbrace{\beta\, \log\frac{\pi_\theta(a_t\mid s_t)}{\pi_{\text{ref}}(a_t\mid s_t)}}_{\text{per-token KL penalty}}
   \]
   <div class="note">
-    Framed as RL: each generated token is an <em>action</em> \(a_t\), the state \(s_t\) is the prompt plus tokens generated so far, and an episode is one full completion. The reward is sparse (one RM score at the end) plus a dense KL penalty at every token.
+    Framed as RL: each generated token is an <em>action</em> \(a_t\), the state \(s_t\) is the prompt plus tokens generated so far, and an episode is one full completion. The reward is sparse (one RM score at the end) plus a dense KL penalty at every token. A dense penalty also aids credit assignment — it flags <em>which</em> tokens drifted, instead of one lump sum at the end.
+  </div>
+  <div class="note">
+    This single-sample log-ratio is unbiased but can be negative for an individual sample (a true KL cannot) and is high-variance. <a href="grpo.html" style="color:#1e40af;">GRPO</a> swaps in the always-positive \(u-\log u-1\) estimator to fix this.
   </div>
 
   <h2 id="pg">4. Policy Gradient Foundations</h2>
