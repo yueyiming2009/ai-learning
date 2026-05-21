@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RLHF — The Math of Reinforcement Learning from Human Feedback</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #ea580c;
+      --accent-light: #fff7ed;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #7c2d12 0%, #ea580c 60%, #f97316 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.9;
+      font-size: 0.97rem;
+      max-width: 560px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: #374151;
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: #374151; }
+    code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: #fafafa; }
+
+    /* ── Step boxes ──────────────────────────── */
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    /* ── Callout / note ──────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: #1e40af;
+    }
+    .note::before { content: '💡 '; }
+
+    /* ── Result / boxed equation ─────────────── */
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #16a34a;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Pipeline diagram ────────────────────── */
+    .pipeline {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: stretch;
+      gap: 0;
+      margin: 1.4em 0;
+    }
+    .pipe-stage {
+      flex: 1 1 160px;
+      background: var(--accent-light);
+      border: 1px solid #fed7aa;
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .pipe-num {
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .pipe-title { font-weight: 600; font-size: 0.95rem; margin: 2px 0 4px; }
+    .pipe-desc { font-size: 0.84rem; color: var(--muted); }
+    .pipe-arrow {
+      align-self: center;
+      color: var(--accent);
+      font-size: 1.3rem;
+      padding: 0 10px;
+    }
+    @media (max-width: 600px) {
+      .pipe-arrow { transform: rotate(90deg); padding: 6px 0; align-self: stretch; text-align: center; }
+    }
+
+    /* ── Summary card ────────────────────────── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .summary-card {
+      background: var(--accent-light);
+      border: 1px solid #fed7aa;
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .summary-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    /* ── Footer ──────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    /* ── Responsive ──────────────────────────── */
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="#">RLHF</a>
+  <div class="nav-links">
+    <a href="index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#notation">Notation</a>
+    <a href="#pipeline">Pipeline</a>
+    <a href="#rm">Reward model</a>
+    <a href="#objective">RL objective</a>
+    <a href="#pg">Policy gradient</a>
+    <a href="#gae">Advantage</a>
+    <a href="#ppo">PPO loss</a>
+    <a href="#loop">Full loop</a>
+    <a href="#vs-dpo">vs. DPO</a>
+    <a href="#summary">Summary</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Alignment</span>
+  <h1>RLHF — Reinforcement Learning from Human Feedback</h1>
+  <p>The full math of the classic three-stage pipeline: a reward model from preferences, a KL-regularized RL objective, and the PPO update that optimizes it.</p>
+</div>
+
+<div class="page-wrap">
+
+  <h2 id="notation">Notation</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symbol</th><th>Description</th></tr>
+      <tr><td>\(x\)</td><td>Prompt; \(y\) a full completion</td></tr>
+      <tr><td>\(y_w,\; y_l\)</td><td>Preferred (winner) and dispreferred (loser) completion in a comparison</td></tr>
+      <tr><td>\(\pi_\theta\)</td><td>Policy being trained (the LM), parameters \(\theta\)</td></tr>
+      <tr><td>\(\pi_{\text{ref}}\)</td><td>Frozen reference policy (the SFT model)</td></tr>
+      <tr><td>\(r_\phi(x,y)\)</td><td>Learned reward model, parameters \(\phi\); outputs a scalar score</td></tr>
+      <tr><td>\(\beta\)</td><td>KL penalty coefficient</td></tr>
+      <tr><td>\(s_t,\; a_t\)</td><td>State (prompt + tokens so far) and action (next token) at step \(t\)</td></tr>
+      <tr><td>\(V_\psi(s)\)</td><td>Value function (critic), parameters \(\psi\)</td></tr>
+      <tr><td>\(\hat A_t\)</td><td>Estimated advantage at step \(t\)</td></tr>
+      <tr><td>\(\gamma,\;\lambda\)</td><td>Discount and GAE smoothing factors</td></tr>
+      <tr><td>\(\sigma\)</td><td>Logistic sigmoid \(1/(1+e^{-t})\)</td></tr>
+    </table>
+  </div>
+  <div class="note">
+    Unsure about any symbol below — \(\mathbb{E}\), \(\sim\), \(\mid\), \(\mathrm{KL}\), \(\nabla\)? See the <a href="math-notation.html" style="color:#1e40af;">math notation reference</a>.
+  </div>
+
+  <h2 id="pipeline">1. The Three-Stage Pipeline</h2>
+  <p>RLHF (as in InstructGPT) aligns a pretrained language model to human preferences in three sequential stages. Each stage produces the input for the next.</p>
+
+  <div class="pipeline">
+    <div class="pipe-stage">
+      <div class="pipe-num">Stage 1</div>
+      <div class="pipe-title">SFT</div>
+      <div class="pipe-desc">Supervised fine-tuning on demonstrations. Produces \(\pi_{\text{ref}}\).</div>
+    </div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-stage">
+      <div class="pipe-num">Stage 2</div>
+      <div class="pipe-title">Reward Model</div>
+      <div class="pipe-desc">Fit \(r_\phi\) to human preference comparisons (§2).</div>
+    </div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-stage">
+      <div class="pipe-num">Stage 3</div>
+      <div class="pipe-title">RL (PPO)</div>
+      <div class="pipe-desc">Optimize \(\pi_\theta\) against \(r_\phi\) with a KL leash (§3–7).</div>
+    </div>
+  </div>
+
+  <p>This page focuses on the math of Stages 2 and 3. Stage 1 is ordinary cross-entropy fine-tuning — see the <a href="cross-entropy.html" style="color:var(--accent);">cross-entropy page</a>.</p>
+
+  <h2 id="rm">2. Reward Model</h2>
+  <p>We can't ask humans for absolute scores, only comparisons. The reward model is a scalar head on a transformer that maps \((x,y)\) to a single number, trained so that preferred completions score higher. Preferences are modeled with <strong>Bradley–Terry</strong>:</p>
+  \[
+    p(y_w \succ y_l \mid x) = \frac{\exp r_\phi(x,y_w)}{\exp r_\phi(x,y_w) + \exp r_\phi(x,y_l)}
+      = \sigma\big(r_\phi(x,y_w) - r_\phi(x,y_l)\big)
+  \]
+  <p>Fitting \(\phi\) by maximum likelihood over the comparison dataset \(\mathcal{D}\) gives a binary-classification (logistic) loss:</p>
+
+  <div class="result">
+    <div class="result-label">Reward model loss</div>
+    \[
+      \mathcal{L}_{\text{RM}}(\phi) = -\,\mathbb{E}_{(x,y_w,y_l)\sim\mathcal{D}}
+        \Big[\, \log \sigma\big(r_\phi(x,y_w) - r_\phi(x,y_l)\big) \Big]
+    \]
+  </div>
+
+  <p>Only reward <em>differences</em> matter, so \(r_\phi\) is identified up to an additive constant; implementations usually normalize it to zero mean. This is the same Bradley–Terry likelihood that <a href="dpo-loss.html" style="color:var(--accent);">DPO</a> later reuses — the difference is where the reward lives (a separate network here, the policy itself in DPO).</p>
+
+  <h2 id="objective">3. The RL Objective</h2>
+  <p>With \(r_\phi\) frozen, Stage 3 trains the policy to maximize reward while staying close to the reference model. The KL leash stops the policy from drifting into degenerate text that fools the reward model (<em>reward hacking</em>):</p>
+
+  <div class="result">
+    <div class="result-label">KL-regularized RL objective</div>
+    \[
+      \max_{\pi_\theta}\; \mathbb{E}_{x\sim\mathcal{D},\, y\sim\pi_\theta(\cdot\mid x)}
+        \big[\, r_\phi(x,y) \,\big]
+        \;-\; \beta\, \mathrm{KL}\!\big(\pi_\theta(\cdot\mid x)\,\|\,\pi_{\text{ref}}(\cdot\mid x)\big)
+    \]
+  </div>
+
+  <p>This is the <em>same</em> objective DPO starts from — DPO solves it in closed form, whereas standard RLHF optimizes it directly with reinforcement learning. The rest of this page is how that direct optimization works.</p>
+
+  <h3>Folding the KL into a per-token reward</h3>
+  <p>In practice the KL term is not computed in closed form; it is absorbed into the reward signal. Estimating the KL by its single-sample log-ratio, the effective reward for a generated sequence becomes:</p>
+  \[
+    R(x,y) = r_\phi(x,y) \;-\; \beta \log\frac{\pi_\theta(y\mid x)}{\pi_{\text{ref}}(y\mid x)}
+  \]
+  <p>Decomposed token by token, the reward model contributes a single <em>terminal</em> reward at the final token, while the KL penalty is applied as a dense per-token shaping reward:</p>
+  \[
+    R_t = \underbrace{\mathbf{1}[t = T]\, r_\phi(x,y)}_{\text{terminal RM reward}}
+        \;-\; \underbrace{\beta\, \log\frac{\pi_\theta(a_t\mid s_t)}{\pi_{\text{ref}}(a_t\mid s_t)}}_{\text{per-token KL penalty}}
+  \]
+  <div class="note">
+    Framed as RL: each generated token is an <em>action</em> \(a_t\), the state \(s_t\) is the prompt plus tokens generated so far, and an episode is one full completion. The reward is sparse (one RM score at the end) plus a dense KL penalty at every token.
+  </div>
+
+  <h2 id="pg">4. Policy Gradient Foundations</h2>
+  <p>How do you maximize an expected reward when the thing you sample from, \(\pi_\theta\), is what you're differentiating? The <strong>policy gradient theorem</strong> (the log-derivative / REINFORCE trick) gives the answer. For an objective \(J(\theta) = \mathbb{E}_{\tau\sim\pi_\theta}[R(\tau)]\) over trajectories \(\tau\):</p>
+
+  <div class="step">
+    <div class="step-label">The log-derivative trick</div>
+    <p>Using \(\nabla_\theta \pi_\theta = \pi_\theta \,\nabla_\theta \log \pi_\theta\), the gradient of the expectation turns back into an expectation we can sample:</p>
+    \[
+      \nabla_\theta\, \mathbb{E}_{\tau\sim\pi_\theta}[R(\tau)]
+        = \mathbb{E}_{\tau\sim\pi_\theta}\!\left[ R(\tau)\, \nabla_\theta \log \pi_\theta(\tau) \right]
+    \]
+  </div>
+
+  <p>Applied per token and replacing the raw return with the <em>advantage</em> \(\hat A_t\) (§5) to reduce variance:</p>
+  \[
+    \nabla_\theta J(\theta)
+      = \mathbb{E}\!\left[ \sum_{t} \hat A_t \, \nabla_\theta \log \pi_\theta(a_t \mid s_t) \right]
+  \]
+  <p>Intuition: push up the log-probability of actions that did better than expected (\(\hat A_t > 0\)), push down those that did worse. The advantage, not the raw reward, is the teaching signal.</p>
+
+  <h2 id="gae">5. Value Function and Advantage</h2>
+  <p>The <em>advantage</em> \(A_t\) measures how much better action \(a_t\) was than the average action from state \(s_t\). It needs a baseline — the <strong>value function</strong> \(V_\psi(s)\), a second head (the <em>critic</em>) predicting expected return from \(s\). The one-step TD error is:</p>
+  \[
+    \delta_t = R_t + \gamma\, V_\psi(s_{t+1}) - V_\psi(s_t)
+  \]
+  <p><strong>Generalized Advantage Estimation (GAE)</strong> blends many horizons with a decay \(\lambda\), trading bias against variance:</p>
+  \[
+    \hat A_t^{\text{GAE}(\gamma,\lambda)} = \sum_{l=0}^{\infty} (\gamma\lambda)^l\, \delta_{t+l}
+  \]
+  <p>The critic is trained by regression toward the observed returns \(\hat R_t = \hat A_t + V_\psi(s_t)\):</p>
+  \[
+    \mathcal{L}_{\text{VF}}(\psi) = \mathbb{E}_t\!\left[ \big(V_\psi(s_t) - \hat R_t\big)^2 \right]
+  \]
+  <div class="note">
+    \(\lambda = 0\) reduces GAE to the single-step TD error (low variance, higher bias); \(\lambda = 1\) recovers the full Monte-Carlo return minus baseline (unbiased, high variance). RLHF typically uses \(\lambda \approx 0.95,\ \gamma \approx 1\).
+  </div>
+
+  <h2 id="ppo">6. The PPO Clipped Objective</h2>
+  <p>Vanilla policy gradients are unstable: one large step can collapse the policy. <strong>PPO</strong> keeps each update close to the policy that collected the data, \(\pi_{\theta_{\text{old}}}\), via a clipped importance ratio. Define the probability ratio:</p>
+  \[
+    \rho_t(\theta) = \frac{\pi_\theta(a_t\mid s_t)}{\pi_{\theta_{\text{old}}}(a_t\mid s_t)}
+  \]
+
+  <div class="result">
+    <div class="result-label">PPO clipped surrogate</div>
+    \[
+      \mathcal{L}^{\text{CLIP}}(\theta) = \mathbb{E}_t\!\left[
+        \min\!\Big( \rho_t(\theta)\,\hat A_t,\;\;
+        \mathrm{clip}\big(\rho_t(\theta),\, 1-\epsilon,\, 1+\epsilon\big)\,\hat A_t \Big)
+      \right]
+    \]
+  </div>
+
+  <p>The \(\min\) of the clipped and unclipped terms means: once the ratio moves more than \(\epsilon\) (e.g. 0.2) in the direction that would help, the objective flattens — removing the incentive to take a huge step. It is a cheap, first-order way to enforce a trust region.</p>
+
+  <h3>Full PPO loss</h3>
+  <p>The complete per-step loss adds the value-function regression and an entropy bonus \(S\) that encourages exploration:</p>
+  \[
+    \mathcal{L}_{\text{PPO}} = \mathbb{E}_t\!\left[
+      -\,\mathcal{L}^{\text{CLIP}}_t
+      \;+\; c_1\, \big(V_\psi(s_t) - \hat R_t\big)^2
+      \;-\; c_2\, S\big[\pi_\theta\big](s_t)
+    \right]
+  \]
+  <p>with coefficients \(c_1, c_2\). (Signs are written for minimization: maximize the clipped surrogate and entropy, minimize value error.)</p>
+
+  <h2 id="loop">7. The Full RLHF Loop</h2>
+  <p>Stage 3 repeats the following until the policy converges or KL budget is exhausted:</p>
+  <ol>
+    <li><strong>Rollout</strong> — sample prompts \(x\sim\mathcal{D}\), generate completions \(y\sim\pi_\theta(\cdot\mid x)\).</li>
+    <li><strong>Score</strong> — compute the terminal reward \(r_\phi(x,y)\) and the per-token KL penalty to form \(R_t\) (§3).</li>
+    <li><strong>Estimate</strong> — run the critic \(V_\psi\) and compute advantages \(\hat A_t\) via GAE (§5).</li>
+    <li><strong>Optimize</strong> — take several PPO epochs of minibatch updates on \(\mathcal{L}_{\text{PPO}}\) (§6), then refresh \(\pi_{\theta_{\text{old}}}\).</li>
+  </ol>
+  <div class="note">
+    This requires <em>four</em> models in memory: the policy \(\pi_\theta\), the critic \(V_\psi\), the frozen reference \(\pi_{\text{ref}}\), and the reward model \(r_\phi\). That cost and instability is precisely the pain DPO removes.
+  </div>
+
+  <h2 id="vs-dpo">8. RLHF vs. DPO</h2>
+  <p>Both optimize the identical KL-regularized objective of §3. They differ in how.</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th></th><th>Standard RLHF (PPO)</th><th>DPO</th></tr>
+      <tr><td>Reward model</td><td>Explicit network \(r_\phi\)</td><td>Implicit: \(\beta\log\frac{\pi_\theta}{\pi_{\text{ref}}}\)</td></tr>
+      <tr><td>Optimization</td><td>Online RL, sampling rollouts</td><td>Offline supervised loss on pairs</td></tr>
+      <tr><td>Models in memory</td><td>Policy, critic, reference, RM</td><td>Policy + reference</td></tr>
+      <tr><td>Objective solved</td><td>Directly, via PPO</td><td>In closed form (no RL loop)</td></tr>
+      <tr><td>Stability</td><td>Sensitive; many knobs</td><td>Stable; a single loss</td></tr>
+      <tr><td>Trade-off</td><td>Can use online data &amp; any reward</td><td>Tied to the preference dataset</td></tr>
+    </table>
+  </div>
+  <p>See the <a href="dpo-loss.html" style="color:var(--accent);">DPO derivation</a> for how the explicit reward and the PPO loop are algebraically eliminated.</p>
+
+  <h2 id="summary">9. Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">RM loss</div>
+      <p>\(-\mathbb{E}[\log\sigma(r_w - r_l)]\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">RL objective</div>
+      <p>\(\max\,\mathbb{E}[r_\phi] - \beta\,\mathrm{KL}(\pi_\theta\|\pi_{\text{ref}})\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Effective reward</div>
+      <p>\(r_\phi - \beta\log\frac{\pi_\theta}{\pi_{\text{ref}}}\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Policy gradient</div>
+      <p>\(\mathbb{E}[\sum_t \hat A_t \nabla\log\pi_\theta(a_t\mid s_t)]\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Advantage (GAE)</div>
+      <p>\(\hat A_t = \sum_l (\gamma\lambda)^l \delta_{t+l}\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">PPO surrogate</div>
+      <p>\(\mathbb{E}[\min(\rho_t\hat A_t,\,\mathrm{clip}(\rho_t)\hat A_t)]\)</p>
+    </div>
+  </div>
+
+  <div class="table-wrap" style="margin-top: 2em;">
+    <table>
+      <tr><th>Stage</th><th>What it learns</th><th>Loss / objective</th></tr>
+      <tr><td>1 · SFT</td><td>\(\pi_{\text{ref}}\)</td><td>Cross-entropy on demonstrations</td></tr>
+      <tr><td>2 · Reward model</td><td>\(r_\phi\)</td><td>\(-\mathbb{E}[\log\sigma(r_\phi(x,y_w) - r_\phi(x,y_l))]\)</td></tr>
+      <tr><td>3 · RL (PPO)</td><td>\(\pi_\theta\), \(V_\psi\)</td><td>\(\mathcal{L}^{\text{CLIP}} + c_1\mathcal{L}_{\text{VF}} - c_2 S\)</td></tr>
+    </table>
+  </div>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; The math of reinforcement learning from human feedback
+</footer>
+
+</body>
+</html>
