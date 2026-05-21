@@ -531,21 +531,63 @@
   <p>Intuition: push up the log-probability of actions that did better than expected (\(\hat A_t > 0\)), push down those that did worse. Subtracting \(V\) strips out the "this state was just generically good/bad" component, leaving a signal about the <em>action</em>. The advantage, not the raw reward, is the teaching signal — and §5 is how \(\hat A_t\) is actually estimated.</p>
 
   <h2 id="gae">5. Value Function and Advantage</h2>
-  <p>The <em>advantage</em> \(A_t\) measures how much better action \(a_t\) was than the average action from state \(s_t\). It needs a baseline — the <strong>value function</strong> \(V_\psi(s)\), a second head (the <em>critic</em>) predicting expected return from \(s\). The one-step TD error is:</p>
+  <p>§4 left us needing to estimate \(\hat A_t\). We have a learned <strong>value function</strong> \(V_\psi(s)\) — a second head (the <em>critic</em>) predicting expected return from \(s\) — and sampled rewards. The whole design is a <strong>bias–variance trade-off</strong>: how much to trust real sampled rewards versus the imperfect bootstrap \(V\).</p>
+
+  <h3>The two extremes</h3>
+  <p><strong>Monte Carlo</strong> uses the actual return-to-go, \(\hat A_t = G_t - V(s_t)\) with \(G_t = \sum_{l\ge 0}\gamma^l r_{t+l}\): unbiased (only real rewards) but high-variance (a long sum of random rewards). <strong>One-step TD</strong> bootstraps after a single step:</p>
   \[
-    \delta_t = R_t + \gamma\, V_\psi(s_{t+1}) - V_\psi(s_t)
+    \hat A_t^{(1)} = R_t + \gamma\, V_\psi(s_{t+1}) - V_\psi(s_t) \;\triangleq\; \delta_t
   \]
-  <p><strong>Generalized Advantage Estimation (GAE)</strong> blends many horizons with a decay \(\lambda\), trading bias against variance:</p>
+  <p>Low variance (one random reward) but biased (leans entirely on \(V\)). This <em>TD error</em> \(\delta_t\) is the building block for everything below.</p>
+
+  <div class="step">
+    <div class="step-label">Step 1 — The n-step ladder</div>
+    <p>Between the extremes, take \(n\) real rewards then bootstrap. Larger \(n\) means less bias, more variance:</p>
+    \[
+      \hat A_t^{(n)} = \sum_{l=0}^{n-1}\gamma^l r_{t+l} + \gamma^n V_\psi(s_{t+n}) - V_\psi(s_t)
+    \]
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step 2 — n-step advantage = sum of TD errors</div>
+    <p>The intermediate value terms <em>telescope</em>, so the \(n\)-step advantage is exactly a discounted sum of TD errors. For \(n=2\), the \(+\gamma V(s_{t+1})\) and \(-\gamma V(s_{t+1})\) cancel:</p>
+    \[
+      \delta_t + \gamma\delta_{t+1}
+        = r_t + \gamma r_{t+1} + \gamma^2 V_\psi(s_{t+2}) - V_\psi(s_t)
+        = \hat A_t^{(2)}
+    \]
+    <p>In general \(\hat A_t^{(n)} = \sum_{l=0}^{n-1}\gamma^l\,\delta_{t+l}\).</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step 3 — GAE averages over all n</div>
+    <p>Rather than pick one \(n\), <strong>Generalized Advantage Estimation</strong> takes an exponentially-weighted average of every \(n\)-step estimator with weight \((1-\lambda)\lambda^{n-1}\):</p>
+    \[
+      \hat A_t^{\text{GAE}(\gamma,\lambda)} = (1-\lambda)\sum_{n=1}^{\infty}\lambda^{n-1}\,\hat A_t^{(n)}
+    \]
+    <p>Collecting the coefficient of each \(\delta_{t+l}\) — it appears in every estimator with \(n>l\), giving \((1-\lambda)\gamma^l(\lambda^l+\lambda^{l+1}+\cdots) = (\gamma\lambda)^l\) — the whole thing collapses to a single discounted sum:</p>
+  </div>
+
+  <div class="result">
+    <div class="result-label">GAE</div>
+    \[
+      \hat A_t^{\text{GAE}(\gamma,\lambda)} = \sum_{l=0}^{\infty} (\gamma\lambda)^l\, \delta_{t+l}
+    \]
+  </div>
+
+  <div class="note">
+    \(\lambda = 0\) keeps only the \(l=0\) term, recovering one-step TD \(\hat A_t = \delta_t\) (low variance, higher bias); \(\lambda = 1\) gives \(\sum_l\gamma^l\delta_{t+l}\), which telescopes to the Monte-Carlo \(G_t - V(s_t)\) (unbiased, high variance). \(\gamma\) is the reward discount (part of the problem); \(\lambda\) is the variance-reduction knob. RLHF typically uses \(\lambda \approx 0.95,\ \gamma \approx 1\).
+  </div>
+
+  <h3>Computing it, and training the critic</h3>
+  <p>The infinite sum is never formed directly — it satisfies a one-line recursion run <em>backward</em> from the end of the trajectory, an \(O(T)\) pass:</p>
   \[
-    \hat A_t^{\text{GAE}(\gamma,\lambda)} = \sum_{l=0}^{\infty} (\gamma\lambda)^l\, \delta_{t+l}
+    \hat A_t = \delta_t + \gamma\lambda\,\hat A_{t+1}
   \]
-  <p>The critic is trained by regression toward the observed returns \(\hat R_t = \hat A_t + V_\psi(s_t)\):</p>
+  <p>The same pass yields the critic's regression target, the TD(\(\lambda\)) return \(\hat R_t = \hat A_t + V_\psi(s_t)\), so policy and critic train together:</p>
   \[
     \mathcal{L}_{\text{VF}}(\psi) = \mathbb{E}_t\!\left[ \big(V_\psi(s_t) - \hat R_t\big)^2 \right]
   \]
-  <div class="note">
-    \(\lambda = 0\) reduces GAE to the single-step TD error (low variance, higher bias); \(\lambda = 1\) recovers the full Monte-Carlo return minus baseline (unbiased, high variance). RLHF typically uses \(\lambda \approx 0.95,\ \gamma \approx 1\).
-  </div>
 
   <h2 id="ppo">6. The PPO Clipped Objective</h2>
   <p>Vanilla policy gradients are unstable: one large step can collapse the policy. <strong>PPO</strong> keeps each update close to the policy that collected the data, \(\pi_{\theta_{\text{old}}}\), via a clipped importance ratio. Define the probability ratio:</p>
