@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Negative Log-Likelihood — The Loss Behind the Losses</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #4f46e5;
+      --accent-light: #eef2ff;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #1e1b4b 0%, #4338ca 60%, #6366f1 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.85;
+      font-size: 0.97rem;
+      max-width: 560px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: #374151;
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: #374151; }
+    code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: #fafafa; }
+
+    /* ── Step boxes ──────────────────────────── */
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    /* ── Callout / note ──────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: #1e40af;
+    }
+    .note::before { content: '💡 '; }
+
+    /* ── Result / boxed equation ─────────────── */
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #16a34a;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Plain-English read box ──────────────── */
+    .read {
+      background: var(--accent-light);
+      border: 1px solid #c7d2fe;
+      border-radius: 8px;
+      padding: 14px 18px;
+      margin: 1.2em 0;
+    }
+    .read-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+    .read p { margin: 0.3em 0; }
+
+    /* ── Summary card ────────────────────────── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .summary-card {
+      background: var(--accent-light);
+      border: 1px solid #c7d2fe;
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .summary-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    /* ── Footer ──────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    /* ── Responsive ──────────────────────────── */
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="#">NLL Loss</a>
+  <div class="nav-links">
+    <a href="index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#notation">Notation</a>
+    <a href="#likelihood">Likelihood</a>
+    <a href="#shape">Cost shape</a>
+    <a href="#example">Worked example</a>
+    <a href="#instances">Instances</a>
+    <a href="#entropy">Entropy &amp; KL</a>
+    <a href="#summary">Summary</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Foundations</span>
+  <h1>Negative Log-Likelihood</h1>
+  <p>The single principle behind cross entropy, the language-model token loss, DPO, and least squares: make the observed data as probable as possible — then take the negative log so it becomes a loss to minimize.</p>
+</div>
+
+<div class="page-wrap">
+
+  <p>Most supervised losses are not separate inventions. They are the same recipe — <em>maximize the probability the model assigns to what actually happened</em> — applied to different output distributions. That recipe is the negative log-likelihood (NLL). Learn it once and cross entropy, binary log-loss, mean-squared error, and the <a href="dpo-loss.html" style="color:var(--accent);">DPO</a> loss all become the same object wearing different clothes.</p>
+
+  <h2 id="notation">Notation</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symbol</th><th>Description</th></tr>
+      <tr><td>\(x_i\)</td><td>Input / context of the \(i\)-th example</td></tr>
+      <tr><td>\(y_i\)</td><td>Observed (true) output of the \(i\)-th example</td></tr>
+      <tr><td>\(\theta\)</td><td>Model parameters being trained</td></tr>
+      <tr><td>\(p_\theta(y\mid x)\)</td><td>Probability the model assigns to output \(y\) given \(x\)</td></tr>
+      <tr><td>\(L(\theta)\)</td><td>Likelihood — probability of the whole dataset under the model</td></tr>
+      <tr><td>\(\mathcal{L}_{\text{NLL}}(\theta)\)</td><td>Negative log-likelihood — the loss we minimize</td></tr>
+      <tr><td>\(n\)</td><td>Number of training examples</td></tr>
+    </table>
+  </div>
+
+  <h2 id="likelihood">1. From "probability of the data" to a loss</h2>
+  <p>Start with one number: how probable does the model think the observed dataset is? Assuming the \(n\) examples are independent, the probability of seeing all of them together is the product of the per-example probabilities — this product is the <strong>likelihood</strong>:</p>
+  \[
+    L(\theta) = \prod_{i=1}^{n} p_\theta(y_i \mid x_i)
+  \]
+  <p>A good model is one that makes the data it actually saw look probable, so we want to <em>maximize</em> \(L\). Three small moves turn this into a loss a gradient optimizer can chew on.</p>
+
+  <div class="step">
+    <div class="step-label">Step 1 — Take the log</div>
+    <p>A product of thousands of probabilities (each \(< 1\)) underflows to zero in floating point and is awkward to differentiate. The log turns the product into a sum (see the <a href="math-notation.html#sumprod" style="color:var(--accent);">notation page</a>), which is numerically stable and has simple term-by-term derivatives:</p>
+    \[
+      \log L(\theta) = \sum_{i=1}^{n} \log p_\theta(y_i \mid x_i)
+    \]
+    <p>The log is monotonic, so whatever \(\theta\) maximizes \(L\) also maximizes \(\log L\) — we have not changed the answer, only the arithmetic.</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step 2 — Negate to get a loss</div>
+    <p>Optimizers minimize by convention. Flip the sign so "maximize log-likelihood" becomes "minimize negative log-likelihood":</p>
+    \[
+      \mathcal{L}_{\text{NLL}}(\theta) = -\sum_{i=1}^{n} \log p_\theta(y_i \mid x_i)
+    \]
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step 3 — Average over the batch</div>
+    <p>Summing makes the loss scale with dataset size; dividing by \(n\) gives a per-example number that is comparable across batch sizes:</p>
+    \[
+      \mathcal{L}_{\text{NLL}}(\theta) = -\frac{1}{n}\sum_{i=1}^{n} \log p_\theta(y_i \mid x_i)
+    \]
+  </div>
+
+  <div class="result">
+    <div class="result-label">Negative log-likelihood</div>
+    \[
+      \mathcal{L}_{\text{NLL}}(\theta) = -\frac{1}{n}\sum_{i=1}^{n} \log p_\theta(y_i \mid x_i)
+    \]
+  </div>
+
+  <div class="read">
+    <div class="read-label">In plain English</div>
+    <p>"For each example, look up the probability the model gave to the answer that actually occurred, take its log, negate it, and average. Driving this down forces the model to put high probability on the truth."</p>
+  </div>
+
+  <div class="note">
+    "Maximum likelihood estimation" (MLE) and "minimizing NLL" are <strong>the same procedure</strong> — one stated as a max over likelihood, the other as a min over its negative log. Whenever a paper says a model is "trained by maximum likelihood," the loss in the code is an NLL.
+  </div>
+
+  <h2 id="shape">2. Why the \(-\log p\) shape is exactly right</h2>
+  <p>Look at the cost of a single example, \(-\log p\), where \(p\) is the probability the model placed on the correct answer. The shape of \(-\log\) does something a plain "probability of error" never could:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Model's prob on truth \(p\)</th><th>Cost \(-\log p\)</th><th>Reading</th></tr>
+      <tr><td>\(1.0\)</td><td>\(0\)</td><td>Certain and correct — no penalty</td></tr>
+      <tr><td>\(0.5\)</td><td>\(0.69\)</td><td>A coin-flip's worth of doubt</td></tr>
+      <tr><td>\(0.1\)</td><td>\(2.30\)</td><td>Truth was unlikely under the model</td></tr>
+      <tr><td>\(0.01\)</td><td>\(4.61\)</td><td>Confidently wrong — heavily punished</td></tr>
+      <tr><td>\(\to 0\)</td><td>\(\to \infty\)</td><td>Ruled the truth out entirely — unbounded loss</td></tr>
+    </table>
+  </div>
+
+  <p>The penalty is zero only when the model is fully confident <em>and</em> right, and grows without bound as the model assigns vanishing probability to what actually happened. That asymmetry is the whole point: <strong>being confidently wrong is punished far more harshly than being unsure.</strong> A loss linear in error would let a model shrug off an occasional catastrophic miss; \(-\log p\) never lets it.</p>
+
+  <div class="note">
+    The log also makes the gradient well-behaved: \(\nabla_\theta\big[-\log p_\theta\big] = -\tfrac{1}{p_\theta}\nabla_\theta p_\theta\). The \(1/p\) factor amplifies the update precisely when the model gave the truth low probability — large corrections where they are most needed, vanishing ones where the model is already right.
+  </div>
+
+  <h2 id="example">3. Worked example</h2>
+  <p>A 3-class problem where the true class is #2. The model outputs the distribution \(\mathbf{p} = [0.1,\ 0.7,\ 0.2]\). Only the probability on the <em>observed</em> class enters the loss:</p>
+  \[
+    \mathcal{L}_{\text{NLL}} = -\log p_2 = -\log(0.7) \approx 0.357
+  \]
+  <p>Had the model been less sure of the truth, say \(\mathbf{p} = [0.1,\ 0.2,\ 0.7]\) (true class got only \(0.2\)):</p>
+  \[
+    \mathcal{L}_{\text{NLL}} = -\log(0.2) \approx 1.609
+  \]
+  <p>Same correct class, but a model that buried the truth under a confident wrong guess pays roughly \(4.5\times\) the cost. The other entries (\(0.1\), \(0.7\)) never appear directly — they matter only through the constraint that the distribution sums to 1, which is what lifting \(p_2\) competes against.</p>
+
+  <h2 id="instances">4. The same loss across model types</h2>
+  <p>NLL is a template. Pick the distribution \(p_\theta(y\mid x)\) that matches your output type, plug it in, and a familiar named loss falls out.</p>
+
+  <h3>Categorical output → cross entropy</h3>
+  <p>If \(y\) is one of \(V\) classes and the model outputs a categorical distribution (via softmax), then \(p_\theta(y_i\mid x_i) = p_{i,k_i}\), the probability on the true class \(k_i\). The NLL is exactly cross entropy:</p>
+  \[
+    \mathcal{L}_{\text{NLL}} = -\frac{1}{n}\sum_{i=1}^{n}\log p_{i,k_i}
+  \]
+  <p>The one-hot label zeroes every term except the true class, so cross entropy's \(-\sum_i y_i\log p_i\) collapses to \(-\log p_{k}\) — the NLL of a single categorical draw.</p>
+  <div class="note">
+    These are two names for one loss. The <a href="cross-entropy.html" style="color:var(--accent);">cross-entropy page</a> derives the softmax mechanics and the clean \(\mathbf{p}-\mathbf{y}\) gradient; this page is the probabilistic reason that loss is the right one to use.
+  </div>
+
+  <h3>Binary output → log-loss (BCE)</h3>
+  <p>For a yes/no label with the model predicting \(p_\theta = \hat p\) for "yes", the Bernoulli probability of the observed \(y\in\{0,1\}\) is \(\hat p^{\,y}(1-\hat p)^{1-y}\). Its NLL is binary cross entropy:</p>
+  \[
+    \mathcal{L}_{\text{NLL}} = -\big[\,y\log\hat p + (1-y)\log(1-\hat p)\,\big]
+  \]
+
+  <h3>Gaussian output → mean-squared error</h3>
+  <p>For a real-valued target modeled as \(y \sim \mathcal{N}(\mu_\theta(x),\sigma^2)\) with fixed \(\sigma\), the density is \(\tfrac{1}{\sqrt{2\pi\sigma^2}}e^{-(y-\mu_\theta)^2/2\sigma^2}\). Taking \(-\log\) drops the constant and leaves the squared error:</p>
+  \[
+    \mathcal{L}_{\text{NLL}} = \frac{1}{2\sigma^2}\,(y-\mu_\theta(x))^2 + \text{const}
+  \]
+  <p>So least-squares regression is just NLL under a Gaussian assumption — the reason MSE is the "default" regression loss is that it is the maximum-likelihood loss for Gaussian noise.</p>
+
+  <h3>Next-token prediction → the LM loss</h3>
+  <p>A language model factorizes the probability of a sequence into per-token conditionals, so its training loss is the NLL summed over positions \(t\):</p>
+  \[
+    \mathcal{L}_{\text{NLL}} = -\frac{1}{T}\sum_{t=1}^{T}\log p_\theta(\text{token}_t \mid \text{token}_{<t})
+  \]
+  <p>"Predict the next token" is literally "maximize the likelihood of the token that actually came next." Each position is a categorical NLL, i.e. a cross entropy over the vocabulary.</p>
+
+  <h3>Preference pairs → the DPO / RLHF reward loss</h3>
+  <p>When the observation is "\(y_w\) was preferred over \(y_l\)," the Bradley–Terry model gives the probability of that preference as \(\sigma(\hat r_w - \hat r_l)\). Its NLL is the <a href="dpo-loss.html" style="color:var(--accent);">DPO</a> loss (and the <a href="rlhf.html" style="color:var(--accent);">RLHF</a> reward-model loss):</p>
+  \[
+    \mathcal{L}_{\text{NLL}} = -\,\mathbb{E}\big[\log\sigma(\hat r_w - \hat r_l)\big]
+  \]
+  <p>Same template — negative log of the probability the model assigns to the observed outcome — with the "outcome" being a human preference rather than a class or a token.</p>
+
+  <div class="table-wrap" style="margin-top:1.4em;">
+    <table>
+      <tr><th>Output type</th><th>Distribution \(p_\theta(y\mid x)\)</th><th>NLL becomes</th></tr>
+      <tr><td>One of \(V\) classes</td><td>Categorical (softmax)</td><td>Cross entropy</td></tr>
+      <tr><td>Yes / no</td><td>Bernoulli (sigmoid)</td><td>Binary log-loss</td></tr>
+      <tr><td>Real number</td><td>Gaussian, fixed \(\sigma\)</td><td>Mean-squared error</td></tr>
+      <tr><td>Next token</td><td>Categorical over vocab</td><td>LM cross-entropy</td></tr>
+      <tr><td>Preference \(y_w \succ y_l\)</td><td>Bradley–Terry (sigmoid)</td><td>DPO / RM loss</td></tr>
+    </table>
+  </div>
+
+  <h2 id="entropy">5. Relationship to entropy and KL</h2>
+  <p>Averaging the NLL over the <em>true</em> data distribution \(p_{\text{data}}\) rather than a finite sample gives the cross entropy between data and model:</p>
+  \[
+    \mathbb{E}_{y\sim p_{\text{data}}}\!\big[-\log p_\theta(y)\big] = H(p_{\text{data}}, p_\theta)
+      = \underbrace{H(p_{\text{data}})}_{\text{fixed}} + \underbrace{\mathrm{KL}\big(p_{\text{data}}\,\|\,p_\theta\big)}_{\text{what training reduces}}
+  \]
+  <p>The entropy \(H(p_{\text{data}})\) does not depend on \(\theta\), so minimizing NLL is exactly minimizing the <strong>forward</strong> KL from the data distribution to the model. That is why maximum-likelihood training is mass-covering: the model is pushed to place probability everywhere the data does. (The forward/reverse KL distinction is on the <a href="math-notation.html#kl" style="color:var(--accent);">notation page</a>.)</p>
+
+  <div class="note">
+    This also explains the floor on the loss: the smallest achievable cross entropy is \(H(p_{\text{data}})\), reached only when \(p_\theta = p_{\text{data}}\). NLL can never be driven to zero unless the data is perfectly deterministic — its irreducible part is the data's own entropy.
+  </div>
+
+  <h2 id="summary">6. Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">Likelihood</div>
+      <p>\(L(\theta)=\prod_i p_\theta(y_i\mid x_i)\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">NLL loss</div>
+      <p>\(-\tfrac{1}{n}\sum_i \log p_\theta(y_i\mid x_i)\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Cost shape</div>
+      <p>\(-\log p\): 0 when right, \(\to\infty\) when confidently wrong</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">MLE = min NLL</div>
+      <p>Maximizing likelihood is minimizing its negative log</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">One template</div>
+      <p>Categorical→CE, Bernoulli→BCE, Gaussian→MSE, BT→DPO</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">= forward KL</div>
+      <p>Min NLL ⇔ min \(\mathrm{KL}(p_{\text{data}}\,\|\,p_\theta)\)</p>
+    </div>
+  </div>
+
+  <div class="table-wrap" style="margin-top: 2em;">
+    <table>
+      <tr><th>When you see…</th><th>Recognize it as</th></tr>
+      <tr><td>"trained by maximum likelihood"</td><td>An NLL loss in the code</td></tr>
+      <tr><td>\(-\log p_k\) / cross entropy</td><td>NLL of a categorical draw</td></tr>
+      <tr><td>\(\tfrac12(y-\hat y)^2\) / MSE</td><td>NLL under a Gaussian with fixed variance</td></tr>
+      <tr><td>\(-\log\sigma(\cdot)\)</td><td>NLL of a Bernoulli / Bradley–Terry outcome</td></tr>
+      <tr><td>A loss that won't reach zero</td><td>Its floor is the data entropy \(H(p_{\text{data}})\)</td></tr>
+    </table>
+  </div>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; Negative log-likelihood — the principle behind the common losses
+</footer>
+
+</body>
+</html>
