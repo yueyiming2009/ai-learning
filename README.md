@@ -30,6 +30,7 @@ algebra behind common losses, layers, and RL objectives.
 | [BatchNorm gradient](https://yueyiming2009.github.io/ai-learning/batchnorm-gradient.html) | Backward across the batch dim; train vs. inference |
 | [SwiGLU](https://yueyiming2009.github.io/ai-learning/swiglu.html) | Gated FFN forward/backward; weight grads for all three projections |
 | [RoPE gradient](https://yueyiming2009.github.io/ai-learning/rope-gradient.html) | Per-pair rotation forward + symmetric backward |
+| [Optimizers — working math](https://yueyiming2009.github.io/ai-learning/optimizers.html) | SGD→AdamW update rules: noise, momentum/Nesterov, Adam moments, clipping, schedules, decoupled decay |
 | [Optimizer norms](https://yueyiming2009.github.io/ai-learning/optimizer-norms.html) | SGD/sign-SGD/Adam/Muon as steepest descent in different norms |
 | [RLHF](https://yueyiming2009.github.io/ai-learning/rlhf.html) | Bradley–Terry RM, KL-regularized RL, policy gradient, GAE, PPO |
 | [GRPO](https://yueyiming2009.github.io/ai-learning/grpo.html) | DeepSeek-R1's critic-free PPO with group-relative advantages |
