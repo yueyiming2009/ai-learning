@@ -289,6 +289,88 @@
     }
     .summary-card p { margin: 0; font-size: 0.9rem; }
 
+    /* ── Visualization ───────────────────────── */
+    .viz {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px;
+      margin: 1.4em 0;
+      background: var(--surface);
+    }
+    .viz canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+      border-radius: 8px;
+      background: #fff;
+      border: 1px solid var(--border);
+    }
+    .viz-controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 16px;
+      margin-top: 14px;
+    }
+    .viz-btn {
+      font-family: inherit;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #fff;
+      background: var(--accent);
+      border: none;
+      border-radius: 6px;
+      padding: 7px 16px;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.05s;
+    }
+    .viz-btn:hover { background: #0b7c72; }
+    .viz-btn:active { transform: translateY(1px); }
+    .viz-btn.ghost {
+      background: #fff;
+      color: var(--accent);
+      border: 1px solid var(--accent);
+    }
+    .viz-btn.ghost:hover { background: var(--accent-light); }
+    .viz-slider {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+    .viz-slider input { cursor: pointer; }
+    .viz-slider .val {
+      font-variant-numeric: tabular-nums;
+      font-weight: 600;
+      color: var(--text);
+      min-width: 2.6em;
+    }
+    .viz-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 18px;
+      margin-top: 12px;
+      font-size: 0.86rem;
+    }
+    .viz-legend .key {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+    .viz-legend .swatch {
+      width: 18px;
+      height: 4px;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+    .viz-cap {
+      font-size: 0.86rem;
+      color: var(--muted);
+      margin-top: 10px;
+      line-height: 1.6;
+    }
+
     /* ── Footer ──────────────────────────────── */
     footer {
       border-top: 1px solid var(--border);
@@ -315,6 +397,7 @@
     <a href="#derivation">Derivation</a>
     <a href="#table">Norm → optimizer</a>
     <a href="#spectral">Spectral = Muon</a>
+    <a href="#momentum">Momentum</a>
     <a href="#geometry">Why it matters</a>
     <a href="#summary">Summary</a>
   </div>
@@ -507,7 +590,89 @@
     1-D and have no meaningful singular-value structure, so those stay on AdamW.
   </div>
 
-  <h2 id="geometry">5. Why the norm choice is not cosmetic</h2>
+  <h2 id="momentum">5. Momentum and the lookahead correction</h2>
+  <p>
+    Everything above fixes the <em>direction of a single step</em> from the current gradient. Momentum is
+    the orthogonal question — how steps should <strong>combine over time</strong>. The norm picks where one
+    step points; momentum picks how much of the past to carry into the next one. The three rules below all
+    use the same \(L_2\) direction \(-g\); they differ only in how they accumulate it.
+  </p>
+
+  <div class="compare">
+    <div class="compare-label">The three update rules</div>
+    <p style="margin:0 0 4px"><strong>Plain SGD</strong> — step straight down the local gradient, no memory:</p>
+    \[ w_{t+1} = w_t - \eta\,g(w_t) \]
+    <p style="margin:10px 0 4px"><strong>Momentum</strong> — accumulate a velocity (an EMA of past gradients); a ball rolling downhill:</p>
+    \[ v_{t+1} = \mu\,v_t - \eta\,g(w_t), \qquad w_{t+1} = w_t + v_{t+1} \]
+    <p style="margin:10px 0 4px"><strong>Nesterov (lookahead)</strong> — evaluate the gradient <em>after</em> the momentum jump, so the step can correct itself before committing:</p>
+    \[ v_{t+1} = \mu\,v_t - \eta\,g\!\big(\underbrace{w_t + \mu\,v_t}_{\text{lookahead point}}\big), \qquad w_{t+1} = w_t + v_{t+1} \]
+  </div>
+
+  <h3>The ravine: why momentum reaches the minimum first</h3>
+  <p>
+    Loss surfaces near a minimum are typically <strong>anisotropic</strong> — steep across a narrow valley,
+    gentle along its floor. The gradient points mostly <em>across</em> the valley and only weakly <em>along</em>
+    it, so a safe learning rate (one that doesn't blow up on the steep axis) leaves plain SGD inching down the
+    floor. Momentum sums the consistent down-valley component across steps into a growing velocity, so it
+    <strong>accelerates</strong> along the floor and arrives while SGD is still crawling. The price is a little
+    overshoot past the minimum — which is exactly what the lookahead correction reins in. Watch all three race
+    from the same start on the elongated bowl \(L = \tfrac12(x^2 + 8y^2)\):
+  </p>
+
+  <div class="viz">
+    <canvas id="raceCanvas" width="1440" height="640" aria-label="Animated trajectories of SGD, momentum, and Nesterov descending an elongated quadratic bowl"></canvas>
+    <div class="viz-controls">
+      <button id="racePlay" class="viz-btn">▶ Play</button>
+      <button id="raceReset" class="viz-btn ghost">↻ Reset</button>
+      <label class="viz-slider">momentum&nbsp;μ
+        <input id="raceMu" type="range" min="0" max="0.95" step="0.05" value="0.85">
+        <span class="val" id="raceMuVal">0.85</span>
+      </label>
+      <label class="viz-slider">learning rate&nbsp;η
+        <input id="raceLr" type="range" min="0.02" max="0.24" step="0.01" value="0.05">
+        <span class="val" id="raceLrVal">0.05</span>
+      </label>
+    </div>
+    <div class="viz-legend">
+      <span class="key"><span class="swatch" style="background:#6b7280"></span>SGD</span>
+      <span class="key"><span class="swatch" style="background:#0d9488"></span>Momentum</span>
+      <span class="key"><span class="swatch" style="background:#d946ef"></span>Nesterov</span>
+    </div>
+    <p class="viz-cap">
+      At the default rate SGD just creeps along the floor while momentum and Nesterov sprint to the minimum.
+      Drag <strong>μ</strong> up: they get faster but overshoot more (Nesterov always overshoots less than plain
+      momentum at the same μ). Push <strong>η</strong> toward the right edge and SGD's cross-valley bounce is the
+      first to oscillate and blow up — momentum tolerates an even smaller stable rate, the catch nobody mentions.
+    </p>
+  </div>
+
+  <h3>What the lookahead actually corrects</h3>
+  <p>
+    The only difference between momentum and Nesterov is <em>where the gradient is sampled</em>. Plain
+    momentum reads the gradient at the current point \(w_t\) and then jumps. Nesterov first takes the
+    momentum jump to a <strong>lookahead point</strong> \(w_t + \mu v_t\), reads the gradient <em>there</em>,
+    and folds it in. When velocity is about to carry you past the valley floor, the gradient at the lookahead
+    point already points back — so Nesterov brakes a step early instead of overshooting and correcting later:
+  </p>
+
+  <div class="viz">
+    <canvas id="lookCanvas" width="1440" height="900" aria-label="Decomposition of a single Nesterov step versus a plain momentum step"></canvas>
+    <p class="viz-cap">
+      Both methods carry the same velocity jump \(\mu v_t\) (gray). Plain momentum adds \(-\eta\,g\) measured at
+      the start \(w_t\) (teal); Nesterov adds \(-\eta\,g\) measured at the lookahead point (magenta). Because the
+      lookahead sits further down the steep wall, its gradient is the stronger restoring pull — the resulting
+      Nesterov landing point overshoots the floor by less.
+    </p>
+  </div>
+
+  <p>
+    Note this is a story about <em>conditioning in time</em>, not about the norm. You can bolt momentum onto any
+    of the optimizers in §3 — Adam is momentum (and second-moment scaling) on top of the \(L_\infty\) direction,
+    and Muon orthogonalizes the <em>momentum</em> matrix, not the raw gradient. Direction comes from the norm;
+    momentum decides how aggressively to commit to it.
+  </p>
+
+  <h2 id="geometry">6. Why the norm choice is not cosmetic</h2>
   <p>The right norm encodes the geometry the parameters actually live in — it is not bookkeeping:</p>
   <ul>
     <li>
@@ -556,5 +721,234 @@
   &nbsp;·&nbsp; <a href="index.html" style="color:inherit">← All notes</a>
 </footer>
 
+<script>
+(function () {
+  "use strict";
+
+  // Shared loss: anisotropic bowl  L = 1/2 (A x^2 + B y^2)
+  var A = 1, B = 8;
+  function grad(p) { return { x: A * p.x, y: B * p.y }; }
+
+  var COL = { sgd: "#6b7280", mom: "#0d9488", nes: "#d946ef", line: "#e3e6ea", floor: "#94a3b8" };
+
+  // ── Helpers ───────────────────────────────────────────
+  function arrowHead(ctx, x0, y0, x1, y1, color, size) {
+    var a = Math.atan2(y1 - y0, x1 - x0);
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x1 - size * Math.cos(a - 0.4), y1 - size * Math.sin(a - 0.4));
+    ctx.lineTo(x1 - size * Math.cos(a + 0.4), y1 - size * Math.sin(a + 0.4));
+    ctx.closePath();
+    ctx.fill();
+  }
+  function dot(ctx, x, y, r, color) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, 2 * Math.PI);
+    ctx.fill();
+  }
+
+  // ══════════════════════════════════════════════════════
+  //  Visual 1 — the ravine race
+  // ══════════════════════════════════════════════════════
+  (function race() {
+    var cv = document.getElementById("raceCanvas");
+    if (!cv) return;
+    var ctx = cv.getContext("2d");
+    var W = cv.width, H = cv.height;
+
+    // view: x in [-3,3], equal unit aspect
+    var xmin = -3, xmax = 3;
+    var scale = W / (xmax - xmin);          // px per unit
+    var ymin = -(H / scale) / 2;            // centred on y=0
+    function px(x) { return (x - xmin) * scale; }
+    function py(y) { return H - (y - ymin) * scale; }
+
+    var START = { x: -2.7, y: 0.7 };
+    var STEPS = 150;
+    var mu = 0.85, lr = 0.05;
+    var traj = { sgd: [], mom: [], nes: [] };
+    var progress = 0, playing = false, raf = null;
+
+    function clampFinite(p) { return isFinite(p.x) && isFinite(p.y) && Math.abs(p.x) < 50 && Math.abs(p.y) < 50; }
+
+    function simulate() {
+      var s = { x: START.x, y: START.y };
+      var m = { x: START.x, y: START.y }, mv = { x: 0, y: 0 };
+      var n = { x: START.x, y: START.y }, nv = { x: 0, y: 0 };
+      traj = { sgd: [{ x: s.x, y: s.y }], mom: [{ x: m.x, y: m.y }], nes: [{ x: n.x, y: n.y }] };
+      for (var i = 0; i < STEPS; i++) {
+        // SGD
+        var gs = grad(s); s = { x: s.x - lr * gs.x, y: s.y - lr * gs.y };
+        // Momentum
+        var gm = grad(m);
+        mv = { x: mu * mv.x - lr * gm.x, y: mu * mv.y - lr * gm.y };
+        m = { x: m.x + mv.x, y: m.y + mv.y };
+        // Nesterov: gradient at lookahead point
+        var look = { x: n.x + mu * nv.x, y: n.y + mu * nv.y };
+        var gn = grad(look);
+        nv = { x: mu * nv.x - lr * gn.x, y: mu * nv.y - lr * gn.y };
+        n = { x: n.x + nv.x, y: n.y + nv.y };
+        if (clampFinite(s)) traj.sgd.push({ x: s.x, y: s.y });
+        if (clampFinite(m)) traj.mom.push({ x: m.x, y: m.y });
+        if (clampFinite(n)) traj.nes.push({ x: n.x, y: n.y });
+      }
+    }
+
+    function drawContours() {
+      ctx.lineWidth = 1.4;
+      ctx.strokeStyle = COL.line;
+      var levels = [0.06, 0.18, 0.4, 0.75, 1.25, 2.0, 3.0, 4.2];
+      for (var k = 0; k < levels.length; k++) {
+        var c = levels[k];
+        ctx.beginPath();
+        ctx.ellipse(px(0), py(0), Math.sqrt(c / A) * scale, Math.sqrt(c / B) * scale, 0, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
+    }
+
+    function drawPath(pts, n, color) {
+      if (n < 1) return;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 3;
+      ctx.lineJoin = "round";
+      ctx.beginPath();
+      ctx.moveTo(px(pts[0].x), py(pts[0].y));
+      for (var i = 1; i <= n && i < pts.length; i++) ctx.lineTo(px(pts[i].x), py(pts[i].y));
+      ctx.stroke();
+      var last = pts[Math.min(n, pts.length - 1)];
+      dot(ctx, px(last.x), py(last.y), 7, color);
+    }
+
+    function render() {
+      ctx.clearRect(0, 0, W, H);
+      drawContours();
+      // minimum marker
+      ctx.strokeStyle = "#cbd5e1"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(px(0) - 12, py(0)); ctx.lineTo(px(0) + 12, py(0));
+      ctx.moveTo(px(0), py(0) - 12); ctx.lineTo(px(0), py(0) + 12); ctx.stroke();
+      // trails (draw SGD last-ish so its zig-zag stays visible; order: sgd, mom, nes)
+      drawPath(traj.sgd, progress, COL.sgd);
+      drawPath(traj.mom, progress, COL.mom);
+      drawPath(traj.nes, progress, COL.nes);
+      // start marker
+      dot(ctx, px(START.x), py(START.y), 6, "#1a1a2e");
+      ctx.fillStyle = "#1a1a2e"; ctx.font = "600 26px Inter, sans-serif"; ctx.textAlign = "left";
+      ctx.fillText("start", px(START.x) + 12, py(START.y) - 12);
+    }
+
+    function loop() {
+      if (!playing) return;
+      progress += 1;
+      var maxLen = Math.max(traj.sgd.length, traj.mom.length, traj.nes.length) - 1;
+      if (progress >= maxLen) { progress = maxLen; playing = false; playBtn.textContent = "▶ Play"; render(); return; }
+      render();
+      raf = requestAnimationFrame(loop);
+    }
+
+    var playBtn = document.getElementById("racePlay");
+    var resetBtn = document.getElementById("raceReset");
+    var muIn = document.getElementById("raceMu"), muVal = document.getElementById("raceMuVal");
+    var lrIn = document.getElementById("raceLr"), lrVal = document.getElementById("raceLrVal");
+
+    function reset(autoplay) {
+      if (raf) cancelAnimationFrame(raf);
+      simulate();
+      progress = 0;
+      render();
+      playing = !!autoplay;
+      playBtn.textContent = playing ? "❚❚ Pause" : "▶ Play";
+      if (playing) raf = requestAnimationFrame(loop);
+    }
+
+    playBtn.addEventListener("click", function () {
+      var maxLen = Math.max(traj.sgd.length, traj.mom.length, traj.nes.length) - 1;
+      if (progress >= maxLen) progress = 0;
+      playing = !playing;
+      playBtn.textContent = playing ? "❚❚ Pause" : "▶ Play";
+      if (playing) raf = requestAnimationFrame(loop);
+    });
+    resetBtn.addEventListener("click", function () { reset(false); });
+    muIn.addEventListener("input", function () { mu = +muIn.value; muVal.textContent = mu.toFixed(2); reset(true); });
+    lrIn.addEventListener("input", function () { lr = +lrIn.value; lrVal.textContent = lr.toFixed(2); reset(true); });
+
+    reset(false);
+  })();
+
+  // ══════════════════════════════════════════════════════
+  //  Visual 2 — anatomy of one Nesterov step
+  // ══════════════════════════════════════════════════════
+  (function lookahead() {
+    var cv = document.getElementById("lookCanvas");
+    if (!cv) return;
+    var ctx = cv.getContext("2d");
+    var W = cv.width, H = cv.height;          // 1440 x 900
+
+    // equal-unit-aspect view, sized to fit the vertical extent of the step
+    var xC = -0.7, yMin = -1.7, yMax = 1.0;
+    var scale = H / (yMax - yMin);            // px per unit
+    function px(x) { return W / 2 + (x - xC) * scale; }
+    function py(y) { return H - (y - yMin) * scale; }
+
+    var lr = 0.2;
+    var w = { x: -1.6, y: 0.7 };          // current point, on the upper wall
+    var mv = { x: 1.4, y: -1.0 };         // carried velocity jump  μ·v
+    var look = { x: w.x + mv.x, y: w.y + mv.y };
+    var gW = grad(w), gL = grad(look);
+    var mom = { x: look.x - lr * gW.x, y: look.y - lr * gW.y };   // plain-momentum landing
+    var nes = { x: look.x - lr * gL.x, y: look.y - lr * gL.y };   // Nesterov landing
+
+    function vec(p0, p1, color, width, dashed) {
+      ctx.save();
+      ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineCap = "round";
+      if (dashed) ctx.setLineDash([10, 9]);
+      ctx.beginPath(); ctx.moveTo(px(p0.x), py(p0.y)); ctx.lineTo(px(p1.x), py(p1.y)); ctx.stroke();
+      ctx.restore();
+      arrowHead(ctx, px(p0.x), py(p0.y), px(p1.x), py(p1.y), color, 18);
+    }
+    function label(p, dx, dy, text, color, weight) {
+      ctx.fillStyle = color; ctx.font = (weight || "600") + " 27px Inter, sans-serif"; ctx.textAlign = "left";
+      ctx.fillText(text, px(p.x) + dx, py(p.y) + dy);
+    }
+
+    // contours
+    ctx.lineWidth = 1.4; ctx.strokeStyle = COL.line;
+    [0.1, 0.4, 0.9, 1.6, 2.6, 3.8].forEach(function (c) {
+      ctx.beginPath();
+      ctx.ellipse(px(0), py(0), Math.sqrt(c / A) * scale, Math.sqrt(c / B) * scale, 0, 0, 2 * Math.PI);
+      ctx.stroke();
+    });
+    // valley floor
+    ctx.save(); ctx.strokeStyle = COL.floor; ctx.lineWidth = 2; ctx.setLineDash([4, 7]);
+    ctx.beginPath(); ctx.moveTo(0, py(0)); ctx.lineTo(W, py(0)); ctx.stroke(); ctx.restore();
+    ctx.fillStyle = COL.floor; ctx.font = "500 22px Inter, sans-serif"; ctx.textAlign = "right";
+    ctx.fillText("valley floor", W - 14, py(0) - 12);
+    // minimum
+    dot(ctx, px(0), py(0), 5, "#cbd5e1");
+
+    // the shared momentum jump  μ·v
+    vec(w, look, "#9ca3af", 4, true);
+    // gradient-step arrows from the lookahead point
+    vec(look, mom, COL.mom, 5, false);   // -η g(w_t)
+    vec(look, nes, COL.nes, 5, false);   // -η g(lookahead)
+
+    // points
+    dot(ctx, px(w.x), py(w.y), 9, "#1a1a2e");
+    dot(ctx, px(look.x), py(look.y), 8, "#374151");
+    dot(ctx, px(mom.x), py(mom.y), 8, COL.mom);
+    dot(ctx, px(nes.x), py(nes.y), 8, COL.nes);
+
+    // labels
+    label(w, 14, -14, "wₜ  (current)", "#1a1a2e");
+    label(look, 12, -14, "wₜ + μvₜ  (lookahead)", "#374151");
+    label({ x: (w.x + look.x) / 2, y: (w.y + look.y) / 2 }, -4, -16, "μ vₜ", "#6b7280", "600");
+    label(mom, 14, 30, "plain momentum lands here", COL.mom);
+    label({ x: (look.x + mom.x) / 2, y: (look.y + mom.y) / 2 }, 16, 4, "−η g(wₜ)", COL.mom);
+    label(nes, -210, 6, "Nesterov lands here", COL.nes);
+    label({ x: (look.x + nes.x) / 2, y: (look.y + nes.y) / 2 }, -260, 4, "−η g(lookahead)", COL.nes);
+  })();
+})();
+</script>
 </body>
 </html>
