@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Optimizers as Steepest Descent Under a Norm</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #0d9488;
+      --accent-light: #f0fdfa;
+      --warning-bg: #fffbeb;
+      --warning-border: #f59e0b;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --compare-bg: #eff6ff;
+      --compare-border: #3b82f6;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .nav-back {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      white-space: nowrap;
+      transition: color 0.15s;
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+    .nav-back:hover { color: var(--text); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #0d9488 0%, #0891b2 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.85;
+      font-size: 0.97rem;
+      max-width: 560px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: #374151;
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: #374151; }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: #fafafa; }
+
+    /* ── Step boxes ──────────────────────────── */
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    /* ── Callout / note ──────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: #78350f;
+    }
+    .note::before { content: '⚠ '; }
+
+    /* ── Result / boxed equation ─────────────── */
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #16a34a;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Comparison box ──────────────────────── */
+    .compare {
+      background: var(--compare-bg);
+      border: 1.5px solid var(--compare-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .compare-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #2563eb;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 10px;
+    }
+    .compare-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 600px) { .compare-grid { grid-template-columns: 1fr; } }
+    .compare-col-label {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: #374151;
+      margin-bottom: 4px;
+    }
+
+    /* ── Summary card ────────────────────────── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .summary-card {
+      background: var(--accent-light);
+      border: 1px solid #99f6e4;
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .summary-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    /* ── Footer ──────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="#">Optimizer Norms</a>
+  <div class="nav-links">
+    <a href="index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#motivation">Idea</a>
+    <a href="#why-norm">Why a norm</a>
+    <a href="#derivation">Derivation</a>
+    <a href="#table">Norm → optimizer</a>
+    <a href="#spectral">Spectral = Muon</a>
+    <a href="#geometry">Why it matters</a>
+    <a href="#summary">Summary</a>
+  </div>
+  <a class="nav-back" href="index.html">Home</a>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">ML Math</span>
+  <h1>Optimizers as Steepest Descent Under a Norm</h1>
+  <p>SGD, sign-SGD, Adam, and Muon are not four unrelated tricks — they are the same steepest-descent rule, each measured in a different norm. Choosing an optimizer is choosing a geometry.</p>
+</div>
+
+<div class="page-wrap">
+
+  <h2 id="motivation">The unifying idea</h2>
+  <p>
+    The optimizer zoo looks like a pile of independent heuristics: SGD steps on the gradient,
+    sign-SGD on its sign, Adam divides by a running root-mean-square, Muon orthogonalizes a matrix.
+    They collapse into <strong>one equation</strong> once you ask: <em>steepest descent — but steep
+    with respect to which norm?</em> Each optimizer is the exact steepest-descent rule for one choice
+    of norm on the weight update. This is the framing of Bernstein &amp; Newhouse,
+    <em>Old Optimizer, New Norm</em> (2024), and it is the mathematical justification behind Muon.
+  </p>
+
+  <h2 id="notation">Notation</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symbol</th><th>Description</th></tr>
+      <tr><td>\(w\)</td><td>Parameters (a vector, or a matrix \(W\) for a single layer)</td></tr>
+      <tr><td>\(g=\nabla_w L\)</td><td>Gradient of the loss — a <em>covector</em> (lives in the dual space)</td></tr>
+      <tr><td>\(\Delta w\)</td><td>The weight update — a vector in the same space as \(w\)</td></tr>
+      <tr><td>\(\lVert\cdot\rVert\)</td><td>The chosen norm measuring update "size"</td></tr>
+      <tr><td>\(\lVert\cdot\rVert_\ast\)</td><td>Its <em>dual</em> norm, \(\lVert g\rVert_\ast=\max_{\lVert d\rVert\le1}\langle g,d\rangle\)</td></tr>
+      <tr><td>\(\eta\)</td><td>Learning rate / trust-region size</td></tr>
+      <tr><td>\(U\Sigma V^\top\)</td><td>SVD of a matrix gradient \(G\); \(\sigma_i\) its singular values</td></tr>
+    </table>
+  </div>
+
+  <h2 id="why-norm">1. Why a norm is even needed</h2>
+  <p>
+    A type mismatch hides inside every update rule. The gradient \(g\) is a <strong>covector</strong>:
+    it eats a direction \(d\) and returns the first-order change in loss, \(\langle g, d\rangle\).
+    The update \(\Delta w\), however, is a <strong>vector</strong> — it must live in the same space as
+    \(w\) so we can write \(w \leftarrow w + \Delta w\).
+  </p>
+  <p>
+    There is no canonical way to convert a covector into a vector. Writing \(\Delta w = -\eta g\)
+    silently assumes the two spaces are identified by the <em>Euclidean</em> inner product. That
+    assumption is a <strong>choice of norm</strong>, and it is the only place the various optimizers
+    actually differ.
+  </p>
+  <div class="note">
+    "Just use the gradient" is not geometry-free — it bakes in the \(L_2\) norm. Every optimizer makes
+    this choice; most make it implicitly.
+  </div>
+
+  <h2 id="derivation">2. Steepest descent — the derivation</h2>
+  <p>
+    Steepest descent takes the step that buys the most loss decrease per unit of size, where size is
+    measured by the chosen norm. Write it as a trust-region (proximal) problem — minimize the local
+    linear model of the loss plus a squared-norm penalty:
+  </p>
+  \[
+    \Delta w \;=\; \arg\min_{\Delta}\;\Big[\,\langle g,\Delta\rangle \;+\; \tfrac{1}{2\eta}\lVert\Delta\rVert^2\,\Big]
+  \]
+
+  <div class="step">
+    <div class="step-label">Step A — split into direction and radius</div>
+    <p>Write \(\Delta = r\,d\) with unit direction \(\lVert d\rVert = 1\) and radius \(r\ge 0\). The objective separates:</p>
+    \[
+      \langle g, r d\rangle + \frac{r^2}{2\eta} \;=\; r\,\langle g, d\rangle + \frac{r^2}{2\eta}
+    \]
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step B — optimal direction is the dual-norm oracle</div>
+    <p>For fixed \(r &gt; 0\), only the \(r\,\langle g,d\rangle\) term depends on \(d\). Minimizing it is the definition of the dual norm:</p>
+    \[
+      \min_{\lVert d\rVert = 1}\,\langle g, d\rangle \;=\; -\lVert g\rVert_\ast,
+      \qquad
+      d^\ast \;=\; \arg\min_{\lVert d\rVert = 1}\,\langle g, d\rangle
+    \]
+    <p>\(d^\ast\) is the <strong>linear minimization oracle</strong> (LMO) of the norm applied to \(g\) — the steepest unit direction.</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step C — optimal radius</div>
+    <p>Substitute to get a scalar problem in \(r\), then set the derivative to zero:</p>
+    \[
+      \min_{r\ge 0}\;\Big[-r\,\lVert g\rVert_\ast + \tfrac{r^2}{2\eta}\Big]
+      \;\;\Rightarrow\;\;
+      -\lVert g\rVert_\ast + \frac{r}{\eta} = 0
+      \;\;\Rightarrow\;\;
+      r = \eta\,\lVert g\rVert_\ast
+    \]
+  </div>
+
+  <div class="result">
+    <div class="result-label">Steepest-descent step</div>
+    \[
+      \Delta w \;=\; \eta\,\lVert g\rVert_\ast\,d^\ast,
+      \qquad d^\ast = \arg\min_{\lVert d\rVert=1}\langle g,d\rangle
+    \]
+  </div>
+
+  <p>
+    Two pieces fall out, and both are fixed by the choice of norm: the <strong>direction</strong>
+    \(d^\ast\) (the LMO), and the <strong>magnitude</strong>, which scales with the dual norm
+    \(\lVert g\rVert_\ast\). In practice optimizers keep the direction \(d^\ast\) and set the
+    magnitude from the learning-rate schedule rather than literally multiplying by \(\lVert g\rVert_\ast\).
+  </p>
+
+  <h2 id="table">3. Each optimizer is one norm</h2>
+  <p>Solving the LMO \(\;d^\ast=\arg\min_{\lVert d\rVert\le1}\langle g,d\rangle\;\) for different norms reproduces the canon exactly:</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Norm on the update</th><th>Dual norm \(\lVert g\rVert_\ast\)</th><th>Direction \(d^\ast\)</th><th>Optimizer</th></tr>
+      <tr><td>\(L_2\) (Euclidean)</td><td>\(\lVert g\rVert_2\)</td><td>\(-\,g/\lVert g\rVert_2\)</td><td><strong>SGD / GD</strong></td></tr>
+      <tr><td>\(L_\infty\) (max coord)</td><td>\(\lVert g\rVert_1\)</td><td>\(-\operatorname{sign}(g)\)</td><td><strong>sign-SGD, Lion</strong></td></tr>
+      <tr><td>\(L_\infty\) in \(1/\sqrt{v}\)-rescaled coords</td><td>—</td><td>\(\approx -\,m/\sqrt{v}\)</td><td><strong>Adam</strong> (approx)</td></tr>
+      <tr><td>\(L_1\)</td><td>\(\lVert g\rVert_\infty\)</td><td>\(-\operatorname{sign}(g_j)\,e_j,\; j=\arg\max_i\lvert g_i\rvert\)</td><td>greedy coordinate descent</td></tr>
+      <tr><td>spectral \(\sigma_{\max}\) (matrices)</td><td>nuclear \(\sum_i\sigma_i\)</td><td>\(-\,UV^\top\)</td><td><strong>Muon</strong></td></tr>
+    </table>
+  </div>
+
+  <h3>\(L_2 \Rightarrow\) SGD</h3>
+  <p>
+    \(\lVert g\rVert_\ast = \lVert g\rVert_2\) and \(d^\ast = -g/\lVert g\rVert_2\), so
+    \(\Delta w = \eta\lVert g\rVert_2\cdot(-g/\lVert g\rVert_2) = -\eta\,g\) — plain gradient descent.
+    The Euclidean norm is the "default geometry" nobody questions.
+  </p>
+
+  <h3>\(L_\infty \Rightarrow\) sign descent (and Adam)</h3>
+  <p>
+    Under \(\lVert d\rVert_\infty \le 1\) every coordinate is independently free in \([-1,1]\), so
+    \(\langle g,d\rangle=\sum_i g_i d_i\) is minimized coordinate-wise by \(d_i = -\operatorname{sign}(g_i)\).
+    That is sign-SGD, and <strong>Lion</strong> (sign of the momentum) is its EMA-smoothed cousin.
+    Drop momentum and bias-correction from Adam and its step is
+    \(-\eta\,g/\sqrt{g^2} = -\eta\operatorname{sign}(g)\) — sign descent again, but with each coordinate
+    rescaled by \(1/\sqrt{v}\). So <strong>Adam is approximately steepest descent under a coordinate-wise
+    max norm</strong>, which is why Adam and sign-SGD behave so similarly in practice.
+  </p>
+
+  <h2 id="spectral">4. Spectral norm \(\Rightarrow\) Muon</h2>
+  <p>
+    For a weight <strong>matrix</strong> \(W\), measure update size by its spectral norm
+    \(\sigma_{\max}(\Delta)\) (the largest singular value) rather than treating the entries as a flat
+    vector. The LMO minimizes the matrix inner product \(\langle G,\Delta\rangle = \operatorname{tr}(G^\top\Delta)\)
+    over the spectral-norm ball.
+  </p>
+
+  <div class="step">
+    <div class="step-label">Step A — the minimizer is the orthogonal factor</div>
+    <p>Take the SVD \(G = U\Sigma V^\top\). Over \(\{\Delta : \sigma_{\max}(\Delta)\le 1\}\), the minimizer of \(\operatorname{tr}(G^\top\Delta)\) is</p>
+    \[
+      \Delta^\ast = -\,U V^\top
+    \]
+    <p>— the gradient with all its singular values <strong>flattened to 1</strong>, keeping only the rotation/reflection factors.</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step B — verify it hits the dual (nuclear) norm</div>
+    <p>With \(G^\top = V\Sigma U^\top\) and \(\Delta^\ast = -UV^\top\):</p>
+    \[
+      \operatorname{tr}(G^\top\Delta^\ast)
+        = -\operatorname{tr}(V\Sigma U^\top U V^\top)
+        = -\operatorname{tr}(V\Sigma V^\top)
+        = -\operatorname{tr}(\Sigma)
+        = -\sum_i \sigma_i
+        = -\lVert G\rVert_{\text{nuclear}}
+    \]
+    <p>which equals \(-\lVert G\rVert_\ast\), confirming \(\Delta^\ast\) is the steepest direction (the dual of the spectral norm is the nuclear norm).</p>
+  </div>
+
+  <div class="result">
+    <div class="result-label">Muon update</div>
+    \[
+      \Delta W \;\propto\; -\,U V^\top \;=\; -\,(G G^\top)^{-1/2}\,G
+    \]
+  </div>
+
+  <p>
+    This <strong>is</strong> Muon: orthogonalize the momentum matrix and step along it. Computing the SVD
+    every step would be far too expensive, so Muon approximates \(U V^\top\) — the "matrix sign" function
+    \((G G^\top)^{-1/2}G\) — with a few iterations of the <strong>Newton–Schulz</strong> matrix-polynomial
+    recurrence, which needs only matmuls and no decomposition.
+  </p>
+  <div class="note">
+    Muon applies only to 2-D parameters (the weight matrices). Embeddings, biases, and norm gains are
+    1-D and have no meaningful singular-value structure, so those stay on AdamW.
+  </div>
+
+  <h2 id="geometry">5. Why the norm choice is not cosmetic</h2>
+  <p>The right norm encodes the geometry the parameters actually live in — it is not bookkeeping:</p>
+  <ul>
+    <li>
+      <strong>Spectral norm controls the layer's behavior.</strong> For a weight matrix, \(\sigma_{\max}\)
+      bounds how much the layer's <em>output</em> can move for a bounded-norm input — it is the layer's
+      Lipschitz constant w.r.t. activations. Descending under the spectral norm therefore bounds the change
+      in <em>features</em> uniformly across directions, instead of letting a few large singular directions
+      dominate the update (which is exactly what flat Frobenius / \(L_2\) does).
+    </li>
+    <li>
+      <strong>Composed norms give width/depth-robust learning rates.</strong> Measure each layer in its own
+      natural norm and the "modular norm" (Bernstein et al.) glues them into one network-wide norm; steepest
+      descent under it yields learning rates that transfer across model sizes — for free, rather than by tuning.
+    </li>
+  </ul>
+
+  <h2 id="summary">Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">One equation</div>
+      <p>\(\Delta w = \eta\lVert g\rVert_\ast\,d^\ast\) — direction = LMO, magnitude = dual norm.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">L₂ → SGD</div>
+      <p>\(d^\ast=-g/\lVert g\rVert_2\), recovering \(-\eta g\).</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">L∞ → sign / Adam</div>
+      <p>\(d^\ast=-\operatorname{sign}(g)\); Adam ≈ the same in \(1/\sqrt{v}\) coords.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Spectral → Muon</div>
+      <p>\(d^\ast=-UV^\top\), the orthogonalized gradient (Newton–Schulz).</p>
+    </div>
+  </div>
+  <p style="font-size:0.88rem; color: var(--muted);">
+    Takeaway: Adam ≈ sign-SGD is no accident (same norm), Muon is the principled steepest-descent rule for
+    matrix-shaped parameters, and the frontier of optimizer design is increasingly "pick the norm that
+    respects the architecture, then read off the LMO."
+  </p>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; Optimizers as steepest descent under a norm
+  &nbsp;·&nbsp; <a href="index.html" style="color:inherit">← All notes</a>
+</footer>
+
+</body>
+</html>
