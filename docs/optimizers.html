@@ -352,6 +352,7 @@
     <a href="#clipping">Clipping</a>
     <a href="#schedule">LR schedule</a>
     <a href="#adamw">Weight decay / AdamW</a>
+    <a href="#muon">Muon</a>
     <a href="#summary">Summary</a>
   </div>
   <a class="nav-back" href="index.html">Home</a>
@@ -360,7 +361,7 @@
 <div class="hero">
   <span class="hero-pill">ML Math</span>
   <h1>Optimizers — The Working Math</h1>
-  <p>The update rules behind the LLM training loop, derived: SGD and its noise, momentum and Nesterov, Adam's two moments and bias correction, gradient clipping, the warmup→cosine schedule, and AdamW's decoupled weight decay.</p>
+  <p>The update rules behind the LLM training loop, derived: SGD and its noise, momentum and Nesterov, Adam's two moments and bias correction, gradient clipping, the warmup→cosine schedule, AdamW's decoupled weight decay, and Muon's matrix-orthogonalized step.</p>
 </div>
 
 <div class="page-wrap">
@@ -369,16 +370,9 @@
     An optimizer turns the gradient produced by backprop into the actual weight update — the rule that
     sits between <code>loss.backward()</code> and the next forward pass. This page collects the
     <em>mechanics</em>: the exact update equations and the derivations behind them, walking the same
-    path the field took — SGD → momentum → Adam → AdamW — so each method reads as a fix to a specific
+    path the field took — SGD → momentum → Adam → AdamW → Muon — so each method reads as a fix to a specific
     weakness in the one before it.
   </p>
-
-  <div class="xref">
-    🧭 Companion view: <a href="optimizer-norms.html">Optimizers as Steepest Descent Under a Norm</a>
-    derives the <em>direction</em> of each of these methods from one idea — steepest descent in a chosen
-    norm — and is where Muon lives. This page is the plain mechanics; that page is the geometry that
-    unifies them.
-  </div>
 
   <h2 id="notation">Notation</h2>
   <div class="table-wrap">
@@ -514,11 +508,6 @@
     lands past the minimum on the rising far wall, the gradient there points back uphill and brakes the
     overshoot <em>this</em> step instead of after. That one-step lead is the whole (modest) benefit.
   </p>
-  <div class="xref">
-    The geometry of why momentum reaches the minimum first — with interactive ravine and lookahead
-    visualizations — is on the <a href="optimizer-norms.html#momentum">norm page's momentum section</a>.
-  </div>
-
   <!-- ════════════════════════ ADAM ════════════════════════ -->
   <h2 id="adam">4. Adam — momentum + a per-parameter learning rate</h2>
   <p>
@@ -770,6 +759,96 @@ optimizer = torch.optim.AdamW([
     spent here (and on data scale) rather than on dropout.
   </p>
 
+  <!-- ════════════════════════ MUON ════════════════════════ -->
+  <h2 id="muon">8. Muon — the matrix-aware step after AdamW</h2>
+  <p>
+    AdamW has been the default for transformer training since ~2018. Every optimizer above — including
+    AdamW — treats the parameters as a <strong>flat bag of scalars</strong>: Adam's \(\sqrt{\hat v}\)
+    rescaling is <em>elementwise</em>, one independent learning rate per weight, blind to the fact that a
+    layer's weights are really a <strong>matrix</strong> \(W\in\mathbb{R}^{m\times n}\) with rows and
+    columns that interact. <strong>Muon</strong> (Jordan et al., 2024) is the first post-AdamW method to win
+    real large-scale traction by exploiting exactly that structure.
+  </p>
+
+  <h3>The idea: orthogonalize the momentum before stepping</h3>
+  <p>
+    Muon keeps the same momentum \(M\) from §3 (an EMA of the gradient <em>matrix</em>), but before applying
+    it, it <strong>orthogonalizes</strong> it. Take the SVD \(M = U\Sigma V^\top\) and replace every singular
+    value with 1:
+  </p>
+  <div class="result">
+    <div class="result-label">Muon update (per matrix \(W\))</div>
+    \[ M_t = \mu\,M_{t-1} + g_t, \qquad O_t = U V^\top = (M_t M_t^\top)^{-1/2} M_t, \qquad W_t = W_{t-1} - \eta\, O_t \]
+  </div>
+  <p>
+    \(O_t = UV^\top\) is the momentum with its <strong>directions kept but all its magnitudes flattened to
+    1</strong> — the closest <em>semi-orthogonal</em> matrix to \(M_t\). Why bother? The raw momentum matrix
+    is almost always dominated by a handful of large singular directions: a plain step pours most of its
+    length into those few directions and starves the rest. Orthogonalizing equalizes the spectrum, so
+    <strong>every direction in the update gets a comparable-size step</strong> — the matrix analogue of what
+    Adam's per-coordinate rescaling does for scalars, but respecting the matrix's row/column geometry instead
+    of treating entries independently.
+  </p>
+
+  <h3>Newton–Schulz: orthogonalize with only matmuls</h3>
+  <p>
+    Computing an SVD every step, for every weight matrix, would be far too slow. Muon never forms the SVD —
+    it approximates \(O_t = (M_t M_t^\top)^{-1/2} M_t\) (the "matrix sign" of \(M_t\)) with a few iterations
+    of the <strong>Newton–Schulz</strong> matrix-polynomial recurrence, which needs only matrix multiplies
+    and runs happily in <code>bf16</code> on the GPU:
+  </p>
+  <pre><code>def orthogonalize(M, steps=5):           # ~5 iters is enough in practice
+    X = M / (M.norm() + 1e-7)             # scale so singular values land in NS's basin
+    for _ in range(steps):
+        A = X @ X.transpose(-2, -1)
+        X = a*X + (b*A + c*A @ A) @ X     # quintic NS iter, (a,b,c)≈(3.4445,-4.7750,2.0315)
+    return X                              # ≈ U Vᵀ</code></pre>
+  <p>
+    The tuned coefficients push the iteration's singular values toward 1 in as few steps as possible. The
+    whole orthogonalization costs a handful of \(n\times n\) matmuls — cheap next to the layer's forward/
+    backward, and well worth it.
+  </p>
+
+  <h3>Muon is a hybrid: it does not replace AdamW everywhere</h3>
+  <p>
+    Orthogonalization only makes sense for a 2-D parameter that <em>has</em> singular-value structure. So a
+    real training run runs <strong>Muon on the hidden weight matrices and AdamW on everything else</strong>:
+  </p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Parameter</th><th>Optimizer</th><th>Why</th></tr>
+      <tr><td>Hidden <code>Linear</code> weights (2-D)</td><td><strong>Muon</strong></td><td>Genuine matrices — orthogonalization balances the update</td></tr>
+      <tr><td>Embedding &amp; final unembedding / head</td><td>AdamW</td><td>Rows are per-token; act like a lookup, not a transform — Muon hurts here</td></tr>
+      <tr><td>Norm gains, biases (1-D)</td><td>AdamW</td><td>Vectors; no singular-value structure to flatten</td></tr>
+    </table>
+  </div>
+  <div class="note">
+    Muon's step size has a different natural scale than Adam's (its update is semi-orthogonal, so
+    \(\lVert O_t\rVert\) is fixed by the matrix shape, not by the gradient magnitude). You generally
+    scale the learning rate by \(\sqrt{\max(m,n)}\) — or normalize the update's RMS to match AdamW — so the
+    Muon and AdamW parameter groups move at compatible rates. Muon also typically keeps AdamW-style weight
+    decay on its matrices.
+  </div>
+
+  <h3>Why it matters</h3>
+  <ul>
+    <li><strong>Speed records.</strong> Muon set a string of wall-clock records on Keller Jordan's
+      <code>modded-nanoGPT</code> speedrun — reaching target loss in meaningfully fewer tokens/seconds than a
+      tuned AdamW baseline.</li>
+    <li><strong>It scales.</strong> The headline validation is large-model pretraining: Moonshot's
+      <strong>Kimi K2</strong> (1T-param MoE) was trained with a Muon variant (<em>MuonClip</em>, which adds
+      a stability clamp), the first clear evidence the method holds up past toy scale.</li>
+    <li><strong>It's a family.</strong> Muon sits alongside other matrix-aware preconditioners —
+      <strong>Shampoo</strong> and its efficient successor <strong>SOAP</strong> — that likewise use the
+      matrix structure (full/Kronecker-factored preconditioners) rather than a diagonal one. Muon is the
+      lightest of them: just orthogonalize the momentum, no preconditioner state to store.</li>
+  </ul>
+  <p style="font-size:0.9rem; color:var(--muted)">
+    Bottom line: AdamW is still the safe default and still runs the embeddings, head, and 1-D params even in a
+    Muon run. Muon is the one genuinely new idea after AdamW with large-scale evidence behind it — and the
+    change is small: keep the momentum, flatten its singular values, step on that.
+  </p>
+
   <!-- ════════════════════════ SUMMARY ════════════════════════ -->
   <h2 id="summary">Summary</h2>
   <div class="summary-grid">
@@ -789,18 +868,21 @@ optimizer = torch.optim.AdamW([
       <div class="summary-card-label">AdamW</div>
       <p>Decouple decay: \((1-\eta\lambda)w - \eta\,\hat m/\sqrt{\hat v}\), matrices only, with clip + warmup→cosine.</p>
     </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Muon</div>
+      <p>Orthogonalize the momentum matrix (\(O=UV^\top\) via Newton–Schulz); hidden 2-D weights only, AdamW elsewhere.</p>
+    </div>
   </div>
   <p style="font-size:0.88rem; color: var(--muted);">
     The LLM recipe in one line: <strong>AdamW</strong>, \(\beta=(0.9,0.95)\), global-norm clip 1.0,
-    warmup→cosine to \(0.1\times\), \(\lambda=0.1\) on matrices only. For the geometry that unifies these
-    update <em>directions</em> — and where Muon comes from — see
-    <a href="optimizer-norms.html" style="color:var(--accent)">Optimizers as Steepest Descent Under a Norm</a>.
+    warmup→cosine to \(0.1\times\), \(\lambda=0.1\) on matrices only — with <strong>Muon</strong> on the
+    hidden weight matrices as the current frontier upgrade.
   </p>
 
 </div>
 
 <footer>
-  Personal ML notes &nbsp;·&nbsp; Optimizers — the working math (SGD → AdamW)
+  Personal ML notes &nbsp;·&nbsp; Optimizers — the working math (SGD → AdamW → Muon)
   &nbsp;·&nbsp; <a href="index.html" style="color:inherit">← All notes</a>
 </footer>
 
