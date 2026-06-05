@@ -449,8 +449,9 @@
   <div class="xref">
     The cost model here follows the partitioning notation popularized by
     <a href="https://jax-ml.github.io/scaling-book/" target="_blank" rel="noopener">“How to Scale Your Model”</a>
-    (Google DeepMind). It is written for a ring-connected mesh (TPU ICI, NVLink islands), but the FLOPs-vs-bytes
-    reasoning transfers to any topology.
+    (Google DeepMind), whose hardware model is the TPU’s ICI <em>torus</em>. The notation and the FLOPs-vs-bytes
+    reasoning transfer to GPUs unchanged — the one thing that differs is the physical topology (GPUs use an NVSwitch
+    crossbar inside a node, not a torus), flagged in §3 where it matters.
   </div>
 
   <!-- ════════════════════════ WHY SHARD ════════════════════════ -->
@@ -518,10 +519,21 @@
   <!-- ════════════════════════ COST MODEL ════════════════════════ -->
   <h2 id="cost">3 · The ring cost model</h2>
   <p>
-    Accelerators in a training mesh are wired as a <strong>ring</strong> (or torus): each device has a fast link
-    to its neighbors, not an all-to-all crossbar. Every collective below is, under the hood, the same motion —
-    each device passes a block to a neighbor, again and again, around the ring. So one cost model prices them all.
+    Every collective below is, under the hood, the same motion: the devices are arranged in a <strong>ring</strong>,
+    and each one passes a block to the next, around and around, until the data has made the rounds. One cost model
+    prices them all. The ring algorithm is <em>bandwidth-optimal on any topology</em>, which is why the same formula
+    holds whether the ring is physical or just a convenient logical ordering:
   </p>
+  <div class="note" style="background:#eff6ff; border-left-color:#3b82f6; color:#1e3a5f">
+    <strong>TPU vs GPU — is the ring real?</strong> On a <strong>TPU</strong> the ring is the literal wiring: chips
+    sit in a 2-D/3-D <em>torus</em> (the ICI interconnect) with fast links only to nearest neighbors — exactly the
+    topology this section assumes. On a <strong>GPU</strong> it is a <em>logical</em> ring. Inside a node the 8 GPUs
+    hang off an <strong>NVSwitch, which is a full all-to-all crossbar</strong> — every GPU can talk to every other
+    at full bandwidth — and the collective library (NCCL) simply lays a ring <em>over</em> that crossbar; across
+    nodes it rides a switched InfiniBand/Ethernet fabric. So the “nearest-neighbor links” mental model is literally
+    true for TPUs and only an algorithmic abstraction for GPUs — but because ring AllReduce/AllGather saturate the
+    links regardless, the \(T\approx V/W\) cost below applies to both.
+  </div>
   <p>
     Let a collective move an array of \(V\) bytes around a ring of \(N=|X|\) devices, where each device starts
     with a \(V/N\) shard, and let \(W\) be the (bidirectional) per-link bandwidth. To get every shard to every
@@ -539,9 +551,10 @@
   <ol>
     <li>
       <strong>The cost barely depends on \(N\).</strong> For \(N\ge 4\) the factor \((N-1)/N\) is already within
-      25% of 1. <em>Adding more devices to a ring does not make its collectives meaningfully slower</em> — even
-      though the devices are only locally connected, locality doesn’t bite. You are bottlenecked by the speed of
-      a single link, not by the diameter of the ring.
+      25% of 1. <em>Adding more devices to the ring does not make its bandwidth-bound collectives meaningfully
+      slower.</em> You are bottlenecked by the speed of a single link, not by how many devices the data passes
+      through — so even a torus where chips only reach their neighbors (TPU) pays the same throughput cost as a
+      crossbar (GPU).
     </li>
     <li>
       <strong>The cost scales with the array size \(V\), not the mesh.</strong> So the lever you actually control
@@ -551,7 +564,7 @@
 
   <h3>Latency floor and the small-message regime</h3>
   <p>
-    Reaching every device takes \(O(N)\) hops, and each hop has a fixed latency \(T_{\min}\) (≈1&nbsp;µs on
+    A ring reaches every device in \(O(N)\) hops, and each hop has a fixed latency \(T_{\min}\) (≈1&nbsp;µs on
     typical hardware) regardless of payload. So the real cost is a max of the two regimes:
   </p>
   <div class="result">
@@ -563,6 +576,13 @@
     token at sampling time) are latency-bound. The crossover is \(V \approx N\,T_{\min} W\): for a device with
     \(W\!\approx\!45\) GB/s and \(T_{\min}\!\approx\!1\,\mu\text{s}\), anything under ~45&nbsp;kB is latency-bound.
   </p>
+  <div class="note" style="background:#eff6ff; border-left-color:#3b82f6; color:#1e3a5f">
+    <strong>The \(N\,T_{\min}\) floor is the ring’s worst case.</strong> Because GPUs aren’t physically bound to a
+    ring, NCCL can instead run a <strong>double-binary-tree</strong> AllReduce that keeps full bandwidth but cuts
+    latency to \(O(\log N)\) hops. So on GPUs the small-message regime is often better than the linear floor above;
+    NCCL picks ring vs tree per call based on message size and topology. On a physical TPU torus the \(O(N)\) ring
+    latency is what you get.
+  </div>
   <div class="note">
     <strong>Multiple mesh axes add bandwidth.</strong> Gathering over two mesh axes at once uses both sets of
     links, so the effective bandwidth is \(W\cdot n_\text{axes}\) and the time drops by that factor. This is why
