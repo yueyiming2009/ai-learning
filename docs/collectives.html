@@ -517,76 +517,96 @@
   </p>
 
   <!-- ════════════════════════ COST MODEL ════════════════════════ -->
-  <h2 id="cost">3 · The ring cost model</h2>
+  <h2 id="cost">3 · What a collective costs</h2>
   <p>
-    Every collective below is, under the hood, the same motion: the devices are arranged in a <strong>ring</strong>,
-    and each one passes a block to the next, around and around, until the data has made the rounds. One cost model
-    prices them all. The ring algorithm is <em>bandwidth-optimal on any topology</em>, which is why the same formula
-    holds whether the ring is physical or just a convenient logical ordering:
+    To price a collective, start from what a GPU physically does when it communicates: it pushes bytes out through
+    its links. Inside a server, those links are a bundle of <strong>NVLinks</strong> into an <strong>NVSwitch</strong>;
+    across servers, a <strong>NIC</strong> into an InfiniBand or Ethernet fabric. The crucial property of the
+    in-server case is that the NVSwitch is a <strong>non-blocking crossbar</strong>: every GPU can drive its full
+    link bandwidth to <em>every</em> other GPU at the same time, with no shared bottleneck in the middle (an H100
+    has ~900&nbsp;GB/s of NVLink per GPU). So we don’t model hops, neighbors, or distance — we model one number per
+    GPU: \(W\), the bandwidth it has into the fabric.
   </p>
-  <div class="note" style="background:#eff6ff; border-left-color:#3b82f6; color:#1e3a5f">
-    <strong>TPU vs GPU — is the ring real?</strong> On a <strong>TPU</strong> the ring is the literal wiring: chips
-    sit in a 2-D/3-D <em>torus</em> (the ICI interconnect) with fast links only to nearest neighbors — exactly the
-    topology this section assumes. On a <strong>GPU</strong> it is a <em>logical</em> ring. Inside a node the 8 GPUs
-    hang off an <strong>NVSwitch, which is a full all-to-all crossbar</strong> — every GPU can talk to every other
-    at full bandwidth — and the collective library (NCCL) simply lays a ring <em>over</em> that crossbar; across
-    nodes it rides a switched InfiniBand/Ethernet fabric. So the “nearest-neighbor links” mental model is literally
-    true for TPUs and only an algorithmic abstraction for GPUs — but because ring AllReduce/AllGather saturate the
-    links regardless, the \(T\approx V/W\) cost below applies to both.
-  </div>
   <p>
-    Let a collective move an array of \(V\) bytes around a ring of \(N=|X|\) devices, where each device starts
-    with a \(V/N\) shard, and let \(W\) be the (bidirectional) per-link bandwidth. To get every shard to every
-    device, each link must carry \(N-1\) of the \(N\) shards. The link is the bottleneck, so the time is the
-    bytes-per-link divided by the bandwidth:
+    With that, the cost of a collective is just <strong>how many bytes each GPU must move through its links,
+    divided by \(W\)</strong> — and because the crossbar is non-blocking, every GPU does this concurrently, so the
+    slowest GPU sets the time. Take an array of \(V\) bytes spread as \(V/N\) shards across \(N\) GPUs and count the
+    bytes for an AllGather: each GPU already holds its own \(V/N\), so it only needs to take in the other \(N-1\)
+    shards — \(V\,(N-1)/N\) bytes across its link. Hence:
   </p>
   <div class="result">
-    <div class="result-label">Throughput-bound collective time</div>
-    \[ T \;=\; \underbrace{\frac{V}{W}}_{\text{full array}}\cdot\frac{N-1}{N}
+    <div class="result-label">Bandwidth-bound collective time</div>
+    \[ T \;=\; \frac{V}{W}\cdot\frac{N-1}{N}
        \;\xrightarrow[\;N\ \text{large}\;]{}\; \frac{V}{W}. \]
   </div>
   <p>
-    Two facts fall out of this, and they drive every parallelism decision in the series:
+    Two facts fall out, and they drive every parallelism decision in the series:
   </p>
   <ol>
     <li>
-      <strong>The cost barely depends on \(N\).</strong> For \(N\ge 4\) the factor \((N-1)/N\) is already within
-      25% of 1. <em>Adding more devices to the ring does not make its bandwidth-bound collectives meaningfully
-      slower.</em> You are bottlenecked by the speed of a single link, not by how many devices the data passes
-      through — so even a torus where chips only reach their neighbors (TPU) pays the same throughput cost as a
-      crossbar (GPU).
+      <strong>The cost barely depends on \(N\).</strong> The factor \((N-1)/N\) is “you don’t pay to move the shard
+      you already have”; it is within 25% of 1 by \(N=4\) and \(\to 1\) after. The crossbar is non-blocking, so
+      adding GPUs adds no contention — the price is set by one GPU’s link speed, not the device count.
     </li>
     <li>
-      <strong>The cost scales with the array size \(V\), not the mesh.</strong> So the lever you actually control
-      is <em>how big the communicated tensors are</em> — which is what each parallelism scheme trades against.
+      <strong>The cost scales with the array size \(V\),</strong> not the mesh. The lever you actually control is
+      <em>how big the communicated tensors are</em> — which is exactly what each parallelism scheme trades against.
     </li>
   </ol>
+  <div class="note" style="background:#eff6ff; border-left-color:#3b82f6; color:#1e3a5f">
+    <strong>This is the number you measure.</strong> NCCL reports exactly this quantity as <em>bus bandwidth</em>
+    (<code>busbw</code> in <code>nccl-tests</code>): bytes-moved-per-GPU ÷ time. It applies a per-collective
+    multiplier — \((N-1)/N\) for AllGather/ReduceScatter, \(2(N-1)/N\) for AllReduce — precisely so the figure
+    approximates peak link bandwidth and is comparable across collectives and GPU counts. When busbw nears your
+    NVLink/NIC bandwidth, the collective is running optimally.
+  </div>
 
-  <h3>Latency floor and the small-message regime</h3>
+  <h3>The one fact that shapes everything: bandwidth comes in two tiers</h3>
   <p>
-    A ring reaches every device in \(O(N)\) hops, and each hop has a fixed latency \(T_{\min}\) (≈1&nbsp;µs on
-    typical hardware) regardless of payload. So the real cost is a max of the two regimes:
+    \(W\) is not a single number. It jumps by an order of magnitude at the boundary of the server:
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Link</th><th>Scope</th><th>Per-GPU bandwidth \(W\)</th></tr></thead>
+      <tbody>
+        <tr><td>NVLink + NVSwitch</td><td>within one node (≤8 GPUs)</td><td class="ctr"><strong>~450 GB/s</strong> each way (H100)</td></tr>
+        <tr><td>InfiniBand / Ethernet NIC</td><td>across nodes</td><td class="ctr"><strong>~50 GB/s</strong> (one 400&nbsp;Gb/s NIC/GPU)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    That ~10× cliff is the reason the parallelism schemes are layered the way they are. A collective that fires
+    <em>often and on the critical path</em> — like the per-block AllReduce of
+    <a href="tensor-parallelism.html">tensor parallelism</a> — must stay on NVLink, which caps it to a single node.
+    A collective that is <em>rare</em> (a once-per-step gradient AllReduce in data parallelism) or
+    <em>point-to-point and overlappable</em> (pipeline-stage activations) can afford to cross the slow network.
+    Every later page is, at heart, a decision about which tier each collective lands on.
+  </p>
+
+  <h3>Small messages: the latency floor</h3>
+  <p>
+    Bandwidth isn’t the whole story for tiny transfers. Every collective also pays a fixed start-up/latency term
+    \(L\) — propagation and per-step overhead that a few bytes can’t amortize. The realistic cost is the larger of
+    the two regimes:
   </p>
   <div class="result">
-    \[ T \;=\; \max\!\Big(\; \underbrace{N\,T_{\min}}_{\text{latency-bound}}\;,\;
+    \[ T \;=\; \max\!\Big(\; \underbrace{L}_{\text{latency-bound}}\;,\;
        \underbrace{\tfrac{V}{W}\cdot\tfrac{N-1}{N}}_{\text{bandwidth-bound}} \;\Big). \]
   </div>
   <p>
-    Big reductions (the gradients and activations of training) are solidly bandwidth-bound; tiny ones (a single
-    token at sampling time) are latency-bound. The crossover is \(V \approx N\,T_{\min} W\): for a device with
-    \(W\!\approx\!45\) GB/s and \(T_{\min}\!\approx\!1\,\mu\text{s}\), anything under ~45&nbsp;kB is latency-bound.
+    \(L\) depends on <em>how the collective is scheduled</em>, and this is where NCCL’s algorithm choice shows up: a
+    <strong>ring</strong> schedule is bandwidth-optimal but its latency grows like \(O(N)\); a
+    <strong>double-binary-tree</strong> schedule keeps full bandwidth while cutting latency to \(O(\log N)\). NCCL
+    builds both over the crossbar and picks per call based on message size. For training this rarely matters —
+    gradients and activations are megabytes to gigabytes, firmly bandwidth-bound — but at inference/sampling time,
+    where a step may reduce only a few kilobytes, latency dominates and the tree wins.
   </p>
-  <div class="note" style="background:#eff6ff; border-left-color:#3b82f6; color:#1e3a5f">
-    <strong>The \(N\,T_{\min}\) floor is the ring’s worst case.</strong> Because GPUs aren’t physically bound to a
-    ring, NCCL can instead run a <strong>double-binary-tree</strong> AllReduce that keeps full bandwidth but cuts
-    latency to \(O(\log N)\) hops. So on GPUs the small-message regime is often better than the linear floor above;
-    NCCL picks ring vs tree per call based on message size and topology. On a physical TPU torus the \(O(N)\) ring
-    latency is what you get.
-  </div>
   <div class="note">
-    <strong>Multiple mesh axes add bandwidth.</strong> Gathering over two mesh axes at once uses both sets of
-    links, so the effective bandwidth is \(W\cdot n_\text{axes}\) and the time drops by that factor. This is why
-    a 2-D torus beats a 1-D ring for the same device count.
+    <strong>Rings and trees are algorithms, not wiring.</strong> On a GPU there is no physical ring — the NVSwitch
+    is all-to-all. “Ring” and “tree” are just the <em>schedules</em> NCCL lays over the crossbar to hit the
+    bandwidth bound above. (On a TPU the story is different: chips are physically wired in a nearest-neighbor
+    <em>torus</em>, so there the ring is the hardware and the \(O(N)\) latency is unavoidable. The bandwidth
+    formula is the same either way.)
   </div>
 
   <!-- ════════════════════════ ALLGATHER ════════════════════════ -->
@@ -600,13 +620,13 @@
     <span class="shard">A[I, J<sub>X</sub>] &nbsp;→&nbsp; A[I, J]</span>
   </div>
   <p>
-    Mechanically: each device sends its shard to a neighbor around the \(X\) ring, keeping every shard it receives,
-    until all \(|X|\) shards have visited all \(|X|\) devices. That is \(N-1\) hops carrying \(V/N\) each, so by the
-    model above:
+    Counting bytes: every GPU is missing \(N-1\) of the \(N\) shards, so it must take in \(V\,(N-1)/N\) bytes
+    (equivalently, it broadcasts its own \(V/N\) shard out to the \(N-1\) others). On the crossbar all of those
+    transfers run at once, so the time is just that per-GPU volume over the link bandwidth:
   </p>
   <div class="result">
     <div class="result-label">AllGather cost</div>
-    \[ T_\text{AG} \;=\; \frac{V}{W\,n_\text{axes}}\cdot\frac{|X|-1}{|X|}\;\approx\;\frac{V}{W}, \qquad
+    \[ T_\text{AG} \;=\; \frac{V}{W}\cdot\frac{|X|-1}{|X|}\;\approx\;\frac{V}{W}, \qquad
        V = \text{bytes of the full (gathered) array.} \]
   </div>
   <p>
@@ -617,35 +637,36 @@
 
   <div class="anim-widget" id="ag-widget">
     <div class="anim-header">
-      <span class="anim-title">▸ AllGather on a 4-device ring</span>
-      <span class="anim-hint">Each device starts with one shard; after 3 hops everyone has all four.</span>
+      <span class="anim-title">▸ AllGather across an NVSwitch</span>
+      <span class="anim-hint">Each GPU broadcasts its shard through the crossbar; all of these overlap in reality.</span>
     </div>
     <div class="anim-stage">
-      <svg id="ring-svg" viewBox="0 0 460 260" width="460" height="260" role="img" aria-label="Ring AllGather animation"></svg>
+      <svg id="ring-svg" viewBox="0 0 460 280" width="460" height="280" role="img" aria-label="NVSwitch AllGather animation"></svg>
     </div>
     <div class="anim-controls">
-      <button class="anim-btn" id="ag-step">Hop ▸</button>
+      <button class="anim-btn" id="ag-step">Broadcast ▸</button>
       <button class="anim-btn anim-btn-ghost" id="ag-reset">↻ Reset</button>
-      <span class="anim-step-label" id="ag-status">Hop 0 / 3 — each device holds only its own shard.</span>
+      <span class="anim-step-label" id="ag-status">Each GPU holds only its own shard. Press broadcast.</span>
     </div>
   </div>
 
   <!-- ════════════════════════ REDUCESCATTER ════════════════════════ -->
   <h2 id="reducescatter">5 · ReduceScatter — reduce, but stay split</h2>
   <p>
-    ReduceScatter resolves an unreduced axis <em>and</em> leaves the result sharded. It is the same ring motion as
-    AllGather, except that instead of <em>keeping</em> each block a device receives, it <em>adds</em> the block into
-    its running shard. Each device walks away owning the fully-summed value of just one slice.
+    ReduceScatter resolves an unreduced axis <em>and</em> leaves the result sharded. It moves the same bytes as
+    AllGather, mirror-imaged: instead of each GPU <em>receiving</em> the shards it lacks, each GPU <em>sends out</em>
+    its partial contributions to wherever each slice is being summed, and <em>adds</em> on arrival. Each GPU walks
+    away owning the fully-summed value of just one slice.
   </p>
   <div class="result">
     <div class="result-label">ReduceScatter over X, sharding the J axis</div>
     <span class="shard">A[I, J] <span class="un">{U<sub>X</sub>}</span> &nbsp;→&nbsp; A[I, J<sub>X</sub>]</span>
   </div>
   <p>
-    Because it does the same amount of link work as AllGather — \(N-1\) shard-hops — it costs the same:
+    Because each GPU pushes the same \(V\,(N-1)/N\) bytes through its link as in an AllGather, it costs the same:
   </p>
   <div class="result">
-    \[ T_\text{RS} \;=\; \frac{V}{W\,n_\text{axes}}\cdot\frac{|X|-1}{|X|}\;\approx\;\frac{V}{W}. \]
+    \[ T_\text{RS} \;=\; \frac{V}{W}\cdot\frac{|X|-1}{|X|}\;\approx\;\frac{V}{W}. \]
   </div>
   <p>
     Note the freedom: a ReduceScatter <em>introduces</em> a new sharded dimension, and you get to pick which one.
@@ -666,7 +687,8 @@
   </div>
   <p>
     But notice what it is: first sum the partials and scatter (ReduceScatter), then gather the scattered sums back
-    to everyone (AllGather). Two ring traversals.
+    to everyone (AllGather). Each GPU therefore both sends and receives ~\(V(N-1)/N\) — twice the byte movement of
+    either half.
   </p>
   <div class="result">
     <div class="result-label">AllReduce = ReduceScatter ∘ AllGather</div>
@@ -690,11 +712,18 @@
     <span class="shard">A[I<sub>X</sub>, J] &nbsp;→&nbsp; A[I, J<sub>X</sub>]</span>
   </div>
   <p>
-    Because an AllToAll never needs to replicate a whole shard onto every device — each device only ships the slice
-    destined for each peer — the data travels, on average, only a quarter of the way around a bidirectional ring:
+    On a crossbar an AllToAll is bandwidth-bound just like an AllGather: each GPU holds \(V\) bytes split into \(N\)
+    pieces, keeps its own, and ships the other \(V(N-1)/N\) out — one piece to each peer, all in parallel through
+    the switch. So per-GPU it moves the same volume as AllGather:
   </p>
   <div class="result">
-    \[ T_\text{A2A} \;\approx\; \tfrac{1}{4}\,T_\text{AG} \;=\; \frac{1}{4}\cdot\frac{V}{W}\cdot\frac{|X|-1}{|X|}. \]
+    \[ T_\text{A2A} \;\approx\; T_\text{AG} \;=\; \frac{V}{W}\cdot\frac{|X|-1}{|X|}. \]
+  </div>
+  <div class="note">
+    <strong>On a ring, AllToAll is cheaper</strong> (≈\(\tfrac14\) of AllGather) because each piece travels only a
+    short arc rather than all the way around. That discount is a <em>ring</em> property — on the NVSwitch crossbar
+    there are no shared hops to economize, so AllToAll and AllGather cost the same per-GPU bytes. The crossbar still
+    wins in absolute terms: its per-GPU bandwidth is far higher than a ring’s two links.
   </div>
 
   <!-- ════════════════════════ MATMUL CASES ════════════════════════ -->
@@ -780,14 +809,14 @@
   <div class="table-wrap">
     <table>
       <thead>
-        <tr><th>Collective</th><th>What it does</th><th>Sharding change</th><th>Time (throughput-bound)</th></tr>
+        <tr><th>Collective</th><th>What it does</th><th>Sharding change</th><th>Bytes/GPU ÷ \(W\)</th></tr>
       </thead>
       <tbody>
         <tr>
           <td><strong>AllGather</strong></td>
           <td>Reassemble a split axis; remove a subscript.</td>
           <td class="shard">A[J<sub>X</sub>] → A[J]</td>
-          <td class="ctr">\(V/(W\,n_\text{axes})\)</td>
+          <td class="ctr">\(\frac{V}{W}\cdot\frac{N-1}{N}\)</td>
         </tr>
         <tr>
           <td><strong>ReduceScatter</strong></td>
@@ -805,7 +834,7 @@
           <td><strong>AllToAll</strong></td>
           <td>Replicate one axis while splitting another on the same mesh axis (resharding / transpose).</td>
           <td class="shard">A[I<sub>X</sub>] → A[J<sub>X</sub>]</td>
-          <td class="ctr">\(\tfrac14\times\) AllGather</td>
+          <td class="ctr">≈ AllGather <span style="font-size:.8em; color:var(--muted)">(\(\tfrac14\times\) on a ring)</span></td>
         </tr>
       </tbody>
     </table>
@@ -822,11 +851,15 @@
     </div>
     <div class="summary-card">
       <div class="summary-card-label">The cost law</div>
-      <p>\(T \approx V/W\), set by the moved-array size \(V\) and link bandwidth \(W\) — almost independent of device count.</p>
+      <p>\(T \approx V/W\): bytes each GPU pushes through its links ÷ link bandwidth \(W\) — almost independent of device count.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Two-tier \(W\)</div>
+      <p>NVLink inside a node (~450 GB/s) vs network across nodes (~50 GB/s). Keep chatty collectives on NVLink — this is why TP stays in one node.</p>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">Cheapest first</div>
-      <p>Prefer ReduceScatter (\(V/W\)) over AllReduce (\(2V/W\)); AllToAll is cheapest (\(V/4W\)). Keep results sharded when you can.</p>
+      <p>Prefer ReduceScatter (\(V/W\)) over AllReduce (\(2V/W\)). Keep results sharded when you can.</p>
     </div>
   </div>
 
@@ -844,8 +877,8 @@
 </footer>
 
 <script>
-  // ── Ring AllGather animation ──────────────────────────────
-  (function setupRing() {
+  // ── NVSwitch AllGather animation ──────────────────────────
+  (function setupSwitch() {
     const svg = document.getElementById('ring-svg');
     const stepBtn = document.getElementById('ag-step');
     const resetBtn = document.getElementById('ag-reset');
@@ -854,86 +887,70 @@
 
     const N = 4;
     const SVGNS = 'http://www.w3.org/2000/svg';
-    // shard colors
     const colors = ['#0d9488', '#c2410c', '#7c3aed', '#2563eb'];
-    const names = ['A₀', 'A₁', 'A₂', 'A₃'];
-    // device positions (square ring)
-    const pos = [ {x:130,y:60}, {x:330,y:60}, {x:330,y:200}, {x:130,y:200} ];
-    let hop = 0;
-    // owned[d] = Set of shard indices device d currently holds
-    let owned = [];
+    const hub = { x: 230, y: 140 };
+    // GPUs at the four corners, all wired to the central switch
+    const pos = [ {x:80,y:55}, {x:380,y:55}, {x:380,y:225}, {x:80,y:225} ];
+    let done = 0;          // number of shards broadcast so far
+    let owned = [];        // owned[d] = Set of shard indices on GPU d
 
-    function fresh() { owned = pos.map((_, d) => new Set([d])); hop = 0; }
+    function fresh() { owned = pos.map((_, d) => new Set([d])); done = 0; }
 
-    function draw() {
+    function mk(tag, attrs) {
+      const e = document.createElementNS(SVGNS, tag);
+      for (const k in attrs) e.setAttribute(k, attrs[k]);
+      svg.appendChild(e);
+      return e;
+    }
+
+    function draw(active) {
       while (svg.firstChild) svg.removeChild(svg.firstChild);
-      // ring arrows (clockwise)
-      for (let d = 0; d < N; d++) {
-        const a = pos[d], b = pos[(d + 1) % N];
-        const line = document.createElementNS(SVGNS, 'line');
-        line.setAttribute('x1', a.x); line.setAttribute('y1', a.y);
-        line.setAttribute('x2', b.x); line.setAttribute('y2', b.y);
-        line.setAttribute('stroke', '#cbd5e1');
-        line.setAttribute('stroke-width', '2');
-        line.setAttribute('stroke-dasharray', '4 4');
-        svg.appendChild(line);
-      }
-      // devices
+      // links GPU <-> switch — during a broadcast, every link carries the source's shard (1→switch→all)
+      const lit = active != null;
       pos.forEach((p, d) => {
-        const g = document.createElementNS(SVGNS, 'g');
-        g.setAttribute('class', 'ring-cell');
-        // four slots per device showing which shards it holds
+        mk('line', { x1: p.x, y1: p.y, x2: hub.x, y2: hub.y,
+          stroke: lit ? colors[active] : '#cbd5e1',
+          'stroke-width': lit ? 3 : 2,
+          'stroke-dasharray': lit ? '0' : '4 4',
+          opacity: lit ? 0.9 : 1 });
+      });
+      // central NVSwitch
+      mk('rect', { x: hub.x - 46, y: hub.y - 18, width: 92, height: 36, rx: 7,
+        fill: '#1e293b', stroke: '#334155' });
+      mk('text', { x: hub.x, y: hub.y + 4, 'text-anchor': 'middle',
+        'font-family': 'ui-monospace, monospace', 'font-size': '12px', 'font-weight': '600',
+        fill: '#e2e8f0' }).textContent = 'NVSwitch';
+      // GPUs
+      pos.forEach((p, d) => {
         const slotW = 18, slotH = 14, x0 = p.x - 2 * slotW, y0 = p.y - 7;
         for (let s = 0; s < N; s++) {
-          const r = document.createElementNS(SVGNS, 'rect');
-          r.setAttribute('x', x0 + s * slotW);
-          r.setAttribute('y', y0);
-          r.setAttribute('width', slotW - 2);
-          r.setAttribute('height', slotH);
-          r.setAttribute('rx', '2');
           const has = owned[d].has(s);
-          r.setAttribute('fill', has ? colors[s] : '#f1f5f9');
-          r.setAttribute('opacity', has ? '1' : '0.35');
-          r.setAttribute('stroke', '#e2e8f0');
-          svg.appendChild(r);
+          mk('rect', { x: x0 + s * slotW, y: y0, width: slotW - 2, height: slotH, rx: 2,
+            fill: has ? colors[s] : '#f1f5f9', opacity: has ? 1 : 0.35, stroke: '#e2e8f0' });
         }
-        const label = document.createElementNS(SVGNS, 'text');
-        label.setAttribute('x', p.x); label.setAttribute('y', p.y - 14);
-        label.setAttribute('text-anchor', 'middle');
-        label.setAttribute('class', 'ring-label');
-        label.textContent = 'GPU ' + d;
-        svg.appendChild(label);
-        const sub = document.createElementNS(SVGNS, 'text');
-        sub.setAttribute('x', p.x); sub.setAttribute('y', p.y + 26);
-        sub.setAttribute('text-anchor', 'middle');
-        sub.setAttribute('class', 'ring-sub');
-        sub.textContent = owned[d].size + '/' + N + ' shards';
-        svg.appendChild(sub);
+        mk('text', { x: p.x, y: p.y - 14, 'text-anchor': 'middle', class: 'ring-label' })
+          .textContent = 'GPU ' + d;
+        mk('text', { x: p.x, y: p.y + 26, 'text-anchor': 'middle', class: 'ring-sub' })
+          .textContent = owned[d].size + '/' + N + ' shards';
       });
     }
 
     function step() {
-      if (hop >= N - 1) return;
-      // each device sends a shard it has (the one received last / its own) to next device
-      const incoming = pos.map(() => new Set());
-      for (let d = 0; d < N; d++) {
-        // forward the shard that originated hop steps "back" along the ring
-        const src = (d - hop + N) % N;
-        if (owned[d].has(src)) incoming[(d + 1) % N].add(src);
-      }
-      for (let d = 0; d < N; d++) incoming[d].forEach(s => owned[d].add(s));
-      hop++;
-      draw();
-      status.textContent = hop < N - 1
-        ? `Hop ${hop} / ${N - 1} — each GPU passed a shard clockwise.`
-        : `Hop ${hop} / ${N - 1} — done: every GPU now holds all ${N} shards (the full array).`;
-      stepBtn.disabled = hop >= N - 1;
+      if (done >= N) return;
+      const src = done;                 // GPU `src` broadcasts its shard to everyone
+      for (let d = 0; d < N; d++) owned[d].add(src);
+      done++;
+      draw(src);
+      status.textContent = done < N
+        ? `GPU ${src} pushed shard A${'₀₁₂₃'[src]} through the switch to all GPUs (${done}/${N}).`
+        : `Done. Every GPU holds all ${N} shards. On the crossbar these ${N} broadcasts overlap — each GPU pulled in the ${N - 1} shards it lacked: V·(N−1)/N bytes.`;
+      stepBtn.disabled = done >= N;
     }
 
     function reset() {
-      fresh(); draw();
+      fresh(); draw(null);
       stepBtn.disabled = false;
-      status.textContent = `Hop 0 / ${N - 1} — each GPU holds only its own shard.`;
+      status.textContent = 'Each GPU holds only its own shard. Press broadcast.';
     }
 
     stepBtn.addEventListener('click', step);
