@@ -50,7 +50,9 @@ plumbing that turns the math into a working training run.
 
 | Page | Topic |
 |---|---|
-| [Sharding & Collectives](https://yueyiming2009.github.io/ai-learning/collectives.html) | Sharding notation, `{Uₓ}` unreduced state, ring cost model, the 4 collectives derived |
+| [GPU Hardware for ML](https://yueyiming2009.github.io/ai-learning/gpu-hardware.html) | Peak FLOPs, the bandwidth hierarchy, the roofline, NVSwitch crossbar, the network cliff |
+| [TPU Hardware for ML](https://yueyiming2009.github.io/ai-learning/tpu-hardware.html) | MXU systolic array, VMEM/HBM, the ICI nearest-neighbor torus, GPU-vs-TPU contrast |
+| [Sharding & Collectives](https://yueyiming2009.github.io/ai-learning/collectives.html) | Sharding notation, `{Uₓ}` unreduced state, the cost model, the 4 collectives derived |
 | [Tensor Parallelism](https://yueyiming2009.github.io/ai-learning/tensor-parallelism.html) | Megatron column/row split → one AllReduce per block; why TP caps at one NVLink node |
 | [Triton — Introduction](triton/intro.ipynb) | Program IDs, block pointers, masking, the launch grid |
 | [Fused Softmax kernel](triton/fused_softmax.ipynb) | Row-wise online softmax in one fused Triton kernel |

@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GPU Hardware for ML — Compute, Memory, Interconnect</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #0d9488;
+      --accent-light: #f0fdfa;
+      --warning-bg: #fffbeb;
+      --warning-border: #f59e0b;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --compare-bg: #eff6ff;
+      --compare-border: #3b82f6;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0; padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 52px;
+    }
+    .nav-brand { font-weight: 600; font-size: 0.9rem; color: var(--accent); text-decoration: none; white-space: nowrap; }
+    .nav-links { display: flex; gap: 4px; overflow-x: auto; flex: 1; }
+    .nav-links a {
+      font-size: 0.82rem; color: var(--muted); text-decoration: none;
+      padding: 4px 10px; border-radius: 6px; white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .nav-back {
+      font-size: 0.82rem; color: var(--muted); text-decoration: none;
+      padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border);
+      white-space: nowrap; transition: color 0.15s; margin-left: auto; flex-shrink: 0;
+    }
+    .nav-back:hover { color: var(--text); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #166534 0%, #0d9488 100%);
+      color: white; padding: 56px 24px 48px; text-align: center;
+    }
+    .hero h1 { font-size: clamp(1.5rem, 4vw, 2.2rem); font-weight: 600; margin: 0 0 12px; letter-spacing: -0.02em; }
+    .hero p { margin: 0 auto; opacity: 0.85; font-size: 0.97rem; max-width: 580px; }
+    .hero-pill {
+      display: inline-block; background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25); border-radius: 100px;
+      font-size: 0.78rem; padding: 3px 12px; margin-bottom: 16px;
+      letter-spacing: 0.04em; text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap { max-width: 820px; margin: 0 auto; padding: 48px 24px 80px; }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem; font-weight: 600; margin: 2.8em 0 0.8em;
+      padding-bottom: 8px; border-bottom: 2px solid var(--border); color: var(--text);
+    }
+    h3 { font-size: 0.97rem; font-weight: 600; margin: 1.6em 0 0.4em; color: #374151; }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: #374151; }
+
+    /* ── Code ────────────────────────────────── */
+    code { font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace; }
+    p code, li code, td code { background: #f1f5f9; padding: 1px 6px; border-radius: 4px; font-size: 0.88em; color: #0f766e; }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
+    th, td { border: 1px solid var(--border); padding: 9px 16px; text-align: left; vertical-align: top; }
+    th { background: var(--surface); font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+    tr:hover td { background: #fafafa; }
+    td.ctr, th.ctr { text-align: center; }
+
+    /* ── Step boxes ──────────────────────────── */
+    .step {
+      background: var(--step-bg); border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0;
+      padding: 16px 20px; margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600; font-size: 0.88rem; color: var(--accent);
+      text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .step-label::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+
+    /* ── Callout / note ──────────────────────── */
+    .note {
+      background: var(--warning-bg); border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0; padding: 10px 16px; margin: 1em 0;
+      font-size: 0.92em; color: #78350f;
+    }
+    .note::before { content: '⚠ '; }
+
+    /* ── Result / boxed equation ─────────────── */
+    .result {
+      background: var(--boxed-bg); border: 1.5px solid var(--boxed-border);
+      border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; text-align: center;
+    }
+    .result-label { font-size: 0.8rem; font-weight: 600; color: #16a34a; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+
+    /* ── Comparison box ──────────────────────── */
+    .compare { background: var(--compare-bg); border: 1.5px solid var(--compare-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; }
+    .compare-label { font-size: 0.8rem; font-weight: 600; color: #2563eb; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
+
+    /* ── Summary card ────────────────────────── */
+    .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 1.2em 0; }
+    .summary-card { background: var(--accent-light); border: 1px solid #99f6e4; border-radius: 8px; padding: 14px 16px; }
+    .summary-card-label { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    /* ── Cross-link banner ───────────────────── */
+    .xref { background: var(--accent-light); border: 1px solid #99f6e4; border-radius: 8px; padding: 12px 18px; margin: 1.4em 0; font-size: 0.92rem; }
+    .xref a { color: var(--accent); font-weight: 600; text-decoration: none; }
+    .xref a:hover { text-decoration: underline; }
+
+    /* ── Spec chips ──────────────────────────── */
+    .spec-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 1.2em 0; }
+    .spec { background: #0f172a; color: #e2e8f0; border-radius: 10px; padding: 12px 14px; }
+    .spec-num { font-size: 1.25rem; font-weight: 600; color: #5eead4; font-family: ui-monospace, monospace; }
+    .spec-key { font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; margin-top: 2px; }
+
+    /* ── Diagram widgets ─────────────────────── */
+    .diagram {
+      background: linear-gradient(180deg, #f9fafb 0%, #f0fdfa 100%);
+      border: 1px solid #99f6e4; border-radius: 12px;
+      padding: 18px 20px; margin: 1.6em 0;
+    }
+    .diagram-title { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+    .diagram-hint { font-size: 0.8rem; color: var(--muted); margin-bottom: 14px; }
+    .diagram-stage { background: white; border-radius: 8px; padding: 16px; overflow-x: auto; }
+    .anim-controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+    .anim-btn { background: var(--accent); color: white; border: none; border-radius: 6px; padding: 7px 16px; font-family: inherit; font-size: 0.85rem; font-weight: 500; cursor: pointer; transition: background 0.15s, transform 0.1s; }
+    .anim-btn:hover:not(:disabled) { background: #0f766e; }
+    .anim-btn:active:not(:disabled) { transform: scale(0.97); }
+    .anim-step-label { font-size: 0.83rem; color: var(--muted); font-style: italic; flex: 1; min-width: 0; }
+    input[type=range] { accent-color: var(--accent); width: 220px; max-width: 60vw; }
+    .rf-read { font-size: 0.9rem; }
+    .rf-read b { font-family: ui-monospace, monospace; }
+
+    footer { border-top: 1px solid var(--border); padding: 28px 24px; text-align: center; font-size: 0.82rem; color: var(--muted); }
+
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="#">GPU Hardware</a>
+  <div class="nav-links">
+    <a href="index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#model">Mental model</a>
+    <a href="#compute">Compute</a>
+    <a href="#memory">Memory hierarchy</a>
+    <a href="#roofline">Roofline</a>
+    <a href="#nvlink">Intra-node</a>
+    <a href="#network">Inter-node</a>
+    <a href="#map">Map to the math</a>
+    <a href="#summary">Summary</a>
+  </div>
+  <a class="nav-back" href="index.html">Home</a>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Systems · Hardware</span>
+  <h1>GPU Hardware for ML</h1>
+  <p>The compute, memory, and interconnect a training GPU actually exposes — peak FLOPs, the bandwidth hierarchy from registers to HBM to NVLink to the network, and the roofline that decides whether your kernel is compute- or memory-bound. The physical basis for every parallelism and collective cost.</p>
+</div>
+
+<div class="page-wrap">
+
+  <p>
+    All the math in this series — every matmul FLOP, every collective’s \(V/W\) cost — ultimately runs on silicon
+    with fixed throughputs. This page is the hardware substrate: what a modern training GPU (we use the
+    <strong>NVIDIA H100 SXM5</strong> as the running example) can compute, how fast it can feed that compute from
+    each level of memory, and how fast it can talk to other GPUs. Three numbers per level, and almost every
+    performance question reduces to comparing two of them.
+  </p>
+
+  <div class="spec-grid">
+    <div class="spec"><div class="spec-num">989</div><div class="spec-key">TFLOP/s bf16</div></div>
+    <div class="spec"><div class="spec-num">80 GB</div><div class="spec-key">HBM3 capacity</div></div>
+    <div class="spec"><div class="spec-num">3.35 TB/s</div><div class="spec-key">HBM bandwidth</div></div>
+    <div class="spec"><div class="spec-num">900 GB/s</div><div class="spec-key">NVLink / GPU</div></div>
+  </div>
+
+  <!-- ════════════════════════ MENTAL MODEL ════════════════════════ -->
+  <h2 id="model">1 · The mental model: compute fed by a bandwidth pyramid</h2>
+  <p>
+    A GPU is an enormous amount of arithmetic throughput attached to a <em>steep hierarchy</em> of memories. The
+    arithmetic is cheap and abundant; the hard part is keeping it fed. Each level up the hierarchy is smaller but
+    far faster, each level down is larger but slower:
+  </p>
+  <ul>
+    <li><strong>Compute:</strong> 132 streaming multiprocessors (SMs), each with Tensor Cores that do the matmuls.</li>
+    <li><strong>On-chip memory:</strong> registers and shared memory (per SM), then a 50 MB L2 shared by all SMs — tens of TB/s, but kilobytes-to-megabytes in size.</li>
+    <li><strong>HBM:</strong> 80 GB of high-bandwidth memory at 3.35 TB/s — where the weights, activations, and optimizer state live.</li>
+    <li><strong>NVLink:</strong> 900 GB/s to the other 7 GPUs in the node, through an NVSwitch crossbar.</li>
+    <li><strong>Network:</strong> ~50 GB/s per GPU across nodes, over InfiniBand or Ethernet.</li>
+  </ul>
+  <p>
+    Performance work is almost always about <em>which level is the bottleneck</em>. A kernel that re-reads HBM is
+    HBM-bound; a tensor-parallel layer is NVLink-bound; a data-parallel cluster is network-bound. The rest of this
+    page makes each level concrete.
+  </p>
+
+  <!-- ════════════════════════ COMPUTE ════════════════════════ -->
+  <h2 id="compute">2 · Compute: SMs and Tensor Cores</h2>
+  <p>
+    The H100 has 132 SMs. General CUDA-core arithmetic (the kind that runs your elementwise ops, norms, and
+    softmaxes) is a few tens of TFLOP/s. The headline number — <strong>989 TFLOP/s in bf16</strong> — comes from
+    the <strong>Tensor Cores</strong>, dedicated matrix-multiply-accumulate units that compute small matmul tiles
+    (e.g. \(16\times8\times16\)) in a few cycles. They are why we build architectures out of big matmuls: that is
+    the one operation the hardware does at full rate.
+  </p>
+  <div class="note">
+    Precision matters: peak roughly doubles each time you halve the bits. The H100 does ~989 TFLOP/s at bf16/fp16
+    and ~1,979 TFLOP/s at fp8 (dense). “With sparsity” marketing numbers double these again but rarely apply to
+    training. Throughout this series we quote <strong>dense bf16</strong>.
+  </div>
+  <p>
+    The key consequence for the math: a matmul \([B,D]\times[D,F]\) costs \(2BDF\) FLOPs and runs near 989 TFLOP/s;
+    an elementwise op over the same activation costs \(O(BD)\) FLOPs but is limited by how fast you can read/write
+    it from HBM. That mismatch is the roofline (§4), and it is why fused kernels (Triton, FlashAttention) exist:
+    do more arithmetic per byte moved.
+  </p>
+
+  <!-- ════════════════════════ MEMORY ════════════════════════ -->
+  <h2 id="memory">3 · The memory hierarchy</h2>
+  <p>
+    Every level the data has to travel through has a capacity and a bandwidth, and they trade off against each
+    other across ~6 orders of magnitude. The diagram shows the H100’s levels to scale (log bandwidth):
+  </p>
+
+  <div class="diagram">
+    <div class="diagram-title">▸ The bandwidth ladder (H100, log scale)</div>
+    <div class="diagram-hint">Each rung down is bigger but slower. The parallelism math lives on the bottom three.</div>
+    <div class="diagram-stage">
+      <svg viewBox="0 0 620 260" width="620" height="260" role="img" aria-label="GPU bandwidth hierarchy">
+        <!-- bars: [label, capacity, bandwidth GB/s, color] drawn by log width -->
+        <g font-family="Inter, sans-serif" font-size="12.5">
+          <!-- Registers -->
+          <rect x="150" y="14"  width="430" height="24" rx="4" fill="#0d9488"/>
+          <text x="146" y="31" text-anchor="end" fill="#374151" font-weight="600">Registers</text>
+          <text x="570" y="31" text-anchor="end" fill="#fff" font-weight="600">~100 TB/s · ~256 KB/SM</text>
+          <!-- Shared / L1 -->
+          <rect x="150" y="46"  width="372" height="24" rx="4" fill="#0f766e"/>
+          <text x="146" y="63" text-anchor="end" fill="#374151" font-weight="600">Shared mem / L1</text>
+          <text x="514" y="63" text-anchor="end" fill="#fff" font-weight="600">~20 TB/s · 228 KB/SM</text>
+          <!-- L2 -->
+          <rect x="150" y="78"  width="300" height="24" rx="4" fill="#115e59"/>
+          <text x="146" y="95" text-anchor="end" fill="#374151" font-weight="600">L2 cache</text>
+          <text x="442" y="95" text-anchor="end" fill="#fff" font-weight="600">~6 TB/s · 50 MB</text>
+          <!-- HBM -->
+          <rect x="150" y="110" width="246" height="24" rx="4" fill="#c2410c"/>
+          <text x="146" y="127" text-anchor="end" fill="#374151" font-weight="600">HBM3</text>
+          <text x="388" y="127" text-anchor="end" fill="#fff" font-weight="600">3.35 TB/s · 80 GB</text>
+          <!-- NVLink -->
+          <rect x="150" y="142" width="180" height="24" rx="4" fill="#b45309"/>
+          <text x="146" y="159" text-anchor="end" fill="#374151" font-weight="600">NVLink (node)</text>
+          <text x="322" y="159" text-anchor="end" fill="#fff" font-weight="600">0.9 TB/s</text>
+          <!-- PCIe -->
+          <rect x="150" y="174" width="96"  height="24" rx="4" fill="#92400e"/>
+          <text x="146" y="191" text-anchor="end" fill="#374151" font-weight="600">PCIe Gen5</text>
+          <text x="372" y="191" text-anchor="start" fill="#92400e" font-weight="600">64 GB/s</text>
+          <!-- Network -->
+          <rect x="150" y="206" width="78"  height="24" rx="4" fill="#7c2d12"/>
+          <text x="146" y="223" text-anchor="end" fill="#374151" font-weight="600">Network NIC</text>
+          <text x="356" y="223" text-anchor="start" fill="#7c2d12" font-weight="600">~50 GB/s (across nodes)</text>
+          <text x="150" y="252" fill="#9ca3af" font-size="11">← bar length ∝ log(bandwidth); teal = on-chip, orange = off-chip</text>
+        </g>
+      </svg>
+    </div>
+  </div>
+
+  <p>
+    The two boundaries that hurt are the <strong>orange jumps</strong>: leaving the chip for HBM (the
+    <em>memory wall</em>), and leaving the node for the network (the <em>communication wall</em>). On-chip
+    bandwidth is so high that, once data is resident, arithmetic is essentially free; the discipline of fast ML
+    kernels is to pull a tile into SRAM once and do as much math on it as possible before paying to write it back.
+  </p>
+
+  <!-- ════════════════════════ ROOFLINE ════════════════════════ -->
+  <h2 id="roofline">4 · The roofline: compute-bound vs memory-bound</h2>
+  <p>
+    Whether a kernel is limited by the Tensor Cores or by HBM is settled by one ratio — its
+    <strong>arithmetic intensity</strong>, the FLOPs it performs per byte it reads from / writes to HBM:
+  </p>
+  <div class="result">
+    <div class="result-label">Arithmetic intensity</div>
+    \[ I \;=\; \frac{\text{FLOPs}}{\text{bytes moved to/from HBM}} \quad\text{(FLOP/byte)} \]
+  </div>
+  <p>
+    The achievable throughput is the smaller of the two ceilings: you can never exceed peak FLOPs, and you can
+    never go faster than HBM can feed you (\(I\times\) bandwidth):
+  </p>
+  <div class="result">
+    \[ \text{achievable FLOP/s} \;=\; \min\big(\underbrace{P_\text{peak}}_{989\ \text{TFLOP/s}},\;
+       \underbrace{I \times W_\text{HBM}}_{I\,\times\,3.35\ \text{TB/s}}\big). \]
+  </div>
+  <p>
+    The two ceilings cross at the <strong>ridge point</strong> \(I^\star = P_\text{peak}/W_\text{HBM} =
+    989/3.35 \approx 295\) FLOP/byte. Below it you are <em>memory-bound</em> (add arithmetic intensity for free
+    speedup); above it you are <em>compute-bound</em> (saturating the Tensor Cores). Drag the slider to see where
+    common operations land:
+  </p>
+
+  <div class="diagram">
+    <div class="diagram-title">▸ Roofline explorer (H100, bf16)</div>
+    <div class="diagram-hint">Arithmetic intensity → achievable throughput. The ridge is at ~295 FLOP/byte.</div>
+    <div class="diagram-stage">
+      <svg id="rf-svg" viewBox="0 0 520 320" width="520" height="320" role="img" aria-label="Roofline plot"></svg>
+    </div>
+    <div class="anim-controls">
+      <label class="rf-read">Arithmetic intensity: <b id="rf-ai">10</b> FLOP/byte</label>
+      <input type="range" id="rf-slider" min="-100" max="400" value="100">
+    </div>
+    <p class="rf-read" id="rf-verdict" style="margin:10px 2px 0"></p>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Operation</th><th class="ctr">Arithmetic intensity</th><th>Bound by</th></tr></thead>
+      <tbody>
+        <tr><td>Elementwise (add, GeLU), norms, softmax</td><td class="ctr">~0.25–2</td><td>HBM bandwidth — fuse them</td></tr>
+        <tr><td>Attention (short context, unfused)</td><td class="ctr">~10</td><td>HBM — why FlashAttention fuses it</td></tr>
+        <tr><td>Big square matmul / FFN \([B,D]\times[D,F]\)</td><td class="ctr">~100s–1000s</td><td>Tensor Cores — the good case</td></tr>
+        <tr><td>Tiny / memory-bound GEMV (decode, batch 1)</td><td class="ctr">~1</td><td>HBM — inference is bandwidth-bound</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note">
+    The same logic governs <em>communication</em>, with HBM bandwidth swapped for link bandwidth: a collective or a
+    parallel layer is “compute-bound” (good — comm hides under the matmul) only when it does enough FLOPs per byte
+    sent. <a href="tensor-parallelism.html">Tensor parallelism</a> works precisely because its AllReduce moves
+    \(O(BTD)\) bytes against \(O(BTDF)\) FLOPs — a high arithmetic intensity over the network.
+  </div>
+
+  <!-- ════════════════════════ NVLINK ════════════════════════ -->
+  <h2 id="nvlink">5 · Inside a node: NVLink and the NVSwitch crossbar</h2>
+  <p>
+    Eight H100s in a server (an HGX/DGX baseboard) are wired together not by a ring or a mesh but by a set of
+    <strong>NVSwitch</strong> chips that form a <strong>non-blocking all-to-all crossbar</strong>. Each GPU has
+    18 NVLink-4 lanes totalling <strong>900 GB/s bidirectional</strong> (≈450 GB/s each way) into the switch
+    fabric, and — crucially — <em>every</em> GPU can drive that full bandwidth to <em>every</em> other GPU at the
+    same time. There is no shared bottleneck and no notion of “distance” between GPUs in a node.
+  </p>
+
+  <div class="diagram">
+    <div class="diagram-title">▸ An 8-GPU node: every GPU reaches every other at full bandwidth</div>
+    <div class="diagram-hint">NVSwitch is a crossbar, not a ring — there are no nearest neighbors.</div>
+    <div class="diagram-stage">
+      <svg viewBox="0 0 560 220" width="560" height="220" role="img" aria-label="8-GPU NVSwitch node">
+        <g font-family="Inter, sans-serif" font-size="11">
+          <!-- central switch -->
+          <rect x="220" y="90" width="120" height="40" rx="8" fill="#1e293b" stroke="#334155"/>
+          <text x="280" y="115" text-anchor="middle" fill="#e2e8f0" font-weight="600" font-size="12.5">NVSwitch ⨯4</text>
+          <!-- 8 GPUs around -->
+          <!-- positions -->
+          <!-- top row -->
+        </g>
+        <g id="node-gpus"></g>
+      </svg>
+    </div>
+  </div>
+
+  <p>
+    This is the single most important fact for <a href="tensor-parallelism.html">tensor parallelism</a>: a TP group
+    can shard a layer across these 8 GPUs and pay only the NVLink-speed AllReduce, with no penalty for which GPU
+    talks to which. It is also why TP is <em>capped at 8</em> — the crossbar exists only inside the node.
+  </p>
+
+  <!-- ════════════════════════ NETWORK ════════════════════════ -->
+  <h2 id="network">6 · Across nodes: NICs, InfiniBand, and the bandwidth cliff</h2>
+  <p>
+    To scale past 8 GPUs you leave the node. Each GPU is paired with a network card (typically a
+    <strong>ConnectX-7 at 400 Gb/s ≈ 50 GB/s</strong>), and those NICs connect through a switched
+    InfiniBand or RoCE fabric — usually a <strong>rail-optimized fat-tree</strong>, where GPU \(i\) of every node
+    attaches to the same “rail” switch so same-rail traffic stays one hop away.
+  </p>
+  <div class="result">
+    <div class="result-label">The cliff at the node boundary</div>
+    NVLink ~450 GB/s  →  network ~50 GB/s &nbsp;&nbsp;≈&nbsp;&nbsp; <strong>~9–10× less bandwidth per GPU</strong>
+  </div>
+  <p>
+    Everything about multi-node parallelism is organized around hiding this drop. The collectives that must cross
+    it — the gradient AllReduce of data parallelism, the activation sends of pipeline parallelism — are chosen
+    either to be <em>rare</em> (once per step) or to <em>overlap</em> with compute, so the slow fabric is never on
+    the exposed critical path. The chatty, per-layer collectives stay inside the NVLink island.
+  </p>
+
+  <!-- ════════════════════════ MAP TO MATH ════════════════════════ -->
+  <h2 id="map">7 · How this maps onto the parallelism math</h2>
+  <p>
+    The <a href="collectives.html">collectives cost model</a> prices a collective as \(T \approx V/W\): bytes moved
+    per GPU over link bandwidth. Everything on this page is where those two symbols come from:
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>In the math</th><th>Is physically…</th><th>H100 value</th></tr></thead>
+      <tbody>
+        <tr><td>\(P_\text{peak}\) (matmul rate)</td><td>Tensor Cores across 132 SMs</td><td>989 TFLOP/s bf16</td></tr>
+        <tr><td>HBM \(W\) (kernel roofline)</td><td>HBM3 stacks</td><td>3.35 TB/s</td></tr>
+        <tr><td>\(W\) for tensor-parallel AllReduce</td><td>NVLink + NVSwitch crossbar (in-node)</td><td>~450 GB/s/GPU</td></tr>
+        <tr><td>\(W\) for data/pipeline parallel</td><td>NIC + InfiniBand fat-tree (cross-node)</td><td>~50 GB/s/GPU</td></tr>
+        <tr><td>Per-GPU memory budget</td><td>HBM capacity</td><td>80 GB</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    The two-tier \(W\) — fast NVLink inside the node, slow network outside — is not a footnote; it is the reason the
+    parallelism schemes are layered the way they are, with tensor parallelism inside each node and data/pipeline
+    parallelism spanning nodes.
+  </p>
+
+  <!-- ════════════════════════ SUMMARY ════════════════════════ -->
+  <h2 id="summary">8 · Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">Compute</div>
+      <p>Tensor Cores do matmuls at ~989 TFLOP/s bf16 — the one op at full rate, which is why models are matmul-shaped.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Memory wall</div>
+      <p>HBM is 80 GB at 3.35 TB/s — orders of magnitude slower than on-chip SRAM. Keep tiles resident; fuse.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Roofline</div>
+      <p>Ridge at ~295 FLOP/byte. Below it = memory-bound (fuse for free speedup); above = compute-bound.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Crossbar in, cliff out</div>
+      <p>NVSwitch gives all-to-all ~450 GB/s within 8 GPUs; the network drops to ~50 GB/s across nodes.</p>
+    </div>
+  </div>
+
+  <div class="xref">
+    Next: <a href="collectives.html">Sharding &amp; Collectives →</a> turns these bandwidths into the
+    \(T \approx V/W\) cost of every communication primitive, and <a href="tpu-hardware.html">TPU Hardware →</a>
+    contrasts this crossbar world with the TPU’s nearest-neighbor torus.
+  </div>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; GPU hardware for ML
+  &nbsp;·&nbsp; <a href="index.html" style="color:inherit">← All notes</a>
+</footer>
+
+<script>
+  // ── 8-GPU node diagram ────────────────────────────────────
+  (function () {
+    const g = document.getElementById('node-gpus');
+    if (!g) return;
+    const SVGNS = 'http://www.w3.org/2000/svg';
+    const cx = 280, cy = 110, sw = { x: 220, y: 90, w: 120, h: 40 };
+    const pts = [
+      {x:60,y:30},{x:180,y:18},{x:380,y:18},{x:500,y:30},
+      {x:60,y:190},{x:180,y:202},{x:380,y:202},{x:500,y:190}
+    ];
+    pts.forEach((p, i) => {
+      // link to nearest edge of switch
+      const tx = Math.max(sw.x, Math.min(p.x, sw.x + sw.w));
+      const ty = p.y < cy ? sw.y : sw.y + sw.h;
+      const line = document.createElementNS(SVGNS, 'line');
+      line.setAttribute('x1', p.x); line.setAttribute('y1', p.y + 14);
+      line.setAttribute('x2', tx); line.setAttribute('y2', ty);
+      line.setAttribute('stroke', '#5eead4'); line.setAttribute('stroke-width', '2.5');
+      g.appendChild(line);
+      const r = document.createElementNS(SVGNS, 'rect');
+      r.setAttribute('x', p.x - 30); r.setAttribute('y', p.y - 2);
+      r.setAttribute('width', 60); r.setAttribute('height', 30); r.setAttribute('rx', 6);
+      r.setAttribute('fill', '#0d9488'); g.appendChild(r);
+      const t = document.createElementNS(SVGNS, 'text');
+      t.setAttribute('x', p.x); t.setAttribute('y', p.y + 18);
+      t.setAttribute('text-anchor', 'middle'); t.setAttribute('fill', '#fff');
+      t.setAttribute('font-family', 'Inter, sans-serif'); t.setAttribute('font-size', '11.5');
+      t.setAttribute('font-weight', '600'); t.textContent = 'GPU ' + i;
+      g.appendChild(t);
+    });
+  })();
+
+  // ── Roofline explorer ─────────────────────────────────────
+  (function () {
+    const svg = document.getElementById('rf-svg');
+    const slider = document.getElementById('rf-slider');
+    const aiOut = document.getElementById('rf-ai');
+    const verdict = document.getElementById('rf-verdict');
+    if (!svg) return;
+    const SVGNS = 'http://www.w3.org/2000/svg';
+    const PEAK = 989;      // TFLOP/s
+    const BW = 3.35;       // TB/s  → TFLOP/s per (FLOP/byte)
+    const RIDGE = PEAK / BW;  // ~295
+
+    // plot area in svg coords
+    const X0 = 60, X1 = 490, Y0 = 24, Y1 = 270;
+    const xminL = -1, xmaxL = 4;   // log10 AI: 0.1 .. 10000
+    const yminL = 0,  ymaxL = 3;   // log10 TFLOP/s: 1 .. 1000
+    const px = l => X0 + (l - xminL) / (xmaxL - xminL) * (X1 - X0);
+    const py = l => Y1 - (l - yminL) / (ymaxL - yminL) * (Y1 - Y0);
+    const L = v => Math.log10(v);
+
+    function mk(tag, a, parent) {
+      const e = document.createElementNS(SVGNS, tag);
+      for (const k in a) e.setAttribute(k, a[k]);
+      (parent || svg).appendChild(e);
+      return e;
+    }
+
+    function base() {
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+      // axes
+      mk('line', { x1: X0, y1: Y1, x2: X1, y2: Y1, stroke: '#cbd5e1', 'stroke-width': 1.5 });
+      mk('line', { x1: X0, y1: Y0, x2: X0, y2: Y1, stroke: '#cbd5e1', 'stroke-width': 1.5 });
+      // gridlines + labels (x decades)
+      for (let l = xminL; l <= xmaxL; l++) {
+        const x = px(l);
+        mk('line', { x1: x, y1: Y0, x2: x, y2: Y1, stroke: '#f1f5f9', 'stroke-width': 1 });
+        const t = mk('text', { x: x, y: Y1 + 16, 'text-anchor': 'middle', 'font-size': 10, fill: '#94a3b8', 'font-family': 'Inter' });
+        t.textContent = (Math.pow(10, l)).toString().replace('0.1', '0.1');
+      }
+      for (let l = yminL; l <= ymaxL; l++) {
+        const y = py(l);
+        mk('line', { x1: X0, y1: y, x2: X1, y2: y, stroke: '#f1f5f9', 'stroke-width': 1 });
+        const t = mk('text', { x: X0 - 8, y: y + 3, 'text-anchor': 'end', 'font-size': 10, fill: '#94a3b8', 'font-family': 'Inter' });
+        t.textContent = Math.pow(10, l);
+      }
+      mk('text', { x: (X0 + X1) / 2, y: Y1 + 32, 'text-anchor': 'middle', 'font-size': 11, fill: '#6b7280', 'font-family': 'Inter' }).textContent = 'arithmetic intensity (FLOP/byte)';
+      const yl = mk('text', { x: 16, y: (Y0 + Y1) / 2, 'text-anchor': 'middle', 'font-size': 11, fill: '#6b7280', 'font-family': 'Inter', transform: 'rotate(-90 16 ' + ((Y0 + Y1) / 2) + ')' });
+      yl.textContent = 'throughput (TFLOP/s)';
+      // roofline: memory-bound ramp then compute ceiling
+      const ramp = `${px(xminL)},${py(L(Math.pow(10, xminL) * BW))} ${px(L(RIDGE))},${py(L(PEAK))} ${px(xmaxL)},${py(L(PEAK))}`;
+      mk('polyline', { points: ramp, fill: 'none', stroke: '#0d9488', 'stroke-width': 2.5 });
+      // ridge marker
+      mk('line', { x1: px(L(RIDGE)), y1: py(L(PEAK)), x2: px(L(RIDGE)), y2: Y1, stroke: '#fb923c', 'stroke-width': 1, 'stroke-dasharray': '3 3' });
+      mk('text', { x: px(L(RIDGE)) + 4, y: Y0 + 12, 'font-size': 10, fill: '#c2410c', 'font-family': 'Inter' }).textContent = 'ridge ≈ 295';
+    }
+
+    let dot, dotLab;
+    function update() {
+      const ai = Math.pow(10, slider.value / 100);
+      aiOut.textContent = ai >= 100 ? Math.round(ai) : ai.toFixed(ai < 1 ? 2 : 1);
+      const achieved = Math.min(PEAK, ai * BW);
+      base();
+      dot = mk('circle', { cx: px(L(ai)), cy: py(L(achieved)), r: 6, fill: '#dc2626', stroke: '#fff', 'stroke-width': 1.5 });
+      const bound = ai < RIDGE;
+      const pct = Math.round(achieved / PEAK * 100);
+      verdict.innerHTML = bound
+        ? `<b>Memory-bound</b> — only <b>${achieved.toFixed(achieved < 10 ? 1 : 0)} TFLOP/s</b> (${pct}% of peak). HBM is the limit; raising intensity (fusion) speeds you up for free.`
+        : `<b>Compute-bound</b> — <b>${Math.round(achieved)} TFLOP/s</b> (${pct}% of peak). Saturating the Tensor Cores; more intensity won't help.`;
+    }
+    slider.addEventListener('input', update);
+    update();
+  })();
+</script>
+
+</body>
+</html>
