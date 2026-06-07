@@ -280,7 +280,15 @@
   <h2 id="protocols">6 · Protocols: how bytes and flags are packed</h2>
   <p>
     Orthogonal to the algorithm is the <strong>protocol</strong> — how each chunk is actually written to the peer
-    and how the receiver knows it has arrived. The tension is synchronization overhead vs payload efficiency:
+    and how the receiver knows it has arrived. The tension is synchronization overhead vs payload efficiency.
+  </p>
+  <p>
+    Why is synchronization even a cost? Picture the producer GPU writing a chunk into the consumer's receive buffer,
+    then writing a <em>ready</em> flag the consumer is spinning on. The trap: writes don't necessarily become
+    <em>visible</em> to the other GPU in the order they were issued — write-combining buffers, the SM's memory
+    pipeline, and the interconnect can each reorder them. If the flag becomes visible before the last bytes of
+    payload do, the consumer reads <strong>torn, stale data</strong>. Every protocol is a different answer to one
+    question: <em>how do I guarantee the data is visible before the flag is?</em>
   </p>
   <div class="table-wrap">
     <table>
@@ -293,13 +301,57 @@
     </table>
   </div>
   <p>
-    <strong>LL</strong> and <strong>LL128</strong> avoid expensive memory fences by writing a <em>flag</em>
-    alongside the data; the receiver spins on the flag word to know the payload is complete. LL pays for that with
-    half its bandwidth (every 8 bytes is half flag), so it’s only for the smallest messages. LL128 packs the flag
-    into a 128-byte line — keeping ~95% of bandwidth while staying fence-free — but it relies on NVLink’s ordering
-    guarantees, so it isn’t used over slower fabrics where the per-line cost dominates. <strong>Simple</strong>
-    uses fences and the full payload: highest bandwidth, highest latency, the choice for big transfers.
+    <strong>Simple</strong> answers with an explicit <strong>memory fence</strong>
+    (<code>__threadfence_system()</code>): write the whole payload, fence — which stalls until those writes are
+    globally visible — then post the flag. Correct on any fabric, and it wastes <em>no</em> payload bytes (~100%
+    bandwidth). But the fence is a per-chunk latency tax, so Simple only shines when chunks are large enough to
+    amortize it.
   </p>
+  <p>
+    <strong>LL</strong> (low-latency) skips the fence by <em>inlining</em> the flag with the data: it writes 8-byte
+    words as 4 bytes payload + 4 bytes flag. A single 8-byte store lands atomically, so if the consumer sees the flag
+    half, the data half is guaranteed there — no fence, almost no latency. The bill is bandwidth: half of every word
+    is flag, capping LL at ~50%, which is why it's reserved for the smallest, most latency-critical messages.
+  </p>
+  <p>
+    <strong>LL128</strong> is the NVLink-tuned middle ground: it amortizes one 8-byte flag over a full 128-byte line
+    (120 B data + 8 B flag → ~94%). It leans on NVLink's guarantee that a 128-byte transfer arrives such that seeing
+    the trailing flag implies the leading 120 bytes are already visible — so it stays fence-free at near-full
+    bandwidth. That ordering guarantee only holds on NVLink/NVSwitch, which is why NCCL restricts LL128 to those
+    links and falls back to Simple on slower fabrics.
+  </p>
+
+  <div class="diagram">
+    <div class="diagram-title">▸ Line layout — where the bandwidth goes</div>
+    <div class="diagram-hint">Each bar is one transfer window. <span style="color:#4f46e5;font-weight:600">Indigo</span> = payload, <span style="color:#f59e0b;font-weight:600">amber</span> = flag/sync overhead. The amber fraction is the bandwidth tax — Simple pays in latency instead, not bytes.</div>
+    <div class="diagram-stage">
+      <svg viewBox="0 0 560 222" width="560" height="222" role="img" aria-label="Byte layout of the Simple, LL128 and LL protocols">
+        <!-- Simple -->
+        <text x="128" y="57" text-anchor="end" font-family="Inter" font-size="12" font-weight="600" fill="#4338ca">Simple</text>
+        <rect x="140" y="40" width="330" height="24" rx="3" fill="#4f46e5"/>
+        <text x="478" y="57" font-family="ui-monospace" font-size="11" fill="#16a34a" font-weight="600">~100%</text>
+        <text x="140" y="80" font-family="Inter" font-size="9.5" fill="#9ca3af">full payload — sync is a separate memory fence (costs latency, not bytes)</text>
+        <!-- LL128 -->
+        <text x="128" y="121" text-anchor="end" font-family="Inter" font-size="12" font-weight="600" fill="#4338ca">LL128</text>
+        <rect x="140" y="104" width="310" height="24" rx="3" fill="#4f46e5"/>
+        <rect x="450" y="104" width="20" height="24" rx="3" fill="#f59e0b"/>
+        <text x="478" y="121" font-family="ui-monospace" font-size="11" fill="#0891b2" font-weight="600">~95%</text>
+        <text x="140" y="144" font-family="Inter" font-size="9.5" fill="#9ca3af">120 B data + 8 B flag per 128-byte line — fence-free, but NVLink only</text>
+        <!-- LL -->
+        <text x="128" y="185" text-anchor="end" font-family="Inter" font-size="12" font-weight="600" fill="#4338ca">LL</text>
+        <rect x="140"    y="168" width="41.25" height="24" rx="3" fill="#4f46e5"/>
+        <rect x="181.25" y="168" width="41.25" height="24" rx="3" fill="#f59e0b"/>
+        <rect x="222.5"  y="168" width="41.25" height="24" rx="3" fill="#4f46e5"/>
+        <rect x="263.75" y="168" width="41.25" height="24" rx="3" fill="#f59e0b"/>
+        <rect x="305"    y="168" width="41.25" height="24" rx="3" fill="#4f46e5"/>
+        <rect x="346.25" y="168" width="41.25" height="24" rx="3" fill="#f59e0b"/>
+        <rect x="387.5"  y="168" width="41.25" height="24" rx="3" fill="#4f46e5"/>
+        <rect x="428.75" y="168" width="41.25" height="24" rx="3" fill="#f59e0b"/>
+        <text x="478" y="185" font-family="ui-monospace" font-size="11" fill="#dc2626" font-weight="600">~50%</text>
+        <text x="140" y="208" font-family="Inter" font-size="9.5" fill="#9ca3af">4 B data + 4 B flag per 8-byte word — fence-free, but half the bytes are flag</text>
+      </svg>
+    </div>
+  </div>
   <div class="result">
     <div class="result-label">Algorithm ⟂ Protocol</div>
     The algorithm sets the <em>latency shape</em> (ring \(O(N)\) vs tree \(O(\log N)\)); the protocol sets the
@@ -309,24 +361,51 @@
   <!-- ════════════════════════ SELECTION ════════════════════════ -->
   <h2 id="selection">7 · Channels and selection</h2>
   <p>
-    A single ring or tree uses one path through the links; to use <em>all</em> of a GPU’s NVLinks at once, NCCL
-    splits the collective across multiple parallel <strong>channels</strong>, each its own ring/tree instance on a
-    subset of links, driven by a few SMs. More channels → more aggregate bandwidth, up to the point where you run
-    out of links or SMs.
+    A single ring or tree is <em>one</em> path through the links, and a GPU has several NVLinks — so one ring can't
+    light them all up at once. NCCL's answer is <strong>channels</strong>: it slices the buffer and runs several
+    independent ring/tree instances in parallel, each on its own subset of links. Concretely the collective launches
+    as <em>one CUDA kernel with many thread blocks</em>; each block drives one channel, copying and reducing its slice
+    along that channel's ring or tree.
   </p>
   <p>
-    Finally, <strong>selection</strong>. For each call, NCCL estimates the time of every viable
-    (algorithm, protocol, #channels) combination with a simple cost model,
+    Three things make extra channels pay off: they cover the NVLinks a single ring's path misses; the reduction
+    arithmetic needs SMs, and more channels put more SMs to work; and one channel's network transfer overlaps
+    another's local copy. Aggregate bandwidth climbs roughly linearly —
+    \( B_\text{eff} \approx n_\text{ch}\times B_\text{channel} \) — until you run out of links or SMs, where it
+    flattens (past that, more channels just add scheduling overhead). That \( B_\text{eff} \) <em>is</em> the
+    \( W \) in the \( T \approx V/W \) cost model: channels are how NCCL turns one ring into full fabric bandwidth.
+  </p>
+  <p>
+    Finally, <strong>selection</strong>. NCCL ships <strong>tuned latency and bandwidth tables</strong> measured per
+    GPU architecture (Volta / Ampere / Hopper) and link type, so for a given call the \( L_\text{algo} \) and
+    \( B_\text{proto} \) below are <em>looked up</em>, not modeled from scratch. It estimates the time of every viable
+    (algorithm, protocol, #channels) triple,
   </p>
   <div class="result">
     \[ T_\text{est} \;\approx\; \underbrace{L_\text{algo}}_{\text{latency: ring } \propto N,\ \text{tree} \propto \log N}
        \;+\; \underbrace{\frac{\text{size}}{B_\text{proto}}}_{\text{transfer at the protocol's effective BW}} \]
   </div>
   <p>
-    and picks the minimum — using tuned constants per GPU architecture and topology, decided <em>per collective,
-    per communicator, even per channel</em>. The upshot is the familiar crossover: small messages → Tree + LL;
-    large messages → Ring + Simple; mid-size on NVLink → often LL128. Drag the GPU count to see why the latency
-    term flips the choice:
+    and picks the minimum — decided <em>per collective, per communicator, even per channel</em>. The result is a
+    clean two-regime crossover: latency-bound at small sizes, bandwidth-bound at large.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Message size</th><th>Bottleneck</th><th class="ctr">Algorithm</th><th class="ctr">Protocol</th></tr></thead>
+      <tbody>
+        <tr><td>tiny (≲ a few KB)</td><td>latency</td><td class="ctr">Tree</td><td class="ctr">LL</td></tr>
+        <tr><td>mid-size, on NVLink</td><td>balanced</td><td class="ctr">Tree / Ring</td><td class="ctr">LL128</td></tr>
+        <tr><td>large (≳ MBs)</td><td>bandwidth</td><td class="ctr">Ring</td><td class="ctr">Simple</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    <strong>Worked crossover (illustrative).</strong> Suppose each serial step costs ~1&nbsp;µs of latency and the
+    transfer term is size ÷ effective-BW. For a <strong>1&nbsp;KB</strong> AllReduce on 16 GPUs the transfer term is
+    negligible, so the tree's \( 2\lceil\log_2 16\rceil = 8 \) steps (~8&nbsp;µs) crush the ring's
+    \( 2(16{-}1) = 30 \) steps (~30&nbsp;µs) — and LL trims the per-step sync further. For a <strong>200&nbsp;MB</strong>
+    AllReduce the transfer term dominates and the ring's extra steps are rounding error, so the ~100%-BW
+    <em>Ring&nbsp;+&nbsp;Simple</em> beats ~50%-BW LL. Drag the GPU count to see the latency half of that trade flip:
   </p>
 
   <div class="diagram">
