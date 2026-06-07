@@ -189,12 +189,14 @@
   <div class="nav-links">
     <a href="index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
     <a href="#model">Mental model</a>
-    <a href="#compute">Compute</a>
-    <a href="#memory">Memory hierarchy</a>
+    <a href="#execution">Execution model</a>
+    <a href="#sm">Inside an SM</a>
+    <a href="#memory">Memory</a>
+    <a href="#datamove">Data movement</a>
     <a href="#roofline">Roofline</a>
     <a href="#nvlink">Intra-node</a>
     <a href="#network">Inter-node</a>
-    <a href="#map">Map to the math</a>
+    <a href="#map">Map to math</a>
     <a href="#summary">Summary</a>
   </div>
   <a class="nav-back" href="index.html">Home</a>
@@ -231,8 +233,8 @@
     far faster, each level down is larger but slower:
   </p>
   <ul>
-    <li><strong>Compute:</strong> 132 streaming multiprocessors (SMs), each with Tensor Cores that do the matmuls.</li>
-    <li><strong>On-chip memory:</strong> registers and shared memory (per SM), then a 50 MB L2 shared by all SMs — tens of TB/s, but kilobytes-to-megabytes in size.</li>
+    <li><strong>Compute:</strong> 132 streaming multiprocessors (SMs), each running thousands of threads (grouped into warps) and holding Tensor Cores that do the matmuls.</li>
+    <li><strong>On-chip memory:</strong> per-SM registers and shared memory — a <em>programmer-managed</em> scratchpad — then a 50 MB L2 shared by all SMs; tens of TB/s, but kilobytes-to-megabytes in size.</li>
     <li><strong>HBM:</strong> 80 GB of high-bandwidth memory at 3.35 TB/s — where the weights, activations, and optimizer state live.</li>
     <li><strong>NVLink:</strong> 900 GB/s to the other 7 GPUs in the node, through an NVSwitch crossbar.</li>
     <li><strong>Network:</strong> ~50 GB/s per GPU across nodes, over InfiniBand or Ethernet.</li>
@@ -243,29 +245,87 @@
     page makes each level concrete.
   </p>
 
-  <!-- ════════════════════════ COMPUTE ════════════════════════ -->
-  <h2 id="compute">2 · Compute: SMs and Tensor Cores</h2>
+  <!-- ════════════════════════ EXECUTION MODEL ════════════════════════ -->
+  <h2 id="execution">2 · The execution model: SIMT, warps, occupancy</h2>
   <p>
-    The H100 has 132 SMs. General CUDA-core arithmetic (the kind that runs your elementwise ops, norms, and
-    softmaxes) is a few tens of TFLOP/s. The headline number — <strong>989 TFLOP/s in bf16</strong> — comes from
-    the <strong>Tensor Cores</strong>, dedicated matrix-multiply-accumulate units that compute small matmul tiles
-    (e.g. \(16\times8\times16\)) in a few cycles. They are why we build architectures out of big matmuls: that is
-    the one operation the hardware does at full rate.
+    Before the bandwidths mean anything, you need to know <em>how code runs</em> on an SM. A GPU kernel launches a
+    <strong>grid</strong> of <strong>thread blocks</strong>; each block is placed on one SM and run as groups of
+    <strong>32 threads called a warp</strong>. The 32 threads of a warp execute <em>the same instruction in
+    lockstep</em>, each on its own data — NVIDIA calls this <strong>SIMT</strong> (single instruction, multiple
+    threads). An H100 SM has <strong>4 warp-scheduler partitions</strong>, each issuing one instruction from one
+    ready warp per cycle.
+  </p>
+  <div class="result">
+    <div class="result-label">The hierarchy of execution</div>
+    thread &nbsp;→&nbsp; <strong>warp</strong> (32 threads, lockstep) &nbsp;→&nbsp; thread block (on one SM)
+    &nbsp;→&nbsp; grid (the whole kernel)
+  </div>
+  <p>
+    The defining trick of a GPU is <strong>latency hiding</strong>. A single warp stalls constantly — every HBM
+    load takes hundreds of cycles. Instead of waiting, the SM keeps <em>many</em> warps resident and, whenever one
+    stalls on memory, the scheduler instantly switches to another that is ready. With enough warps in flight, the
+    Tensor Cores and ALUs never idle even though every individual memory access is slow. The fraction of the SM’s
+    warp capacity you actually use (up to <strong>64 warps/SM</strong> on Hopper) is called <strong>occupancy</strong>.
+  </p>
+  <div class="note" style="background:#ecfccb; border-left-color:#65a30d; color:#3f6212">
+    <strong>Foundation for kernel optimization →</strong> occupancy is the knob that hides HBM latency. Too few
+    warps (often from using too many registers or too much shared memory per block) leaves the SM stalling on
+    memory with no other work to switch to — the “low-occupancy” trap. This is why kernels budget registers and
+    shared memory carefully.
+  </p>
+
+  <!-- ════════════════════════ INSIDE AN SM ════════════════════════ -->
+  <h2 id="sm">3 · Inside an SM: cores, Tensor Cores, and the register file</h2>
+  <p>
+    Each of the 132 SMs is a small independent processor. Splitting it into its four scheduler partitions, one SM
+    holds:
+  </p>
+
+  <div class="diagram">
+    <div class="diagram-title">▸ One Hopper SM (4 partitions)</div>
+    <div class="diagram-hint">Each partition has its own warp scheduler, registers, and execution units; shared memory/L1 is shared by the whole SM.</div>
+    <div class="diagram-stage">
+      <svg id="sm-svg" viewBox="0 0 540 300" width="540" height="300" role="img" aria-label="SM internal block diagram"></svg>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Per SM (H100)</th><th class="ctr">Count / size</th><th>Runs</th></tr></thead>
+      <tbody>
+        <tr><td>Warp schedulers</td><td class="ctr">4</td><td>issue one warp/cycle each</td></tr>
+        <tr><td>FP32 “CUDA cores”</td><td class="ctr">128</td><td>elementwise, norms, softmax, activations</td></tr>
+        <tr><td>Tensor Cores (4th-gen)</td><td class="ctr">4</td><td>the matmuls — bf16/fp16/fp8/tf32</td></tr>
+        <tr><td>Register file</td><td class="ctr">256 KB (64K × 32-bit)</td><td>each thread’s private working set</td></tr>
+        <tr><td>Shared memory / L1</td><td class="ctr">up to 228 KB</td><td>the managed scratchpad (§4)</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    General <strong>CUDA-core</strong> arithmetic — the elementwise ops, norms, softmaxes — runs at a few tens of
+    TFLOP/s. The headline <strong>989 TFLOP/s bf16</strong> comes entirely from the <strong>Tensor Cores</strong>:
+    dedicated <strong>matrix-multiply-accumulate (MMA)</strong> units that, each instruction, multiply a small
+    matrix tile (e.g. \(16\times8\times16\)) and add it into a running accumulator. They take <strong>bf16/fp16/fp8/tf32
+    inputs and accumulate in fp32</strong>, and they read their operands from registers and shared memory — never
+    directly from HBM. They are why we build architectures out of big matmuls: that is the one operation the
+    hardware does at full rate.
   </p>
   <div class="note">
     Precision matters: peak roughly doubles each time you halve the bits. The H100 does ~989 TFLOP/s at bf16/fp16
     and ~1,979 TFLOP/s at fp8 (dense). “With sparsity” marketing numbers double these again but rarely apply to
     training. Throughout this series we quote <strong>dense bf16</strong>.
   </div>
-  <p>
-    The key consequence for the math: a matmul \([B,D]\times[D,F]\) costs \(2BDF\) FLOPs and runs near 989 TFLOP/s;
-    an elementwise op over the same activation costs \(O(BD)\) FLOPs but is limited by how fast you can read/write
-    it from HBM. That mismatch is the roofline (§4), and it is why fused kernels (Triton, FlashAttention) exist:
-    do more arithmetic per byte moved.
+  <div class="note" style="background:#ecfccb; border-left-color:#65a30d; color:#3f6212">
+    <strong>Foundation for kernel optimization →</strong> because the Tensor Cores are fed from registers/shared
+    memory, a matmul kernel’s whole job is to <em>stream operand tiles into them without stalling</em>. That is what
+    “tiling” means, and why a matmul \([B,D]\times[D,F]\) (cost \(2BDF\) FLOPs) can run near peak while an
+    elementwise op over the same data (cost \(O(BD)\)) cannot — the mismatch the <a href="#roofline">roofline</a>
+    makes precise.
   </p>
 
   <!-- ════════════════════════ MEMORY ════════════════════════ -->
-  <h2 id="memory">3 · The memory hierarchy</h2>
+  <h2 id="memory">4 · The memory hierarchy</h2>
   <p>
     Every level the data has to travel through has a capacity and a bandwidth, and they trade off against each
     other across ~6 orders of magnitude. The diagram shows the H100’s levels to scale (log bandwidth):
@@ -315,12 +375,47 @@
   <p>
     The two boundaries that hurt are the <strong>orange jumps</strong>: leaving the chip for HBM (the
     <em>memory wall</em>), and leaving the node for the network (the <em>communication wall</em>). On-chip
-    bandwidth is so high that, once data is resident, arithmetic is essentially free; the discipline of fast ML
-    kernels is to pull a tile into SRAM once and do as much math on it as possible before paying to write it back.
+    bandwidth is so high that, once data is resident, arithmetic is essentially free.
   </p>
 
+  <h3>The crucial part: the top two levels are <em>yours</em> to manage</h3>
+  <p>
+    Unlike a CPU, where caches are transparent and automatic, a GPU’s <strong>registers and shared memory are
+    explicitly programmer-managed</strong>. Registers hold each thread’s private working set. <strong>Shared
+    memory is a scratchpad you allocate per block</strong> and fill by hand — it is the same SRAM as L1, carved out
+    under your control — so a kernel decides exactly which slice of data lives on-chip and gets reused. L2 and HBM
+    are managed for you; registers and shared memory are not.
+  </p>
+  <div class="note" style="background:#ecfccb; border-left-color:#65a30d; color:#3f6212">
+    <strong>Foundation for kernel optimization →</strong> this scratchpad is <em>the</em> lever. “Tiling” means
+    staging a block of operands in shared memory and reusing it many times before writing back; “fusion” means
+    keeping an intermediate in registers/SMEM instead of round-tripping it through HBM. Both are just choices about
+    what lives in these two levels — and both move an op rightward on the <a href="#roofline">roofline</a>.
+  </p>
+
+  <!-- ════════════════════════ DATA MOVEMENT ════════════════════════ -->
+  <h2 id="datamove">5 · Data movement: async copy and TMA</h2>
+  <p>
+    Getting operands from HBM into that scratchpad fast — and <em>without stalling the math</em> — is its own
+    hardware story. Two engines matter:
+  </p>
+  <ul>
+    <li><strong><code>cp.async</code> (Ampere+):</strong> an asynchronous global→shared copy that bypasses the
+      register file. A thread issues the load and keeps computing instead of blocking until the data lands.</li>
+    <li><strong>TMA — Tensor Memory Accelerator (Hopper):</strong> a dedicated copy engine that moves whole
+      multi-dimensional <em>tiles</em> between HBM and shared memory with the address arithmetic done in hardware.
+      A single thread kicks off a bulk transfer and the SM’s threads are freed entirely for compute.</li>
+  </ul>
+  <div class="note" style="background:#ecfccb; border-left-color:#65a30d; color:#3f6212">
+    <strong>Foundation for kernel optimization →</strong> these are the hardware behind <em>software pipelining</em>:
+    while the Tensor Cores chew on tile \(k\), TMA is already streaming tile \(k{+}1\) into a second shared-memory
+    buffer, so compute and memory overlap and neither waits. A multi-stage pipeline like this is how a well-written
+    matmul or <a href="https://github.com/yueyiming2009/ai-learning/blob/main/triton/fused_softmax.ipynb">fused
+    kernel</a> stays compute-bound.
+  </div>
+
   <!-- ════════════════════════ ROOFLINE ════════════════════════ -->
-  <h2 id="roofline">4 · The roofline: compute-bound vs memory-bound</h2>
+  <h2 id="roofline">6 · The roofline: compute-bound vs memory-bound</h2>
   <p>
     Whether a kernel is limited by the Tensor Cores or by HBM is settled by one ratio — its
     <strong>arithmetic intensity</strong>, the FLOPs it performs per byte it reads from / writes to HBM:
@@ -376,7 +471,7 @@
   </div>
 
   <!-- ════════════════════════ NVLINK ════════════════════════ -->
-  <h2 id="nvlink">5 · Inside a node: NVLink and the NVSwitch crossbar</h2>
+  <h2 id="nvlink">7 · Inside a node: NVLink and the NVSwitch crossbar</h2>
   <p>
     Eight H100s in a server (an HGX/DGX baseboard) are wired together not by a ring or a mesh but by a set of
     <strong>NVSwitch</strong> chips that form a <strong>non-blocking all-to-all crossbar</strong>. Each GPU has
@@ -475,13 +570,13 @@
     A crossbar costs \(O(N^2)\) crosspoints, so you cannot build a 10,000-port one — the silicon and wiring blow
     up. The universal fix is to <strong>compose small crossbars into a near-non-blocking <em>fat-tree</em> (Clos
     network)</strong>, trading a little blocking and \(O(\log N)\) hops for \(O(N\log N)\) cost. Crossbars are the
-    atom at every tier: one node is a single crossbar (NVSwitch); the InfiniBand network in §6 is a fat-tree
+    atom at every tier: one node is a single crossbar (NVSwitch); the InfiniBand network in §8 is a fat-tree
     <em>of</em> crossbar switch chips. Stepping from one crossbar to a fat-tree of them is exactly the bandwidth
     cliff at the node boundary — and the reason tensor parallelism is <em>capped at one node</em>.
   </p>
 
   <!-- ════════════════════════ NETWORK ════════════════════════ -->
-  <h2 id="network">6 · Across nodes: the scale-out network</h2>
+  <h2 id="network">8 · Across nodes: the scale-out network</h2>
   <p>
     A GPU lives in <em>two</em> networks, and “going across nodes” means dropping from the first to the second:
   </p>
@@ -520,7 +615,7 @@
 
   <h3>The topology: a rail-optimized fat-tree</h3>
   <p>
-    The switches form a <strong>fat-tree (Clos network)</strong> — the same crossbars-of-crossbars from §5: each
+    The switches form a <strong>fat-tree (Clos network)</strong> — the same crossbars-of-crossbars from §7: each
     switch (e.g. an NVIDIA Quantum-2, 64×400 Gb/s) is a crossbar, composed into a near-non-blocking tree with full
     bisection bandwidth. Nodes attach to <strong>leaf</strong> switches; leaves connect through <strong>spine</strong>
     switches; the largest clusters add a third core tier.
@@ -566,7 +661,7 @@
   </p>
 
   <!-- ════════════════════════ MAP TO MATH ════════════════════════ -->
-  <h2 id="map">7 · How this maps onto the parallelism math</h2>
+  <h2 id="map">9 · How this maps onto the parallelism math</h2>
   <p>
     The <a href="collectives.html">collectives cost model</a> prices a collective as \(T \approx V/W\): bytes moved
     per GPU over link bandwidth. Everything on this page is where those two symbols come from:
@@ -590,11 +685,23 @@
   </p>
 
   <!-- ════════════════════════ SUMMARY ════════════════════════ -->
-  <h2 id="summary">8 · Summary</h2>
+  <h2 id="summary">10 · Summary</h2>
   <div class="summary-grid">
     <div class="summary-card">
-      <div class="summary-card-label">Compute</div>
-      <p>Tensor Cores do matmuls at ~989 TFLOP/s bf16 — the one op at full rate, which is why models are matmul-shaped.</p>
+      <div class="summary-card-label">Execution model</div>
+      <p>Threads run in warps of 32 (SIMT) on SMs; many resident warps hide HBM latency. Occupancy is that knob.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Tensor Cores</div>
+      <p>Do matmuls at ~989 TFLOP/s bf16 (fp32 accumulate) — fed from registers/SMEM, so peak needs tiling to keep them fed.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Managed scratchpad</div>
+      <p>Registers + shared memory are programmer-managed, not caches. Tiling/fusion are choices about what lives there.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Async data movement</div>
+      <p>cp.async / TMA stream tiles HBM→SMEM while the cores compute — the hardware behind software pipelining.</p>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">Memory wall</div>
@@ -821,6 +928,44 @@
       });
     });
     mk('text', { x: 280, y: 292, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11, fill: '#16a34a' }, 'green: GPU 1 ↔ GPU 1 stays on rail 1 — a single leaf hop, no spine');
+  })();
+
+  // ── SM internals diagram ──────────────────────────────────
+  (function () {
+    const svg = document.getElementById('sm-svg');
+    if (!svg) return;
+    const SVGNS = 'http://www.w3.org/2000/svg';
+    function mk(tag, a, txt) { const e = document.createElementNS(SVGNS, tag); for (const k in a) e.setAttribute(k, a[k]); if (txt != null) e.textContent = txt; svg.appendChild(e); return e; }
+    // outer SM box
+    mk('rect', { x: 8, y: 8, width: 524, height: 284, rx: 10, fill: '#f8fafc', stroke: '#cbd5e1' });
+    mk('text', { x: 20, y: 28, 'font-family': 'Inter', 'font-size': 12, 'font-weight': 600, fill: '#475569' }, 'Streaming Multiprocessor (×132)');
+    // 4 partitions
+    const px = [16, 145, 274, 403], pw = 122, py = 40, ph = 168;
+    for (let i = 0; i < 4; i++) {
+      const x = px[i];
+      mk('rect', { x: x, y: py, width: pw, height: ph, rx: 7, fill: '#eef2ff', stroke: '#c7d2fe' });
+      mk('text', { x: x + pw / 2, y: py + 17, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 10.5, 'font-weight': 600, fill: '#4338ca' }, 'partition ' + i);
+      // warp scheduler
+      mk('rect', { x: x + 8, y: py + 26, width: pw - 16, height: 22, rx: 4, fill: '#6366f1' });
+      mk('text', { x: x + pw / 2, y: py + 41, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 9.5, fill: '#fff' }, 'warp scheduler');
+      // 32 FP32 cores (grid of dots)
+      for (let r = 0; r < 4; r++) for (let c = 0; c < 8; c++) {
+        mk('rect', { x: x + 10 + c * 13, y: py + 56 + r * 11, width: 9, height: 8, rx: 1.5, fill: '#0d9488' });
+      }
+      mk('text', { x: x + pw / 2, y: py + 112, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 9, fill: '#475569' }, '32 FP32 cores');
+      // 1 tensor core
+      mk('rect', { x: x + 18, y: py + 120, width: pw - 36, height: 20, rx: 4, fill: '#c2410c' });
+      mk('text', { x: x + pw / 2, y: py + 134, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 9.5, 'font-weight': 600, fill: '#fff' }, 'Tensor Core' );
+      // registers
+      mk('rect', { x: x + 8, y: py + 145, width: pw - 16, height: 16, rx: 3, fill: '#fff', stroke: '#cbd5e1' });
+      mk('text', { x: x + pw / 2, y: py + 156, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 8.5, fill: '#64748b' }, '64 KB registers');
+    }
+    // shared memory / L1 bar spanning the SM
+    mk('rect', { x: 16, y: 218, width: 509, height: 30, rx: 6, fill: '#0f766e' });
+    mk('text', { x: 270, y: 237, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 12, 'font-weight': 600, fill: '#fff' }, 'Shared memory / L1  —  up to 228 KB  (the managed scratchpad)');
+    // L2/HBM below
+    mk('rect', { x: 16, y: 256, width: 509, height: 26, rx: 6, fill: '#fde68a' });
+    mk('text', { x: 270, y: 273, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11, fill: '#92400e' }, '↕ L2 (50 MB) ↔ HBM (80 GB) — off the SM, shared by all 132');
   })();
 </script>
 
