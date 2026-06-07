@@ -239,7 +239,7 @@
 
   <div class="diagram">
     <div class="diagram-title">▸ Double binary tree — two complementary trees over the same 7 ranks</div>
-    <div class="diagram-hint">Solid = interior (relays two children, heavy traffic); outline = leaf (one link). A rank that's interior in one tree is a leaf in the other, so its links stay busy in <em>both</em> — full bandwidth at ~2·log₂N latency.</div>
+    <div class="diagram-hint">Solid = interior (relays two children, heavy traffic); outline = leaf (one link). A rank that's interior in one tree is a leaf in the other, so its links stay busy in <em>both</em> — full bandwidth at ~2·log₂N latency. The loop runs both phases: <span style="color:#16a34a;font-weight:600">reduce ↑</span> to the roots, then <span style="color:#dc2626;font-weight:600">broadcast ↓</span> to every leaf — both trees at once.</div>
     <div class="diagram-stage">
       <svg id="tree-svg" viewBox="0 0 720 290" width="720" height="290" role="img" aria-label="Two complementary binary trees over ranks 0 to 6"></svg>
     </div>
@@ -496,11 +496,16 @@
     const SVGNS = 'http://www.w3.org/2000/svg';
     function mk(tag, a, txt) { const e = document.createElementNS(SVGNS, tag); for (const k in a) e.setAttribute(k, a[k]); if (txt != null) e.textContent = txt; svg.appendChild(e); return e; }
 
+    const GREEN = '#16a34a', RED = '#dc2626', BASE = '#a5b4fc';
+
     function drawTree(nodes, edges, interior, title, tx) {
       mk('text', { x: tx, y: 20, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 12, 'font-weight': 600, fill: '#4338ca' }, title);
+      const lines = {};
       edges.forEach(([a, b]) => {
-        mk('line', { x1: nodes[a].x, y1: nodes[a].y, x2: nodes[b].x, y2: nodes[b].y, stroke: '#a5b4fc', 'stroke-width': 2 });
+        const ln = mk('line', { x1: nodes[a].x, y1: nodes[a].y, x2: nodes[b].x, y2: nodes[b].y, stroke: BASE, 'stroke-width': 2 });
+        lines[a + '-' + b] = ln; lines[b + '-' + a] = ln;
       });
+      const ns = {};
       Object.keys(nodes).forEach(k => {
         const n = nodes[k], isInt = interior.has(+k);
         mk('circle', { cx: n.x, cy: n.y, r: 15,
@@ -508,7 +513,9 @@
           stroke: isInt ? '#312e81' : '#818cf8', 'stroke-width': isInt ? 0 : 1.5 });
         mk('text', { x: n.x, y: n.y + 4, 'text-anchor': 'middle', 'font-family': 'ui-monospace', 'font-size': 12,
           'font-weight': 600, fill: isInt ? '#fff' : '#4338ca' }, k);
+        ns[k] = { x: n.x, y: n.y };
       });
+      return { nodes: ns, lines };
     }
 
     // Tree A — recursive-bisection tree over ranks 0..6 (root 3)
@@ -517,7 +524,7 @@
       1: { x: 110, y: 132 }, 5: { x: 250, y: 132 },
       0: { x: 75, y: 206 }, 2: { x: 145, y: 206 }, 4: { x: 215, y: 206 }, 6: { x: 285, y: 206 }
     };
-    drawTree(A, [[3,1],[3,5],[1,0],[1,2],[5,4],[5,6]], new Set([3,1,5]), 'Tree A · half the bytes', 180);
+    const TA = drawTree(A, [[3,1],[3,5],[1,0],[1,2],[5,4],[5,6]], new Set([3,1,5]), 'Tree A · half the bytes', 180);
 
     // Tree B — same shape, ranks rotated by 1 so interior/leaf roles flip (root 4)
     const B = {
@@ -525,15 +532,71 @@
       2: { x: 470, y: 132 }, 6: { x: 610, y: 132 },
       1: { x: 435, y: 206 }, 3: { x: 505, y: 206 }, 5: { x: 575, y: 206 }, 0: { x: 645, y: 206 }
     };
-    drawTree(B, [[4,2],[4,6],[2,1],[2,3],[6,5],[6,0]], new Set([4,2,6]), 'Tree B · the other half', 540);
-
-    // shared reduce-up / broadcast-down legend, in the gap between the trees
-    mk('text', { x: 360, y: 110, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11, fill: '#16a34a', 'font-weight': 600 }, '↑ reduce');
-    mk('text', { x: 360, y: 158, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11, fill: '#dc2626', 'font-weight': 600 }, '↓ bcast');
+    const TB = drawTree(B, [[4,2],[4,6],[2,1],[2,3],[6,5],[6,0]], new Set([4,2,6]), 'Tree B · the other half', 540);
 
     // the key insight
     mk('text', { x: 360, y: 250, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11.5, 'font-weight': 600, fill: '#374151' }, 'Ranks 1·3·5 are interior in A but leaves in B — and 2·4·6 the reverse.');
     mk('text', { x: 360, y: 268, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11, fill: '#6b7280' }, 'Each rank carries heavy interior traffic in exactly one tree → every link stays busy → full bandwidth.');
+
+    // ── Animate the two phases: reduce up to roots, broadcast back down ──
+    // Each entry is [tree, from, to]; a hop moves a packet from→to and lights that link.
+    const rUp1 = [['A',0,1],['A',2,1],['A',4,5],['A',6,5], ['B',1,2],['B',3,2],['B',5,6],['B',0,6]]; // leaves → mid
+    const rUp2 = [['A',1,3],['A',5,3], ['B',2,4],['B',6,4]];                                         // mid → roots
+    const bDn1 = [['A',3,1],['A',3,5], ['B',4,2],['B',4,6]];                                         // roots → mid
+    const bDn2 = [['A',1,0],['A',1,2],['A',5,4],['A',5,6], ['B',2,1],['B',2,3],['B',6,5],['B',6,0]]; // mid → leaves
+    const STEP = 760, PAUSE = 620;
+    const moves = [
+      { dur: STEP,  color: GREEN, arrow: '↑', label: 'phase 1 · reduce ↑',    edges: rUp1 },
+      { dur: STEP,  color: GREEN, arrow: '↑', label: 'phase 1 · reduce ↑',    edges: rUp2 },
+      { dur: PAUSE, color: GREEN, arrow: '✓', label: 'roots hold the sum',    edges: [] },
+      { dur: STEP,  color: RED,   arrow: '↓', label: 'phase 2 · broadcast ↓', edges: bDn1 },
+      { dur: STEP,  color: RED,   arrow: '↓', label: 'phase 2 · broadcast ↓', edges: bDn2 },
+      { dur: PAUSE, color: RED,   arrow: '✓', label: 'every rank has it',     edges: [] },
+    ];
+    const total = moves.reduce((s, m) => s + m.dur, 0);
+
+    const phaseEl = mk('text', { x: 360, y: 20, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 12, 'font-weight': 700 }, '');
+    const arrowEl = mk('text', { x: 360, y: 142, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 26, 'font-weight': 700 }, '');
+    const gAnim = mk('g', {});
+
+    function pt(tree, r) { return (tree === 'A' ? TA : TB).nodes[r]; }
+    function lineOf(tree, a, b) { return (tree === 'A' ? TA : TB).lines[a + '-' + b]; }
+    function resetLines() {
+      [TA, TB].forEach(T => { const seen = new Set();
+        Object.values(T.lines).forEach(ln => { if (seen.has(ln)) return; seen.add(ln);
+          ln.setAttribute('stroke', BASE); ln.setAttribute('stroke-width', 2); }); });
+    }
+    const ease = t => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+
+    const prefersReduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (prefersReduced) {
+      phaseEl.setAttribute('fill', '#6b7280');
+      phaseEl.textContent = 'reduce ↑ to roots, then broadcast ↓ to leaves';
+    } else {
+      let t0 = null;
+      function frame(ts) {
+        if (t0 == null) t0 = ts;
+        let e = (ts - t0) % total, mv, local = 0;
+        for (const m of moves) { if (e < m.dur) { mv = m; local = e / m.dur; break; } e -= m.dur; }
+        phaseEl.setAttribute('fill', mv.color); phaseEl.textContent = mv.label;
+        arrowEl.setAttribute('fill', mv.color); arrowEl.textContent = mv.arrow;
+        while (gAnim.firstChild) gAnim.removeChild(gAnim.firstChild);
+        resetLines();
+        const p = ease(local);
+        mv.edges.forEach(([tree, a, b]) => {
+          const from = pt(tree, a), to = pt(tree, b);
+          const ln = lineOf(tree, a, b);
+          if (ln) { ln.setAttribute('stroke', mv.color); ln.setAttribute('stroke-width', 4); }
+          const c = document.createElementNS(SVGNS, 'circle');
+          c.setAttribute('cx', from.x + (to.x - from.x) * p);
+          c.setAttribute('cy', from.y + (to.y - from.y) * p);
+          c.setAttribute('r', 5.5); c.setAttribute('fill', mv.color);
+          gAnim.appendChild(c);
+        });
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    }
   })();
 
   // ── Ring vs tree latency explorer ─────────────────────────
