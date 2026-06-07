@@ -406,7 +406,75 @@
   <p>
     This is the single most important fact for <a href="tensor-parallelism.html">tensor parallelism</a>: a TP group
     can shard a layer across these 8 GPUs and pay only the NVLink-speed AllReduce, with no penalty for which GPU
-    talks to which. It is also why TP is <em>capped at 8</em> — the crossbar exists only inside the node.
+    talks to which. But “non-blocking crossbar” is doing a lot of work in that sentence — it’s worth unpacking.
+  </p>
+
+  <h3>What “crossbar” actually means</h3>
+  <p>
+    A <strong>crossbar</strong> is the simplest fabric that connects <em>every</em> input to <em>every</em> output.
+    The mental model is a literal grid: inputs run horizontally, outputs run vertically, and at each intersection
+    sits a switch (a <em>crosspoint</em>). To connect input \(i\) to output \(j\), you close crosspoint \((i,j)\).
+    Two properties make it the gold standard:
+  </p>
+  <ul>
+    <li><strong>Any-to-any, one hop.</strong> There is no notion of “neighbor” or “distance” — every pair is
+      directly reachable. (Contrast a ring/torus, where reaching a far node costs multiple hops.)</li>
+    <li><strong>Non-blocking.</strong> All \(N\) inputs can be connected to \(N\) outputs <em>at once</em> — any
+      <em>permutation</em> — each at full link rate, because no two connections share any wire in the middle.</li>
+  </ul>
+  <p>
+    The only limit is at the endpoints: two inputs can’t both drive one output at full rate (an
+    <em>output-port conflict</em>). So the fabric never blocks — but a single GPU’s own link bandwidth still caps
+    how much can flow into it. Drag a new permutation and notice all four paths stay full-rate simultaneously:
+  </p>
+
+  <div class="diagram">
+    <div class="diagram-title">▸ A 4×4 crossbar — any permutation, all at full rate</div>
+    <div class="diagram-hint">Inputs → rows, outputs → columns. Filled dots = closed crosspoints. No two paths share a wire.</div>
+    <div class="diagram-stage">
+      <svg id="xbar-svg" viewBox="0 0 360 300" width="360" height="300" role="img" aria-label="Crossbar switch"></svg>
+    </div>
+    <div class="anim-controls">
+      <button class="anim-btn" id="xbar-shuffle">New permutation ▸</button>
+      <span class="anim-step-label" id="xbar-status">Each input reaches a distinct output — 4 simultaneous full-rate connections.</span>
+    </div>
+  </div>
+
+  <h3>How NVSwitch really builds one</h3>
+  <p>
+    NVSwitch is not a grid of analog crosspoints flipping on and off. Since 2018, NVLink has been a
+    <strong>packet-switched</strong> fabric, so an NVSwitch chip is a small high-speed router that <em>behaves
+    like</em> a non-blocking crossbar. Inside one chip: input ports buffer arriving NVLink packets (using
+    <em>virtual output queues</em> — a queue per destination — to avoid head-of-line blocking); an
+    <strong>arbiter</strong> solves a bipartite matching each cycle to decide which inputs cross to which outputs;
+    the crossbar datapath carries that permutation; and packets are routed by physical address (a host-side
+    <em>fabric manager</em> programs the tables). The “closing of crosspoints” is done in logic, every cycle.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>NVSwitch (gen 3, H100)</th><th>Value</th></tr></thead>
+      <tbody>
+        <tr><td>NVLink-4 ports per chip</td><td>64 (non-blocking)</td></tr>
+        <tr><td>Bidirectional bandwidth / chip</td><td>3.2 TB/s</td></tr>
+        <tr><td>Chips per 8-GPU baseboard</td><td>4 — each H100’s 18 links fan out across all four</td></tr>
+        <tr><td>In-switch compute (SHARP)</td><td>embedded ALU, ~400 GFLOP/s — sums + multicasts data</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    That last row is the hardware behind <a href="nccl.html#nvls">NVLS</a>: because the switch has an ALU, it can
+    <em>sum</em> data from many GPUs and multicast the result — so an AllReduce can be done <em>in the switch</em>
+    instead of circulating partial sums around a ring.
+  </p>
+
+  <h3>Why the crossbar stops at the node</h3>
+  <p>
+    A crossbar costs \(O(N^2)\) crosspoints, so you cannot build a 10,000-port one — the silicon and wiring blow
+    up. The universal fix is to <strong>compose small crossbars into a near-non-blocking <em>fat-tree</em> (Clos
+    network)</strong>, trading a little blocking and \(O(\log N)\) hops for \(O(N\log N)\) cost. Crossbars are the
+    atom at every tier: one node is a single crossbar (NVSwitch); the InfiniBand network in §6 is a fat-tree
+    <em>of</em> crossbar switch chips. Stepping from one crossbar to a fat-tree of them is exactly the bandwidth
+    cliff at the node boundary — and the reason tensor parallelism is <em>capped at one node</em>.
   </p>
 
   <!-- ════════════════════════ NETWORK ════════════════════════ -->
@@ -590,6 +658,54 @@
     }
     slider.addEventListener('input', update);
     update();
+  })();
+
+  // ── Crossbar permutation widget ───────────────────────────
+  (function () {
+    const svg = document.getElementById('xbar-svg');
+    const btn = document.getElementById('xbar-shuffle');
+    const status = document.getElementById('xbar-status');
+    if (!svg) return;
+    const SVGNS = 'http://www.w3.org/2000/svg';
+    const N = 4;
+    const yR = [70, 120, 170, 220];        // input rows
+    const xC = [110, 170, 230, 290];       // output columns
+    const xL = 64, xRgt = 322, yTop = 46, yBot = 244;
+    const colors = ['#0d9488', '#c2410c', '#7c3aed', '#2563eb'];
+    let perm = [0, 1, 2, 3];
+
+    function mk(tag, a, txt) { const e = document.createElementNS(SVGNS, tag); for (const k in a) e.setAttribute(k, a[k]); if (txt != null) e.textContent = txt; svg.appendChild(e); return e; }
+
+    function shuffle() {
+      do { for (let i = N - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [perm[i], perm[j]] = [perm[j], perm[i]]; } }
+      while (perm.every((c, r) => c === r));   // avoid the identity for visual interest
+      draw();
+    }
+
+    function draw() {
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+      // grid wires
+      for (let r = 0; r < N; r++) mk('line', { x1: xL, y1: yR[r], x2: xRgt, y2: yR[r], stroke: '#e2e8f0', 'stroke-width': 2 });
+      for (let c = 0; c < N; c++) mk('line', { x1: xC[c], y1: yTop, x2: xC[c], y2: yBot, stroke: '#e2e8f0', 'stroke-width': 2 });
+      // active L-paths (input r → crosspoint → output c)
+      for (let r = 0; r < N; r++) {
+        const c = perm[r], col = colors[r];
+        mk('line', { x1: xL, y1: yR[r], x2: xC[c], y2: yR[r], stroke: col, 'stroke-width': 3 });
+        mk('line', { x1: xC[c], y1: yR[r], x2: xC[c], y2: yBot, stroke: col, 'stroke-width': 3 });
+      }
+      // crosspoint dots (filled = closed)
+      for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+        const on = perm[r] === c;
+        mk('circle', { cx: xC[c], cy: yR[r], r: on ? 6 : 3, fill: on ? colors[r] : '#cbd5e1' });
+      }
+      // labels
+      for (let r = 0; r < N; r++) mk('text', { x: xL - 8, y: yR[r] + 4, 'text-anchor': 'end', 'font-family': 'ui-monospace', 'font-size': 12, fill: '#475569' }, 'in' + r);
+      for (let c = 0; c < N; c++) mk('text', { x: xC[c], y: yBot + 18, 'text-anchor': 'middle', 'font-family': 'ui-monospace', 'font-size': 12, fill: '#475569' }, 'out' + c);
+      status.textContent = 'in→out: ' + perm.map((c, r) => r + '→' + c).join(', ') + ' — 4 simultaneous full-rate paths, no shared wire.';
+    }
+
+    btn.addEventListener('click', shuffle);
+    draw();
   })();
 </script>
 
