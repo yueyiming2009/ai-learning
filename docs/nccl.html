@@ -238,10 +238,10 @@
   </p>
 
   <div class="diagram">
-    <div class="diagram-title">▸ Double binary tree (reduce up ↑, broadcast down ↓)</div>
-    <div class="diagram-hint">Latency ~2·log₂N hops. Two complementary trees (only one shown) keep every link busy.</div>
+    <div class="diagram-title">▸ Double binary tree — two complementary trees over the same 7 ranks</div>
+    <div class="diagram-hint">Solid = interior (relays two children, heavy traffic); outline = leaf (one link). A rank that's interior in one tree is a leaf in the other, so its links stay busy in <em>both</em> — full bandwidth at ~2·log₂N latency.</div>
     <div class="diagram-stage">
-      <svg id="tree-svg" viewBox="0 0 460 250" width="460" height="250" role="img" aria-label="Binary tree reduction"></svg>
+      <svg id="tree-svg" viewBox="0 0 720 290" width="720" height="290" role="img" aria-label="Two complementary binary trees over ranks 0 to 6"></svg>
     </div>
   </div>
 
@@ -495,25 +495,45 @@
     if (!svg) return;
     const SVGNS = 'http://www.w3.org/2000/svg';
     function mk(tag, a, txt) { const e = document.createElementNS(SVGNS, tag); for (const k in a) e.setAttribute(k, a[k]); if (txt != null) e.textContent = txt; svg.appendChild(e); return e; }
-    // 7-node binary tree
-    const nodes = {
-      0: { x: 230, y: 40 },
-      1: { x: 130, y: 110 }, 2: { x: 330, y: 110 },
-      3: { x: 80, y: 190 }, 4: { x: 180, y: 190 }, 5: { x: 280, y: 190 }, 6: { x: 380, y: 190 }
+
+    function drawTree(nodes, edges, interior, title, tx) {
+      mk('text', { x: tx, y: 20, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 12, 'font-weight': 600, fill: '#4338ca' }, title);
+      edges.forEach(([a, b]) => {
+        mk('line', { x1: nodes[a].x, y1: nodes[a].y, x2: nodes[b].x, y2: nodes[b].y, stroke: '#a5b4fc', 'stroke-width': 2 });
+      });
+      Object.keys(nodes).forEach(k => {
+        const n = nodes[k], isInt = interior.has(+k);
+        mk('circle', { cx: n.x, cy: n.y, r: 15,
+          fill: isInt ? '#4338ca' : '#eef2ff',
+          stroke: isInt ? '#312e81' : '#818cf8', 'stroke-width': isInt ? 0 : 1.5 });
+        mk('text', { x: n.x, y: n.y + 4, 'text-anchor': 'middle', 'font-family': 'ui-monospace', 'font-size': 12,
+          'font-weight': 600, fill: isInt ? '#fff' : '#4338ca' }, k);
+      });
+    }
+
+    // Tree A — recursive-bisection tree over ranks 0..6 (root 3)
+    const A = {
+      3: { x: 180, y: 58 },
+      1: { x: 110, y: 132 }, 5: { x: 250, y: 132 },
+      0: { x: 75, y: 206 }, 2: { x: 145, y: 206 }, 4: { x: 215, y: 206 }, 6: { x: 285, y: 206 }
     };
-    const edges = [[0,1],[0,2],[1,3],[1,4],[2,5],[2,6]];
-    edges.forEach(([a, b]) => {
-      mk('line', { x1: nodes[a].x, y1: nodes[a].y, x2: nodes[b].x, y2: nodes[b].y, stroke: '#a5b4fc', 'stroke-width': 2 });
-    });
-    // up / down arrows annotations
-    mk('text', { x: 250, y: 78, 'font-family': 'Inter', 'font-size': 11, fill: '#16a34a' }, '↑ reduce');
-    mk('text', { x: 250, y: 95, 'font-family': 'Inter', 'font-size': 11, fill: '#dc2626' }, '↓ broadcast');
-    Object.keys(nodes).forEach(k => {
-      const n = nodes[k];
-      mk('circle', { cx: n.x, cy: n.y, r: 16, fill: k === '0' ? '#4338ca' : '#4f46e5' });
-      mk('text', { x: n.x, y: n.y + 4, 'text-anchor': 'middle', 'font-family': 'ui-monospace', 'font-size': 12, fill: '#fff' }, k);
-    });
-    mk('text', { x: 230, y: 232, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11, fill: '#6b7280' }, 'depth ≈ log₂N → reduce up then broadcast down = 2·log₂N hops');
+    drawTree(A, [[3,1],[3,5],[1,0],[1,2],[5,4],[5,6]], new Set([3,1,5]), 'Tree A · half the bytes', 180);
+
+    // Tree B — same shape, ranks rotated by 1 so interior/leaf roles flip (root 4)
+    const B = {
+      4: { x: 540, y: 58 },
+      2: { x: 470, y: 132 }, 6: { x: 610, y: 132 },
+      1: { x: 435, y: 206 }, 3: { x: 505, y: 206 }, 5: { x: 575, y: 206 }, 0: { x: 645, y: 206 }
+    };
+    drawTree(B, [[4,2],[4,6],[2,1],[2,3],[6,5],[6,0]], new Set([4,2,6]), 'Tree B · the other half', 540);
+
+    // shared reduce-up / broadcast-down legend, in the gap between the trees
+    mk('text', { x: 360, y: 110, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11, fill: '#16a34a', 'font-weight': 600 }, '↑ reduce');
+    mk('text', { x: 360, y: 158, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11, fill: '#dc2626', 'font-weight': 600 }, '↓ bcast');
+
+    // the key insight
+    mk('text', { x: 360, y: 250, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11.5, 'font-weight': 600, fill: '#374151' }, 'Ranks 1·3·5 are interior in A but leaves in B — and 2·4·6 the reverse.');
+    mk('text', { x: 360, y: 268, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11, fill: '#6b7280' }, 'Each rank carries heavy interior traffic in exactly one tree → every link stays busy → full bandwidth.');
   })();
 
   // ── Ring vs tree latency explorer ─────────────────────────
