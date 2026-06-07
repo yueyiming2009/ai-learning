@@ -230,18 +230,28 @@
   <h2 id="tree">4 · The tree algorithm</h2>
   <p>
     A tree AllReduce <strong>reduces up</strong> to a root and <strong>broadcasts down</strong>, so its latency is
-    \(O(\log N)\) hops instead of \(O(N)\). The naive cost is that a plain binary tree only uses half its links
-    (interior nodes receive from two children but the leaves and root sit idle in one phase). NCCL’s fix is the
-    <strong>double binary tree</strong>: build <em>two</em> complementary trees so that a node that is interior in
+    \(O(\log N)\) hops instead of \(O(N)\). The catch is that a plain binary tree only uses half its links
+    (interior endpoints relay both children, while the leaves and root sit idle in one phase). NCCL’s fix is the
+    <strong>double binary tree</strong>: build <em>two</em> complementary trees so that an endpoint that is interior in
     one is a leaf in the other, and split the data between them. Now every link carries traffic in both
     directions — <strong>full bandwidth and logarithmic latency</strong>.
   </p>
+  <p>
+    One detail worth pinning down — and it’s a common confusion: NCCL builds this tree <strong>over nodes, not
+    individual GPUs</strong>. The constructor is literally <code>ncclGetDtree(nNodes, …)</code>, and for an odd node
+    count it forms the second tree by <em>shifting ranks by one</em> (mirroring for an even count), exactly as drawn
+    below. <em>Inside</em> a node the GPUs are wired as a <strong>chain</strong> — <code>tree.up</code> is the previous
+    GPU, <code>tree.down</code> the next, over NVLink — and that chain’s head carries the node’s link in the binary
+    tree. So the cost splits in two: a linear intra-node chain, \(2(G\!-\!1)\,\alpha\) for \(G\) GPUs per node, plus the
+    log-depth inter-node tree, \(2\log_2 N\,\alpha\). The tree’s latency win is purely the inter-node term; the figure
+    below shows that level — each circle is a <em>node</em> — with one node’s 8-GPU chain expanded underneath.
+  </p>
 
   <div class="diagram">
-    <div class="diagram-title">▸ Double binary tree — two complementary trees over the same 7 ranks</div>
-    <div class="diagram-hint">Solid = interior (relays two children, heavy traffic); outline = leaf (one link). A rank that's interior in one tree is a leaf in the other, so its links stay busy in <em>both</em> — full bandwidth at ~2·log₂N latency. The loop runs both phases: <span style="color:#16a34a;font-weight:600">reduce ↑</span> to the roots, then <span style="color:#dc2626;font-weight:600">broadcast ↓</span> to every leaf — both trees at once.</div>
+    <div class="diagram-title">▸ Double binary tree — two complementary trees over 7 nodes (each node a chain of GPUs)</div>
+    <div class="diagram-hint">Each circle is a <em>node</em>. Solid = interior (relays two children, heavy traffic); outline = leaf (one link). A node that's interior in one tree is a leaf in the other, so its links stay busy in <em>both</em> — full bandwidth at ~2·log₂N latency. The loop runs both phases: <span style="color:#16a34a;font-weight:600">reduce ↑</span> to the roots, then <span style="color:#dc2626;font-weight:600">broadcast ↓</span> to every leaf — both trees at once. Inside one node, the GPU chain is expanded below.</div>
     <div class="diagram-stage">
-      <svg id="tree-svg" viewBox="0 0 720 290" width="720" height="290" role="img" aria-label="Two complementary binary trees over ranks 0 to 6"></svg>
+      <svg id="tree-svg" viewBox="0 0 720 384" width="720" height="384" role="img" aria-label="Two complementary binary trees over 7 nodes, with one node's 8-GPU NVLink chain expanded below"></svg>
     </div>
   </div>
 
@@ -534,9 +544,23 @@
     };
     const TB = drawTree(B, [[4,2],[4,6],[2,1],[2,3],[6,5],[6,0]], new Set([4,2,6]), 'Tree B · the other half', 540);
 
-    // the key insight
-    mk('text', { x: 360, y: 250, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11.5, 'font-weight': 600, fill: '#374151' }, 'Ranks 1·3·5 are interior in A but leaves in B — and 2·4·6 the reverse.');
-    mk('text', { x: 360, y: 268, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11, fill: '#6b7280' }, 'Each rank carries heavy interior traffic in exactly one tree → every link stays busy → full bandwidth.');
+    // the key insight (about nodes — the tree is built over nodes)
+    mk('text', { x: 360, y: 232, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11.5, 'font-weight': 600, fill: '#374151' }, 'Nodes 1·3·5 are interior in A but leaves in B — and 2·4·6 the reverse.');
+    mk('text', { x: 360, y: 250, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11, fill: '#6b7280' }, 'Each node does heavy interior relaying in exactly one tree → every link stays busy.');
+
+    // ── Inset: one node = a chain of 8 GPUs over NVLink (intra-node) ──
+    mk('line', { x1: 40, y1: 272, x2: 680, y2: 272, stroke: '#e5e7eb', 'stroke-width': 1 });
+    mk('text', { x: 360, y: 290, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11.5, 'font-weight': 600, fill: '#4338ca' }, 'Zoom into one node — the tree is over nodes; inside a node, GPUs form an NVLink chain');
+    mk('text', { x: 360, y: 306, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 10.5, fill: '#6b7280' }, 'the head GPU (0) also carries this node’s link in the inter-node tree');
+    const gx = [220, 260, 300, 340, 380, 420, 460, 500], gy = 340;
+    mk('text', { x: 220, y: 324, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 13, 'font-weight': 700, fill: '#4338ca' }, '↑');
+    for (let i = 0; i < gx.length - 1; i++) mk('line', { x1: gx[i], y1: gy, x2: gx[i + 1], y2: gy, stroke: '#a5b4fc', 'stroke-width': 2 });
+    gx.forEach((x, i) => {
+      const head = i === 0;
+      mk('circle', { cx: x, cy: gy, r: 12, fill: head ? '#4338ca' : '#eef2ff', stroke: head ? '#312e81' : '#818cf8', 'stroke-width': head ? 0 : 1.5 });
+      mk('text', { x: x, y: gy + 4, 'text-anchor': 'middle', 'font-family': 'ui-monospace', 'font-size': 11, 'font-weight': 600, fill: head ? '#fff' : '#4338ca' }, i);
+    });
+    mk('text', { x: 360, y: 372, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 10.5, fill: '#9ca3af' }, 'GPUs 0–7 · intra-node chain (cost 2(G−1)·α)   —   between nodes: binary tree (cost 2·log₂N·α)');
 
     // ── Animate the two phases: reduce up to roots, broadcast back down ──
     // Each entry is [tree, from, to]; a hop moves a packet from→to and lights that link.
