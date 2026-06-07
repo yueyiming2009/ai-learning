@@ -481,22 +481,88 @@
   </p>
 
   <!-- ════════════════════════ NETWORK ════════════════════════ -->
-  <h2 id="network">6 · Across nodes: NICs, InfiniBand, and the bandwidth cliff</h2>
+  <h2 id="network">6 · Across nodes: the scale-out network</h2>
   <p>
-    To scale past 8 GPUs you leave the node. Each GPU is paired with a network card (typically a
-    <strong>ConnectX-7 at 400 Gb/s ≈ 50 GB/s</strong>), and those NICs connect through a switched
-    InfiniBand or RoCE fabric — usually a <strong>rail-optimized fat-tree</strong>, where GPU \(i\) of every node
-    attaches to the same “rail” switch so same-rail traffic stays one hop away.
+    A GPU lives in <em>two</em> networks, and “going across nodes” means dropping from the first to the second:
   </p>
+  <ul>
+    <li><strong>Scale-up</strong> — the <a href="#nvlink">NVLink domain</a>: the fast, non-blocking NVSwitch
+      crossbar. On a classic HGX H100 node that’s <strong>8 GPUs</strong>; on a GB200 NVL72 rack it’s
+      <strong>72 GPUs</strong>. No cliff inside this domain — it’s all ~450 GB/s/GPU.</li>
+    <li><strong>Scale-out</strong> — the data-center fabric (InfiniBand or Ethernet) connecting NVLink domains to
+      each other. This is the slow tier, ~50 GB/s/GPU.</li>
+  </ul>
+  <p>
+    So the boundary that matters isn’t literally “the node” — it’s the <strong>edge of the NVLink domain</strong>.
+    Cross it and you’re on the scale-out network, built from three things:
+  </p>
+  <ul>
+    <li><strong>One NIC per GPU.</strong> A DGX H100 has <strong>8 ConnectX-7 adapters at 400 Gb/s (≈50 GB/s)</strong>,
+      one dedicated to each GPU (plus separate NICs for storage). The 1-NIC-per-GPU ratio holds on NVL72 too.</li>
+    <li><strong>GPU and its NIC under the same PCIe switch</strong>, so the GPU reaches the wire without crossing the CPU.</li>
+    <li><strong>A fabric of switches</strong> wiring the NICs together (next).</li>
+  </ul>
+
+  <h3>The data path, and why GPUDirect RDMA matters</h3>
+  <p>
+    A transfer from GPU&nbsp;A on one node to GPU&nbsp;B on another follows:
+  </p>
+  <div class="result" style="font-family:ui-monospace,monospace; font-size:0.84rem; text-align:left; line-height:1.7">
+    GPU A HBM → PCIe switch → NIC A → optics → leaf switch → [spine] → leaf switch → NIC B → PCIe switch → GPU B HBM
+  </div>
+  <p>
+    What makes this fast is <strong>GPUDirect RDMA</strong>: the NIC reads and writes <em>GPU HBM directly</em> over
+    PCIe, bypassing the CPU and host memory entirely. NIC&nbsp;B performs a remote DMA straight into GPU&nbsp;B’s
+    HBM — no CPU copy, no staging in system RAM. Without it, every inter-node byte would detour through the CPU and
+    the effective bandwidth would collapse. (The GPU↔NIC PCIe Gen5 ×16 link is ~64 GB/s, which is why a 50 GB/s NIC
+    fits comfortably under it.)
+  </p>
+
+  <h3>The topology: a rail-optimized fat-tree</h3>
+  <p>
+    The switches form a <strong>fat-tree (Clos network)</strong> — the same crossbars-of-crossbars from §5: each
+    switch (e.g. an NVIDIA Quantum-2, 64×400 Gb/s) is a crossbar, composed into a near-non-blocking tree with full
+    bisection bandwidth. Nodes attach to <strong>leaf</strong> switches; leaves connect through <strong>spine</strong>
+    switches; the largest clusters add a third core tier.
+  </p>
+  <p>
+    The GPU-specific twist is <strong>rail optimization</strong>: with 8 GPUs/8 NICs per node, NIC&nbsp;\(i\) of
+    <em>every</em> node connects to the same “rail” (leaf switch \(i\)) — so there are 8 parallel rails. GPU&nbsp;\(i\)
+    on any node reaches GPU&nbsp;\(i\) on any other node by <strong>staying on its rail — one leaf-switch hop</strong>,
+    never touching the contended spine. NCCL leans on this: it structures collectives so same-rank GPUs talk on their
+    own rail. Cross-rail traffic either climbs to the spine, or first hops over <em>NVLink inside the node</em> to the
+    GPU on the right rail — combining both networks.
+  </p>
+
+  <div class="diagram">
+    <div class="diagram-title">▸ Rail-optimized fat-tree (2 nodes, 4 rails)</div>
+    <div class="diagram-hint">GPU i → NIC i → rail i. Same-rail = 1 hop (green); cross-rail climbs to the spine (dashed).</div>
+    <div class="diagram-stage">
+      <svg id="rail-svg" viewBox="0 0 560 300" width="560" height="300" role="img" aria-label="Rail-optimized fat-tree"></svg>
+    </div>
+  </div>
+
+  <h3>InfiniBand vs Ethernet</h3>
+  <p>
+    Two transport flavors carry this: <strong>InfiniBand</strong> (NVIDIA Quantum) — lossless, RDMA-native,
+    hardware congestion control, and the default in most large training clusters; its switches can even do
+    in-network reduction (<strong>SHARP</strong> → NCCL’s CollNet, the InfiniBand analogue of NVLS). And
+    <strong>RoCE / Ethernet</strong> (RDMA over Converged Ethernet; NVIDIA Spectrum-X) — RDMA over Ethernet, needing
+    careful PFC/ECN tuning to stay lossless, favored by some hyperscalers. Either way the transport is RDMA: the
+    point is to move GPU memory to GPU memory without the CPUs in the loop.
+  </p>
+
   <div class="result">
-    <div class="result-label">The cliff at the node boundary</div>
+    <div class="result-label">The cliff at the NVLink-domain boundary</div>
     NVLink ~450 GB/s  →  network ~50 GB/s &nbsp;&nbsp;≈&nbsp;&nbsp; <strong>~9–10× less bandwidth per GPU</strong>
   </div>
   <p>
     Everything about multi-node parallelism is organized around hiding this drop. The collectives that must cross
     it — the gradient AllReduce of data parallelism, the activation sends of pipeline parallelism — are chosen
     either to be <em>rare</em> (once per step) or to <em>overlap</em> with compute, so the slow fabric is never on
-    the exposed critical path. The chatty, per-layer collectives stay inside the NVLink island.
+    the exposed critical path. The chatty, per-layer collectives stay inside the NVLink domain. And the modern
+    trend — NVL72 growing that domain from 8 to 72 GPUs — is precisely about <strong>moving this cliff outward</strong>
+    so more of your parallelism enjoys scale-up bandwidth.
   </p>
 
   <!-- ════════════════════════ MAP TO MATH ════════════════════════ -->
@@ -709,6 +775,52 @@
 
     btn.addEventListener('click', shuffle);
     draw();
+  })();
+
+  // ── Rail-optimized fat-tree diagram ───────────────────────
+  (function () {
+    const svg = document.getElementById('rail-svg');
+    if (!svg) return;
+    const SVGNS = 'http://www.w3.org/2000/svg';
+    const R = 4;                                   // rails
+    const railX = [80, 220, 360, 500], railY = 130;
+    const spine = { x: 230, y: 36, w: 100, h: 30 };
+    const highlight = 1;                           // which rail to light as "same-rail, 1 hop"
+    // two nodes, each with R GPUs (GPU i wired to rail i)
+    const nodes = [
+      { x: 30,  label: 'Node A', gx: [55, 105, 155, 205] },
+      { x: 350, label: 'Node B', gx: [375, 425, 475, 525] }
+    ];
+    const gY = 250;
+    function mk(tag, a, txt) { const e = document.createElementNS(SVGNS, tag); for (const k in a) e.setAttribute(k, a[k]); if (txt != null) e.textContent = txt; svg.appendChild(e); return e; }
+
+    // spine ↔ rails (dashed = cross-rail path up to spine)
+    railX.forEach(rx => mk('line', { x1: rx, y1: railY, x2: spine.x + spine.w / 2, y2: spine.y + spine.h, stroke: '#cbd5e1', 'stroke-width': 1.5, 'stroke-dasharray': '4 3' }));
+    // GPU → rail links
+    nodes.forEach(nd => nd.gx.forEach((gx, i) => {
+      const lit = i === highlight;
+      mk('line', { x1: gx, y1: gY - 10, x2: railX[i], y2: railY + 13, stroke: lit ? '#16a34a' : '#94a3b8', 'stroke-width': lit ? 3 : 1.8 });
+    }));
+    // spine box
+    mk('rect', { x: spine.x, y: spine.y, width: spine.w, height: spine.h, rx: 6, fill: '#334155' });
+    mk('text', { x: spine.x + spine.w / 2, y: spine.y + 20, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 12, 'font-weight': 600, fill: '#e2e8f0' }, 'spine');
+    // rail (leaf) switches
+    railX.forEach((rx, i) => {
+      const lit = i === highlight;
+      mk('rect', { x: rx - 34, y: railY - 13, width: 68, height: 26, rx: 5, fill: lit ? '#16a34a' : '#0d9488' });
+      mk('text', { x: rx, y: railY + 5, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11, 'font-weight': 600, fill: '#fff' }, 'rail ' + i);
+    });
+    // nodes + GPUs
+    nodes.forEach(nd => {
+      mk('rect', { x: nd.x, y: gY - 26, width: 250, height: 52, rx: 8, fill: 'none', stroke: '#cbd5e1', 'stroke-dasharray': '5 4' });
+      mk('text', { x: nd.x + 6, y: gY + 40, 'font-family': 'Inter', 'font-size': 11, fill: '#6b7280' }, nd.label);
+      nd.gx.forEach((gx, i) => {
+        const lit = i === highlight;
+        mk('rect', { x: gx - 18, y: gY - 12, width: 36, height: 26, rx: 4, fill: lit ? '#15803d' : '#4f46e5' });
+        mk('text', { x: gx, y: gY + 5, 'text-anchor': 'middle', 'font-family': 'ui-monospace', 'font-size': 11, fill: '#fff' }, 'G' + i);
+      });
+    });
+    mk('text', { x: 280, y: 292, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11, fill: '#16a34a' }, 'green: GPU 1 ↔ GPU 1 stays on rail 1 — a single leaf hop, no spine');
   })();
 </script>
 
