@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>torch.distributed — c10d, DDP &amp; FSDP</title>
+  <title>Data Parallelism — Replicate, Shard, and the ZeRO Ladder</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -421,12 +421,12 @@
 <body>
 
 <nav>
-  <a class="nav-brand" href="#">torch.distributed</a>
+  <a class="nav-brand" href="#">Data Parallelism</a>
   <div class="nav-links">
     <a href="index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
     <a href="#foundation">The foundation</a>
-    <a href="#api">The c10d API</a>
-    <a href="#ddp">DDP</a>
+    <a href="#primitives">The primitives</a>
+    <a href="#ddp">DDP &amp; the wall</a>
     <a href="#fsdp">FSDP</a>
     <a href="#zero">ZeRO ladder</a>
     <a href="#mesh">Composing axes</a>
@@ -438,38 +438,38 @@
 
 <div class="hero">
   <span class="hero-pill">Systems · Distributed</span>
-  <h1>torch.distributed — c10d, DDP &amp; FSDP</h1>
-  <p>The single library under every PyTorch parallelism strategy. Below the launcher and above NCCL sits <code>torch.distributed</code> — process groups and a handful of collective calls. DDP, FSDP, tensor and pipeline parallelism are not separate engines; they are different <em>patterns of collectives</em> over that one foundation.</p>
+  <h1>Data Parallelism — Replicate, Shard, and the ZeRO Ladder</h1>
+  <p>One training job across N GPUs, each holding a slice of the batch. The entire design space is a single dial: how much of the model state each GPU keeps. DDP replicates all of it; FSDP shards all of it; the ZeRO ladder is every rung between — all built on the same handful of <code>torch.distributed</code> collectives.</p>
 </div>
 
 <div class="page-wrap">
 
   <div class="xref">
-    This page sits between two others. The collectives it issues — AllReduce, AllGather, ReduceScatter — are derived in
-    <a href="collectives.html">Sharding &amp; Collectives →</a>, and how they actually run on the wire (rings, trees, NVLS) is
-    <a href="nccl.html">NCCL →</a>. Here we cover the PyTorch <em>API</em> over them, and the data-parallel strategies — DDP and FSDP — built directly on top.
+    This page builds on the comm layer from <a href="collectives.html">Sharding &amp; Collectives →</a> (AllReduce, AllGather, ReduceScatter and their byte costs) and <a href="nccl.html">NCCL →</a> (how those collectives run on the wire). The orthogonal model-parallel axis is <a href="tensor-parallelism.html">Tensor Parallelism →</a>.
   </div>
 
   <p>
-    A natural question when you first meet these tools is: <em>is DDP the foundation that FSDP and the rest are built on?</em>
-    It is not. DDP and FSDP are <strong>siblings</strong>, not parent and child — two data-parallel strategies that both sit on the
-    same lower layer. That layer is <code>torch.distributed</code>, historically the <strong>c10d</strong> library: a
-    <strong>process group</strong> abstraction plus collective and point-to-point communication primitives. Everything else —
-    DDP, FSDP, tensor parallelism, pipeline parallelism, expert parallelism — is a recipe written in those primitives.
+    <strong>Data parallelism</strong> is the first parallelism you reach for and the backbone of nearly every large training
+    run. The recipe is three lines: put a copy of the model on each of \(N\) GPUs, feed each copy a different shard of the
+    batch, and synchronize gradients so the copies take an identical optimizer step and never drift apart. It scales
+    throughput almost linearly — until the model state stops fitting on one GPU. Everything interesting about modern data
+    parallelism is the answer to <em>that</em> problem, and you read the whole answer off one number: <strong>bytes of model
+    state per GPU</strong>. Replicate it (DDP), shard it (FSDP), or anywhere between (ZeRO).
   </p>
 
   <!-- ════════════════════════ FOUNDATION ════════════════════════ -->
-  <h2 id="foundation">1 · One library under every strategy</h2>
+  <h2 id="foundation">1 · The foundation: <code>torch.distributed</code></h2>
   <p>
-    A distributed run has three layers. The <strong>launcher</strong> (<code>torchrun</code>) spawns one process per GPU and
-    sets the environment variables that tell each process who it is. Each process then calls
-    <code>init_process_group</code>, which is <code>torch.distributed</code> — it forms the <em>process group</em> and binds a
-    <strong>backend</strong> (NCCL on GPUs). The backend is the thing that actually moves bytes. Stacked:
+    Before the strategies, the layer they all stand on. A distributed run is \(N\) ordinary processes, one per GPU, each
+    running the same script. The <strong>launcher</strong> (<code>torchrun</code>) spawns them and stamps each with the
+    environment it needs; each process then calls <code>init_process_group</code> — which <em>is</em>
+    <code>torch.distributed</code>, historically the <strong>c10d</strong> library. It forms the <strong>process group</strong>
+    and binds a <strong>backend</strong> (NCCL on GPUs) that actually moves the bytes.
   </p>
 
   <div style="margin:1.4em 0; display:flex; flex-direction:column; gap:8px; align-items:stretch; max-width:560px; margin-left:auto; margin-right:auto;">
     <div style="background:var(--step-bg); border:1px solid var(--step-border); border-radius:8px; padding:10px 16px; text-align:center; font-size:.9rem;">
-      <strong>torchrun</strong> — launcher · spawns N processes, sets <code>RANK</code>/<code>WORLD_SIZE</code>/<code>MASTER_ADDR</code>
+      <strong>torchrun</strong> — launcher · spawns N processes, sets <code>RANK</code> / <code>WORLD_SIZE</code> / <code>MASTER_ADDR</code>
     </div>
     <div style="text-align:center; color:var(--muted); font-size:.8rem;">▼ each process calls <code>init_process_group</code></div>
     <div style="background:var(--accent-light); border:1.5px solid var(--accent); border-radius:8px; padding:14px 16px; text-align:center;">
@@ -489,260 +489,371 @@
   </div>
 
   <p>
-    The reframe that matters: <strong>data parallelism</strong> (DDP, FSDP) splits the <em>batch</em> and keeps each device
-    computing whole layers; the <strong>model-parallel</strong> axes (tensor, pipeline, expert) split the <em>model</em>.
-    These are orthogonal axes you compose, not a hierarchy. DDP is simply the thinnest possible use of the foundation —
-    and FSDP is what you get when you shard DDP's redundant state instead of replicating it.
+    The one thing to carry out of this section: <strong>every strategy in that middle row — data-parallel or model-parallel —
+    is just a pattern of collective calls over a process group.</strong> DDP and FSDP differ only in <em>which</em>
+    collectives they issue and <em>what state</em> they keep between them. The rest of the page is those patterns.
   </p>
 
-  <!-- ════════════════════════ API ════════════════════════ -->
-  <h2 id="api">2 · The c10d API surface</h2>
+  <!-- ════════════════════════ PRIMITIVES ════════════════════════ -->
+  <h2 id="primitives">2 · The primitives you actually need</h2>
   <p>
-    The whole API is small. You initialize one process group, query your identity, and issue collectives against the group.
-  </p>
-
-  <pre><code>import os, torch
-import torch.distributed as dist
-
-# torchrun has already set RANK / WORLD_SIZE / MASTER_ADDR / MASTER_PORT in the env.
-dist.init_process_group(backend="nccl")          # form the default process group
-rank       = dist.get_rank()                      # global index, 0 .. world_size-1
-world_size = dist.get_world_size()                # total processes
-local_rank = int(os.environ["LOCAL_RANK"])        # GPU index on THIS node
-torch.cuda.set_device(local_rank)                 # pin this process to its GPU
-
-# collectives — every rank in the group must call the same op, in the same order
-dist.all_reduce(t, op=dist.ReduceOp.SUM)          # sum t across ranks; result on all
-dist.all_gather(out_list, t)                      # gather each rank's t into a list
-dist.reduce_scatter(out, in_list)                 # reduce, then scatter shards
-dist.broadcast(t, src=0)                           # rank 0's t -> everyone
-dist.barrier()                                     # sync point
-dist.send(t, dst=1); dist.recv(t, src=0)           # point-to-point (pipeline parallel)
-
-# a subgroup = one parallelism axis
-tp_group = dist.new_group(ranks=[0, 1, 2, 3])     # e.g. a 4-way tensor-parallel group
-dist.all_reduce(t, group=tp_group)                 # collective scoped to that axis</code></pre>
-
-  <p>
-    Two things are worth pulling out. First, the <strong>backend</strong> is what binds the abstract collective to hardware:
+    To make \(N\) independent processes behave as one training job you have to coordinate exactly four things. The whole
+    c10d API is those four and little else:
   </p>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Backend</th><th>Device</th><th>Use</th></tr></thead>
+      <thead><tr><th>What you must coordinate</th><th>The call</th></tr></thead>
       <tbody>
-        <tr><td><code>nccl</code></td><td>GPU</td><td>The default for training — NVLink/IB collectives. See the <a href="nccl.html">NCCL page</a>.</td></tr>
-        <tr><td><code>gloo</code></td><td>CPU</td><td>CPU tensors, debugging, or when NCCL is unavailable.</td></tr>
-        <tr><td><code>mpi</code></td><td>CPU/GPU</td><td>HPC clusters with an existing MPI stack (must build from source).</td></tr>
+        <tr><td><strong>Identity</strong> — which rank am I, how many of us?</td><td><code>get_rank()</code>, <code>get_world_size()</code></td></tr>
+        <tr><td><strong>Rendezvous</strong> — find each other, pick a backend</td><td><code>init_process_group(backend="nccl")</code></td></tr>
+        <tr><td><strong>Reduction</strong> — combine tensors across ranks</td><td><code>all_reduce</code>, <code>all_gather</code>, <code>reduce_scatter</code>, <code>broadcast</code></td></tr>
+        <tr><td><strong>Scoping</strong> — restrict a collective to a subset</td><td><code>new_group(ranks=[…])</code> / <code>DeviceMesh</code></td></tr>
       </tbody>
     </table>
   </div>
-  <p>
-    Second, the env vars <code>init_process_group</code> reads are exactly the ones the launcher injects —
-    <code>RANK</code>, <code>WORLD_SIZE</code>, <code>MASTER_ADDR</code>, <code>MASTER_PORT</code>, <code>LOCAL_RANK</code> —
-    read out of <code>os.environ</code>. The launcher sets the env; your code reads it; c10d wires the processes together.
-  </p>
-  <div class="xref">
-    Where those env vars come from is the launcher's job — see the rendezvous and env-injection mechanics in the
-    <code>torchrun</code> note (personal PyTorch notebook), and <code>os.environ</code> as the read side.
-  </div>
+
+  <pre><code>import os, torch, torch.distributed as dist
+
+dist.init_process_group(backend="nccl")          # rendezvous (reads RANK/WORLD_SIZE/MASTER_ADDR from the env)
+torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))   # pin this process to its GPU
+dist.all_reduce(grad, op=dist.ReduceOp.SUM)       # every rank ends up with the summed grad</code></pre>
 
   <p>
-    <strong>Subgroups are the key idea for scale.</strong> <code>new_group(ranks=[...])</code> carves a subset of ranks into
-    their own process group with its own NCCL communicator. Each parallelism axis — the tensor-parallel group, the
-    data-parallel group, the pipeline-parallel group — is just one such subgroup. A collective issued on a subgroup only
-    touches its members. This is precisely how Megatron's <code>initialize_model_parallel</code> builds its TP/DP/PP/EP
-    groups once at startup, then routes every collective to the right one.
+    Two facts do a lot of work later. First, <strong>the backend is what turns an abstract collective into hardware
+    traffic</strong> — <code>nccl</code> for GPUs (the case that matters; see <a href="nccl.html">NCCL</a>),
+    <code>gloo</code> for CPU/debugging, <code>mpi</code> on HPC clusters. Second, <strong>a subgroup is a parallelism
+    axis.</strong> <code>new_group</code> carves a subset of ranks into their own process group with its own communicator;
+    a collective issued on it touches only those ranks. The tensor-parallel group, the data-parallel group, the
+    pipeline-parallel group are each one such subgroup — which is exactly how a framework like Megatron builds its
+    TP/DP/PP/EP groups once at startup and then routes every collective to the right one (§6).
   </p>
 
   <!-- ════════════════════════ DDP ════════════════════════ -->
-  <h2 id="ddp">3 · DDP — replicate and AllReduce</h2>
+  <h2 id="ddp">3 · DDP — replicate, and the memory wall</h2>
   <p>
-    <strong>DistributedDataParallel</strong> is the simplest strategy. Every GPU holds a <em>full replica</em> of the model:
-    parameters, gradients, and optimizer state. Each process feeds its replica a different shard of the global batch, so the
-    forward and backward passes run independently. The only synchronization is on the gradients:
+    <strong>DistributedDataParallel</strong> is the bottom of the dial: every GPU holds a <em>full replica</em> of the model —
+    parameters, gradients, and optimizer state. Forward and backward run independently per replica; the only sync is on the
+    gradients.
   </p>
 
   <div class="step">
     <div class="step-label">The DDP step</div>
     <ol style="margin:.2em 0;">
-      <li>Each replica runs forward and backward on its own micro-batch → local gradients.</li>
-      <li>During backward, gradients are <strong>AllReduce</strong>d (averaged) across all replicas — bucketed and
-          <strong>overlapped</strong> with backward compute, so the reduction of early layers fires while later layers
-          are still computing.</li>
-      <li>After the AllReduce every replica holds the <em>same</em> averaged gradient → the optimizer takes an identical
-          step → replicas stay in lock-step.</li>
+      <li>Each replica runs forward + backward on its own micro-batch → local gradients.</li>
+      <li>Gradients are <strong>AllReduce</strong>d (averaged) across replicas — bucketed and <strong>overlapped</strong> with
+          backward, so early layers reduce while later layers are still computing.</li>
+      <li>Every replica now holds the same averaged gradient → identical optimizer step → replicas stay in lock-step.</li>
     </ol>
   </div>
 
   <pre><code>from torch.nn.parallel import DistributedDataParallel as DDP
-model = DDP(model.to(local_rank), device_ids=[local_rank])
-# train loop is otherwise unchanged — DDP installs gradient hooks
-# that launch the bucketed AllReduce during loss.backward()</code></pre>
+model = DDP(model.to(local_rank), device_ids=[local_rank])   # installs the gradient-AllReduce hooks</code></pre>
 
   <p>
-    The cost: one gradient AllReduce per step (≈ \(2M\) bytes moved for a model of \(M\) bytes, since ring-AllReduce is a
-    ReduceScatter followed by an AllGather). The limitation: <strong>the whole model, its gradients, and its optimizer state
-    must fit on one GPU</strong> — DDP replicates all three. For an AdamW-trained model in mixed precision that is roughly
-    \(16\) bytes per parameter (fp16 weights + fp16 grads + fp32 master weights + fp32 momentum + fp32 variance), so a 7B
-    model already needs ~112&nbsp;GB of optimizer-related state. That wall is exactly what FSDP removes.
+    The cost is one gradient AllReduce per step; the <em>limitation</em> is the whole point of everything that follows.
+    DDP replicates all three pieces of state, so it works only while the model, its gradients, and its optimizer state fit on
+    one GPU. Count the bytes for mixed-precision AdamW:
+  </p>
+
+  <div class="result">
+    <div class="result-label">The 16-bytes-per-parameter wall</div>
+    \[
+    \underbrace{2}_{\substack{\text{fp16}\\\text{weight}}}
+    \;+\; \underbrace{2}_{\substack{\text{fp16}\\\text{grad}}}
+    \;+\; \underbrace{4}_{\substack{\text{fp32}\\\text{master}}}
+    \;+\; \underbrace{4}_{\substack{\text{fp32}\\\text{momentum}}}
+    \;+\; \underbrace{4}_{\substack{\text{fp32}\\\text{variance}}}
+    \;=\; 16\ \text{bytes / param}
+    \]
+  </div>
+
+  <p>
+    So a \(7\text{B}\) model needs \(7\times10^9 \times 16 \approx 112\ \text{GB}\) of state — already past an 80&nbsp;GB
+    H100, before a single byte of activations. DDP cannot help: every replica carries the full \(16M\). That factor of
+    16 — and the fact that it is <em>replicated \(N\) times across the cluster for no reason</em> — is exactly what sharding
+    attacks.
   </p>
 
   <!-- ════════════════════════ FSDP ════════════════════════ -->
-  <h2 id="fsdp">4 · FSDP — shard instead of replicate</h2>
+  <h2 id="fsdp">4 · FSDP — shard the state</h2>
   <p>
     <strong>FullyShardedDataParallel</strong> keeps the data-parallel structure — split the batch, one process per GPU — but
-    <em>shards</em> parameters, gradients, and optimizer state across the data-parallel group instead of replicating them.
-    Each rank permanently owns only \(1/N\) of every weight. The full weights for a layer are reconstructed
-    <strong>just-in-time</strong>, used, and immediately freed.
+    <em>shards</em> parameters, gradients, and optimizer state across the \(N\) data-parallel ranks. Each rank permanently
+    owns only \(1/N\) of every weight. The full weights for a layer are reconstructed <strong>just-in-time</strong>, used,
+    and immediately freed — so peak memory is set by the <em>largest single layer</em>, not the whole model.
+  </p>
+  <p>
+    FSDP is not built on top of DDP — the two are <strong>siblings</strong>. FSDP is what you get when you take DDP and
+    shard its redundant state instead of replicating it, splitting the single gradient AllReduce into a ReduceScatter plus
+    the AllGathers needed to rebuild weights on demand. Step through one layer's life on a single rank:
   </p>
 
-  <div class="step">
-    <div class="step-label">The FSDP unit lifecycle</div>
-    <p style="margin:.2em 0;">The model is partitioned into <strong>units</strong> (a wrapping granularity — often per transformer block). For each unit, in both forward and backward:</p>
-    <ol style="margin:.2em 0;">
-      <li><strong>AllGather</strong> the unit's full parameters from all ranks (everyone reconstructs the whole weight).</li>
-      <li>Run the unit's compute.</li>
-      <li><strong>Free</strong> the gathered parameters — drop back to the local \(1/N\) shard.</li>
-      <li>In backward only: <strong>ReduceScatter</strong> the gradients, so each rank keeps just the gradient for <em>its</em> shard.</li>
-    </ol>
-    <p style="margin:.2em 0;">The optimizer then steps on the local shard alone. Peak parameter memory is set by the <em>largest single unit</em> being gathered, not the whole model.</p>
+  <!-- ── FSDP lifecycle animation ── -->
+  <div class="anim-widget">
+    <div class="anim-header">
+      <span class="anim-title">FSDP unit lifecycle — memory on one rank</span>
+      <span class="anim-hint">N = 4 ranks · 6-block model · each block = 4 tiles</span>
+    </div>
+    <div class="anim-stage">
+      <svg id="fsdp-svg" viewBox="0 0 560 270" style="width:100%; max-width:560px; height:auto;"></svg>
+    </div>
+    <div class="anim-controls">
+      <button class="anim-btn" id="fsdp-step">Step ▶</button>
+      <button class="anim-btn anim-btn-ghost" id="fsdp-reset">Reset</button>
+      <span class="anim-step-label" id="fsdp-note"></span>
+    </div>
   </div>
 
-  <pre><code># FSDP1 — wrap the whole model, choose a unit policy
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-model = FSDP(model, auto_wrap_policy=transformer_auto_wrap_policy, device_id=local_rank)
+  <p>
+    Notice the shape: a low <strong>shard baseline</strong> that is always resident, with a single <strong>block-sized
+    spike</strong> riding on top during compute and dropping straight back down. DDP, by contrast, sits pinned at the full
+    model height the entire step. That gap is the memory win — and the price is the second AllGather in the backward pass.
+  </p>
 
-# FSDP2 (torch >= 2.4) — per-parameter sharding on DTensor
+  <pre><code># FSDP2 (torch >= 2.4) — per-parameter sharding on DTensor
 from torch.distributed.fsdp import fully_shard
 for block in model.layers:
-    fully_shard(block)
+    fully_shard(block)        # each block is one all-gather/free unit
 fully_shard(model)</code></pre>
 
   <div class="compare">
-    <div class="compare-label">DDP vs FSDP — same family, opposite ends of the memory/comm trade</div>
+    <div class="compare-label">DDP vs FSDP — same family, opposite ends of the dial</div>
     <div class="compare-grid">
       <div>
         <div class="compare-col-label">DDP — replicate</div>
-        <p style="margin:.3em 0; font-size:.92rem">Full model on every GPU. One gradient <strong>AllReduce</strong> per step. Minimal communication; capped by single-GPU memory.</p>
+        <p style="margin:.3em 0; font-size:.92rem">Full model on every GPU. One gradient <strong>AllReduce</strong> per step. Least communication; capped by single-GPU memory.</p>
       </div>
       <div>
         <div class="compare-col-label">FSDP — shard</div>
-        <p style="margin:.3em 0; font-size:.92rem">Each GPU holds \(1/N\). <strong>AllGather</strong> params just-in-time (forward <em>and</em> backward) + <strong>ReduceScatter</strong> grads. ~1.5× the communication, but the model size is no longer bounded by one device.</p>
+        <p style="margin:.3em 0; font-size:.92rem">Each GPU holds \(1/N\). <strong>AllGather</strong> weights just-in-time (forward <em>and</em> backward) + <strong>ReduceScatter</strong> grads. More communication, but model size is no longer bounded by one device.</p>
       </div>
     </div>
   </div>
 
   <div class="note">
-    FSDP1 flattens each unit's parameters into one big <em>FlatParameter</em> and shards that buffer; FSDP2 shards each
-    parameter individually as a <code>DTensor</code>, which composes more cleanly with tensor parallelism and makes
-    distributed checkpointing and partial freezing simpler. New code should prefer FSDP2 (<code>fully_shard</code>).
+    FSDP1 flattens each unit's parameters into one <em>FlatParameter</em> and shards that buffer; FSDP2 shards each parameter
+    individually as a <code>DTensor</code>, which composes cleanly with tensor parallelism (§6) and simplifies distributed
+    checkpointing and partial freezing. New code should prefer FSDP2 (<code>fully_shard</code>).
   </div>
 
   <!-- ════════════════════════ ZERO ════════════════════════ -->
   <h2 id="zero">5 · The ZeRO ladder — DDP and FSDP are two rungs</h2>
   <p>
-    DeepSpeed's <strong>ZeRO</strong> formalizes the spectrum between DDP and FSDP. The three replicated tensors — optimizer
-    state, gradients, parameters — are sharded one at a time. Each stage saves more memory and pays a little more
-    communication. DDP is the bottom rung (nothing sharded); FSDP is the top (everything sharded).
+    DeepSpeed's <strong>ZeRO</strong> formalizes the dial. The three replicated tensors — optimizer state, gradients,
+    parameters — are sharded one at a time; each stage saves more memory and pays a little more communication. DDP is the
+    bottom rung (nothing sharded), FSDP the top (everything sharded).
   </p>
 
   <div class="table-wrap">
     <table>
       <thead>
-        <tr><th>Stage</th><th>Optimizer state</th><th>Gradients</th><th>Parameters</th><th>Backward comm</th></tr>
+        <tr><th>Stage</th><th>Optim state</th><th>Gradients</th><th>Parameters</th><th>Per-GPU state</th></tr>
       </thead>
       <tbody>
-        <tr><td><strong>DDP</strong> (ZeRO-0)</td><td>replicated</td><td>replicated</td><td>replicated</td><td>AllReduce</td></tr>
-        <tr><td>ZeRO-1</td><td class="col">sharded</td><td>replicated</td><td>replicated</td><td>ReduceScatter + AllGather</td></tr>
-        <tr><td>ZeRO-2</td><td class="col">sharded</td><td class="col">sharded</td><td>replicated</td><td>ReduceScatter + AllGather</td></tr>
-        <tr><td><strong>FSDP</strong> (≈ ZeRO-3)</td><td class="col">sharded</td><td class="col">sharded</td><td class="col">sharded</td><td>AllGather params (fwd+bwd) + ReduceScatter grads</td></tr>
+        <tr><td><strong>DDP</strong> (ZeRO-0)</td><td>replicated</td><td>replicated</td><td>replicated</td><td>\(16M\)</td></tr>
+        <tr><td>ZeRO-1</td><td class="col">sharded</td><td>replicated</td><td>replicated</td><td>\(4M + 12M/N\)</td></tr>
+        <tr><td>ZeRO-2</td><td class="col">sharded</td><td class="col">sharded</td><td>replicated</td><td>\(2M + 14M/N\)</td></tr>
+        <tr><td><strong>FSDP</strong> (≈ ZeRO-3)</td><td class="col">sharded</td><td class="col">sharded</td><td class="col">sharded</td><td>\(16M/N\)</td></tr>
       </tbody>
     </table>
   </div>
 
-  <div class="result">
-    <div class="result-label">The headline</div>
-    <p style="margin:0;">DDP = ZeRO-0; FSDP ≈ ZeRO-3. Going from DDP to full sharding cuts per-GPU state from \(O(M)\) to \(O(M/N)\) at the cost of roughly <strong>1.5×</strong> the communication volume (an extra parameter AllGather in the forward pass).</p>
-  </div>
-
+  <h3>Where the ~1.5× communication comes from</h3>
   <p>
-    Megatron's <code>DistributedOptimizer</code> is the <strong>ZeRO-1</strong> point on this ladder — it shards optimizer
-    state and fp32 master weights across the data-parallel group and pairs a ReduceScatter gradient path with an AllGather
-    of the updated parameters, while leaving the parameters themselves replicated within the DP group.
+    Count bytes moved <em>per rank</em> per step for \(M\) bytes of parameters across \(N\) ranks. From the
+    <a href="collectives.html">collectives cost model</a>, each primitive moves a payload scaled by \((N-1)/N\), which
+    \(\to 1\) for large \(N\): an AllGather or a ReduceScatter costs \(\approx 1\times\) the payload, and an AllReduce
+    \(\approx 2\times\) (it <em>is</em> a ReduceScatter followed by an AllGather).
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th></th><th>Forward</th><th>Backward</th><th>Total / step</th></tr></thead>
+      <tbody>
+        <tr><td><strong>DDP</strong></td><td>—</td><td>AllReduce grads \(\approx 2M\)</td><td>\(\approx 2M\)</td></tr>
+        <tr><td><strong>FSDP</strong></td><td>AllGather params \(\approx M\)</td><td>AllGather params \(\approx M\) + ReduceScatter grads \(\approx M\)</td><td>\(\approx 3M\)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="result">
+    <div class="result-label">The trade, in one ratio</div>
+    \[
+    \frac{\text{FSDP comm}}{\text{DDP comm}} \;=\; \frac{3M}{2M} \;=\; 1.5\times,
+    \qquad
+    \frac{\text{FSDP state}}{\text{DDP state}} \;=\; \frac{16M/N}{16M} \;=\; \frac{1}{N}.
+    \]
+  </div>
+  <p>
+    That is the whole bargain: <strong>50% more communication buys an \(N\)-fold cut in per-GPU state.</strong> The extra
+    \(M\) is the second weight AllGather FSDP needs in the backward pass — the spike you stepped through in §4, paid twice.
+    Megatron's <code>DistributedOptimizer</code> is the <strong>ZeRO-1</strong> point on this ladder: it shards optimizer
+    state and fp32 master weights across the DP group and pairs a ReduceScatter gradient path with an AllGather of the
+    updated params, while leaving the parameters themselves replicated.
   </p>
 
   <!-- ════════════════════════ MESH ════════════════════════ -->
-  <h2 id="mesh">6 · Composing axes — DeviceMesh and N-D parallelism</h2>
+  <h2 id="mesh">6 · Composing with the model-parallel axes</h2>
   <p>
-    Real large-scale training combines several axes at once: data parallel <em>and</em> tensor parallel <em>and</em> pipeline
-    parallel (and, for MoE, expert parallel). Each axis is one set of process groups; a GPU belongs to one group per axis.
-    <code>DeviceMesh</code> is the modern way to lay this out — it builds the per-axis subgroups for you from a named grid.
+    Data parallelism is one axis. At frontier scale it is combined with the <em>orthogonal</em> model-parallel axes —
+    tensor, pipeline, and (for MoE) expert parallel — that split the model itself rather than the batch. Each axis is one
+    set of process groups; a GPU belongs to one group per axis. <code>DeviceMesh</code> lays this out from a named grid and
+    builds the per-axis subgroups for you.
   </p>
 
   <pre><code>from torch.distributed.device_mesh import init_device_mesh
 
-# 8 GPUs arranged as a 2-D mesh: 2-way data-parallel x 4-way tensor-parallel
+# 8 GPUs as a 2-D mesh: 2-way data-parallel x 4-way tensor-parallel
 mesh = init_device_mesh("cuda", (2, 4), mesh_dim_names=("dp", "tp"))
-dp_group = mesh["dp"].get_group()   # AllReduce gradients here
+dp_group = mesh["dp"].get_group()   # FSDP / gradient sync here
 tp_group = mesh["tp"].get_group()   # Megatron AllReduce per layer here</code></pre>
 
   <p>
-    The usual topology mapping — chattiest axis on the fastest link — falls out of the cost model: <strong>tensor parallel
-    innermost</strong> (an AllReduce on the critical path of every layer → keep it inside one NVLink node), then
-    context/expert parallel, then <strong>pipeline parallel</strong> (cheap point-to-point activations between stages),
-    with <strong>data parallel outermost</strong> (one gradient reduction per step, overlappable). In a 3-D layout the DP
-    axis is typically realized as <strong>FSDP</strong> rather than plain DDP, so each axis is independently
-    memory-efficient.
+    The topology mapping falls out of each axis's communication cost: <strong>tensor parallel innermost</strong> (an
+    AllReduce on the critical path of every layer → keep it inside one NVLink node), then context/expert parallel, then
+    <strong>pipeline parallel</strong> (cheap point-to-point activations between stages), with <strong>data parallel
+    outermost</strong> (one reduction per step, overlappable). In such a 3-D layout the DP axis is normally
+    <strong>FSDP</strong> rather than plain DDP, so every axis is independently memory-efficient.
   </p>
 
   <div class="xref">
-    The tensor-parallel axis is worked out in full — column/row sharding, one AllReduce per block, the single-node cap — in
-    <a href="tensor-parallelism.html">Tensor Parallelism →</a>. To see all the axes fire together on a real step, the
+    The tensor-parallel axis — column/row sharding, one AllReduce per block, the single-node cap — is worked out in full in
+    <a href="tensor-parallelism.html">Tensor Parallelism →</a>. To watch every axis fire on a real step, the
     <a href="https://github.com/yueyiming2009/ai-learning/blob/main/rl/ppo_training_walkthrough.md">verl PPO walkthrough →</a>
-    traces every NCCL call across TP/DP/PP.
+    traces each NCCL call across TP/DP/PP.
   </div>
 
   <!-- ════════════════════════ PRACTICE ════════════════════════ -->
   <h2 id="practice">7 · In practice</h2>
   <ul>
-    <li><strong>The handshake.</strong> <code>torchrun --standalone --nproc_per_node=8 train.py</code> spawns 8 processes; each
-        calls <code>init_process_group("nccl")</code>, reads <code>LOCAL_RANK</code>, pins its GPU, and wraps the model in
-        DDP or FSDP. That is the entire bring-up.</li>
-    <li><strong>Collectives must match across ranks.</strong> Every rank has to call the same collective the same number of
-        times, or the job <em>hangs</em> — the classic cause is a ragged last batch (uneven <code>WORLD_SIZE</code> division)
-        desyncing the AllReduce; <code>drop_last=True</code> in the sampler avoids it. Mismatched control flow (an early
-        <code>continue</code> on one rank) hangs the same way.</li>
-    <li><strong>NCCL hang at the first step</strong> is usually a network/topology issue, not your code — try
-        <code>NCCL_DEBUG=INFO</code> to see the rings being built, and <code>NCCL_P2P_DISABLE=1</code> as a blunt diagnostic.</li>
-    <li><strong>Direction of travel.</strong> FSDP2 and tensor/pipeline parallelism are converging on <code>DTensor</code> —
-        a sharded-tensor type that carries its placement on a <code>DeviceMesh</code> — so the same model can be sharded along
-        several axes by annotation rather than by separate wrappers.</li>
+    <li><strong>Bring-up is two lines.</strong> <code>torchrun --standalone --nproc_per_node=8 train.py</code> spawns 8
+        processes; each calls <code>init_process_group("nccl")</code>, pins its GPU from <code>LOCAL_RANK</code>, and wraps
+        the model in DDP or FSDP. That is the whole handshake.</li>
+    <li><strong>Collectives must match across ranks.</strong> Every rank has to issue the same collective the same number of
+        times or the job <em>hangs</em>. The classic cause is a ragged last batch (uneven <code>WORLD_SIZE</code> division)
+        desyncing the AllReduce — set <code>drop_last=True</code>. Rank-divergent control flow (an early <code>continue</code>
+        on one rank) hangs the same way.</li>
+    <li><strong>NCCL hang at the first step</strong> is usually network/topology, not your code — <code>NCCL_DEBUG=INFO</code>
+        shows the rings being built; <code>NCCL_P2P_DISABLE=1</code> is a blunt diagnostic.</li>
+    <li><strong>Direction of travel.</strong> FSDP2 and tensor/pipeline parallel are converging on <code>DTensor</code> — a
+        sharded-tensor type carrying its placement on a <code>DeviceMesh</code> — so one model is sharded along several axes
+        by annotation rather than by stacked wrappers.</li>
   </ul>
 
   <!-- ════════════════════════ SUMMARY ════════════════════════ -->
   <h2 id="summary">Summary</h2>
   <div class="summary-grid">
     <div class="summary-card">
-      <div class="summary-card-label">The foundation</div>
-      <p><code>torch.distributed</code> (c10d) = process groups + collectives. Every strategy is a pattern of collective calls over it.</p>
+      <div class="summary-card-label">One dial</div>
+      <p>Data parallelism = replicate the model, split the batch, sync grads. The only choice is how much state each GPU keeps.</p>
     </div>
     <div class="summary-card">
-      <div class="summary-card-label">DDP &amp; FSDP are siblings</div>
-      <p>Both are data-parallel. DDP replicates (ZeRO-0); FSDP shards params/grads/optimizer (≈ ZeRO-3). Neither is built on the other.</p>
+      <div class="summary-card-label">DDP ↔ FSDP</div>
+      <p>Siblings, not parent/child. DDP replicates (state \(16M\), comm \(2M\)); FSDP shards (state \(16M/N\), comm \(3M\)).</p>
     </div>
     <div class="summary-card">
-      <div class="summary-card-label">Memory ↔ comm</div>
-      <p>Sharding trades ~1.5× communication for \(O(M/N)\) per-GPU state — the ZeRO ladder is the dial.</p>
+      <div class="summary-card-label">The bargain</div>
+      <p>The ZeRO ladder: 1.5× communication buys an \(N\)-fold cut in per-GPU state. FSDP ≈ ZeRO-3.</p>
     </div>
     <div class="summary-card">
-      <div class="summary-card-label">Composition</div>
-      <p>Model-parallel axes (TP/PP/EP) are orthogonal subgroups. DeviceMesh lays out N-D parallelism; DP is usually FSDP.</p>
+      <div class="summary-card-label">Foundation</div>
+      <p>All of it is collective calls over <code>torch.distributed</code> process groups; subgroups / DeviceMesh add the orthogonal model-parallel axes.</p>
     </div>
   </div>
 
 </div>
 
 <footer>Personal ML notes · <a href="https://github.com/yueyiming2009/ai-learning" style="color:inherit;text-decoration:underline;">source on GitHub</a></footer>
+
+<script>
+  (function () {
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = document.getElementById('fsdp-svg');
+    if (!svg) return;
+    function el(tag, attrs) {
+      const e = document.createElementNS(NS, tag);
+      for (const k in attrs) e.setAttribute(k, attrs[k]);
+      return e;
+    }
+    function add(tag, attrs) { const e = el(tag, attrs); svg.appendChild(e); return e; }
+    function txt(x, y, s, cls, anchor) {
+      const t = add('text', { x: x, y: y, class: cls || '', 'text-anchor': anchor || 'start' });
+      t.textContent = s; return t;
+    }
+
+    // illustrative tile budget: 6 blocks x 4 tiles = 24 full; sharded baseline = 24/4 = 6; one gathered block adds 3
+    const FULL = 24, BASE = 6, BLOCK = 3;
+    const yBot = 232, yTop = 30, H = yBot - yTop, scale = H / FULL;
+    const barX = 150, barW = 90;
+
+    const stages = [
+      { cap: '0 · Resident (sharded)', top: 0, comm: '', kind: '',
+        note: 'Steady state: each rank permanently holds 1/N of every block — the shard baseline. Nothing is gathered.' },
+      { cap: '1 · AllGather block k — forward', top: BLOCK, comm: 'AllGather ▲', kind: 'up',
+        note: 'Ranks trade shards of block k so each rebuilds the full weight. Live memory rises by the missing (N−1)/N of one block.' },
+      { cap: '2 · Forward(k)', top: BLOCK, comm: '', kind: '',
+        note: 'Compute block k on the full weight; save activations. Peak is ONE full block above the shard baseline — never the whole model.' },
+      { cap: '3 · Free block k', top: 0, comm: 'free ▼', kind: 'down',
+        note: 'Discard the gathered weight immediately. Back to the 1/N shard. This free-after-use is what bounds FSDP peak memory.' },
+      { cap: '4 · AllGather block k — backward', top: BLOCK, comm: 'AllGather ▲', kind: 'up',
+        note: "Backward needs the weights again, so FSDP gathers a SECOND time — this extra all-gather is FSDP's comm premium over DDP." },
+      { cap: '5 · Backward(k) → grads', top: BLOCK, comm: '', kind: '',
+        note: 'Compute the full gradient of block k locally on this rank.' },
+      { cap: '6 · ReduceScatter grads', top: 0, comm: 'ReduceScatter ▼', kind: 'down',
+        note: 'Reduce grads across ranks and scatter: each rank keeps only the grad for its 1/N shard, then frees the rest. Optimizer steps on the shard.' },
+    ];
+
+    let i = 0;
+    const stepBtn = document.getElementById('fsdp-step');
+    const resetBtn = document.getElementById('fsdp-reset');
+    const noteEl = document.getElementById('fsdp-note');
+
+    function draw() {
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+      const st = stages[i];
+
+      // axes
+      add('line', { x1: barX - 14, y1: yBot, x2: 520, y2: yBot, stroke: '#9ca3af', 'stroke-width': 1 });
+      add('line', { x1: barX - 14, y1: yTop - 6, x2: barX - 14, y2: yBot, stroke: '#9ca3af', 'stroke-width': 1 });
+      txt(barX - 20, yTop + 2, 'mem', 'tp-sub', 'end');
+
+      // DDP reference line at full-model height
+      const yDDP = yBot - FULL * scale;
+      const dl = add('line', { x1: barX - 14, y1: yDDP, x2: 520, y2: yDDP, stroke: '#dc2626', 'stroke-width': 1.5 });
+      dl.setAttribute('stroke-dasharray', '6 4');
+      txt(520, yDDP - 7, 'DDP — full model resident (24), every step', 'tp-comm', 'end');
+
+      // FSDP bar: baseline shard + optional gathered block
+      const baseH = BASE * scale;
+      add('rect', { x: barX, y: yBot - baseH, width: barW, height: baseH, fill: '#14b8a6', stroke: '#0f766e', rx: 2 });
+      txt(barX + barW / 2, yBot - baseH / 2 + 4, '1/N shard', 'tp-sub', 'middle').setAttribute('fill', '#ffffff');
+
+      if (st.top > 0) {
+        const topH = st.top * scale;
+        const r = add('rect', { x: barX, y: yBot - baseH - topH, width: barW, height: topH, fill: '#99f6e4', stroke: '#5eead4', rx: 2 });
+        txt(barX + barW / 2, yBot - baseH - topH / 2 + 4, 'block k', 'tp-sub', 'middle');
+      }
+
+      // live memory readout
+      const live = BASE + st.top;
+      txt(barX + barW / 2, yBot - (BASE + st.top) * scale - 12, 'live: ' + live + ' tiles', 'tp-cap', 'middle');
+
+      // comm annotation
+      if (st.comm) {
+        const cy = st.kind === 'up' ? yBot - baseH - 8 : yBot - baseH + 4;
+        const c = txt(barX + barW + 18, st.kind === 'up' ? yBot - baseH - (BLOCK * scale) / 2 : yBot - baseH / 2, st.comm, 'tp-comm', 'start');
+      }
+
+      // caption
+      txt(barX - 14, yTop - 14, st.cap, 'tp-cap', 'start');
+
+      noteEl.textContent = st.note;
+      stepBtn.disabled = i >= stages.length - 1;
+    }
+
+    stepBtn.addEventListener('click', function () { if (i < stages.length - 1) { i++; draw(); } });
+    resetBtn.addEventListener('click', function () { i = 0; draw(); stepBtn.disabled = false; });
+    draw();
+  })();
+</script>
 
 </body>
 </html>

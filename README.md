@@ -55,7 +55,7 @@ plumbing that turns the math into a working training run.
 | [Sharding & Collectives](https://yueyiming2009.github.io/ai-learning/collectives.html) | Sharding notation, `{Uₓ}` unreduced state, the cost model, the 4 collectives derived |
 | [NCCL](https://yueyiming2009.github.io/ai-learning/nccl.html) | The 5-layer stack: topology, ring/tree/NVLS, LL/LL128/Simple protocols, channels, selection |
 | [Tensor Parallelism](https://yueyiming2009.github.io/ai-learning/tensor-parallelism.html) | Megatron column/row split → one AllReduce per block; why TP caps at one NVLink node |
-| [torch.distributed](https://yueyiming2009.github.io/ai-learning/torch-distributed.html) | The c10d foundation: process groups, the collective API, DDP vs FSDP, the ZeRO ladder, DeviceMesh for N-D parallelism |
+| [Data Parallelism](https://yueyiming2009.github.io/ai-learning/torch-distributed.html) | `torch.distributed` foundation → DDP's 16 B/param wall, FSDP's all-gather/free lifecycle (animated), the ZeRO ladder's 1.5×-comm-for-1/N-state trade, DeviceMesh |
 | [Triton — Introduction](triton/intro.ipynb) | Program IDs, block pointers, masking, the launch grid |
 | [Fused Softmax kernel](triton/fused_softmax.ipynb) | Row-wise online softmax in one fused Triton kernel |
 | [PPO training walkthrough (verl)](rl/ppo_training_walkthrough.md) | One PPO step on LLaMA-7B/8 GPUs: every shape, every NCCL call, TP/DP/PP |
