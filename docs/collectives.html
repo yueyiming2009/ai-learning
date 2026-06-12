@@ -1056,6 +1056,38 @@
       });
     }
 
+    let flightId = null; // rAF handle while blocks are in transit
+    const reduceMotion = window.matchMedia &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    // Fly one V/4 block per GPU from source → switch → destination, then settle.
+    function flyBlocks(transfers, partial, done) {
+      if (reduceMotion) { done(); return; }
+      draw(true);
+      const blocks = transfers.map((t) => ({
+        from: pos[t.from], to: pos[t.to],
+        e: mk('rect', { x: -30, y: -30, width: 16, height: 12, rx: 2,
+          fill: colors[t.s],
+          opacity: partial ? 0.5 : 0.95,
+          stroke: partial ? colors[t.s] : 'none',
+          'stroke-dasharray': partial ? '3 2' : '0' })
+      }));
+      const T = 850, t0 = performance.now();
+      function frame(now) {
+        const u = Math.min((now - t0) / T, 1);
+        const e = u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2; // ease in-out
+        blocks.forEach((b) => {
+          // first half of the flight: source → hub; second half: hub → destination
+          const [p, q, k] = e < 0.5 ? [b.from, hub, e * 2] : [hub, b.to, (e - 0.5) * 2];
+          b.e.setAttribute('x', p.x + (q.x - p.x) * k - 8);
+          b.e.setAttribute('y', p.y + (q.y - p.y) * k - 6);
+        });
+        if (u < 1) { flightId = requestAnimationFrame(frame); }
+        else { flightId = null; done(); }
+      }
+      flightId = requestAnimationFrame(frame);
+    }
+
     function nextLabel() {
       const total = ROUNDS[mode];
       if (phase >= total) return 'Done ✓';
@@ -1067,27 +1099,23 @@
     }
 
     function step() {
-      if (phase >= ROUNDS[mode]) return;
+      if (flightId || phase >= ROUNDS[mode]) return;
       phase++; sentQuarters++;
       const isRS = mode === 'rs' || (mode === 'ar' && phase <= 3);
       const r = (mode === 'ar' && phase > 3) ? phase - 3 : phase; // round within the half
-      const flashes = [];
-      if (isRS) {
-        // round r: each GPU d ships its partial slice (d+r) mod 4 to that slice's owner —
-        // four disjoint transfers, all concurrent through the switch — and folds the
-        // partial that just arrived into its own slice (a local add on the receiver)
-        for (let d = 0; d < N; d++) {
-          cells[d][(d + r) % N] = 'empty';
-          cells[d][d] = r === 3 ? 'full' : cells[d][d] + 1;
-          flashes.push({ d, s: d });
-        }
-      } else {
-        // round r: each GPU d pulls in the shard of GPU (d+r) mod 4 while pushing its own
-        for (let d = 0; d < N; d++) {
-          cells[d][(d + r) % N] = 'full';
-          flashes.push({ d, s: (d + r) % N });
-        }
+
+      // round r moves one V/4 piece per GPU — four disjoint transfers, a perfect
+      // matching through the switch, all concurrent:
+      //   RS: GPU d ships its partial of slice (d+r) mod 4 to that slice's owner
+      //       (a move — the source cell empties at launch)
+      //   AG: GPU (d+r) mod 4 pushes a copy of its own shard to GPU d
+      //       (a broadcast copy — the source keeps its shard)
+      const transfers = [];
+      for (let d = 0; d < N; d++) {
+        if (isRS) transfers.push({ from: d, to: (d + r) % N, s: (d + r) % N });
+        else      transfers.push({ from: (d + r) % N, to: d, s: (d + r) % N });
       }
+      if (isRS) for (let d = 0; d < N; d++) cells[d][(d + r) % N] = 'empty';
 
       const half = mode === 'ar' ? (isRS ? 'Half 1 (ReduceScatter), ' : 'Half 2 (AllGather), ') : '';
       if (isRS) {
@@ -1107,12 +1135,28 @@
         ][r];
       }
 
-      stepBtn.disabled = phase >= ROUNDS[mode];
-      stepBtn.textContent = nextLabel();
-      draw(true, flashes);
+      stepBtn.disabled = true;
+      flyBlocks(transfers, isRS, () => {
+        // arrival: land the pieces and update the cells
+        const flashes = [];
+        for (let d = 0; d < N; d++) {
+          if (isRS) {
+            // the matching incoming partial folds into this GPU's own slice
+            cells[d][d] = r === 3 ? 'full' : cells[d][d] + 1;
+            flashes.push({ d, s: d });
+          } else {
+            cells[d][(d + r) % N] = 'full';
+            flashes.push({ d, s: (d + r) % N });
+          }
+        }
+        stepBtn.disabled = phase >= ROUNDS[mode];
+        stepBtn.textContent = nextLabel();
+        draw(true, flashes);
+      });
     }
 
     function reset() {
+      if (flightId) { cancelAnimationFrame(flightId); flightId = null; }
       phase = 0; sentQuarters = 0;
       cells = mode === 'ag' ? diag() : allPartial();
       stepBtn.disabled = false;
