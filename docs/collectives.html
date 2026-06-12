@@ -718,6 +718,43 @@
     actually need the full array on every device. Half the comm volume of a layer can hinge on this single choice.
   </div>
 
+  <h3>Why \(2V/W\) is the floor</h3>
+  <p>
+    RS ∘ AG is not just <em>a</em> way to do an AllReduce — it is bandwidth-optimal, and the counting argument
+    is short. Track a single byte-position of the output. Its final value is the sum of \(N\) partials, one per
+    GPU, and at the end every GPU must hold it. Two costs are unavoidable:
+  </p>
+  <ul>
+    <li><strong>Reducing.</strong> An addition can only happen where both operands sit on the same device, so at
+      least \(N-1\) of the \(N\) partials must cross the fabric to get folded in: \(N-1\) transmissions.</li>
+    <li><strong>Distributing.</strong> Once fully summed, the value lives on whichever GPU finished the sum; the
+      \(N-1\) others must each receive it (or a contribution that lets them finish it — either way a transmission):
+      \(N-1\) more.</li>
+  </ul>
+  <p>
+    So every byte-position forces at least \(2(N-1)\) crossings — \(2V(N-1)\) bytes of total fabric traffic —
+    and all of it must leave through just \(N\) egress links. The best any schedule can possibly do is spread that
+    traffic perfectly evenly:
+  </p>
+  <div class="result">
+    <div class="result-label">AllReduce bandwidth lower bound</div>
+    \[ T_\text{AR} \;\ge\; 2\cdot\frac{V}{W}\cdot\frac{|X|-1}{|X|} \]
+  </div>
+  <p>
+    — exactly the cost above, with zero slack. The decomposition meets the bound because each half wastes nothing:
+    ReduceScatter pays only the \(N-1\) reduction crossings per position (each partial travels once and is consumed
+    by an add), AllGather pays only the \(N-1\) deliveries (finished bytes, no more math), and both keep every link
+    uniformly busy. The trick is the intermediate state — <em>each output slice fully summed on exactly one
+    owner</em> — which is the cheapest possible halfway point: the reduce phase builds one copy of each sum, not
+    \(N\), and the gather phase only copies.
+  </p>
+  <div class="note">
+    <strong>The naive alternative shows what the bound protects you from.</strong> Reduce everything to one root,
+    then broadcast: the mandatory bytes are the same, but they all crowd one port — the root takes in \(V(N-1)\)
+    and pushes out \(V(N-1)\) while the other \(N-1\) links sit mostly idle. That is ≈\(N\times\) the optimum.
+    The lower bound is a per-link statement, so hitting it is entirely about balance.
+  </div>
+
   <div class="anim-widget" id="coll-widget">
     <div class="anim-header">
       <span class="anim-title">▸ The three collectives on an NVSwitch</span>
