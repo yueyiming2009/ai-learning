@@ -51,6 +51,7 @@ plumbing that turns the math into a working training run.
 | Page | Topic |
 |---|---|
 | [GPU Hardware for ML](https://yueyiming2009.github.io/ai-learning/gpu-hardware.html) | SIMT execution model, inside an SM (Tensor Cores, scratchpad, TMA), the roofline, NVSwitch crossbar, the network cliff |
+| [MFU](https://yueyiming2009.github.io/ai-learning/mfu.html) | Model FLOPs Utilization: the 6N rule + attention term, MFU vs HFU, worked example, calculator |
 | [TPU Hardware for ML](https://yueyiming2009.github.io/ai-learning/tpu-hardware.html) | MXU systolic array, VMEM/HBM, the ICI nearest-neighbor torus, GPU-vs-TPU contrast |
 | [Sharding & Collectives](https://yueyiming2009.github.io/ai-learning/collectives.html) | Sharding notation, `{Uₓ}` unreduced state, the cost model, the 4 collectives derived |
 | [NCCL](https://yueyiming2009.github.io/ai-learning/nccl.html) | The 5-layer stack: topology, ring/tree/NVLS, LL/LL128/Simple protocols, channels, selection |
