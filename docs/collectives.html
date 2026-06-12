@@ -833,21 +833,87 @@
   <h2 id="duality">9 · Forward/backward duality</h2>
   <p>
     A convenient theorem ties the collectives together under autodiff: <strong>the backward pass of an AllGather is
-    a ReduceScatter, and vice versa.</strong> Intuitively, if the forward pass copied a shard to many devices
-    (AllGather), then in the backward pass many devices each produce a gradient contribution for that shard, and
-    those must be summed back down (ReduceScatter).
+    a ReduceScatter, the backward of a ReduceScatter is an AllGather — and the backward of an AllReduce is another
+    AllReduce.</strong> None of this needs to be memorized; it falls out of three small observations.
   </p>
+
+  <div class="step">
+    <div class="step-label">Observation 1 — backprop through a linear op applies its transpose</div>
+    <p style="margin:0">
+      A collective only copies and adds numbers — it is a <em>linear map</em> \(A\) on the stacked per-device data.
+      Backprop through any linear map \(y = Ax\) multiplies the incoming gradient by the transpose:
+      \(\partial L/\partial x = A^\top \,\partial L/\partial y\). So the question “what is the backward of this
+      collective?” is really “what communication pattern is \(A^\top\)?”
+    </p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Observation 2 — copy and sum are transposes of each other</div>
+    <p style="margin:0 0 8px">
+      The classic autodiff duality: a fan-<em>out</em> in the forward becomes a fan-<em>in</em> in the backward.
+      Run the §6 widget in your head, in reverse:
+    </p>
+    <ul style="margin:0">
+      <li><strong>AllGather forward:</strong> GPU 0 ships <em>copies</em> of its shard to GPUs 1–3. In the backward
+        pass each of those GPUs holds its own gradient w.r.t. its copy — and since all copies are the same variable,
+        those gradients must be <em>summed</em> into shard 0’s gradient. Ship foreign partials to the owner, add on
+        arrival: that is exactly ReduceScatter’s send-and-sum, running the same wires in reverse. Hence
+        <span class="shard">AllGather<sub>X</sub><sup>⊤</sup> = ReduceScatter<sub>X</sub></span>.</li>
+      <li style="margin-top:6px"><strong>ReduceScatter forward:</strong> contributions are summed, and GPU 0 keeps
+        only slice 0. The backward of a sum is a broadcast — \(\partial(\textstyle\sum_i x_i)/\partial x_i = 1\),
+        so every contributor receives the output’s gradient unchanged — and every GPU contributed to <em>every</em>
+        slice, so each GPU needs the gradient of all \(N\) slices, each fetched from its owner. Everyone gathers
+        every slice: <span class="shard">ReduceScatter<sub>X</sub><sup>⊤</sup> = AllGather<sub>X</sub></span>.</li>
+    </ul>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Observation 3 — transposing a composition flips each factor <em>and</em> reverses the order</div>
+    <p style="margin:0">
+      Now apply both to the §6 decomposition <span class="shard">AllReduce = AllGather ∘ ReduceScatter</span>:
+    </p>
+    \[ \text{AR}^\top \;=\; (\text{AG}\circ\text{RS})^\top \;=\; \text{RS}^\top \circ\, \text{AG}^\top
+       \;=\; \text{AG}\circ\text{RS} \;=\; \text{AR}. \]
+    <p style="margin:0">
+      The order reversal swaps the two halves; transposing each half swaps them back. The two flips cancel —
+      AllReduce is <strong>self-adjoint</strong>.
+    </p>
+  </div>
+
   <div class="result">
     <div class="result-label">Adjoint pairs</div>
     <span class="shard">AllGather<sub>X</sub></span> (fwd) &nbsp;⟺&nbsp; <span class="shard">ReduceScatter<sub>X</sub></span> (bwd)<br>
     <span class="shard">ReduceScatter<sub>X</sub></span> (fwd) &nbsp;⟺&nbsp; <span class="shard">AllGather<sub>X</sub></span> (bwd)<br>
-    <span class="shard">AllReduce<sub>X</sub></span> (fwd) &nbsp;⟺&nbsp; <span class="shard">AllReduce<sub>X</sub></span> (bwd, self-adjoint)
+    <span class="shard">AllReduce<sub>X</sub></span> (fwd) &nbsp;⟺&nbsp; <span class="shard">AllReduce<sub>X</sub></span> (bwd, self-adjoint)<br>
+    <span class="shard">AllToAll<sub>X</sub></span> (fwd) &nbsp;⟺&nbsp; <span class="shard">AllToAll<sub>X</sub></span> (bwd, the inverse permutation)
   </div>
+
   <p>
-    This is why counting communication for a forward pass immediately gives you the backward cost: replace each
-    collective with its dual (same price), and an AllReduce stays an AllReduce. It is also why the
-    <a href="tensor-parallelism.html">tensor-parallel</a> Megatron block reports “one AllReduce forward, one
-    AllReduce backward” — the same self-adjoint reduction shows up on both legs.
+    The AllReduce case can also be seen directly, without the decomposition. Forward, it computes
+    \(y = \sum_i x_i\) and replicates it, so every input touches every replica with coefficient 1. By symmetry,
+    \(\partial L/\partial x_i = \sum_d \partial L/\partial y_d\) for every \(i\): sum the per-device cotangents,
+    hand everyone the result — which is the definition of an AllReduce on the gradients. (In matrix form an
+    AllReduce is \((\mathbf{1}\mathbf{1}^\top)\otimes I\), and \(\mathbf{1}\mathbf{1}^\top\) is symmetric.)
+  </p>
+
+  <div class="note">
+    <strong>The fine print: “backward = AllReduce” assumes the incoming gradients are partials.</strong>
+    The transpose rule treats the per-device cotangents as genuine partial sums (the {U<sub>X</sub>} state) —
+    each device’s replica feeding a <em>different</em> downstream computation. In Megatron-style
+    <a href="tensor-parallelism.html">tensor parallelism</a> the computation after the forward AllReduce is
+    replicated instead, so in the backward pass every device already holds the complete, fully-reduced gradient —
+    AllReducing those identical copies would overcount by \(N\times\). That is why Megatron’s conjugate operators
+    read \(g\) = (AllReduce fwd, identity bwd) and \(f\) = (identity fwd, AllReduce bwd): the block still pays one
+    AllReduce per leg, but the backward one comes from \(f\) at the block’s <em>input</em> — where a replicated
+    activation fed two sharded branches, whose gradient contributions really are partials that need summing —
+    not from re-running \(g\)’s.
+  </div>
+
+  <p>
+    The accounting corollary: counting communication for a forward pass immediately gives the backward cost.
+    Replace each collective with its dual — same price, since AllGather and ReduceScatter cost the same and the
+    other two are self-dual. In particular, whatever AllReduce traffic a layer pays forward, it pays again
+    backward: the \(2V/W\) shows up on both legs.
   </p>
 
   <!-- ════════════════════════ IN CODE ════════════════════════ -->
