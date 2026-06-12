@@ -412,6 +412,15 @@
     }
     .gpu-label { font: 600 12px ui-monospace, monospace; fill: #374151; }
     .gpu-sub { font: 11px 'Inter', sans-serif; fill: var(--muted); }
+    .plus-flash {
+      font: 700 13px ui-monospace, monospace;
+      animation: plusFade 1.1s ease-out forwards;
+    }
+    @keyframes plusFade {
+      0%   { opacity: 0; transform: translateY(4px); }
+      25%  { opacity: 1; }
+      100% { opacity: 0; transform: translateY(-5px); }
+    }
 
     /* ── Footer ──────────────────────────────── */
     footer {
@@ -711,7 +720,7 @@
   <div class="anim-widget" id="coll-widget">
     <div class="anim-header">
       <span class="anim-title">▸ The three collectives on an NVSwitch</span>
-      <span class="anim-hint">Solid = final value &nbsp;·&nbsp; faded/dashed = partial sum &nbsp;·&nbsp; grey = absent. All 4 GPUs move in every round.</span>
+      <span class="anim-hint">Solid = final value &nbsp;·&nbsp; dashed = partial sum, darkening as contributions fold in &nbsp;·&nbsp; grey = absent. All 4 GPUs move in every round.</span>
     </div>
     <div class="anim-tabs" role="tablist">
       <button class="anim-tab active" data-mode="ag">AllGather</button>
@@ -987,7 +996,7 @@
 
     const grid = (fn) => pos.map((_, d) => pos.map((_, s) => fn(d, s)));
     const diag = () => grid((d, s) => d === s ? 'full' : 'empty');     // sharded, reduced
-    const allPartial = () => grid(() => 'partial');                    // full-shape, {U_X}
+    const allPartial = () => grid(() => 1);                            // full-shape, {U_X}: 1 of 4 contributions
 
     const IDLE = {
       ag: 'Sharded: each GPU holds only its own V/4 shard. Step through 3 rounds.',
@@ -1006,7 +1015,7 @@
       return e;
     }
 
-    function draw(lit) {
+    function draw(lit, flashes) {
       while (svg.firstChild) svg.removeChild(svg.firstChild);
       // links GPU <-> switch: all four light together — the transfers are concurrent
       pos.forEach((p) => {
@@ -1026,12 +1035,18 @@
       pos.forEach((p, d) => {
         const slotW = 18, slotH = 14, x0 = p.x - 2 * slotW, y0 = p.y - 7;
         for (let s = 0; s < N; s++) {
-          const st = cells[d][s];
+          const st = cells[d][s];           // 'full' | 'empty' | 1..3 partials accumulated
+          const partials = typeof st === 'number' ? st : 0;
           mk('rect', { x: x0 + s * slotW, y: y0, width: slotW - 2, height: slotH, rx: 2,
             fill: st === 'empty' ? '#f1f5f9' : colors[s],
-            opacity: st === 'full' ? 1 : st === 'partial' ? 0.25 : 0.35,
-            stroke: st === 'partial' ? colors[s] : '#e2e8f0',
-            'stroke-dasharray': st === 'partial' ? '3 2' : '0' });
+            opacity: st === 'full' ? 1 : partials ? 0.25 * partials : 0.35,
+            stroke: partials ? colors[s] : '#e2e8f0',
+            'stroke-dasharray': partials ? '3 2' : '0' });
+          if (flashes && flashes.some((f) => f.d === d && f.s === s)) {
+            mk('text', { x: x0 + s * slotW + slotW / 2 - 1, y: y0 - 4,
+              'text-anchor': 'middle', class: 'plus-flash', fill: colors[s] })
+              .textContent = '+';
+          }
         }
         mk('text', { x: p.x, y: p.y - 14, 'text-anchor': 'middle', class: 'gpu-label' })
           .textContent = 'GPU ' + d;
@@ -1055,21 +1070,29 @@
       phase++; sentQuarters++;
       const isRS = mode === 'rs' || (mode === 'ar' && phase <= 3);
       const r = (mode === 'ar' && phase > 3) ? phase - 3 : phase; // round within the half
+      const flashes = [];
       if (isRS) {
         // round r: each GPU d ships its partial slice (d+r) mod 4 to that slice's owner —
-        // four disjoint transfers, all concurrent through the switch
-        for (let d = 0; d < N; d++) cells[d][(d + r) % N] = 'empty';
-        if (r === 3) for (let d = 0; d < N; d++) cells[d][d] = 'full'; // last partial folded in
+        // four disjoint transfers, all concurrent through the switch — and folds the
+        // partial that just arrived into its own slice (a local add on the receiver)
+        for (let d = 0; d < N; d++) {
+          cells[d][(d + r) % N] = 'empty';
+          cells[d][d] = r === 3 ? 'full' : cells[d][d] + 1;
+          flashes.push({ d, s: d });
+        }
       } else {
         // round r: each GPU d pulls in the shard of GPU (d+r) mod 4 while pushing its own
-        for (let d = 0; d < N; d++) cells[d][(d + r) % N] = 'full';
+        for (let d = 0; d < N; d++) {
+          cells[d][(d + r) % N] = 'full';
+          flashes.push({ d, s: (d + r) % N });
+        }
       }
 
       const half = mode === 'ar' ? (isRS ? 'Half 1 (ReduceScatter), ' : 'Half 2 (AllGather), ') : '';
       if (isRS) {
         status.textContent = half + ['',
-          'round 1/3 — each GPU ships one foreign partial slice to its owner and folds the matching incoming partial into its own slice: ¼·V each way, all 4 transfers concurrent.',
-          'round 2/3 — second permutation of sends; each GPU’s own slice now holds 3 of the 4 partial contributions. ½·V cumulative.',
+          'round 1/3 — each GPU ships one foreign partial slice to its owner, and locally adds the partial that just arrived into its own slice (the + flash; the wire only moves bytes — the sum happens on the receiver). ¼·V each way, all 4 concurrent.',
+          'round 2/3 — second permutation of sends; another arriving partial added in, so each GPU’s own slice darkens: 3 of 4 contributions. ½·V cumulative.',
           'round 3/3 — last partial folded in: reduced, still sharded. ¾·V per GPU' +
             (mode === 'ar' ? ' so far.' : ' — same price as AllGather.')
         ][r];
@@ -1085,7 +1108,7 @@
 
       stepBtn.disabled = phase >= ROUNDS[mode];
       stepBtn.textContent = nextLabel();
-      draw(true);
+      draw(true, flashes);
     }
 
     function reset() {
