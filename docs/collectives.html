@@ -1061,24 +1061,39 @@
       window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     // Fly one V/4 block per GPU from source → switch → destination, then settle.
+    // Each transfer gets its own port on the switch and a colored route line,
+    // so the four concurrent flights stay individually traceable.
     function flyBlocks(transfers, partial, done) {
       if (reduceMotion) { done(); return; }
-      draw(true);
+      draw(false);
+      const portOf = (t) => ({ x: hub.x - 34.5 + t.s * 23, y: hub.y });
+      transfers.forEach((t) => {
+        const port = portOf(t);
+        mk('polyline', {
+          points: pos[t.from].x + ',' + pos[t.from].y + ' ' + port.x + ',' + port.y +
+                  ' ' + pos[t.to].x + ',' + pos[t.to].y,
+          fill: 'none', stroke: colors[t.s], 'stroke-width': 2, opacity: 0.3,
+          'stroke-dasharray': partial ? '4 3' : '0' });
+      });
       const blocks = transfers.map((t) => ({
         from: pos[t.from], to: pos[t.to],
+        port: portOf(t),
         e: mk('rect', { x: -30, y: -30, width: 16, height: 12, rx: 2,
           fill: colors[t.s],
           opacity: partial ? 0.5 : 0.95,
           stroke: partial ? colors[t.s] : 'none',
           'stroke-dasharray': partial ? '3 2' : '0' })
       }));
-      const T = 850, t0 = performance.now();
+      const T = 1600, t0 = performance.now();
+      const ease = (k) => k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
       function frame(now) {
         const u = Math.min((now - t0) / T, 1);
-        const e = u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2; // ease in-out
         blocks.forEach((b) => {
-          // first half of the flight: source → hub; second half: hub → destination
-          const [p, q, k] = e < 0.5 ? [b.from, hub, e * 2] : [hub, b.to, (e - 0.5) * 2];
+          // two eased legs with a beat at the switch port between them:
+          // source → port, then port → destination
+          const [p, q, k] = u < 0.5
+            ? [b.from, b.port, ease(u * 2)]
+            : [b.port, b.to, ease((u - 0.5) * 2)];
           b.e.setAttribute('x', p.x + (q.x - p.x) * k - 8);
           b.e.setAttribute('y', p.y + (q.y - p.y) * k - 6);
         });
