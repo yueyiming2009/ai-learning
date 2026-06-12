@@ -711,7 +711,7 @@
   <div class="anim-widget" id="coll-widget">
     <div class="anim-header">
       <span class="anim-title">▸ The three collectives on an NVSwitch</span>
-      <span class="anim-hint">Solid = final value &nbsp;·&nbsp; faded/dashed = partial sum &nbsp;·&nbsp; grey = absent. Every transfer in a step is concurrent.</span>
+      <span class="anim-hint">Solid = final value &nbsp;·&nbsp; faded/dashed = partial sum &nbsp;·&nbsp; grey = absent. All 4 GPUs move in every round.</span>
     </div>
     <div class="anim-tabs" role="tablist">
       <button class="anim-tab active" data-mode="ag">AllGather</button>
@@ -979,23 +979,24 @@
     const pos = [ {x:80,y:55}, {x:380,y:55}, {x:380,y:225}, {x:80,y:225} ];
 
     let mode = 'ag';
-    let phase = 0;        // steps taken in the current mode
+    let phase = 0;        // rounds completed in the current mode
     let cells = [];       // cells[d][s] = 'full' | 'partial' | 'empty'
     let sentQuarters = 0; // V/4-units each GPU has pushed so far
+
+    const ROUNDS = { ag: 3, rs: 3, ar: 6 };
 
     const grid = (fn) => pos.map((_, d) => pos.map((_, s) => fn(d, s)));
     const diag = () => grid((d, s) => d === s ? 'full' : 'empty');     // sharded, reduced
     const allPartial = () => grid(() => 'partial');                    // full-shape, {U_X}
-    const allFull = () => grid(() => 'full');                          // replicated, reduced
 
     const IDLE = {
-      ag: 'Sharded: each GPU holds only its own V/4 shard. Press run.',
-      rs: 'Unreduced {Uₓ}: every GPU holds a full-shape array of partial sums. Press run.',
-      ar: 'Unreduced {Uₓ}: every GPU holds a full-shape array of partial sums. Two halves to run.'
+      ag: 'Sharded: each GPU holds only its own V/4 shard. Step through 3 rounds.',
+      rs: 'Unreduced {Uₓ}: every GPU holds a full-shape array of partial sums. Step through 3 rounds.',
+      ar: 'Unreduced {Uₓ}: every GPU holds a full-shape array of partial sums. Two halves, 3 rounds each.'
     };
 
     function sentLabel() {
-      return ['0', '¾·V', '1½·V'][Math.min(sentQuarters / 3, 2)];
+      return ['0', '¼·V', '½·V', '¾·V', '1·V', '1¼·V', '1½·V'][Math.min(sentQuarters, 6)];
     }
 
     function mk(tag, attrs) {
@@ -1039,31 +1040,51 @@
       });
     }
 
-    function step() {
-      if (mode === 'ag') {
-        cells = allFull();
-        sentQuarters += 3; phase = 1;
-        status.textContent = 'All 4 GPUs broadcast their shard through the switch at once — no turns, no hops. ' +
-          'Each pushed its V/4 to 3 peers and took in the 3 shards it lacked: V·(N−1)/N = ¾·V each way.';
-        stepBtn.disabled = true;
-      } else if (mode === 'rs') {
-        cells = diag();
-        sentQuarters += 3; phase = 1;
-        status.textContent = 'Concurrently, each GPU shipped its 3 foreign partial slices to their owners (¾·V out) ' +
-          'and summed the 3 partials arriving for its own slice. Reduced, and still sharded — same price as AllGather.';
-        stepBtn.disabled = true;
-      } else if (phase === 0) {
-        cells = diag();
-        sentQuarters += 3; phase = 1;
-        status.textContent = 'Half 1 — ReduceScatter: partials resolved, each GPU owns one reduced slice. ¾·V per GPU so far.';
-        stepBtn.textContent = 'AllGather ▸';
-      } else {
-        cells = allFull();
-        sentQuarters += 3; phase = 2;
-        status.textContent = 'Half 2 — AllGather: the reduced slices re-replicated. Total 2·¾·V = 1½·V per GPU — ' +
-          'exactly twice either half. That factor of 2 is the whole AllReduce premium.';
-        stepBtn.disabled = true;
+    function nextLabel() {
+      const total = ROUNDS[mode];
+      if (phase >= total) return 'Done ✓';
+      if (mode === 'ar') {
+        return phase < 3 ? 'RS round ' + (phase + 1) + '/3 ▸'
+                         : 'AG round ' + (phase - 3 + 1) + '/3 ▸';
       }
+      return 'Round ' + (phase + 1) + '/3 ▸';
+    }
+
+    function step() {
+      if (phase >= ROUNDS[mode]) return;
+      phase++; sentQuarters++;
+      const isRS = mode === 'rs' || (mode === 'ar' && phase <= 3);
+      const r = (mode === 'ar' && phase > 3) ? phase - 3 : phase; // round within the half
+      if (isRS) {
+        // round r: each GPU d ships its partial slice (d+r) mod 4 to that slice's owner —
+        // four disjoint transfers, all concurrent through the switch
+        for (let d = 0; d < N; d++) cells[d][(d + r) % N] = 'empty';
+        if (r === 3) for (let d = 0; d < N; d++) cells[d][d] = 'full'; // last partial folded in
+      } else {
+        // round r: each GPU d pulls in the shard of GPU (d+r) mod 4 while pushing its own
+        for (let d = 0; d < N; d++) cells[d][(d + r) % N] = 'full';
+      }
+
+      const half = mode === 'ar' ? (isRS ? 'Half 1 (ReduceScatter), ' : 'Half 2 (AllGather), ') : '';
+      if (isRS) {
+        status.textContent = half + ['',
+          'round 1/3 — each GPU ships one foreign partial slice to its owner and folds the matching incoming partial into its own slice: ¼·V each way, all 4 transfers concurrent.',
+          'round 2/3 — second permutation of sends; each GPU’s own slice now holds 3 of the 4 partial contributions. ½·V cumulative.',
+          'round 3/3 — last partial folded in: reduced, still sharded. ¾·V per GPU' +
+            (mode === 'ar' ? ' so far.' : ' — same price as AllGather.')
+        ][r];
+      } else {
+        status.textContent = half + ['',
+          'round 1/3 — every GPU pushes its slice to one peer and receives one new slice, all 4 transfers at once through the switch: ¼·V each way.',
+          'round 2/3 — second permutation: another slice in, another copy out. ½·V cumulative.',
+          mode === 'ar'
+            ? 'round 3/3 — reduced slices re-replicated. Total 2·¾·V = 1½·V per GPU — exactly twice either half. That factor of 2 is the whole AllReduce premium.'
+            : 'round 3/3 — each GPU pushed its V/4 to 3 peers and collected the 3 it lacked: V·(N−1)/N = ¾·V each way.'
+        ][r];
+      }
+
+      stepBtn.disabled = phase >= ROUNDS[mode];
+      stepBtn.textContent = nextLabel();
       draw(true);
     }
 
@@ -1071,7 +1092,7 @@
       phase = 0; sentQuarters = 0;
       cells = mode === 'ag' ? diag() : allPartial();
       stepBtn.disabled = false;
-      stepBtn.textContent = mode === 'ar' ? 'ReduceScatter ▸' : 'Run ▸';
+      stepBtn.textContent = nextLabel();
       status.textContent = IDLE[mode];
       draw(false);
     }
