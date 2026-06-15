@@ -23,6 +23,7 @@ algebra behind common losses, layers, and RL objectives.
 | Page | Topic |
 |---|---|
 | [Math notation](https://yueyiming2009.github.io/ai-learning/math-notation.html) | Symbol-by-symbol reference for ML papers |
+| [Backpropagation](https://yueyiming2009.github.io/ai-learning/backprop.html) | Chain rule on a graph as reverse-mode vector–Jacobian products; why a scalar loss forces reverse mode; the per-op VJP rules behind every gradient page |
 | [NLL loss](https://yueyiming2009.github.io/ai-learning/nll-loss.html) | The maximum-likelihood principle behind CE, MSE, BCE, DPO |
 | [Cross entropy](https://yueyiming2009.github.io/ai-learning/cross-entropy.html) | Softmax + CE forward/backward; the `p − y` gradient |
 | [LayerNorm gradient](https://yueyiming2009.github.io/ai-learning/layernorm-gradient.html) | Full backward through mean, variance, normalized input |
