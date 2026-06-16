@@ -218,7 +218,6 @@
       padding: 16px 20px;
       margin: 1.2em 0;
       text-align: center;
-      overflow-x: auto;
     }
     .result-label {
       font-size: 0.8rem;
@@ -227,13 +226,6 @@
       text-transform: uppercase;
       letter-spacing: 0.05em;
       margin-bottom: 6px;
-    }
-    /* Let wide display equations scroll instead of bursting their container */
-    mjx-container[display="true"] {
-      max-width: 100%;
-      overflow-x: auto;
-      overflow-y: hidden;
-      padding: 2px 0;
     }
 
     /* ── Group diagram ───────────────────────── */
@@ -348,7 +340,7 @@
       <tr><th>Symbol</th><th>Description</th></tr>
       <tr><td>\(q\)</td><td>Prompt / question (the same role as \(x\) elsewhere)</td></tr>
       <tr><td>\(o_i\)</td><td>The \(i\)-th sampled output (completion) in the group; \(|o_i|\) its token length</td></tr>
-      <tr><td>\(o_{i,t}\)</td><td>Token \(t\) of output \(i\); \(o_{i,<t}\) the tokens before it</td></tr>
+      <tr><td>\(o_{i,t}\)</td><td>Token \(t\) of output \(i\); \(o_{i,&lt;t}\) the tokens before it</td></tr>
       <tr><td>\(G\)</td><td>Group size — number of outputs sampled per prompt</td></tr>
       <tr><td>\(\pi_\theta\)</td><td>Policy being trained; \(\pi_{\theta_{\text{old}}}\) the policy that generated the group; \(\pi_{\text{ref}}\) frozen reference</td></tr>
       <tr><td>\(r_i\)</td><td>Reward of output \(o_i\) (from a reward model or a verifier)</td></tr>
@@ -401,7 +393,7 @@
     \]
   </div>
 
-  <p>Subtracting the group mean is the baseline; dividing by the group standard deviation normalizes scale, so prompts of differing difficulty contribute comparable gradients. An answer better than its peers gets \(\hat A_{i,t} > 0\) (reinforce it); a below-average answer gets \(\hat A_{i,t} < 0\) (suppress it).</p>
+  <p>Subtracting the group mean is the baseline; dividing by the group standard deviation normalizes scale, so prompts of differing difficulty contribute comparable gradients. An answer better than its peers gets \(\hat A_{i,t} > 0\) (reinforce it); a below-average answer gets \(\hat A_{i,t} &lt; 0\) (suppress it).</p>
 
   <div class="note">
     This matches how reward models are trained — on <em>comparisons</em> between outputs of the same prompt. GRPO's group-relative scoring uses the reward model in exactly the comparative regime it was fit on.
@@ -417,7 +409,7 @@
   <h2 id="objective">4. The GRPO Objective</h2>
   <p>GRPO keeps PPO's clipped surrogate but plugs in the group-relative advantage and adds the KL penalty <em>directly to the loss</em> (rather than folding it into the reward, as PPO does). The importance ratio is per-token:</p>
   \[
-    \rho_{i,t}(\theta) = \frac{\pi_\theta(o_{i,t}\mid q, o_{i,<t})}{\pi_{\theta_{\text{old}}}(o_{i,t}\mid q, o_{i,<t})}
+    \rho_{i,t}(\theta) = \frac{\pi_\theta(o_{i,t}\mid q, o_{i,&lt;t})}{\pi_{\theta_{\text{old}}}(o_{i,t}\mid q, o_{i,&lt;t})}
   \]
 
   <div class="result">
@@ -443,8 +435,8 @@
     <div class="result-label">KL estimator</div>
     \[
       \mathbb{D}_{\mathrm{KL}}\!\big[\pi_\theta \,\|\, \pi_{\text{ref}}\big]_{i,t}
-        = \frac{\pi_{\text{ref}}(o_{i,t}\mid q, o_{i,<t})}{\pi_\theta(o_{i,t}\mid q, o_{i,<t})}
-        - \log\frac{\pi_{\text{ref}}(o_{i,t}\mid q, o_{i,<t})}{\pi_\theta(o_{i,t}\mid q, o_{i,<t})}
+        = \frac{\pi_{\text{ref}}(o_{i,t}\mid q, o_{i,&lt;t})}{\pi_\theta(o_{i,t}\mid q, o_{i,&lt;t})}
+        - \log\frac{\pi_{\text{ref}}(o_{i,t}\mid q, o_{i,&lt;t})}{\pi_\theta(o_{i,t}\mid q, o_{i,&lt;t})}
         - 1
     \]
   </div>
@@ -461,7 +453,7 @@
     \nabla_\theta \mathcal{J}_{\text{GRPO}}
       = \mathbb{E}\!\left[ \frac{1}{G}\sum_{i=1}^{G}\frac{1}{|o_i|}\sum_{t=1}^{|o_i|}
         \left( \hat A_{i,t} + \beta\Big(\frac{\pi_{\text{ref}}(o_{i,t}\mid\cdot)}{\pi_\theta(o_{i,t}\mid\cdot)} - 1\Big) \right)
-        \nabla_\theta \log \pi_\theta(o_{i,t}\mid q, o_{i,<t}) \right]
+        \nabla_\theta \log \pi_\theta(o_{i,t}\mid q, o_{i,&lt;t}) \right]
   \]
   <p>The coefficient on each token's score-function gradient \(\nabla_\theta\log\pi_\theta\) is its advantage, nudged by the KL pull toward the reference. The familiar \(\nabla\log\pi_\theta\) factor is the same log-derivative trick from the <a href="rlhf.html" style="color:var(--accent);">RLHF policy-gradient section</a>.</p>
 
