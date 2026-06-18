@@ -33,6 +33,7 @@ algebra behind common losses, layers, and RL objectives.
 | [RoPE gradient](https://yueyiming2009.github.io/ai-learning/rope-gradient.html) | Per-pair rotation forward + symmetric backward |
 | [Optimizers — working math](https://yueyiming2009.github.io/ai-learning/optimizers.html) | SGD→AdamW update rules: noise, momentum/Nesterov, Adam moments, clipping, schedules, decoupled decay |
 | [Optimizer norms](https://yueyiming2009.github.io/ai-learning/optimizer-norms.html) | SGD/sign-SGD/Adam/Muon as steepest descent in different norms |
+| [Importance sampling](https://yueyiming2009.github.io/ai-learning/importance-sampling.html) | The off-policy reweighting `E_p[f]=E_q[(p/q)f]` behind the PPO/GRPO ratio; unbiasedness, the variance blow-up, why clipping exists |
 | [RLHF](https://yueyiming2009.github.io/ai-learning/rlhf.html) | Bradley–Terry RM, KL-regularized RL, policy gradient, GAE, PPO |
 | [GRPO](https://yueyiming2009.github.io/ai-learning/grpo.html) | DeepSeek-R1's critic-free PPO with group-relative advantages |
 | [DPO](https://yueyiming2009.github.io/ai-learning/dpo-loss.html) | KL-constrained RLHF → closed-form policy → logistic loss |
