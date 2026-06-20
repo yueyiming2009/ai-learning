@@ -88,10 +88,11 @@
       font-size: 0.875rem;
       line-height: 1.8;
     }
-    .algo-title { font-family: 'Inter', sans-serif; font-size: 0.78rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; }
-    .algo .kw { color: #7dd3fc; }
-    .algo .cm { color: #64748b; }
-    .algo .num { color: #86efac; }
+    .algo-title { font-family: 'Inter', sans-serif; font-size: 0.78rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0; padding-bottom: 10px; border-bottom: 1px solid #334155; }
+    .algo pre { margin: 12px 0 0; padding: 0; font: inherit; color: inherit; background: transparent; white-space: pre; }
+    .algo .kw { color: #7dd3fc; font-weight: 600; }
+    .algo .cm { color: #94a3b8; font-style: italic; }
+    .algo .req { color: #cbd5e1; }
 
     .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 1.2em 0; }
     .summary-card { background: var(--accent-light); border: 1px solid #99f6e4; border-radius: 8px; padding: 14px 16px; }
@@ -168,29 +169,32 @@
   <p>A <strong>rollout</strong> is one complete run of the policy through an episode — from an initial state to termination. At each step the policy samples an action, the environment returns a reward and a new state, and the process repeats until the episode ends:</p>
 
   <div class="algo">
-    <div class="algo-title">Generating a rollout</div>
-    <span class="cm">── initialise ──────────────────────────────────────</span>
-    s₀ ← initial state
-    τ  ← []
+    <div class="algo-title">Algorithm — Rollout generation</div>
+    <pre><span class="req">Require:</span> policy π, environment env
 
-    <span class="cm">── step through the episode ────────────────────────</span>
-    <span class="kw">for</span> t = 0, 1, 2, … <span class="kw">until</span> terminal:
-        aₜ  ← sample from π(· | sₜ)          <span class="cm"># policy acts</span>
-        rₜ  ← R(sₜ, aₜ)                       <span class="cm"># environment rewards</span>
-        sₜ₊₁ ← sample from P(· | sₜ, aₜ)     <span class="cm"># environment transitions</span>
-        append (sₜ, aₜ, rₜ) to τ
-
-    <span class="cm">── τ = (s₀, a₀, r₀, s₁, a₁, r₁, …, sT) ───────────</span>
+s ← s₀,  τ ← []
+<span class="kw">for</span> t = 0, 1, 2, … <span class="kw">do</span>
+    aₜ       ← π(sₜ)               <span class="cm">▷ sample action from policy</span>
+    rₜ, sₜ₊₁ ← env.step(sₜ, aₜ)   <span class="cm">▷ observe reward and next state</span>
+    τ ← τ ∥ (sₜ, aₜ, rₜ)
+    <span class="kw">if</span> sₜ₊₁ is terminal <span class="kw">then break end if</span>
+    sₜ ← sₜ₊₁
+<span class="kw">end for</span>
+<span class="kw">return</span> τ = (s₀, a₀, r₀, s₁, a₁, r₁, …, sT)</pre>
   </div>
 
   <p>Once the rollout is complete, compute returns by walking <em>backwards</em> through the trajectory — this handles the telescoping sum in a single pass:</p>
 
   <div class="algo">
-    <div class="algo-title">Computing returns from a rollout</div>
-    G ← <span class="num">0</span>
-    <span class="kw">for</span> t = T−1, T−2, …, 0:
-        G   ← rₜ + γ · G          <span class="cm"># Gₜ = rₜ + γ Gₜ₊₁</span>
-        Gₜ  ← G                   <span class="cm"># store return at each step</span>
+    <div class="algo-title">Algorithm — Computing returns (backward pass)</div>
+    <pre><span class="req">Require:</span> trajectory τ = (s₀,a₀,r₀,…,sT), discount factor γ
+
+G ← 0
+<span class="kw">for</span> t = T−1 <span class="kw">downto</span> 0 <span class="kw">do</span>
+    G  ← rₜ + γ · G   <span class="cm">▷ Gₜ = rₜ + γ Gₜ₊₁</span>
+    Gₜ ← G
+<span class="kw">end for</span>
+<span class="kw">return</span> (G₀, G₁, …, G_{T−1})</pre>
   </div>
 
   <p>The result is a list of \((s_t, a_t, G_t)\) tuples — one per step. These are the raw material for both value estimation and policy gradient updates.</p>
@@ -275,19 +279,16 @@
   <p>This is an expectation over trajectories — so we can estimate it by Monte Carlo: sample a trajectory, compute \(G_t\) at each step, and treat the sum as a gradient estimate. That is exactly <strong>REINFORCE</strong> (Williams, 1992):</p>
 
   <div class="algo">
-    <div class="algo-title">REINFORCE algorithm</div>
-    <span class="kw">repeat</span>:
-        τ = (s₀,a₀,r₀, …, sT) ← run one rollout under π_θ
+    <div class="algo-title">Algorithm — REINFORCE (Williams, 1992)</div>
+    <pre><span class="req">Require:</span> policy π_θ, learning rate α, discount factor γ
 
-        <span class="cm">── compute returns (backward pass) ─────────────────</span>
-        G ← <span class="num">0</span>
-        <span class="kw">for</span> t = T−1 <span class="kw">down to</span> 0:
-            G  ← rₜ + γ · G
-            Gₜ ← G
-
-        <span class="cm">── gradient update ─────────────────────────────────</span>
-        <span class="kw">for</span> t = 0 <span class="kw">to</span> T−1:
-            θ ← θ + α · Gₜ · ∇_θ log π_θ(aₜ | sₜ)
+<span class="kw">repeat</span>
+    τ ← GenerateRollout(π_θ)          <span class="cm">▷ sample one episode</span>
+    (G₀, …, G_{T−1}) ← BackwardPass(τ)
+    <span class="kw">for</span> t = 0 <span class="kw">to</span> T−1 <span class="kw">do</span>
+        θ ← θ + α · Gₜ · ∇_θ log π_θ(aₜ | sₜ)
+    <span class="kw">end for</span>
+<span class="kw">until</span> convergence</pre>
   </div>
 
   <p>The update rule has a clean intuition: if \(G_t\) was high (the episode went well from step \(t\)), <em>increase</em> the log-probability of the action taken — make it more likely next time. If \(G_t\) was low, decrease it. The magnitude of the push is proportional to how good the return was.</p>

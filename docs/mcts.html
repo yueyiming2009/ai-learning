@@ -77,10 +77,11 @@
     .read p { margin: 0.3em 0; }
 
     .algo { background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: 20px 24px; margin: 1.2em 0; font-family: 'Menlo', 'Monaco', 'Courier New', monospace; font-size: 0.875rem; line-height: 1.8; }
-    .algo-title { font-family: 'Inter', sans-serif; font-size: 0.78rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; }
-    .algo .kw { color: #7dd3fc; }
-    .algo .cm { color: #64748b; }
-    .algo .hi { color: #86efac; }
+    .algo-title { font-family: 'Inter', sans-serif; font-size: 0.78rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0; padding-bottom: 10px; border-bottom: 1px solid #334155; }
+    .algo pre { margin: 12px 0 0; padding: 0; font: inherit; color: inherit; background: transparent; white-space: pre; }
+    .algo .kw { color: #7dd3fc; font-weight: 600; }
+    .algo .cm { color: #94a3b8; font-style: italic; }
+    .algo .req { color: #cbd5e1; }
     .algo .phase { color: #f9a8d4; font-weight: 600; }
 
     /* Four-phase diagram */
@@ -286,38 +287,38 @@
   <h2 id="algorithm">3. The Full MCTS Algorithm</h2>
 
   <div class="algo">
-    <div class="algo-title">MCTS with UCT</div>
-    <span class="cm">── initialise tree with root node s₀ ────────────────</span>
-    N(s₀) ← 0;  <span class="kw">for</span> each action a: N(s₀,a) ← 0, W(s₀,a) ← 0
+    <div class="algo-title">Algorithm — MCTS with UCT</div>
+    <pre><span class="req">Require:</span> root state s₀, simulation budget K, exploration constant c
+<span class="req">Initialize:</span> N(s₀) ← 0;  for each a: N(s₀,a) ← 0,  W(s₀,a) ← 0
 
-    <span class="kw">for</span> simulation = 1 … K:
+<span class="kw">for</span> simulation = 1 <span class="kw">to</span> K <span class="kw">do</span>
+    s ← s₀;  path ← []
 
-        <span class="phase">── SELECTION ────────────────────────────────────────</span>
-        s ← s₀,  path ← []
-        <span class="kw">while</span> s is in tree <span class="kw">and</span> not terminal:
-            a ← argmax<sub>a'</sub> UCT(s, a')        <span class="cm"># choose best child</span>
-            append (s, a) to path
-            s ← transition(s, a)             <span class="cm"># move to child</span>
+    <span class="phase">▷ Selection</span>
+    <span class="kw">while</span> s is in tree <span class="kw">and</span> s is not terminal <span class="kw">do</span>
+        a ← argmax<sub>a'</sub> UCT(s, a')             <span class="cm">▷ exploit + explore via UCB</span>
+        path.append(s, a);  s ← transition(s, a)
+    <span class="kw">end while</span>
 
-        <span class="phase">── EXPANSION ────────────────────────────────────────</span>
-        <span class="kw">if</span> s is not terminal:
-            add s to tree with N(s,·) ← 0, W(s,·) ← 0
-            a ← any unvisited action from s
-            append (s, a) to path
-            s ← transition(s, a)
+    <span class="phase">▷ Expansion</span>
+    <span class="kw">if</span> s is not terminal <span class="kw">then</span>
+        add s to tree;  N(s,·) ← 0;  W(s,·) ← 0
+        a ← any unvisited action from s
+        path.append(s, a);  s ← transition(s, a)
+    <span class="kw">end if</span>
 
-        <span class="phase">── SIMULATION ───────────────────────────────────────</span>
-        G ← rollout(s)                        <span class="cm"># random play to terminal</span>
+    <span class="phase">▷ Simulation</span>
+    G ← rollout(s)                           <span class="cm">▷ random play to terminal state</span>
 
-        <span class="phase">── BACKPROPAGATION ──────────────────────────────────</span>
-        <span class="kw">for</span> (s, a) in reversed(path):
-            N(s, a) += 1
-            W(s, a) += G
-            Q(s, a)  = W(s, a) / N(s, a)
-            N(s)    += 1
-
-    <span class="cm">── act: most-visited action from root ───────────────</span>
-    <span class="hi">return</span> argmax<sub>a</sub> N(s₀, a)
+    <span class="phase">▷ Backpropagation</span>
+    <span class="kw">for</span> (s, a) ∈ reversed(path) <span class="kw">do</span>
+        N(s, a) ← N(s, a) + 1
+        W(s, a) ← W(s, a) + G
+        Q(s, a) ← W(s, a) / N(s, a)
+        N(s)    ← N(s) + 1
+    <span class="kw">end for</span>
+<span class="kw">end for</span>
+<span class="kw">return</span> argmax<sub>a</sub> N(s₀, a)                      <span class="cm">▷ most-visited action at root</span></pre>
   </div>
 
   <div class="note">

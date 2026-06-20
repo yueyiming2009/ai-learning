@@ -77,9 +77,11 @@
     .read p { margin: 0.3em 0; }
 
     .algo { background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: 20px 24px; margin: 1.2em 0; font-family: 'Menlo', 'Monaco', 'Courier New', monospace; font-size: 0.875rem; line-height: 1.8; }
-    .algo-title { font-family: 'Inter', sans-serif; font-size: 0.78rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; }
-    .algo .kw { color: #7dd3fc; }
-    .algo .cm { color: #64748b; }
+    .algo-title { font-family: 'Inter', sans-serif; font-size: 0.78rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0; padding-bottom: 10px; border-bottom: 1px solid #334155; }
+    .algo pre { margin: 12px 0 0; padding: 0; font: inherit; color: inherit; background: transparent; white-space: pre; }
+    .algo .kw { color: #7dd3fc; font-weight: 600; }
+    .algo .cm { color: #94a3b8; font-style: italic; }
+    .algo .req { color: #cbd5e1; }
     .algo .hi { color: #86efac; }
 
     /* Spectrum bar */
@@ -224,17 +226,20 @@
   </div>
 
   <div class="algo">
-    <div class="algo-title">TD(0) for policy evaluation</div>
-    initialise V(s) = 0 for all s
+    <div class="algo-title">Algorithm — TD(0) for policy evaluation</div>
+    <pre><span class="req">Require:</span> policy π, learning rate α, discount factor γ
+<span class="req">Initialize:</span> V(s) ← 0 for all s ∈ S
 
-    <span class="kw">for</span> each episode:
-        s ← s₀
-        <span class="kw">while</span> s is not terminal:
-            a      ← π(s)                        <span class="cm"># follow the policy</span>
-            r, s'  ← env.step(a)                 <span class="cm"># observe reward and next state</span>
-            δ      ← r + γ·V(s') − V(s)         <span class="cm"># compute TD error</span>
-            V(s)   ← V(s) + α·δ                  <span class="cm"># update in place</span>
-            s      ← s'
+<span class="kw">repeat</span>
+    s ← s₀
+    <span class="kw">while</span> s is not terminal <span class="kw">do</span>
+        a     ← π(s)
+        r, s' ← env.step(s, a)
+        δ     ← r + γ · V(s') − V(s)   <span class="cm">▷ TD error</span>
+        V(s)  ← V(s) + α · δ
+        s     ← s'
+    <span class="kw">end while</span>
+<span class="kw">until</span> V converges</pre>
   </div>
 
   <p>Two things to notice: TD(0) updates <em>online</em> — after every step, not after every episode. And it only ever looks one step into the future, regardless of episode length. Both properties follow from using the TD target instead of the full return.</p>
@@ -330,17 +335,20 @@
   </div>
 
   <div class="algo">
-    <div class="algo-title">Q-learning</div>
-    initialise Q(s, a) = 0 for all s, a
+    <div class="algo-title">Algorithm — Q-learning (Watkins, 1989)</div>
+    <pre><span class="req">Require:</span> learning rate α, discount factor γ, exploration rate ε
+<span class="req">Initialize:</span> Q(s, a) ← 0 for all s ∈ S, a ∈ A
 
-    <span class="kw">for</span> each episode:
-        s ← s₀
-        <span class="kw">while</span> s is not terminal:
-            a     ← ε-greedy action from Q(s, ·)  <span class="cm"># explore occasionally</span>
-            r, s' ← env.step(a)
-            δ     ← r + γ · <span class="hi">max</span><sub>a'</sub> Q(s', a') − Q(s, a)   <span class="cm"># greedy target</span>
-            Q(s, a) ← Q(s, a) + α · δ
-            s ← s'
+<span class="kw">repeat</span>
+    s ← s₀
+    <span class="kw">while</span> s is not terminal <span class="kw">do</span>
+        a     ← ε-greedy(Q(s, ·))                       <span class="cm">▷ explore or exploit</span>
+        r, s' ← env.step(s, a)
+        δ     ← r + γ · <span class="hi">max</span><sub>a'</sub> Q(s', a') − Q(s, a)   <span class="cm">▷ Bellman target</span>
+        Q(s, a) ← Q(s, a) + α · δ
+        s ← s'
+    <span class="kw">end while</span>
+<span class="kw">until</span> Q converges to Q*</pre>
   </div>
 
   <h3>Why Q-learning is off-policy</h3>

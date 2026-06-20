@@ -77,11 +77,12 @@
     .read p { margin: 0.3em 0; }
 
     .algo { background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: 20px 24px; margin: 1.2em 0; font-family: 'Menlo', 'Monaco', 'Courier New', monospace; font-size: 0.875rem; line-height: 1.8; }
-    .algo-title { font-family: 'Inter', sans-serif; font-size: 0.78rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; }
-    .algo .kw { color: #7dd3fc; }
-    .algo .cm { color: #64748b; }
+    .algo-title { font-family: 'Inter', sans-serif; font-size: 0.78rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0; padding-bottom: 10px; border-bottom: 1px solid #334155; }
+    .algo pre { margin: 12px 0 0; padding: 0; font: inherit; color: inherit; background: transparent; white-space: pre; }
+    .algo .kw { color: #7dd3fc; font-weight: 600; }
+    .algo .cm { color: #94a3b8; font-style: italic; }
+    .algo .req { color: #cbd5e1; }
     .algo .hi { color: #86efac; }
-    .algo .str { color: #fca5a5; }
 
     /* Triad diagram */
     .triad {
@@ -258,39 +259,33 @@
   <h2 id="algorithm">5. The Full DQN Algorithm</h2>
 
   <div class="algo">
-    <div class="algo-title">DQN (Mnih et al., 2015)</div>
-    initialise Q<sub>θ</sub> with random weights θ
-    initialise Q<sub>θ⁻</sub> with θ⁻ ← θ        <span class="cm"># target network</span>
-    initialise replay buffer 𝒟 of capacity N
-    ε ← ε_start
+    <div class="algo-title">Algorithm — DQN (Mnih et al., 2015)</div>
+    <pre><span class="req">Require:</span> learning rate α, discount γ, exploration ε, buffer capacity N, target sync period C
+<span class="req">Initialize:</span> Q<sub>θ</sub> with random θ;  θ⁻ ← θ;  replay buffer 𝒟 ← ∅
 
-    <span class="kw">for</span> episode = 1, 2, … :
-        s ← initial state (preprocessed frames)
+<span class="kw">repeat</span>
+    s ← preprocessed initial frames
+    <span class="kw">repeat</span>
+        <span class="kw">if</span> rand() < ε <span class="kw">then</span>  a ← random action          <span class="cm">▷ explore</span>
+        <span class="kw">else</span>                  a ← argmax<sub>a'</sub> Q<sub>θ</sub>(s, a')  <span class="cm">▷ exploit</span>
+        <span class="kw">end if</span>
+        r, s', done ← env.step(a)
+        store (s, a, r, s', done) in 𝒟;  s ← s'
 
-        <span class="kw">for</span> t = 1, 2, … :
+        <span class="kw">if</span> |𝒟| ≥ batch_size <span class="kw">then</span>                        <span class="cm">▷ learn</span>
+            𝒝 ← uniform sample of batch_size tuples from 𝒟
+            <span class="kw">for</span> each (sⱼ, aⱼ, rⱼ, sⱼ', doneⱼ) ∈ 𝒝 <span class="kw">do</span>
+                <span class="kw">if</span> doneⱼ <span class="kw">then</span>  yⱼ ← rⱼ
+                <span class="kw">else</span>            yⱼ ← rⱼ + γ · <span class="hi">max</span><sub>a'</sub> Q<sub>θ⁻</sub>(sⱼ', a')
+                <span class="kw">end if</span>
+            <span class="kw">end for</span>
+            θ ← θ − α · ∇<sub>θ</sub> Σⱼ (yⱼ − Q<sub>θ</sub>(sⱼ, aⱼ))²
+        <span class="kw">end if</span>
 
-            <span class="cm">── act ─────────────────────────────────────────────</span>
-            <span class="kw">with</span> probability ε:  a ← random action      <span class="cm"># explore</span>
-            <span class="kw">else</span>:               a ← argmax<sub>a'</sub> Q<sub>θ</sub>(s, a') <span class="cm"># exploit</span>
-
-            r, s', done ← env.step(a)
-            store (s, a, r, s', done) in 𝒟
-            s ← s'
-
-            <span class="cm">── learn ────────────────────────────────────────────</span>
-            <span class="kw">if</span> |𝒟| ≥ batch_size:
-                𝒝 ← sample random mini-batch from 𝒟
-
-                <span class="kw">for</span> each (sⱼ, aⱼ, rⱼ, sⱼ', doneⱼ) in 𝒝:
-                    <span class="kw">if</span> doneⱼ:  yⱼ ← rⱼ
-                    <span class="kw">else</span>:      yⱼ ← rⱼ + γ · <span class="hi">max</span><sub>a'</sub> Q<sub>θ⁻</sub>(sⱼ', a')
-
-                gradient step on θ to minimise Σⱼ (yⱼ − Q<sub>θ</sub>(sⱼ, aⱼ))²
-
-            <span class="cm">── sync target ──────────────────────────────────────</span>
-            <span class="kw">if</span> t mod C == 0:  θ⁻ ← θ
-
-        ε ← decay(ε)   <span class="cm"># anneal exploration over training</span>
+        <span class="kw">if</span> t mod C = 0 <span class="kw">then</span>  θ⁻ ← θ  <span class="kw">end if</span>          <span class="cm">▷ sync target network</span>
+    <span class="kw">until</span> episode terminates
+    ε ← decay(ε)                                         <span class="cm">▷ anneal exploration</span>
+<span class="kw">until</span> training complete</pre>
   </div>
 
   <h2 id="extensions">6. Key Extensions</h2>

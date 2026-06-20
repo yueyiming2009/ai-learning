@@ -77,10 +77,11 @@
     .read p { margin: 0.3em 0; }
 
     .algo { background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: 20px 24px; margin: 1.2em 0; font-family: 'Menlo', 'Monaco', 'Courier New', monospace; font-size: 0.875rem; line-height: 1.8; }
-    .algo-title { font-family: 'Inter', sans-serif; font-size: 0.78rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; }
-    .algo .kw { color: #7dd3fc; }
-    .algo .cm { color: #64748b; }
-    .algo .hi { color: #86efac; }
+    .algo-title { font-family: 'Inter', sans-serif; font-size: 0.78rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0; padding-bottom: 10px; border-bottom: 1px solid #334155; }
+    .algo pre { margin: 12px 0 0; padding: 0; font: inherit; color: inherit; background: transparent; white-space: pre; }
+    .algo .kw { color: #7dd3fc; font-weight: 600; }
+    .algo .cm { color: #94a3b8; font-style: italic; }
+    .algo .req { color: #cbd5e1; }
     .algo .phase { color: #f9a8d4; font-weight: 600; }
 
     /* Loop diagram */
@@ -346,34 +347,38 @@
   </div>
 
   <div class="algo">
-    <div class="algo-title">AlphaZero training loop (simplified)</div>
-    initialise f<sub>θ</sub> with random weights
-    𝒟 ← empty replay buffer
+    <div class="algo-title">Algorithm — AlphaZero training loop</div>
+    <pre><span class="req">Require:</span> network f<sub>θ</sub>, MCTS simulations per move K, win threshold τ_win
+<span class="req">Initialize:</span> f<sub>θ</sub> with random θ;  θ_best ← θ;  𝒟 ← ∅
 
-    <span class="kw">loop</span>:
+<span class="kw">repeat</span>
+    <span class="phase">▷ Self-play: generate training data</span>
+    <span class="kw">for</span> each game <span class="kw">do</span>
+        s ← initial position
+        <span class="kw">while</span> s is not terminal <span class="kw">do</span>
+            π ← MCTS(s, f<sub>θ</sub>, K)              <span class="cm">▷ PUCT search with V<sub>θ</sub> leaf eval</span>
+            a ← sample from π(· | s)
+            record (s, π);  s ← transition(s, a)
+        <span class="kw">end while</span>
+        z ← game outcome ∈ {−1, 0, +1}
+        add {(sₜ, πₜ, z)}<sub>t=0</sub><sup>T</sup> to 𝒟
+    <span class="kw">end for</span>
 
-        <span class="phase">── self-play (parallel workers) ─────────────────────</span>
-        <span class="kw">for</span> each game:
-            s ← initial position
-            <span class="kw">while</span> s not terminal:
-                π ← MCTS(s, f<sub>θ</sub>, K simulations)   <span class="cm"># PUCT + V_θ leaf eval</span>
-                a ← sample from π(·|s)
-                record (s, π)
-                s ← transition(s, a)
-            z ← game outcome (+1 / 0 / −1)
-            add {(sₜ, πₜ, z) for all t} to 𝒟
-
-        <span class="phase">── training (GPU) ───────────────────────────────────</span>
+    <span class="phase">▷ Training: gradient steps on the combined loss</span>
+    <span class="kw">for</span> each gradient step <span class="kw">do</span>
         𝒝 ← sample mini-batch from 𝒟
-        <span class="kw">for</span> (s, π, z) in 𝒝:
+        <span class="kw">for</span> each (s, π, z) ∈ 𝒝 <span class="kw">do</span>
             (P, V) ← f<sub>θ</sub>(s)
-            ℒ ← (z − V)² − π · log P + λ‖θ‖²
-        θ ← θ − α∇<sub>θ</sub>ℒ
+            ℒ ← (z − V)² − π⊤ log P + λ‖θ‖²
+        <span class="kw">end for</span>
+        θ ← θ − α · ∇<sub>θ</sub> ℒ
+    <span class="kw">end for</span>
 
-        <span class="phase">── evaluation ───────────────────────────────────────</span>
-        <span class="kw">if</span> new f<sub>θ</sub> wins > 55% against best f<sub>θ_best</sub>:
-            θ_best ← θ
-            <span class="cm"># self-play workers switch to new weights</span>
+    <span class="phase">▷ Evaluation: keep only a strictly stronger network</span>
+    <span class="kw">if</span> f<sub>θ</sub> beats f<sub>θ_best</sub> in > τ_win fraction of games <span class="kw">then</span>
+        θ_best ← θ                            <span class="cm">▷ promote; workers switch weights</span>
+    <span class="kw">end if</span>
+<span class="kw">until</span> training complete</pre>
   </div>
 
   <h2 id="gpi">6. Why It Works: Generalised Policy Iteration</h2>
