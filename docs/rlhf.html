@@ -374,6 +374,10 @@
 
   <p>This page focuses on the math of Stages 2 and 3. Stage 1 is ordinary cross-entropy fine-tuning — see the <a href="cross-entropy.html" style="color:var(--accent);">cross-entropy page</a>.</p>
 
+  <div class="note">
+    This page is the applied capstone of the RL Theory series. §4 applies variance-reduction results from <a href="mc-rollouts.html" style="color:#1e40af;">Monte Carlo Rollouts</a>; §5 applies the bias–variance trade-off and GAE from <a href="td-learning.html" style="color:#1e40af;">TD Learning</a>; the clipped surrogate in §6 is the <a href="importance-sampling.html" style="color:#1e40af;">importance-sampling</a> ratio bounded by a clip. Reading those pages first makes every derivation here click into place.
+  </div>
+
   <h2 id="rm">2. Reward Model</h2>
   <p>We can't ask humans for absolute scores, only comparisons. The reward model is a scalar head on a transformer that maps \((x,y)\) to a single number, trained so that preferred completions score higher. <strong>Bradley–Terry</strong> treats each pairwise comparison as a <em>soft probability</em> rather than a hard winner: the probability that a human annotator would prefer \(y_w\) over \(y_l\) given prompt \(x\) is</p>
   \[
@@ -513,78 +517,23 @@
   <p>Each action's score function \(\nabla\log\pi_\theta(a_t\mid s_t)\) points in the direction that makes \(a_t\) more likely; weighting it by the return reinforces actions from good trajectories and suppresses those from bad ones.</p>
 
   <h3>From return to advantage</h3>
-  <p>This estimator is correct but <em>high-variance</em> — it credits every action with the whole trajectory's return, including luck it had nothing to do with. Three refinements sharpen it, each keeping the gradient unbiased.</p>
-
-  <div class="step">
-    <div class="step-label">A — Reward-to-go (causality)</div>
-    <p>An action \(a_t\) cannot affect rewards collected before it: \(\mathbb{E}[\nabla\log\pi_\theta(a_t\mid s_t)\, r_{t'}] = 0\) for \(t' < t\). Dropping those past rewards leaves the expectation unchanged but cuts variance. Replace \(R(\tau)\) with the reward-to-go \(G_t = \sum_{t'\ge t} r_{t'}\):</p>
-    \[
-      \nabla_\theta J = \mathbb{E}\!\left[\sum_t \nabla_\theta \log \pi_\theta(a_t\mid s_t)\;G_t\right]
-    \]
-  </div>
-
-  <div class="step">
-    <div class="step-label">B — Subtract a baseline</div>
-    <p>For any \(b(s_t)\) depending on the state but not the action, its contribution is exactly zero (the policy sums to 1, so its gradient sums to 0):</p>
-    \[
-      \mathbb{E}_{a_t\sim\pi_\theta}\!\big[\nabla_\theta\log\pi_\theta(a_t\mid s_t)\,b(s_t)\big]
-        = b(s_t)\,\nabla_\theta\!\!\sum_{a_t}\pi_\theta(a_t\mid s_t) = b(s_t)\,\nabla_\theta 1 = 0
-    \]
-    <p>So we may subtract a baseline for free (unbiased), and a good one slashes variance: \(\nabla_\theta J = \mathbb{E}[\sum_t \nabla\log\pi_\theta(a_t\mid s_t)\,(G_t - b(s_t))]\).</p>
-  </div>
-
-  <div class="step">
-    <div class="step-label">C — Baseline = value ⟹ advantage</div>
-    <p>The natural baseline is the expected return from the state, the value function \(V(s_t) = \mathbb{E}[G_t\mid s_t]\). Then \(G_t - V(s_t)\) measures how much better \(a_t\) did than <em>average</em> from \(s_t\) — exactly the <strong>advantage</strong>, since \(Q(s_t,a_t) = \mathbb{E}[G_t\mid s_t,a_t]\):</p>
-    \[
-      \hat A_t \approx G_t - V(s_t), \qquad A_t = Q(s_t,a_t) - V(s_t)
-    \]
-  </div>
-
-  <p>Substituting yields the form used throughout RLHF:</p>
+  <p>This estimator is correct but high-variance — every action is credited with the full trajectory return, including luck it had nothing to do with. The <a href="mc-rollouts.html" style="color:var(--accent);">Monte Carlo Rollouts page</a> derives three variance-reduction techniques in full; applied here:</p>
+  <ul>
+    <li><strong>Reward-to-go (causality)</strong> — \(a_t\) cannot affect rewards collected before it, so replace \(R(\tau)\) with \(G_t = \sum_{t'\ge t} r_{t'}\). The dropped terms are zero in expectation: \(\mathbb{E}[\nabla\log\pi_\theta(a_t\mid s_t)\, r_{t'}] = 0\) for \(t' < t\).</li>
+    <li><strong>Baseline subtraction</strong> — any \(b(s_t)\) depending on state but not action can be subtracted for free: \(\mathbb{E}_{a_t}[\nabla\log\pi_\theta(a_t\mid s_t)\, b(s_t)] = 0\), because the policy sums to 1 and its gradient sums to 0.</li>
+    <li><strong>Advantage</strong> — the optimal baseline is \(V(s_t) = \mathbb{E}[G_t\mid s_t]\). Then \(A_t = G_t - V(s_t) = Q(s_t,a_t) - V(s_t)\): how much better this specific action performed compared to average from \(s_t\).</li>
+  </ul>
+  <p>Applying all three yields the form used throughout RLHF. Push up the log-probability of actions that outperformed expectations (\(\hat A_t > 0\)), suppress those that underperformed. Subtracting \(V\) strips out "this state was generically good/bad," leaving a signal purely about the <em>action</em>:</p>
   \[
     \nabla_\theta J(\theta)
       = \mathbb{E}\!\left[ \sum_{t} \hat A_t \, \nabla_\theta \log \pi_\theta(a_t \mid s_t) \right]
   \]
-  <p>Intuition: push up the log-probability of actions that did better than expected (\(\hat A_t > 0\)), push down those that did worse. Subtracting \(V\) strips out the "this state was just generically good/bad" component, leaving a signal about the <em>action</em>. The advantage, not the raw reward, is the teaching signal — and §5 is how \(\hat A_t\) is actually estimated.</p>
+  <p>Section 5 shows how \(\hat A_t\) is estimated in practice.</p>
 
-  <h2 id="gae">5. Value Function and Advantage</h2>
-  <p>§4 left us needing to estimate \(\hat A_t\). We have a learned <strong>value function</strong> \(V_\psi(s)\) — a second head (the <em>critic</em>) predicting expected return from \(s\) — and sampled rewards. The whole design is a <strong>bias–variance trade-off</strong>: how much to trust real sampled rewards versus the imperfect bootstrap \(V\).</p>
+  <h2 id="gae">5. Advantage Estimation — GAE</h2>
+  <p>§4 left us needing \(\hat A_t\). We have a learned critic \(V_\psi(s)\) and sampled per-token rewards \(R_t\). The central tension is the <strong>bias–variance trade-off</strong>: using the full return-to-go is unbiased but accumulates variance over a long episode; bootstrapping from \(V_\psi\) after one step is low-variance but biased by the imperfect critic. <a href="td-learning.html" style="color:var(--accent);">TD Learning §4–5</a> develops this spectrum in full — one-step TD, \(n\)-step returns, and how each \(n\)-step estimate telescopes into a sum of TD errors \(\delta_{t+l} = R_{t+l} + \gamma V_\psi(s_{t+l+1}) - V_\psi(s_{t+l})\).</p>
 
-  <h3>The two extremes</h3>
-  <p><strong>Monte Carlo</strong> uses the actual return-to-go, \(\hat A_t = G_t - V(s_t)\) with \(G_t = \sum_{l\ge 0}\gamma^l r_{t+l}\): unbiased (only real rewards) but high-variance (a long sum of random rewards). <strong>One-step TD</strong> bootstraps after a single step:</p>
-  \[
-    \hat A_t^{(1)} = R_t + \gamma\, V_\psi(s_{t+1}) - V_\psi(s_t) \;\triangleq\; \delta_t
-  \]
-  <p>Low variance (one random reward) but biased (leans entirely on \(V\)). This <em>TD error</em> \(\delta_t\) is the building block for everything below.</p>
-
-  <div class="step">
-    <div class="step-label">Step 1 — The n-step ladder</div>
-    <p>Between the extremes, take \(n\) real rewards then bootstrap. Larger \(n\) means less bias, more variance:</p>
-    \[
-      \hat A_t^{(n)} = \sum_{l=0}^{n-1}\gamma^l r_{t+l} + \gamma^n V_\psi(s_{t+n}) - V_\psi(s_t)
-    \]
-  </div>
-
-  <div class="step">
-    <div class="step-label">Step 2 — n-step advantage = sum of TD errors</div>
-    <p>The intermediate value terms <em>telescope</em>, so the \(n\)-step advantage is exactly a discounted sum of TD errors. For \(n=2\), the \(+\gamma V(s_{t+1})\) and \(-\gamma V(s_{t+1})\) cancel:</p>
-    \[
-      \delta_t + \gamma\delta_{t+1}
-        = r_t + \gamma r_{t+1} + \gamma^2 V_\psi(s_{t+2}) - V_\psi(s_t)
-        = \hat A_t^{(2)}
-    \]
-    <p>In general \(\hat A_t^{(n)} = \sum_{l=0}^{n-1}\gamma^l\,\delta_{t+l}\).</p>
-  </div>
-
-  <div class="step">
-    <div class="step-label">Step 3 — GAE averages over all n</div>
-    <p>Rather than pick one \(n\), <strong>Generalized Advantage Estimation</strong> takes an exponentially-weighted average of every \(n\)-step estimator with weight \((1-\lambda)\lambda^{n-1}\):</p>
-    \[
-      \hat A_t^{\text{GAE}(\gamma,\lambda)} = (1-\lambda)\sum_{n=1}^{\infty}\lambda^{n-1}\,\hat A_t^{(n)}
-    \]
-    <p>Collecting the coefficient of each \(\delta_{t+l}\) — it appears in every estimator with \(n>l\), giving \((1-\lambda)\gamma^l(\lambda^l+\lambda^{l+1}+\cdots) = (\gamma\lambda)^l\) — the whole thing collapses to a single discounted sum:</p>
-  </div>
+  <p><strong>Generalized Advantage Estimation (GAE)</strong> takes an exponentially-weighted average of every \(n\)-step estimator, which collapses to a single discounted sum of TD errors:</p>
 
   <div class="result">
     <div class="result-label">GAE</div>
@@ -698,6 +647,30 @@
       <tr><td>2 · Reward model</td><td>\(r_\phi\)</td><td>\(-\mathbb{E}[\log\sigma(r_\phi(x,y_w) - r_\phi(x,y_l))]\)</td></tr>
       <tr><td>3 · RL (PPO)</td><td>\(\pi_\theta\), \(V_\psi\)</td><td>\(\mathcal{L}^{\text{CLIP}} + c_1\mathcal{L}_{\text{VF}} - c_2 S\)</td></tr>
     </table>
+  </div>
+
+  <h2>What's Next</h2>
+  <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; margin:1.2em 0;">
+    <a href="grpo.html" style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;text-decoration:none;color:inherit;display:block;transition:border-color 0.15s,box-shadow 0.15s;">
+      <div style="font-size:0.78rem;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Next</div>
+      <div style="font-weight:600;font-size:0.95rem;margin-bottom:4px;">GRPO</div>
+      <p style="margin:0;font-size:0.88rem;color:var(--muted);">Drop the critic entirely. Group sampling as a Monte Carlo baseline — the RL algorithm behind DeepSeek-R1.</p>
+    </a>
+    <a href="dpo-loss.html" style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;text-decoration:none;color:inherit;display:block;transition:border-color 0.15s,box-shadow 0.15s;">
+      <div style="font-size:0.78rem;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Related</div>
+      <div style="font-weight:600;font-size:0.95rem;margin-bottom:4px;">DPO</div>
+      <p style="margin:0;font-size:0.88rem;color:var(--muted);">The same KL-regularized objective solved in closed form — no RL loop, no reward model, no critic.</p>
+    </a>
+    <a href="ppo-training-walkthrough.html" style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;text-decoration:none;color:inherit;display:block;transition:border-color 0.15s,box-shadow 0.15s;">
+      <div style="font-size:0.78rem;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Systems</div>
+      <div style="font-weight:600;font-size:0.95rem;margin-bottom:4px;">PPO Training Walkthrough</div>
+      <p style="margin:0;font-size:0.88rem;color:var(--muted);">End-to-end trace of one PPO step across 8 GPUs — tensor shapes, NCCL collectives, and the hybrid engine.</p>
+    </a>
+    <a href="td-learning.html" style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;text-decoration:none;color:inherit;display:block;transition:border-color 0.15s,box-shadow 0.15s;">
+      <div style="font-size:0.78rem;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Theory</div>
+      <div style="font-weight:600;font-size:0.95rem;margin-bottom:4px;">TD Learning &amp; GAE</div>
+      <p style="margin:0;font-size:0.88rem;color:var(--muted);">The full derivation behind §5: TD error, n-step returns, and how the telescoping collapses to the GAE formula.</p>
+    </a>
   </div>
 
 </div>
