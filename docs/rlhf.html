@@ -381,16 +381,15 @@
       = \sigma\big(r_\phi(x,y_w) - r_\phi(x,y_l)\big)
   \]
 
-  <div class="step">
-    <div class="step-label">Where the sigmoid comes from</div>
-    <p>Let \(r_w = r_\phi(x,y_w)\) and \(r_l = r_\phi(x,y_l)\). Divide numerator and denominator by \(\exp r_w\):</p>
+  <div class="note">
+    <strong>Where the sigmoid comes from.</strong> Let \(r_w = r_\phi(x,y_w)\) and \(r_l = r_\phi(x,y_l)\). Divide numerator and denominator by \(\exp r_w\):
     \[
       \frac{e^{r_w}}{e^{r_w} + e^{r_l}}
       = \frac{1}{1 + e^{r_l - r_w}}
       = \frac{1}{1 + e^{-(r_w - r_l)}}
       = \sigma(r_w - r_l)
     \]
-    <p>This is exact algebra — no approximation. Only the <em>gap</em> \(\Delta = r_w - r_l\) matters; shifting both scores by the same constant cancels out and leaves the probability unchanged.</p>
+    Exact algebra — no approximation. Only the <em>gap</em> \(\Delta = r_w - r_l\) matters; shifting both scores by the same constant cancels out and leaves the probability unchanged.
   </div>
 
   <div class="note">
@@ -403,7 +402,7 @@
     The soft probability also captures annotation noise: two annotators can genuinely disagree on a borderline pair. Rather than forcing a hard 0/1 label, BT lets the model reflect that ambiguity.
   </div>
 
-  <p>Bradley–Terry gives the probability of a <em>single</em> comparison. To turn it into a training loss we fit \(\phi\) by <strong>maximum likelihood</strong> over the whole comparison dataset \(\mathcal{D}\), in three steps.</p>
+  <p>To turn this into a training loss, we fit \(\phi\) by <strong>maximum likelihood</strong> over the whole comparison dataset \(\mathcal{D}\), in three steps.</p>
 
   <div class="step">
     <div class="step-label">Step 1 — Likelihood of the dataset</div>
@@ -424,7 +423,7 @@
 
   <div class="step">
     <div class="step-label">Step 3 — Negate and average</div>
-    <p>Flip the sign to turn "maximize log-likelihood" into "minimize a loss," and average over the dataset (the \(\tfrac{1}{|\mathcal{D}|}\sum\) is written as an expectation \(\mathbb{E}_{\mathcal{D}}\)):</p>
+    <p>Flip the sign to turn "maximize log-likelihood" into "minimize a loss," and average over the dataset (the \(\tfrac{1}{|\mathcal{D}|}\sum\) is written as an expectation \(\mathbb{E}_{\mathcal{D}}\)). Minimizing the result drives \(r_w\) up and \(r_l\) down: a pair already ranked correctly contributes almost no gradient, while a pair ranked backwards contributes a large one.</p>
   </div>
 
   <div class="result">
@@ -435,11 +434,7 @@
     \]
   </div>
 
-  <div class="note">
-    <strong>Reading the loss.</strong> The 2-way softmax above is exactly a sigmoid of the reward gap, \(\sigma(r_\phi(x,y_w) - r_\phi(x,y_l))\), so this is just <em>binary logistic regression</em> with the gap as its single logit and "the winner wins" as the label. Taking \(-\log\) of that probability and averaging over the dataset is maximum likelihood: minimizing it drives \(r_\phi(x,y_w)\) up and \(r_\phi(x,y_l)\) down until the preferred completion is confidently ranked higher. A pair already ranked correctly contributes almost no gradient; a pair ranked backwards contributes a large one.
-  </div>
-
-  <p>Only reward <em>differences</em> matter, so \(r_\phi\) is identified up to an additive constant; implementations usually normalize it to zero mean. This is the same Bradley–Terry likelihood that <a href="dpo-loss.html" style="color:var(--accent);">DPO</a> later reuses — the difference is where the reward lives (a separate network here, the policy itself in DPO).</p>
+  <p>Only reward <em>differences</em> matter, so \(r_\phi\) is identified only up to an additive constant; implementations usually normalize scores to zero mean. The same Bradley–Terry likelihood reappears in <a href="dpo-loss.html" style="color:var(--accent);">DPO</a> — the difference is where the reward lives: a separate network \(r_\phi\) here, versus the policy itself in DPO.</p>
 
   <h2 id="objective">3. The RL Objective</h2>
   <p>With \(r_\phi\) frozen, Stage 3 trains the policy to maximize reward while staying close to the reference model. The KL leash stops the policy from drifting into degenerate text that fools the reward model (<em>reward hacking</em>):</p>
