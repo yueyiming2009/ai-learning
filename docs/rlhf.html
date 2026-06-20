@@ -311,8 +311,6 @@
     <a href="#pipeline">Pipeline</a>
     <a href="#rm">Reward model</a>
     <a href="#objective">RL objective</a>
-    <a href="#pg">Policy gradient</a>
-    <a href="#gae">Advantage</a>
     <a href="#ppo">PPO loss</a>
     <a href="#loop">Full loop</a>
     <a href="#vs-dpo">vs. DPO</a>
@@ -375,7 +373,7 @@
   <p>This page focuses on the math of Stages 2 and 3. Stage 1 is ordinary cross-entropy fine-tuning — see the <a href="cross-entropy.html" style="color:var(--accent);">cross-entropy page</a>.</p>
 
   <div class="note">
-    This page is the applied capstone of the RL Theory series. §4 applies variance-reduction results from <a href="mc-rollouts.html" style="color:#1e40af;">Monte Carlo Rollouts</a>; §5 applies the bias–variance trade-off and GAE from <a href="td-learning.html" style="color:#1e40af;">TD Learning</a>; the clipped surrogate in §6 is the <a href="importance-sampling.html" style="color:#1e40af;">importance-sampling</a> ratio bounded by a clip. Reading those pages first makes every derivation here click into place.
+    This page is the applied capstone of the RL Theory series. The policy gradient theorem, advantage estimation, and GAE are derived on the <a href="policy-gradient.html" style="color:#1e40af;">Policy Gradient page</a> — reading that first makes §4 here click into place. The clipped surrogate in §4 is the <a href="importance-sampling.html" style="color:#1e40af;">importance-sampling</a> ratio bounded by a clip.
   </div>
 
   <h2 id="rm">2. Reward Model</h2>
@@ -472,91 +470,13 @@
     This single-sample log-ratio is unbiased but can be negative for an individual sample (a true KL cannot) and is high-variance. <a href="grpo.html" style="color:#1e40af;">GRPO</a> swaps in the always-positive \(u-\log u-1\) estimator to fix this.
   </div>
 
-  <h2 id="pg">4. Policy Gradient Foundations</h2>
-  <p>How do you maximize an expected reward when the thing you sample from, \(\pi_\theta\), is what you're differentiating? The <strong>policy gradient theorem</strong> (the log-derivative / REINFORCE trick) gives the answer. A trajectory is \(\tau = (s_0, a_0, s_1, a_1, \ldots, s_T)\) with return \(R(\tau)\), and the objective is the expected return:</p>
+  <p>The policy gradient theorem, advantage estimation, and GAE are derived step by step on the <a href="policy-gradient.html" style="color:var(--accent);">Policy Gradient page</a>. The result used here: given per-token advantages \(\hat A_t\) computed via GAE \(\bigl(\hat A_t = \sum_l (\gamma\lambda)^l \delta_{t+l}\bigr)\), the gradient of the expected return is:</p>
   \[
-    J(\theta) = \mathbb{E}_{\tau\sim\pi_\theta}[R(\tau)] = \sum_\tau \pi_\theta(\tau)\, R(\tau)
+    \nabla_\theta J(\theta) = \mathbb{E}\!\left[\sum_t \hat A_t\,\nabla_\theta\log\pi_\theta(a_t\mid s_t)\right]
   \]
+  <p>Push up the log-probability of actions that outperformed expectations (\(\hat A_t > 0\)); suppress those that underperformed. The PPO objective below clips this gradient to prevent a destructive large step.</p>
 
-  <div class="step">
-    <div class="step-label">Step 1 — Differentiate</div>
-    <p>Only the trajectory probability depends on \(\theta\) (the return is just a number once \(\tau\) is fixed), so:</p>
-    \[
-      \nabla_\theta J(\theta) = \sum_\tau \nabla_\theta \pi_\theta(\tau)\, R(\tau)
-    \]
-    <p>This is not yet an expectation — \(\nabla_\theta \pi_\theta(\tau)\) can't be estimated by sampling. We must get it back to the form \(\sum_\tau \pi_\theta(\tau)[\cdots]\).</p>
-  </div>
-
-  <div class="step">
-    <div class="step-label">Step 2 — The log-derivative trick</div>
-    <p>From \(\nabla_\theta \log \pi_\theta(\tau) = \tfrac{\nabla_\theta \pi_\theta(\tau)}{\pi_\theta(\tau)}\), rearrange to \(\nabla_\theta \pi_\theta(\tau) = \pi_\theta(\tau)\,\nabla_\theta \log \pi_\theta(\tau)\) and substitute:</p>
-    \[
-      \nabla_\theta J(\theta)
-        = \sum_\tau \pi_\theta(\tau)\,\nabla_\theta \log \pi_\theta(\tau)\,R(\tau)
-        = \mathbb{E}_{\tau\sim\pi_\theta}\!\big[R(\tau)\,\nabla_\theta \log \pi_\theta(\tau)\big]
-    \]
-    <p>An expectation under \(\pi_\theta\) again — and we already sample \(\tau\sim\pi_\theta\) during rollouts, so it is now estimable.</p>
-  </div>
-
-  <div class="step">
-    <div class="step-label">Step 3 — Only the policy terms survive</div>
-    <p>The trajectory probability factorizes into the initial state, the per-step policy, and the environment dynamics:</p>
-    \[
-      \pi_\theta(\tau) = p(s_0)\prod_{t} \pi_\theta(a_t\mid s_t)\, P(s_{t+1}\mid s_t, a_t)
-    \]
-    <p>Taking \(\log\) (product → sum) then \(\nabla_\theta\): the initial-state term \(p(s_0)\) and the dynamics \(P(s_{t+1}\mid s_t,a_t)\) do not depend on \(\theta\) — the agent controls neither — so they vanish, leaving only the policy:</p>
-    \[
-      \nabla_\theta \log \pi_\theta(\tau) = \sum_t \nabla_\theta \log \pi_\theta(a_t\mid s_t)
-    \]
-  </div>
-
-  <p>Combining gives the <strong>policy gradient theorem</strong> (REINFORCE form):</p>
-  \[
-    \nabla_\theta J(\theta) = \mathbb{E}\!\left[\sum_t \nabla_\theta \log \pi_\theta(a_t\mid s_t)\;R(\tau)\right]
-  \]
-  <p>Each action's score function \(\nabla\log\pi_\theta(a_t\mid s_t)\) points in the direction that makes \(a_t\) more likely; weighting it by the return reinforces actions from good trajectories and suppresses those from bad ones.</p>
-
-  <h3>From return to advantage</h3>
-  <p>This estimator is correct but high-variance — every action is credited with the full trajectory return, including luck it had nothing to do with. The <a href="mc-rollouts.html" style="color:var(--accent);">Monte Carlo Rollouts page</a> derives three variance-reduction techniques in full; applied here:</p>
-  <ul>
-    <li><strong>Reward-to-go (causality)</strong> — \(a_t\) cannot affect rewards collected before it, so replace \(R(\tau)\) with \(G_t = \sum_{t'\ge t} r_{t'}\). The dropped terms are zero in expectation: \(\mathbb{E}[\nabla\log\pi_\theta(a_t\mid s_t)\, r_{t'}] = 0\) for \(t' < t\).</li>
-    <li><strong>Baseline subtraction</strong> — any \(b(s_t)\) depending on state but not action can be subtracted for free: \(\mathbb{E}_{a_t}[\nabla\log\pi_\theta(a_t\mid s_t)\, b(s_t)] = 0\), because the policy sums to 1 and its gradient sums to 0.</li>
-    <li><strong>Advantage</strong> — the optimal baseline is \(V(s_t) = \mathbb{E}[G_t\mid s_t]\). Then \(A_t = G_t - V(s_t) = Q(s_t,a_t) - V(s_t)\): how much better this specific action performed compared to average from \(s_t\).</li>
-  </ul>
-  <p>Applying all three yields the form used throughout RLHF. Push up the log-probability of actions that outperformed expectations (\(\hat A_t > 0\)), suppress those that underperformed. Subtracting \(V\) strips out "this state was generically good/bad," leaving a signal purely about the <em>action</em>:</p>
-  \[
-    \nabla_\theta J(\theta)
-      = \mathbb{E}\!\left[ \sum_{t} \hat A_t \, \nabla_\theta \log \pi_\theta(a_t \mid s_t) \right]
-  \]
-  <p>Section 5 shows how \(\hat A_t\) is estimated in practice.</p>
-
-  <h2 id="gae">5. Advantage Estimation — GAE</h2>
-  <p>§4 left us needing \(\hat A_t\). We have a learned critic \(V_\psi(s)\) and sampled per-token rewards \(R_t\). The central tension is the <strong>bias–variance trade-off</strong>: using the full return-to-go is unbiased but accumulates variance over a long episode; bootstrapping from \(V_\psi\) after one step is low-variance but biased by the imperfect critic. <a href="td-learning.html" style="color:var(--accent);">TD Learning §4–5</a> develops this spectrum in full — one-step TD, \(n\)-step returns, and how each \(n\)-step estimate telescopes into a sum of TD errors \(\delta_{t+l} = R_{t+l} + \gamma V_\psi(s_{t+l+1}) - V_\psi(s_{t+l})\).</p>
-
-  <p><strong>Generalized Advantage Estimation (GAE)</strong> takes an exponentially-weighted average of every \(n\)-step estimator, which collapses to a single discounted sum of TD errors:</p>
-
-  <div class="result">
-    <div class="result-label">GAE</div>
-    \[
-      \hat A_t^{\text{GAE}(\gamma,\lambda)} = \sum_{l=0}^{\infty} (\gamma\lambda)^l\, \delta_{t+l}
-    \]
-  </div>
-
-  <div class="note">
-    \(\lambda = 0\) keeps only the \(l=0\) term, recovering one-step TD \(\hat A_t = \delta_t\) (low variance, higher bias); \(\lambda = 1\) gives \(\sum_l\gamma^l\delta_{t+l}\), which telescopes to the Monte-Carlo \(G_t - V(s_t)\) (unbiased, high variance). \(\gamma\) is the reward discount (part of the problem); \(\lambda\) is the variance-reduction knob. RLHF typically uses \(\lambda \approx 0.95,\ \gamma \approx 1\).
-  </div>
-
-  <h3>Computing it, and training the critic</h3>
-  <p>The infinite sum is never formed directly — it satisfies a one-line recursion run <em>backward</em> from the end of the trajectory, an \(O(T)\) pass:</p>
-  \[
-    \hat A_t = \delta_t + \gamma\lambda\,\hat A_{t+1}
-  \]
-  <p>The same pass yields the critic's regression target, the TD(\(\lambda\)) return \(\hat R_t = \hat A_t + V_\psi(s_t)\), so policy and critic train together:</p>
-  \[
-    \mathcal{L}_{\text{VF}}(\psi) = \mathbb{E}_t\!\left[ \big(V_\psi(s_t) - \hat R_t\big)^2 \right]
-  \]
-
-  <h2 id="ppo">6. The PPO Clipped Objective</h2>
+  <h2 id="ppo">4. The PPO Clipped Objective</h2>
   <p>Vanilla policy gradients are unstable: one large step can collapse the policy. <strong>PPO</strong> keeps each update close to the policy that collected the data, \(\pi_{\theta_{\text{old}}}\), via a clipped <a href="importance-sampling.html" style="color:var(--accent);">importance ratio</a> — the reweighting that lets the old policy's rollouts estimate the new policy's objective. Define the probability ratio:</p>
   \[
     \rho_t(\theta) = \frac{\pi_\theta(a_t\mid s_t)}{\pi_{\theta_{\text{old}}}(a_t\mid s_t)}
@@ -585,19 +505,19 @@
   \]
   <p>with coefficients \(c_1, c_2\). (Signs are written for minimization: maximize the clipped surrogate and entropy, minimize value error.)</p>
 
-  <h2 id="loop">7. The Full RLHF Loop</h2>
+  <h2 id="loop">5. The Full RLHF Loop</h2>
   <p>Stage 3 repeats the following until the policy converges or KL budget is exhausted:</p>
   <ol>
     <li><strong>Rollout</strong> — sample prompts \(x\sim\mathcal{D}\), generate completions \(y\sim\pi_\theta(\cdot\mid x)\).</li>
     <li><strong>Score</strong> — compute the terminal reward \(r_\phi(x,y)\) and the per-token KL penalty to form \(R_t\) (§3).</li>
-    <li><strong>Estimate</strong> — run the critic \(V_\psi\) and compute advantages \(\hat A_t\) via GAE (§5).</li>
-    <li><strong>Optimize</strong> — take several PPO epochs of minibatch updates on \(\mathcal{L}_{\text{PPO}}\) (§6), then refresh \(\pi_{\theta_{\text{old}}}\).</li>
+    <li><strong>Estimate</strong> — run the critic \(V_\psi\) and compute advantages \(\hat A_t\) via GAE (see <a href="policy-gradient.html#gae" style="color:var(--accent);">Policy Gradient §3</a>).</li>
+    <li><strong>Optimize</strong> — take several PPO epochs of minibatch updates on \(\mathcal{L}_{\text{PPO}}\) (§4), then refresh \(\pi_{\theta_{\text{old}}}\).</li>
   </ol>
   <div class="note">
     This requires <em>four</em> models in memory: the policy \(\pi_\theta\), the critic \(V_\psi\), the frozen reference \(\pi_{\text{ref}}\), and the reward model \(r_\phi\). That cost and instability is precisely the pain DPO removes.
   </div>
 
-  <h2 id="vs-dpo">8. RLHF vs. DPO</h2>
+  <h2 id="vs-dpo">6. RLHF vs. DPO</h2>
   <p>Both optimize the identical KL-regularized objective of §3. They differ in how.</p>
   <div class="table-wrap">
     <table>
@@ -612,7 +532,7 @@
   </div>
   <p>See the <a href="dpo-loss.html" style="color:var(--accent);">DPO derivation</a> for how the explicit reward and the PPO loop are algebraically eliminated.</p>
 
-  <h2 id="summary">9. Summary</h2>
+  <h2 id="summary">7. Summary</h2>
   <div class="summary-grid">
     <div class="summary-card">
       <div class="summary-card-label">RM loss</div>
@@ -666,10 +586,10 @@
       <div style="font-weight:600;font-size:0.95rem;margin-bottom:4px;">PPO Training Walkthrough</div>
       <p style="margin:0;font-size:0.88rem;color:var(--muted);">End-to-end trace of one PPO step across 8 GPUs — tensor shapes, NCCL collectives, and the hybrid engine.</p>
     </a>
-    <a href="td-learning.html" style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;text-decoration:none;color:inherit;display:block;transition:border-color 0.15s,box-shadow 0.15s;">
+    <a href="policy-gradient.html" style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;text-decoration:none;color:inherit;display:block;transition:border-color 0.15s,box-shadow 0.15s;">
       <div style="font-size:0.78rem;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Theory</div>
-      <div style="font-weight:600;font-size:0.95rem;margin-bottom:4px;">TD Learning &amp; GAE</div>
-      <p style="margin:0;font-size:0.88rem;color:var(--muted);">The full derivation behind §5: TD error, n-step returns, and how the telescoping collapses to the GAE formula.</p>
+      <div style="font-weight:600;font-size:0.95rem;margin-bottom:4px;">Policy Gradient &amp; GAE</div>
+      <p style="margin:0;font-size:0.88rem;color:var(--muted);">The REINFORCE derivation, advantage estimation, and the GAE backward recursion that the RLHF loop uses to compute \(\hat A_t\).</p>
     </a>
   </div>
 
