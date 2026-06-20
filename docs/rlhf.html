@@ -375,11 +375,34 @@
   <p>This page focuses on the math of Stages 2 and 3. Stage 1 is ordinary cross-entropy fine-tuning — see the <a href="cross-entropy.html" style="color:var(--accent);">cross-entropy page</a>.</p>
 
   <h2 id="rm">2. Reward Model</h2>
-  <p>We can't ask humans for absolute scores, only comparisons. The reward model is a scalar head on a transformer that maps \((x,y)\) to a single number, trained so that preferred completions score higher. Preferences are modeled with <strong>Bradley–Terry</strong>:</p>
+  <p>We can't ask humans for absolute scores, only comparisons. The reward model is a scalar head on a transformer that maps \((x,y)\) to a single number, trained so that preferred completions score higher. <strong>Bradley–Terry</strong> treats each pairwise comparison as a <em>soft probability</em> rather than a hard winner: the probability that a human annotator would prefer \(y_w\) over \(y_l\) given prompt \(x\) is</p>
   \[
     p(y_w \succ y_l \mid x) = \frac{\exp r_\phi(x,y_w)}{\exp r_\phi(x,y_w) + \exp r_\phi(x,y_l)}
       = \sigma\big(r_\phi(x,y_w) - r_\phi(x,y_l)\big)
   \]
+
+  <div class="step">
+    <div class="step-label">Where the sigmoid comes from</div>
+    <p>Let \(r_w = r_\phi(x,y_w)\) and \(r_l = r_\phi(x,y_l)\). Divide numerator and denominator by \(\exp r_w\):</p>
+    \[
+      \frac{e^{r_w}}{e^{r_w} + e^{r_l}}
+      = \frac{1}{1 + e^{r_l - r_w}}
+      = \frac{1}{1 + e^{-(r_w - r_l)}}
+      = \sigma(r_w - r_l)
+    \]
+    <p>This is exact algebra — no approximation. Only the <em>gap</em> \(\Delta = r_w - r_l\) matters; shifting both scores by the same constant cancels out and leaves the probability unchanged.</p>
+  </div>
+
+  <div class="note">
+    <strong>Reading the probability.</strong> \(p = \sigma(\Delta)\) where \(\Delta = r_\phi(x,y_w) - r_\phi(x,y_l)\):
+    <ul style="margin: 0.5em 0 0.2em 1.3em; line-height: 1.8">
+      <li>\(\Delta = 0\): \(p = 0.5\) — model sees the two responses as equally good; coin-flip likely either is preferred.</li>
+      <li>\(\Delta \gg 0\) (e.g. \(+4\)): \(p \approx 0.98\) — model is confident \(y_w\) is the better response.</li>
+      <li>\(\Delta \ll 0\) (e.g. \(-4\)): \(p \approx 0.02\) — model currently scores \(y_l\) higher than \(y_w\); training will push hard to correct this.</li>
+    </ul>
+    The soft probability also captures annotation noise: two annotators can genuinely disagree on a borderline pair. Rather than forcing a hard 0/1 label, BT lets the model reflect that ambiguity.
+  </div>
+
   <p>Bradley–Terry gives the probability of a <em>single</em> comparison. To turn it into a training loss we fit \(\phi\) by <strong>maximum likelihood</strong> over the whole comparison dataset \(\mathcal{D}\), in three steps.</p>
 
   <div class="step">
