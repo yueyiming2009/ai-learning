@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Async RL for LLM Post-Training</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #7c3aed;
+      --accent-light: #f5f3ff;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #1e1b4b 0%, #4c1d95 60%, #7c3aed 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.9;
+      font-size: 0.97rem;
+      max-width: 600px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: #374151;
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: #374151; }
+    a { color: var(--accent); }
+    code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+    pre {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      line-height: 1.55;
+      margin: 1.2em 0;
+    }
+    pre code { background: none; padding: 0; color: var(--text); }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: #fafafa; }
+
+    /* ── Step boxes ──────────────────────────── */
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    /* ── Callout / note ──────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: #1e40af;
+    }
+
+    /* ── Result / boxed equation ─────────────── */
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #16a34a;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Two-column regime ───────────────────── */
+    .regime-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .regime-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .regime-card.stall { border-top: 3px solid #f59e0b; }
+    .regime-card.collapse { border-top: 3px solid #ef4444; }
+    .regime-card h4 {
+      margin: 0 0 6px;
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+    .regime-card.stall h4 { color: #b45309; }
+    .regime-card.collapse h4 { color: #b91c1c; }
+    .regime-card p { font-size: 0.88rem; margin: 0; }
+
+    /* ── Fix family grid ─────────────────────── */
+    .fix-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .fix-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .fix-card h4 {
+      margin: 0 0 8px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--accent);
+    }
+    .fix-card ul { padding-left: 1.2em; margin: 0; }
+    .fix-card li { font-size: 0.85rem; margin-bottom: 4px; }
+
+    /* ── Responsive ──────────────────────────── */
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+      .regime-grid, .fix-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="#">Async RL</a>
+  <div class="nav-links">
+    <a href="index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#bottleneck">Sync bottleneck</a>
+    <a href="#async">Async RL</a>
+    <a href="#lag">Policy lag</a>
+    <a href="#is">IS correction</a>
+    <a href="#stabilization">Stabilization</a>
+    <a href="#tim">TIM</a>
+    <a href="#knobs">VeRL knobs</a>
+    <a href="#refs">References</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">RL Systems</span>
+  <h1>Async RL for LLM Post-Training</h1>
+  <p>Policy lag, importance sampling (token vs. sequence level), training-inference mismatch,
+  and the eliminate-vs-correct debate in modern async RL systems.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="note">
+    Prerequisite: <a href="rlhf.html">RLHF</a> (PPO, policy gradient, GAE) and
+    <a href="importance-sampling.html">Importance Sampling</a> (the IS identity, variance, self-normalized IS).
+    This page covers the <em>async-specific</em> complications that arise when generation and training decouple.
+    Systems walkthrough: <a href="ppo-training-walkthrough.html">PPO training in VeRL</a>.
+  </div>
+
+  <!-- ── §1 Sync bottleneck ─────────────────── -->
+  <h2 id="bottleneck">1. The Synchronous Bottleneck</h2>
+
+  <p>In synchronous on-policy RL, generation and training alternate in strict lockstep:</p>
+
+  <pre><code>rollout → [wait for slowest trajectory] → compute rewards → train → repeat</code></pre>
+
+  <p>The wait is expensive. Autoregressive generation is sequential — each token requires a full forward pass — so rollout latency scales with response length. A 1024-token response takes seconds; a training step on the resulting batch takes milliseconds. All GPUs idle at the generation↔training boundary.</p>
+
+  <p>For short responses this is tolerable. For long-horizon reasoning (multi-step tool use, code, math) where rollouts run 2000–8000 tokens, the sync wait dominates wall-clock time.</p>
+
+  <!-- ── §2 Async ──────────────────────────── -->
+  <h2 id="async">2. Async RL: Decoupled Loops</h2>
+
+  <p>Async RL breaks the lockstep. Rollout workers and the trainer run as independent, continuously-executing services:</p>
+
+  <pre><code>rollout pool:   [gen] → [gen] → [gen] → ...      (fills a sample buffer)
+trainer:        [step] → [step] → [step] → ...   (drains the buffer)</code></pre>
+
+  <p>The trainer never waits for generation to finish; the rollout pool never waits for a training step to complete. Measured speedup: <strong>2–3× over synchronous pipelines</strong> on real workloads.</p>
+
+  <p>The cost: by the time a rollout sample reaches the trainer, the policy has been updated \(K\) times. The sample is now <em>off-policy</em> — it was generated by \(\pi_{old}\) but will be used to update \(\pi_{new}\).</p>
+
+  <!-- ── §3 Policy lag ──────────────────────── -->
+  <h2 id="lag">3. Policy Lag and Steady State</h2>
+
+  <h3>Definition</h3>
+
+  <p><strong>Policy lag \(K\)</strong>: the number of trainer steps by which the current training policy \(\pi_{new}\) leads the rollout policy \(\pi_{old}\) that generated a given sample.</p>
+
+  <ul>
+    <li>\(K = 0\): on-policy (synchronous)</li>
+    <li>\(K = 1\): sample generated one step behind current policy</li>
+    <li>\(K = K_{max}\): the discard threshold — samples older than this are dropped</li>
+  </ul>
+
+  <h3>Steady-State Lag</h3>
+
+  <p>In a running async system, the lag stabilizes when the rollout pool's production rate matches the trainer's consumption rate:</p>
+
+  <div class="result">
+    <div class="result-label">Steady-state lag</div>
+    \[
+      K_{steady} \approx \frac{T_{rollout}}{T_{train}} \times \frac{N_{rollout}}{N_{train}}
+    \]
+    <p style="font-size:0.88rem; color:#374151; margin-top:8px;">
+      \(T\) = per-step latency &nbsp;·&nbsp; \(N\) = number of workers per role
+    </p>
+  </div>
+
+  <p><strong>Derivation:</strong> at steady state, the number of training steps completed while one rollout is in flight is \(T_{rollout}/T_{train}\). With \(N_{rollout}\) workers running in parallel, the effective lag per sample scales by \(N_{rollout}/N_{train}\).</p>
+
+  <h3>Two Regimes</h3>
+
+  <div class="regime-grid">
+    <div class="regime-card stall">
+      <h4>\(K_{max} &lt; K_{steady}\)</h4>
+      <p>Trainer stalls — rollout can't produce fast enough to keep the buffer full. Fix: more rollout workers, lower \(K_{max}\), or faster generation.</p>
+    </div>
+    <div class="regime-card collapse">
+      <h4>\(K_{max} \geq K_{steady}\)</h4>
+      <p>Trainer never waits; lag accumulates toward \(K_{max}\). Stability depends on IS correction quality at that lag. Too high → collapse.</p>
+    </div>
+  </div>
+
+  <p>The throughput gain from async is maximized by raising \(K_{max}\). The stability loss from doing so is the central problem.</p>
+
+  <!-- ── §4 IS ──────────────────────────────── -->
+  <h2 id="is">4. Off-Policy Correction via Importance Sampling</h2>
+
+  <h3>The IS Objective</h3>
+
+  <p>The on-policy policy gradient objective is:</p>
+  \[
+    J(\theta) = \mathbb{E}_{\tau \sim \pi_\theta}\!\left[\sum_t A_t \log \pi_\theta(a_t|s_t)\right]
+  \]
+
+  <p>When \(\tau\) was generated by a behavior policy \(\pi_b \neq \pi_\theta\), reweight by the importance ratio to remain unbiased:</p>
+
+  <div class="result">
+    <div class="result-label">IS-corrected objective</div>
+    \[
+      J_{IS}(\theta) = \mathbb{E}_{\tau \sim \pi_b}\!\left[w(\tau)\sum_t A_t \log \pi_\theta(a_t|s_t)\right]
+    \]
+  </div>
+
+  <p>In async RL, \(\pi_b = \pi_{old}\) (rollout policy at generation time) and \(\pi_\theta = \pi_{new}\) (current training policy).</p>
+
+  <h3>Token-Level IS</h3>
+
+  <p>Apply IS independently per token — the standard PPO formulation:</p>
+  \[
+    w_{tok}(\tau) = \prod_{t=1}^{T} \frac{\pi_{new}(a_t|s_t)}{\pi_{old}(a_t|s_t)}
+  \]
+
+  <p>PPO's clipped surrogate bounds each per-token ratio \(r_t\) individually. <strong>Problem at high lag:</strong> each factor deviates slightly from 1; the product of \(T\) factors (e.g., \(T=512\)) has variance that grows <em>exponentially</em> with sequence length. Even small per-token deviations compound into extreme trajectory weights. Clipping controls the damage but introduces bias that <strong>grows with compute scale</strong> and cannot be fixed by increasing batch size.</p>
+
+  <h3>Sequence-Level IS</h3>
+
+  <p>Treat the entire trajectory as the unit of reweighting:</p>
+  \[
+    w_{seq}(\tau) = \frac{\pi_{new}(\tau)}{\pi_{old}(\tau)} = \prod_{t=1}^{T} \frac{\pi_{new}(a_t|s_t)}{\pi_{old}(a_t|s_t)}
+  \]
+
+  <p>The formula is mathematically identical to \(w_{tok}\), but it is applied as a <strong>single scalar weight on the trajectory-level objective</strong> rather than per-token:</p>
+  \[
+    J_{seq}(\theta) = \mathbb{E}_{\tau \sim \pi_b}\!\left[w_{seq}(\tau) \cdot \hat{A}(\tau) \cdot \sum_t \log \pi_\theta(a_t|s_t)\right]
+  \]
+
+  <p>Why more robust: unbiased under any lag (no clipping distorts the correction). Cost: high variance — \(w_{seq}\) has even wider distribution than any individual \(r_t\). Mitigations:</p>
+  <ul>
+    <li><strong>Length normalization</strong> — use \(\exp(\log w_{seq} / T)\), the geometric mean per-token ratio; tractable range without bias</li>
+    <li><strong>Large batch</strong> — variance of \(w_{seq}\) decreases as \(1/N\); the estimator is consistent but needs larger \(N\)</li>
+  </ul>
+
+  <p>This is what GSPO (Qwen) and VeRL's <code>rollout_is=sequence</code> implement.</p>
+
+  <h3>Comparison</h3>
+
+  <div class="table-wrap">
+    <table>
+      <tr>
+        <th></th>
+        <th>Token-level IS</th>
+        <th>Sequence-level IS</th>
+      </tr>
+      <tr>
+        <td><strong>Bias under lag</strong></td>
+        <td>Structurally biased (clipping) — grows with scale</td>
+        <td>Unbiased — no clipping needed</td>
+      </tr>
+      <tr>
+        <td><strong>Variance</strong></td>
+        <td>Extreme tails at high \(K\)</td>
+        <td>High but controlled by batch size</td>
+      </tr>
+      <tr>
+        <td><strong>Stability at high \(K\)</strong></td>
+        <td>Collapses; can't be fixed by batch size</td>
+        <td>Holds longer; needs larger batch</td>
+      </tr>
+      <tr>
+        <td><strong>Common use</strong></td>
+        <td>PPO <code>ratio * advantage</code> per token</td>
+        <td>GSPO, VeRL <code>rollout_is=sequence</code></td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="note">
+    <strong>Low-bias compute-scaling hypothesis</strong> (Luke Huang): token-level IS is faster at small scale but hits a ceiling; sequence-level IS is slower to start but improves with scale. Long-horizon tasks raise the batch-size requirement for sequence IS.
+  </div>
+
+  <!-- ── §5 Stabilization ───────────────────── -->
+  <h2 id="stabilization">5. IS Stabilization Algorithms</h2>
+
+  <p>All of these trade bias for variance to prevent gradient explosions from large IS ratios. All fail at very high policy lag — they delay collapse, not prevent it.</p>
+
+  <div class="step">
+    <div class="step-label">TIS / CISPO — Truncated IS</div>
+    <p>Clip per-token ratios to a bounded range:</p>
+    \[ \tilde{r}_t = \min(r_t,\; c) \qquad \text{where } r_t = \pi_{new}(a_t|s_t)/\pi_{old}(a_t|s_t) \]
+    <p>One-sided cutoff above threshold \(c\). Same operation as PPO's upper clip, applied in the IS reweighting context. VeRL exposes via <code>rollout_is=token</code>.</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">MIS / IcePop — Masked IS</div>
+    <p>Drop entire samples whose trajectory-level IS ratio exceeds a threshold rather than clipping:</p>
+    \[ w = w_{seq}(\tau) \cdot \mathbf{1}[w_{seq}(\tau) \leq c] \]
+    <p>Cleaner than clipping (no gradient from extreme samples) but wastes data. IcePop is the DeepSeek/Minimax variant.</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">M2PO — Masked Multi-step PO</div>
+    <p>Iteratively mask individual <em>tokens</em> (not full trajectories) until the remaining sample's variance satisfies a constraint. Finer-grained than MIS — keeps most of the sample, drops the specific high-ratio tokens.</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">DeepSeek Masking</div>
+    <p>Mask out negative-advantage tokens with large log-ratios \(\log \pi_{new}/\pi_{old}\). Motivated by the observation that large negative-advantage updates with big ratios produce destabilizing large-magnitude gradients.</p>
+  </div>
+
+  <!-- ── §6 TIM ──────────────────────────────── -->
+  <h2 id="tim">6. Training-Inference Mismatch (TIM)</h2>
+
+  <p>Even without policy lag, a subtler source of off-policy data exists: the rollout engine (vLLM/SGLang) and training engine (FSDP/Megatron) <strong>produce different log-probabilities on identical weights and tokens</strong>. This silently converts "on-policy" data into off-policy without any lag at all.</p>
+
+  <p>The importance ratio \(\pi_{new}(a_t|s_t)/\pi_{old}(a_t|s_t)\) is supposed to be 1 for on-policy data. TIM makes it deviate from 1 by construction.</p>
+
+  <h3>Root Causes</h3>
+
+  <ol>
+    <li><strong>Batch-size-dependent accumulation order</strong> — standard GPU matmul and reductions accumulate floating-point additions in an order that depends on batch size and thread layout. Different batch sizes → different rounding → different log-probs on identical weights.</li>
+    <li><strong>TP-size-dependent accumulation</strong> — training uses FSDP (data-parallel) while rollout uses tensor parallelism. All-reduce operations in TP introduce rounding in a different order → log-prob divergence even for the same batch size.</li>
+    <li><strong>MoE routing instability</strong> — two separate forward passes can route tokens to different experts → completely different log-probs.</li>
+    <li><strong>Tokenization drift (TITO)</strong> — if rollout and training apply slightly different token preprocessing, sequences diverge before any computation.</li>
+  </ol>
+
+  <h3>Diagnosing TIM</h3>
+
+  <p>Standard aggregate KL \(\mathbb{D}_{KL}(\pi_{old} \| \pi_{new})\) <strong>hides</strong> early-stage TIM failure — it averages over both aligned and misaligned tokens. Better signals:</p>
+  <ul>
+    <li><strong><code>pg_clipfrac</code></strong> — fraction of tokens whose ratio \(r_t\) hits the PPO clip bound. Should be near zero when on-policy; TIM pushes it up even without lag.</li>
+    <li><strong>Pearson correlation</strong> between rollout log-probs and training log-probs across tokens — near 1.0 = aligned; falling = engines diverging.</li>
+    <li><strong>Sign-imbalanced loss distortion</strong> — after PPO clipping, a wrong ratio direction produces one-sided bias in the gradient visible as asymmetric clip patterns.</li>
+  </ul>
+
+  <h3>Three Fix Families</h3>
+
+  <div class="fix-grid">
+    <div class="fix-card">
+      <h4>Eliminate</h4>
+      <ul>
+        <li><strong>Batch-invariant kernels</strong> (Thinking Machines; DeepSeek V4) — deterministic accumulation regardless of batch size</li>
+        <li><strong>TBIK</strong> — TP-size determinism; the open part</li>
+        <li><strong>Routing replay (R3)</strong> — force MoE training to use rollout's expert assignments</li>
+        <li><strong>TITO</strong> — tokenizer alignment</li>
+      </ul>
+    </div>
+    <div class="fix-card">
+      <h4>Correct</h4>
+      <ul>
+        <li><strong>Token-level TIS</strong> — one-sided ratio clip (VeRL <code>rollout_correction</code>)</li>
+        <li><strong>GSPO</strong> — sequence-level IS; immune to MoE expert-activation volatility</li>
+        <li><strong>Decoupled PPO</strong> — split proximal from behavior policy</li>
+        <li><strong>Bypass old-logprobs</strong> — use rollout probs directly; on-policy only</li>
+      </ul>
+    </div>
+    <div class="fix-card">
+      <h4>Precision</h4>
+      <ul>
+        <li><strong>FP16 over BF16</strong> — 10 vs 7 mantissa bits; cuts mismatch ~24× and outperforms best IS patch (~99% vs ~95% on MATH500). Cheapest fix.</li>
+        <li><strong>FP32 LM head</strong> — older trick; superseded by full FP16</li>
+        <li><strong>FP8 rollout + IS</strong> — quantized rollout widens gap; pair with TIS</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>MILES / slime: the Eliminate Camp in Practice</h3>
+
+  <p>MILES commits fully to the eliminate family: make SGLang and FSDP/Megatron bitwise-identical for the full forward pass. IS ratio ≡ 1 by construction — no correction needed. IS is retained only as a fallback for edge cases where bitwise identity can't be guaranteed (e.g., TP-size boundary).</p>
+
+  <p>The differentiating claim: eliminating the mismatch is strictly better than correcting for it, because IS correction itself introduces variance and potential bias. The open question is whether bitwise identity can be guaranteed at scale across all TP configurations.</p>
+
+  <!-- ── §7 VeRL knobs ──────────────────────── -->
+  <h2 id="knobs">7. Async VeRL: Three Knobs</h2>
+
+  <p>VeRL's fully-async mode controls the staleness tradeoff with three config parameters:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Knob</th><th>What it controls</th></tr>
+      <tr>
+        <td><code>trigger_parameter_sync_step</code></td>
+        <td>How often the trainer pushes fresh weights to rollout workers (every \(N\) steps). Smaller \(N\) → fresher policy, more sync overhead.</td>
+      </tr>
+      <tr>
+        <td><code>staleness_threshold</code></td>
+        <td>Max age (in policy versions) before a sample is discarded. <code>0</code> ≈ synchronous; higher → more off-policy data tolerated.</td>
+      </tr>
+      <tr>
+        <td><code>partial_rollout</code></td>
+        <td>Whether unfinished rollouts are saved and resumed across a weight update (vs. thrown away). Saves long in-flight rollouts; the resumed half is from the older policy.</td>
+      </tr>
+    </table>
+  </div>
+
+  <h3>Monitoring Staleness</h3>
+
+  <p><strong><code>pg_clipfrac</code> as a staleness gauge:</strong> as the rollout policy falls behind the training policy (increasing \(K\)), more IS ratios fall outside the PPO clip range → <code>pg_clipfrac</code> rises. A rising clipfrac signals the sync cadence or staleness threshold is too permissive.</p>
+
+  <p><strong>Pearson correlation as a staleness metric:</strong> measures alignment between \(\log \pi_{old}(a_t|s_t)\) and \(\log \pi_{current}(a_t|s_t)\) across all tokens in a batch. Near 1.0 = policies aligned; falling = diverging. Scale-invariant: captures the relative ordering of log-prob mass across tokens, which is what actually keeps IS ratios bounded.</p>
+
+  <div class="note">
+    A Pearson drop that persists <em>even after discarding stale samples</em> points to systemic drift in the "fresh" samples — not just stale-buffer contamination. Likely cause: advantage normalization over a mixed-staleness batch, or IS ratio accumulation across multiple updates.
+  </div>
+
+  <!-- ── §8 References ──────────────────────── -->
+  <h2 id="refs">8. Key References</h2>
+
+  <div class="table-wrap">
+    <table>
+      <tr>
+        <td><a href="https://luk-huang.github.io/personal-website/blog/is-frontier-asynchronous-rl-solved.html">Is Frontier Async RL Solved?</a></td>
+        <td>Luke Huang — policy lag math, sequence vs token IS, low-bias compute-scaling hypothesis</td>
+      </tr>
+      <tr>
+        <td><a href="https://arxiv.org/abs/2507.18071">GSPO</a></td>
+        <td>Qwen sequence-level IS; MoE RL stability; removes routing replay</td>
+      </tr>
+      <tr>
+        <td><a href="https://arxiv.org/html/2510.26788v1">Defeating TIM via FP16</a></td>
+        <td>FP16 cuts mismatch ~24×; beats best IS patch</td>
+      </tr>
+      <tr>
+        <td><a href="https://arxiv.org/html/2605.14220">Diagnosing TIM in LLM RL</a></td>
+        <td>TIM taxonomy; aggregate KL hides failure; VeXact bitwise reference</td>
+      </tr>
+      <tr>
+        <td><a href="https://github.com/zhaochenyang20/Awesome-ML-SYS-Tutorial/blob/main/rlhf/slime/mismatch/blog-en.md">MILES blog</a></td>
+        <td>Bitwise-identical SGLang↔FSDP/Megatron; IS as fallback</td>
+      </tr>
+      <tr>
+        <td><a href="https://arxiv.org/abs/2511.17826">TBIK</a></td>
+        <td>Deterministic inference across TP sizes</td>
+      </tr>
+      <tr>
+        <td><a href="https://newsletter.semianalysis.com/p/rl-systems-mind-the-gap-matching">RL Systems: Mind the Gap</a></td>
+        <td>Throughput-matching framework; four case studies (SemiAnalysis)</td>
+      </tr>
+      <tr>
+        <td><a href="https://verl.readthedocs.io/en/latest/advance/fully_async.html">VeRL fully-async docs</a></td>
+        <td><code>trigger_parameter_sync_step</code>, <code>staleness_threshold</code>, <code>partial_rollout</code></td>
+      </tr>
+      <tr>
+        <td><a href="https://github.com/sail-sg/slime">sail-sg/slime</a></td>
+        <td>Minimal RL framework built around TIM elimination</td>
+      </tr>
+    </table>
+  </div>
+
+</div>
+</body>
+</html>

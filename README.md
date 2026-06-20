@@ -61,7 +61,8 @@ plumbing that turns the math into a working training run.
 | [Data Parallelism](https://yueyiming2009.github.io/ai-learning/torch-distributed.html) | `torch.distributed` foundation → DDP's 16 B/param wall, FSDP's all-gather/free lifecycle (animated), the ZeRO ladder's 1.5×-comm-for-1/N-state trade, DeviceMesh |
 | [Triton — Introduction](triton/intro.ipynb) | Program IDs, block pointers, masking, the launch grid |
 | [Fused Softmax kernel](triton/fused_softmax.ipynb) | Row-wise online softmax in one fused Triton kernel |
-| [PPO training walkthrough (verl)](rl/ppo_training_walkthrough.md) | One PPO step on LLaMA-7B/8 GPUs: every shape, every NCCL call, TP/DP/PP |
+| [PPO training walkthrough (verl)](https://yueyiming2009.github.io/ai-learning/ppo-training-walkthrough.html) | One PPO step on LLaMA-7B/8 GPUs: every shape, every NCCL call, TP/DP/PP |
+| [Async RL — policy lag, IS correction, TIM](https://yueyiming2009.github.io/ai-learning/async-rl.html) | Decoupled generation/training, token vs sequence IS, eliminate/correct/precision TIM fix families |
 
 ## Publishing
 

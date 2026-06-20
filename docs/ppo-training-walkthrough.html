@@ -1,0 +1,885 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PPO Training Walkthrough in VeRL</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #1d4ed8;
+      --accent-light: #eff6ff;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --nccl-bg: #fef3c7;
+      --nccl-border: #d97706;
+      --phase-bg: #f5f3ff;
+      --phase-border: #7c3aed;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #0f172a 0%, #1e40af 60%, #3b82f6 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.4rem, 3.5vw, 2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.9;
+      font-size: 0.95rem;
+      max-width: 620px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: #374151;
+    }
+    h4 {
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin: 1.2em 0 0.3em;
+      color: #4b5563;
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    a { color: var(--accent); }
+    code {
+      font-family: 'JetBrains Mono', monospace;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.85em;
+    }
+    pre {
+      font-family: 'JetBrains Mono', monospace;
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      overflow-x: auto;
+      font-size: 0.83rem;
+      line-height: 1.6;
+      margin: 1.2em 0;
+    }
+    pre code { background: none; padding: 0; border: none; color: var(--text); font-size: inherit; }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.9rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 8px 14px;
+      text-align: left;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: #fafafa; }
+    td code { font-size: 0.8em; }
+
+    /* ── Phase header ────────────────────────── */
+    .phase {
+      background: var(--phase-bg);
+      border: 1px solid var(--phase-border);
+      border-radius: 10px;
+      padding: 18px 22px;
+      margin: 2em 0 1em;
+    }
+    .phase-label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--phase-border);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 4px;
+    }
+    .phase h3 {
+      margin: 0;
+      font-size: 1rem;
+      color: #1e1b4b;
+    }
+    .phase p {
+      margin: 8px 0 0;
+      font-size: 0.9rem;
+      color: #374151;
+    }
+
+    /* ── NCCL callout ────────────────────────── */
+    .nccl {
+      background: var(--nccl-bg);
+      border: 1px solid var(--nccl-border);
+      border-left: 3px solid var(--nccl-border);
+      border-radius: 0 8px 8px 0;
+      padding: 12px 16px;
+      margin: 1em 0;
+      font-size: 0.9rem;
+    }
+    .nccl-label {
+      font-weight: 600;
+      font-size: 0.8rem;
+      color: #92400e;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Note ────────────────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: #1e40af;
+    }
+
+    /* ── Result ──────────────────────────────── */
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 14px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: #16a34a;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Tensor row ──────────────────────────── */
+    .tensor-table td:nth-child(2),
+    .tensor-table td:nth-child(3) {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8em;
+      color: #374151;
+    }
+
+    /* ── Responsive ──────────────────────────── */
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="#">PPO Walkthrough</a>
+  <div class="nav-links">
+    <a href="index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#config">Config</a>
+    <a href="#parallelism">Parallelism</a>
+    <a href="#memory">Memory</a>
+    <a href="#phases">Phases</a>
+    <a href="#comms">Comms</a>
+    <a href="#tensors">Tensors</a>
+    <a href="#code">Code</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">RL Systems</span>
+  <h1>PPO Training Walkthrough in VeRL</h1>
+  <p>One complete PPO step on LLaMA-7B across 8 GPUs — every tensor has an explicit shape,
+  every NCCL call is named, and every parallelism strategy is explained.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="note">
+    Prerequisites: <a href="rlhf.html">RLHF</a> (PPO, advantages, KL penalty),
+    <a href="tensor-parallelism.html">Tensor Parallelism</a> (column/row-parallel, AllReduce per block),
+    <a href="torch-distributed.html">Data Parallelism / FSDP</a> (AllGather/ReduceScatter lifecycle).
+    For the async extension of this pipeline, see <a href="async-rl.html">Async RL</a>.
+  </div>
+
+  <!-- ── §1 Config ──────────────────────────── -->
+  <h2 id="config">1. Concrete Configuration</h2>
+
+  <h3>1.1 Model — LLaMA-7B</h3>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symbol</th><th>Name</th><th>Value</th></tr>
+      <tr><td>\(H\)</td><td>Hidden size</td><td>4096</td></tr>
+      <tr><td>\(A\)</td><td>Number of attention heads</td><td>32</td></tr>
+      <tr><td>\(d\)</td><td>Head dimension (\(H/A\))</td><td>128</td></tr>
+      <tr><td>\(F\)</td><td>FFN intermediate size (SwiGLU)</td><td>11008</td></tr>
+      <tr><td>\(L\)</td><td>Number of transformer layers</td><td>32</td></tr>
+      <tr><td>\(V\)</td><td>Vocabulary size</td><td>32 000</td></tr>
+    </table>
+  </div>
+
+  <h3>1.2 Hardware and Parallelism</h3>
+  <pre><code>Total GPUs: 8  (2 nodes × 4 GPUs per node, NVLink intra-node, InfiniBand cross-node)
+
+Training strategy :  TP=2, DP=4, PP=1  (FSDP-based data parallelism)
+Rollout strategy  :  TP=2, DP=4, PP=1  (hybrid engine — same physical GPUs)</code></pre>
+
+  <p><strong>GPU layout</strong> (DP rank × TP rank):</p>
+  <pre><code>Node 0:
+  GPU 0  →  DP=0, TP=0
+  GPU 1  →  DP=0, TP=1
+  GPU 2  →  DP=1, TP=0
+  GPU 3  →  DP=1, TP=1
+Node 1:
+  GPU 4  →  DP=2, TP=0
+  GPU 5  →  DP=2, TP=1
+  GPU 6  →  DP=3, TP=0
+  GPU 7  →  DP=3, TP=1</code></pre>
+
+  <h3>1.3 Batch Sizes and Sequence Lengths</h3>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symbol</th><th>Name</th><th>Value</th></tr>
+      <tr><td>\(B\)</td><td>Prompts per step (global)</td><td>16</td></tr>
+      <tr><td>\(n\)</td><td>Rollouts per prompt</td><td>4</td></tr>
+      <tr><td>\(B_{seq}\)</td><td>Total sequences \(= B \times n\)</td><td>64</td></tr>
+      <tr><td>\(P\)</td><td>Prompt length (tokens)</td><td>512</td></tr>
+      <tr><td>\(R\)</td><td>Response length (tokens)</td><td>512</td></tr>
+      <tr><td>\(S\)</td><td>Full sequence length \(= P + R\)</td><td>1024</td></tr>
+      <tr><td>\(M\)</td><td>PPO mini-batch size (global)</td><td>16</td></tr>
+      <tr><td>\(E\)</td><td>PPO epochs</td><td>1</td></tr>
+    </table>
+  </div>
+
+  <div class="note">
+    <strong>Why mini-batches?</strong> Rollout is ~100× more expensive than a training step. Mini-batches amortize that cost: collect 64 sequences once, then extract 4 gradient updates cheaply (M=16, E=1). Multiple updates on the same batch let the policy climb further up the advantage landscape — the same intuition as running multiple SGD steps on a fixed dataset.
+  </div>
+
+  <!-- ── §2 Parallelism ─────────────────────── -->
+  <h2 id="parallelism">2. Parallelism Strategies</h2>
+
+  <h3>2.1 Tensor Parallelism (TP=2)</h3>
+
+  <p>Model weights inside each transformer layer are split across the two GPUs of a DP rank using Megatron-LM column/row-parallel conventions — designed so each sub-layer needs only <strong>one AllReduce</strong>.</p>
+
+  <ul>
+    <li><strong>Column-parallel</strong> — split \(W\) along the output dimension; each TP rank holds \((H,\, K/TP)\) and produces a partial output. No communication.</li>
+    <li><strong>Row-parallel</strong> — split \(W\) along the input dimension; each TP rank produces a partial sum; <strong>AllReduce (sum)</strong> across the TP group combines them.</li>
+  </ul>
+
+  <p>Column-parallel and row-parallel are always paired: column feeds directly into row, so only one AllReduce is needed at the end of each pair.</p>
+
+  <h4>Attention (TP=2, per DP rank)</h4>
+  <pre><code>x : (16, 512, H=4096)   — same on both TP ranks
+
+# Column-parallel: split heads across TP ranks, no comm
+W_Q_local : (4096, 2048)    Q_local = x @ W_Q_local  → (16, 512, 2048)
+W_K_local : (4096, 2048)    K_local = x @ W_K_local  → (16, 512, 2048)
+W_V_local : (4096, 2048)    V_local = x @ W_V_local  → (16, 512, 2048)
+
+# Local flash attention over 16 heads, no comm
+attn_out : (16, 512, 2048)
+
+# Row-parallel: AllReduce to reconstruct full hidden
+W_O_local : (2048, 4096)    partial = attn_out @ W_O_local  → (16, 512, 4096)
+                             ► AllReduce (SUM) across TP group
+out : (16, 512, 4096)       — full hidden, same on both ranks</code></pre>
+
+  <h4>FFN — SwiGLU (TP=2)</h4>
+  <pre><code>SwiGLU(x) = (x @ W_up) * Swish(x @ W_gate)
+          = (x @ W_up) * (x @ W_gate * sigmoid(x @ W_gate))
+
+# Column-parallel gate + up, no comm
+W_gate_local : (4096, 5504)   gate = x @ W_gate_local  → (16, 512, 5504)
+W_up_local   : (4096, 5504)   up   = x @ W_up_local    → (16, 512, 5504)
+hidden = SiLU(gate) * up                               → (16, 512, 5504)
+
+# Row-parallel down: AllReduce
+W_down_local : (5504, 4096)   partial = hidden @ W_down_local  → (16, 512, 4096)
+                               ► AllReduce (SUM) across TP group
+out : (16, 512, 4096)</code></pre>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Weight</th><th>Full shape</th><th>Per TP rank</th><th>Type</th></tr>
+      <tr><td>\(W_Q, W_K, W_V\)</td><td>(4096, 4096)</td><td>(4096, 2048)</td><td>column</td></tr>
+      <tr><td>\(W_O\)</td><td>(4096, 4096)</td><td>(2048, 4096)</td><td>row → AllReduce</td></tr>
+      <tr><td>\(W_{gate}, W_{up}\)</td><td>(4096, 11008)</td><td>(4096, 5504)</td><td>column</td></tr>
+      <tr><td>\(W_{down}\)</td><td>(11008, 4096)</td><td>(5504, 4096)</td><td>row → AllReduce</td></tr>
+    </table>
+  </div>
+
+  <p>Each transformer layer requires exactly <strong>2 AllReduce calls per forward pass</strong> (one after \(W_O\), one after \(W_{down}\)), and 2 more in the backward — <strong>4 AllReduce per layer per forward-backward</strong>.</p>
+
+  <h3>2.2 Data Parallelism (DP=4, FSDP)</h3>
+
+  <p>The global batch is split evenly across 4 DP ranks. FSDP (ZeRO-3 equivalent) shards every weight across DP ranks — each GPU holds only \(1/DP\) of each tensor.</p>
+
+  <pre><code># Forward — AllGather to reconstruct weights before compute:
+Each GPU holds shard:  W_shard : (rows/DP, cols)
+AllGather across DP →  W_full  : (rows,    cols)   ← used for compute, then discarded
+
+# Backward — ReduceScatter to sync and re-shard gradients:
+Each GPU computes:      dW_full  : (rows,    cols)
+ReduceScatter across DP → dW_shard : (rows/DP, cols)   ← sum-reduced + sharded
+
+# Optimizer step — local, no communication:
+W_shard -= lr * AdamW(dW_shard, m_shard, v_shard)</code></pre>
+
+  <p>Memory footprint per GPU:</p>
+  <pre><code>Parameters  : 7B × 2 bytes / (TP=2 × DP=4) ≈ 437 MB
+Optimizer   : 7B × 8 bytes / (TP=2 × DP=4) ≈ 875 MB   (Adam m + v in float32)</code></pre>
+
+  <h3>2.3 Hybrid Engine</h3>
+
+  <p>VeRL's hybrid engine time-multiplexes all four RL models (actor, reference, critic, reward) on the same 8 GPUs rather than dedicating separate hardware to each.</p>
+
+  <p><strong>Actor = Reference + LoRA:</strong> the base model weights are frozen and shared. The reference policy runs with LoRA disabled; the actor runs with LoRA enabled. Only the LoRA adapter weights are trained — roughly \(2 \times r \times H \times L \approx 4M\) params vs 7B base. If LoRA is disabled (full fine-tuning), a separate frozen reference copy must be kept, doubling weight memory.</p>
+
+  <h3>2.4 Flash Attention</h3>
+
+  <p>Standard attention writes the full \((seq, seq)\) score matrix to HBM — O(seq²) memory. Flash attention (Dao et al. 2022) is an IO-aware rewrite: tiles Q, K, V into blocks that fit in SRAM, fuses softmax + matmul into one kernel using the <strong>online softmax trick</strong>, and never writes the score matrix to HBM.</p>
+
+  <pre><code># Online softmax update (per tile of K, V):
+m_new = max(m_old, m_tile)
+l_new = l_old * exp(m_old - m_new) + sum(exp(s_tile - m_new))
+out   = (out_old * l_old * exp(m_old - m_new) + exp(s_tile - m_new) @ V_tile) / l_new
+
+# Kernel structure:
+for each block of Q (fits in SRAM):
+    m = -inf,  l = 0,  out = 0
+    for each block of K, V (streamed from HBM):
+        s = Q_block @ K_block.T    ← stays in SRAM
+        m, l, out = update(m, l, out, s, V_block)
+    write out_block to HBM         ← only output written to HBM</code></pre>
+
+  <p>Memory: O(seq) instead of O(seq²). The backward pass recomputes tiles on the fly from saved Q/K/V rather than storing the score matrix.</p>
+
+  <!-- ── §3 Memory ───────────────────────────── -->
+  <h2 id="memory">3. Model Parameter Memory Layout (per GPU)</h2>
+
+  <p>Each GPU holds one row of the DP × TP grid.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Context</th><th>Fraction held</th><th>Example: \(W_{down}\) (one layer)</th></tr>
+      <tr>
+        <td>Training (FSDP active)</td>
+        <td>\(1/(TP \times DP) = 1/8\)</td>
+        <td>(5504 × 4096) / 4 rows ≈ 11 MB</td>
+      </tr>
+      <tr>
+        <td>Rollout (FSDP AllGathered)</td>
+        <td>\(1/TP = 1/2\)</td>
+        <td>(5504, 4096) per GPU ≈ 45 MB</td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- ── §4 Phases ──────────────────────────── -->
+  <h2 id="phases">4. Phase-by-Phase Walkthrough</h2>
+
+  <!-- Phase 1 -->
+  <div class="phase">
+    <div class="phase-label">Phase 1</div>
+    <h3>Data Loading and Scatter</h3>
+    <p>Ray controller (CPU process) samples a mini-batch and broadcasts to DP ranks.</p>
+  </div>
+
+  <div class="table-wrap">
+    <table class="tensor-table">
+      <tr><th>Tensor</th><th>Shape</th><th>Dtype</th><th>Placement</th></tr>
+      <tr><td><code>prompts</code> (global)</td><td>(16, 512)</td><td>int64</td><td>CPU, controller</td></tr>
+      <tr><td><code>attention_mask</code> (global)</td><td>(16, 512)</td><td>bool</td><td>CPU, controller</td></tr>
+    </table>
+  </div>
+
+  <p>Controller sends <code>prompts[dp_rank*4 : (dp_rank+1)*4]</code> to each DP rank via Ray object store. Before rollout, prompts are repeated \(n=4\) times: <code>prompts_repeated : (16, 512)</code> per DP rank. The only host-to-device transfer: worker receives on CPU then calls <code>.to(device)</code>.</p>
+
+  <!-- Phase 2 -->
+  <div class="phase">
+    <div class="phase-label">Phase 2</div>
+    <h3>Rollout — Autoregressive Generation</h3>
+    <p>Each DP rank (pair of TP-parallel GPUs) generates R=512 new tokens token-by-token using KV cache.</p>
+  </div>
+
+  <h4>2a. Prefill (process the full prompt)</h4>
+
+  <p>For each of the L=32 transformer layers, one forward pass over the full 512-token prompt.</p>
+
+  <p><strong>Attention — column-parallel QKV, flash attention, row-parallel O + AllReduce:</strong></p>
+  <pre><code>Q_local = x @ W_Q_local  →  (16, 512, 2048)   no comm
+K_local = x @ W_K_local  →  (16, 512, 2048)
+V_local = x @ W_V_local  →  (16, 512, 2048)
+
+# KV cache stored per TP rank, per layer:
+K_cache, V_cache :  (16, 16 heads, 512, 128)   bfloat16   ~64 MB each
+
+attn_out :  (16, 512, 2048)
+
+partial = attn_out @ W_O_local  →  (16, 512, 4096)</code></pre>
+
+  <div class="nccl">
+    <div class="nccl-label">NCCL — AllReduce (SUM) · TP group (intra-node NVLink)</div>
+    Tensor: (16, 512, 4096) bfloat16 &nbsp;·&nbsp; Volume: 64 MB per direction
+  </div>
+
+  <p><strong>FFN — SwiGLU + AllReduce:</strong></p>
+  <pre><code>gate = x @ W_gate  →  (16, 512, 5504)   no comm
+up   = x @ W_up    →  (16, 512, 5504)
+hidden = SiLU(gate) * up
+partial = hidden @ W_down  →  (16, 512, 4096)</code></pre>
+
+  <div class="nccl">
+    <div class="nccl-label">NCCL — AllReduce (SUM) · TP group (intra-node NVLink)</div>
+    Tensor: (16, 512, 4096) bfloat16 &nbsp;·&nbsp; Volume: 64 MB per direction
+  </div>
+
+  <p><strong>Per-layer total:</strong> 2 AllReduce × 64 MB = 128 MB.
+  <strong>Prefill total (32 layers):</strong> 64 AllReduce calls, ~4 GB.</p>
+
+  <h4>2b. Decode (generate R=512 tokens one at a time)</h4>
+
+  <p>At each decode step \(t\), only the new token is processed: <code>x : (16, 1, 4096)</code>.</p>
+  <pre><code>Q = x @ W_Q_local  →  (16, 1, 2048)       per TP rank
+K = x @ W_K_local  →  (16, 1, 2048)
+V = x @ W_V_local  →  (16, 1, 2048)
+
+# Append to KV cache (grows each step)
+K_cache :  (16, 16, P+t, 128)
+
+# Query against full prefix
+attn : (16, 1, 2048)
+partial = attn @ W_O_local  →  (16, 1, 4096)</code></pre>
+
+  <div class="nccl">
+    <div class="nccl-label">NCCL — AllReduce (SUM) × 2 per layer · TP group</div>
+    Tensor: (16, 1, 4096) bfloat16 &nbsp;·&nbsp; Volume: 128 KB each (tiny at decode time)
+    <br><strong>Decode total:</strong> 512 steps × 32 layers × 2 × 128 KB = ~4 GB
+  </div>
+
+  <h4>2c. Log-prob collection during generation</h4>
+  <pre><code>logit_local :  (16, 1, V/TP=16000)   per TP rank
+
+# 3-step distributed log-prob (no full-vocab materialization):
+m_global  = AllReduce(max(logits_local, dim=-1), op=MAX)     # (16, 1)
+sum_global = AllReduce(exp(logits_local - m_global).sum(-1), op=SUM)  # (16, 1)
+log_prob_t = AllReduce(log_prob_in_local_slice, op=SUM)       # (16,)</code></pre>
+
+  <h4>Rollout phase output (per DP rank → controller)</h4>
+  <div class="table-wrap">
+    <table class="tensor-table">
+      <tr><th>Tensor</th><th>Shape (global)</th><th>Dtype</th></tr>
+      <tr><td><code>sequences</code></td><td>(64, 1024)</td><td>int64</td></tr>
+      <tr><td><code>rollout_log_probs</code></td><td>(64, 512)</td><td>float32</td></tr>
+    </table>
+  </div>
+
+  <!-- Phase 3 -->
+  <div class="phase">
+    <div class="phase-label">Phase 3</div>
+    <h3>Reward Computation</h3>
+    <p>Rule-based verifier (math/code) or learned reward model forward pass. Output: <code>token_level_rewards : (64, 512)</code> — zero everywhere except the final response token.</p>
+  </div>
+
+  <!-- Phase 4 -->
+  <div class="phase">
+    <div class="phase-label">Phase 4</div>
+    <h3>Old Log-Prob Recomputation</h3>
+    <p>Non-autoregressive forward pass over full sequences for numerical stability (the same GPU ops as prefill, on micro-batches of 4 sequences).</p>
+  </div>
+
+  <p>3-step distributed log-prob per token (no V=32000 vocab materialization):</p>
+  <pre><code># Per micro-batch of 4 sequences:
+m_global   = AllReduce(max(logits_local, dim=-1), op=MAX)   # (4, 512)
+sum_global = AllReduce(exp(logits_local - m_global).sum(-1), op=SUM)  # (4, 512)
+log_prob   = AllReduce(log_prob_of_target, op=SUM)          # (4, 512)</code></pre>
+
+  <div class="nccl">
+    <div class="nccl-label">NCCL — AllReduce × 2 per layer (TP) + 3 × AllReduce per token (log-prob)</div>
+    Per-layer AllReduce: (4, 1024, 4096) bfloat16 · 32 MB each &nbsp;·&nbsp; 32 layers: ~2 GB
+  </div>
+
+  <p>Output on controller: <code>old_log_probs : (64, 512) float32</code></p>
+
+  <!-- Phase 5 -->
+  <div class="phase">
+    <div class="phase-label">Phase 5</div>
+    <h3>Reference Policy Log-Probs</h3>
+    <p>Identical computation to Phase 4 with frozen reference weights. Output: <code>ref_log_probs : (64, 512) float32</code></p>
+  </div>
+
+  <!-- Phase 6 -->
+  <div class="phase">
+    <div class="phase-label">Phase 6</div>
+    <h3>Value Estimation (Critic)</h3>
+    <p>LLaMA-7B with a linear value head; same forward pass as Phase 4 plus <code>values = hidden_last_layer @ W_value → (16, 1024)</code>. Output: <code>values : (64, 1024) float32</code></p>
+  </div>
+
+  <!-- Phase 7 -->
+  <div class="phase">
+    <div class="phase-label">Phase 7</div>
+    <h3>Advantage Estimation (GAE)</h3>
+    <p>Controller CPU — no GPU, no NCCL. Pure scalar operations.</p>
+  </div>
+
+  <h4>KL penalty</h4>
+  <pre><code>kl = old_log_probs - ref_log_probs                    # (64, 512)
+penalized_rewards = token_level_rewards - beta * kl   # (64, 512)</code></pre>
+
+  <h4>GAE backward pass</h4>
+
+  <p>GAE interpolates between one-step TD (low variance, high bias) and Monte Carlo (low bias, high variance) via \(\lambda\):</p>
+  \[
+    A_t^{GAE} = \delta_t + (\gamma\lambda)\,A_{t+1}^{GAE}, \qquad
+    \delta_t = r_t + \gamma\,V(t+1) - V(t)
+  \]
+
+  <pre><code>nextvalues = 0
+lastgaelam = 0
+advantages = []
+
+for t in reversed(range(R=512)):
+    delta       = penalized_rewards[:, t] + gamma * nextvalues - values[:, t]  # (64,)
+    lastgaelam  = delta + gamma * lam * lastgaelam * response_mask[:, t]       # (64,)
+    nextvalues  = values[:, t] * response_mask[:, t]
+    advantages.append(lastgaelam)
+
+advantages = stack(reversed(advantages))   # (64, 512)
+returns    = advantages + values           # (64, 512)
+advantages = whiten(advantages, response_mask)   # zero mean, unit variance</code></pre>
+
+  <div class="note">
+    <code>response_mask</code> zeros the recurrence at padding positions and after EOS so advantages don't leak across sequence boundaries. Typical: \(\gamma=1.0\), \(\lambda=0.95\).
+  </div>
+
+  <!-- Phase 8 -->
+  <div class="phase">
+    <div class="phase-label">Phase 8</div>
+    <h3>Actor Update (PPO)</h3>
+    <p>All 8 GPUs. PPO epochs=1, mini-batch per DP rank = 4 sequences.</p>
+  </div>
+
+  <h4>8a. FSDP AllGather (per layer)</h4>
+  <div class="nccl">
+    <div class="nccl-label">NCCL — AllGather (DP group, cross-node InfiniBand)</div>
+    Each rank holds shard: ~2 MB (e.g., W_Q shard). Gathered result: ~8 MB per TP rank.
+    <br>7 weight matrices per layer × ~16 MB (full size / TP) ≈ 56 MB AllGathered per layer.
+    <br><strong>Total 32 layers:</strong> ~1.8 GB AllGather per forward pass.
+  </div>
+
+  <h4>8b. Forward pass (TP AllReduce, same as Phase 4)</h4>
+  <div class="nccl">
+    <div class="nccl-label">NCCL — AllReduce (TP group, intra-node NVLink)</div>
+    (4, 1024, 4096) bfloat16 · 32 MB each · 32 layers × 2 = <strong>~2 GB</strong>
+  </div>
+
+  <h4>8c. PPO loss (local)</h4>
+  <pre><code>log_ratio = new_log_probs - old_log_probs   # (4, 512) float32
+ratio     = exp(log_ratio)                  # (4, 512)
+
+surr1 = ratio * advantages                          # (4, 512)
+surr2 = clamp(ratio, 1-eps, 1+eps) * advantages     # (4, 512)  eps=0.2
+
+actor_loss = -mean(min(surr1, surr2) * response_mask)   # scalar</code></pre>
+
+  <h4>8d. Backward pass</h4>
+  <div class="nccl">
+    <div class="nccl-label">NCCL — AllReduce (TP) + ReduceScatter (DP) per layer</div>
+    TP AllReduce: (4, 1024, 4096) bf16 · 32 MB each · 32 layers × 2 = ~2 GB<br>
+    DP ReduceScatter: ~56 MB per layer (FSDP re-shards gradients) · 32 layers = ~1.8 GB
+  </div>
+
+  <h4>8e–8f. Loss AllReduce + metrics AllGather (negligible volume)</h4>
+  <pre><code># from verl/workers/engine_workers.py:198
+torch.distributed.all_reduce(loss, op=ReduceOp.AVG, group=dp_group)
+
+# from verl/workers/engine_workers.py:290
+torch.distributed.all_gather_object(global_token_num_output, global_token_num, dp_group)</code></pre>
+
+  <h4>8g. Optimizer step (local, no NCCL)</h4>
+  <pre><code>params_shard    :  ~437 MB per GPU (bfloat16)
+grad_shard      :  ~437 MB per GPU (bfloat16)
+m_shard (mean)  :  ~875 MB per GPU (float32)
+v_shard (var)   :  ~875 MB per GPU (float32)
+# Total optimizer state per GPU: ~2.2 GB</code></pre>
+
+  <!-- Phase 9 -->
+  <div class="phase">
+    <div class="phase-label">Phase 9</div>
+    <h3>Critic Update</h3>
+    <p>Same structure as Phase 8, using the value regression loss:</p>
+  </div>
+  <pre><code>value_clipped = clip(value_pred, old_values - eps_v, old_values + eps_v)
+value_loss    = 0.5 * mean((value_clipped - returns)^2 * response_mask)</code></pre>
+
+  <!-- Phase 10 -->
+  <div class="phase">
+    <div class="phase-label">Phase 10</div>
+    <h3>Weight Synchronization (Hybrid Engine)</h3>
+    <p>After training, the rollout model is updated with new weights.</p>
+  </div>
+
+  <pre><code>1. sleep_replicas()  — pause rollout workers
+2. FSDP AllGather   — reconstruct full TP-sharded model from FSDP shards
+3. Rollout workers have up-to-date weights
+4. wake_up()</code></pre>
+
+  <div class="nccl">
+    <div class="nccl-label">NCCL — AllGather (DP group, cross-node InfiniBand)</div>
+    Input per GPU: ~875 MB FSDP shard (bfloat16) &nbsp;·&nbsp; Output: ~3.5 GB full TP copy &nbsp;·&nbsp; Volume: ~3.5 GB
+  </div>
+
+  <!-- ── §5 Comms ────────────────────────────── -->
+  <h2 id="comms">5. Communication Summary</h2>
+
+  <div class="table-wrap">
+    <table>
+      <tr>
+        <th>Phase</th><th>Primitive</th><th>Group</th><th>Tensor</th><th>Volume</th>
+      </tr>
+      <tr>
+        <td>Rollout prefill (per layer)</td>
+        <td>AllReduce × 2</td>
+        <td>TP (intra-node)</td>
+        <td>(16,512,4096) bf16</td>
+        <td>64 MB × 2</td>
+      </tr>
+      <tr>
+        <td>Rollout decode (per layer, per step)</td>
+        <td>AllReduce × 2</td>
+        <td>TP (intra-node)</td>
+        <td>(16,1,4096) bf16</td>
+        <td>128 KB × 2</td>
+      </tr>
+      <tr>
+        <td>Log-prob (per step)</td>
+        <td>AllReduce × 3</td>
+        <td>TP (intra-node)</td>
+        <td>(16,1) float32</td>
+        <td>~1 MB</td>
+      </tr>
+      <tr>
+        <td>FSDP forward (per layer)</td>
+        <td>AllGather</td>
+        <td>DP (cross-node)</td>
+        <td>~56 MB weights</td>
+        <td>56 MB</td>
+      </tr>
+      <tr>
+        <td>FSDP backward (per layer)</td>
+        <td>ReduceScatter</td>
+        <td>DP (cross-node)</td>
+        <td>~56 MB grads</td>
+        <td>56 MB</td>
+      </tr>
+      <tr>
+        <td>TP backward (per layer)</td>
+        <td>AllReduce × 2</td>
+        <td>TP (intra-node)</td>
+        <td>(4,1024,4096) bf16</td>
+        <td>32 MB × 2</td>
+      </tr>
+      <tr>
+        <td>Weight sync (post-training)</td>
+        <td>AllGather</td>
+        <td>DP (cross-node)</td>
+        <td>875 MB shard</td>
+        <td>875 MB</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="result">
+    <div class="result-label">Per-iteration budget (rough)</div>
+    <div class="table-wrap" style="margin:0;">
+      <table>
+        <tr><th>Type</th><th>Approx. total</th></tr>
+        <tr><td>TP AllReduce (rollout + log-prob + training)</td><td>~15 GB</td></tr>
+        <tr><td>FSDP AllGather (fwd) × 2 models</td><td>~3.5 GB</td></tr>
+        <tr><td>FSDP ReduceScatter (bwd) × 2 models</td><td>~3.5 GB</td></tr>
+        <tr><td>Weight sync (AllGather)</td><td>~3.5 GB</td></tr>
+        <tr><td><strong>Total</strong></td><td><strong>~26 GB</strong></td></tr>
+      </table>
+    </div>
+    <p style="font-size:0.85rem;color:#374151;margin-top:8px;">TP = NVLink (~600 GB/s bidirectional) &nbsp;·&nbsp; DP/weight sync = InfiniBand (~200 GB/s)</p>
+  </div>
+
+  <!-- ── §6 Tensors ──────────────────────────── -->
+  <h2 id="tensors">6. Full Tensor Inventory (on controller CPU unless noted)</h2>
+
+  <div class="table-wrap">
+    <table class="tensor-table">
+      <tr><th>Tensor</th><th>Shape</th><th>Dtype</th><th>Bytes</th></tr>
+      <tr><td><code>prompts</code></td><td>(16, 512)</td><td>int64</td><td>64 KB</td></tr>
+      <tr><td><code>sequences</code></td><td>(64, 1024)</td><td>int64</td><td>512 KB</td></tr>
+      <tr><td><code>rollout_log_probs</code></td><td>(64, 512)</td><td>float32</td><td>128 KB</td></tr>
+      <tr><td><code>ref_log_probs</code></td><td>(64, 512)</td><td>float32</td><td>128 KB</td></tr>
+      <tr><td><code>old_log_probs</code></td><td>(64, 512)</td><td>float32</td><td>128 KB</td></tr>
+      <tr><td><code>rewards</code></td><td>(64, 512)</td><td>float32</td><td>128 KB</td></tr>
+      <tr><td><code>values</code></td><td>(64, 1024)</td><td>float32</td><td>256 KB</td></tr>
+      <tr><td><code>advantages</code></td><td>(64, 512)</td><td>float32</td><td>128 KB</td></tr>
+      <tr><td><code>returns</code></td><td>(64, 512)</td><td>float32</td><td>128 KB</td></tr>
+      <tr><td>Model weights (rollout, per GPU)</td><td>—</td><td>bfloat16</td><td>~3.5 GB</td></tr>
+      <tr><td>Model weights (training, per GPU)</td><td>—</td><td>bfloat16</td><td>~437 MB</td></tr>
+      <tr><td>Optimizer state (per GPU)</td><td>—</td><td>float32</td><td>~2.2 GB</td></tr>
+      <tr><td>KV cache (per GPU, during rollout)</td><td>(16,16,≤1024,128)×32×2</td><td>bfloat16</td><td>~4 GB</td></tr>
+    </table>
+  </div>
+
+  <!-- ── §7 Dimension index ─────────────────── -->
+  <h2>7. Dimension Index</h2>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symbol</th><th>Meaning</th><th>Value</th></tr>
+      <tr><td>\(B\)</td><td>Global prompt batch size</td><td>16</td></tr>
+      <tr><td>\(n\)</td><td>Rollouts per prompt</td><td>4</td></tr>
+      <tr><td>\(B_{seq}\)</td><td>Total sequences \((B \times n)\)</td><td>64</td></tr>
+      <tr><td>\(P\)</td><td>Prompt length</td><td>512</td></tr>
+      <tr><td>\(R\)</td><td>Response length</td><td>512</td></tr>
+      <tr><td>\(S\)</td><td>Full sequence length \((P+R)\)</td><td>1024</td></tr>
+      <tr><td>\(H\)</td><td>Hidden size</td><td>4096</td></tr>
+      <tr><td>\(A\)</td><td>Number of attention heads</td><td>32</td></tr>
+      <tr><td>\(d\)</td><td>Head dimension \((H/A)\)</td><td>128</td></tr>
+      <tr><td>\(F\)</td><td>FFN intermediate size</td><td>11008</td></tr>
+      <tr><td>\(L\)</td><td>Number of layers</td><td>32</td></tr>
+      <tr><td>\(V\)</td><td>Vocabulary size</td><td>32 000</td></tr>
+      <tr><td>TP</td><td>Tensor parallel size</td><td>2</td></tr>
+      <tr><td>DP</td><td>Data parallel size</td><td>4</td></tr>
+      <tr><td>PP</td><td>Pipeline parallel size</td><td>1</td></tr>
+    </table>
+  </div>
+
+  <!-- ── §8 Code pointers ───────────────────── -->
+  <h2 id="code">8. Key Code Pointers</h2>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Concept</th><th>File</th><th>Lines</th></tr>
+      <tr><td>PPO training loop</td><td><code>verl/trainer/ppo/ray_trainer.py</code></td><td>1260–1654</td></tr>
+      <tr><td>GAE advantage computation</td><td><code>verl/trainer/ppo/core_algos.py</code></td><td>216–263</td></tr>
+      <tr><td>GRPO advantage computation</td><td><code>verl/trainer/ppo/core_algos.py</code></td><td>268–334</td></tr>
+      <tr><td>Worker <code>train_mini_batch</code></td><td><code>verl/workers/engine_workers.py</code></td><td>235–323</td></tr>
+      <tr><td>DP loss AllReduce</td><td><code>verl/workers/engine_workers.py</code></td><td>195–198</td></tr>
+      <tr><td>DP token count AllGather</td><td><code>verl/workers/engine_workers.py</code></td><td>286–292</td></tr>
+      <tr><td>Rollout device mesh</td><td><code>verl/workers/engine_workers.py</code></td><td>592–601</td></tr>
+      <tr><td>DataProto protocol</td><td><code>verl/protocol.py</code></td><td>—</td></tr>
+    </table>
+  </div>
+
+</div>
+</body>
+</html>
