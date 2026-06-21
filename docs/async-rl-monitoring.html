@@ -295,6 +295,12 @@
   is barely moving (too conservative or reward signal collapsed). Above ~50% consistently means
   the gradient is being heavily truncated — effective learning rate has dropped to near zero.</p>
 
+  <p><strong>Metric keys —</strong>
+    verl: <code>actor/pg_clipfrac</code> (combined upper+lower) and
+    <code>actor/pg_clipfrac_lower</code> (lower clip tracked separately as a first-class metric) ·
+    Miles: <code>train/pg_clipfrac</code> (combined only; upper vs lower split requires custom logging).
+  </p>
+
   <h3>Asymmetry matters — track upper and lower clipfrac separately</h3>
 
   <p>The aggregate clipfrac hides the direction of policy movement. The ratio
@@ -356,7 +362,11 @@
   <div class="note">
     <strong>slime/Miles with TIM elimination:</strong> pg_clipfrac should stay near zero at
     \(K=0\) by construction. A non-zero floor here signals a TP degree mismatch between SGLang
-    and Megatron, FP precision drift, or a failed weight sync.
+    and Megatron, FP precision drift, or a failed weight sync. Miles also logs the TIM magnitude
+    directly: <code>train/train_rollout_logprob_abs_diff</code> (mean |log π<sub>train</sub> −
+    log π<sub>rollout</sub>| per token) and <code>train/train_rollout_kl</code> (KL(rollout ∥ train)
+    via the k3 estimator). These are zero by construction when TIM elimination holds and spike
+    immediately when it breaks.
   </div>
 
   <!-- ── §2 Pearson ─────────────────────────── -->
@@ -394,6 +404,13 @@
 
   <p><strong>Healthy:</strong> \(\rho \geq 0.97\). Below 0.90 is a warning; sustained drop
   below 0.85 typically precedes training collapse.</p>
+
+  <p><strong>Metric keys —</strong> Neither verl nor Miles exposes Pearson correlation as a
+  built-in metric. In verl, the closest proxy is <code>actor/ppo_kl</code> (mean per-token KL,
+  logged via <code>actor/</code> prefix); in Miles it is <code>train/train_rollout_kl</code>
+  (KL between rollout and training log-probs). Both are aggregate KL estimates — they capture
+  magnitude but miss rank-order divergence. Pearson requires a custom logging hook that runs
+  <code>np.corrcoef</code> over the rollout and recomputed log-prob vectors each step.</p>
 
   <h3 id="pearson-patterns">Diagnosing Pearson patterns</h3>
 
@@ -510,6 +527,16 @@ Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
   where \(r_t > c\). If consistently above ~20–30%, TIS is in constant-corrector mode and the
   gradient bias is substantial.</p>
 
+  <p><strong>Metric keys —</strong>
+    verl: <code>rollout_corr/rollout_is_ratio_fraction_high</code> (fraction of tokens above the
+    IS threshold, equivalent to tis_clipfrac); also
+    <code>rollout_corr/rollout_is_ratio_fraction_low</code> (below lower threshold) ·
+    Miles: <code>train/tis_clipfrac</code> (fraction where TIS clip fired),
+    <code>train/tis</code> (mean raw IS ratio before clipping),
+    <code>train/tis_abs</code> (mean |IS ratio − 1|),
+    <code>train/ois</code> (original IS ratio, pre-clip).
+  </p>
+
   <div class="note">
     <strong>The tell:</strong> TIS stabilizing \(\rho\) at its step-0 value is a confirmation
     that the Pearson drop was entropy-collapse amplification of pre-existing TIM, not a new
@@ -559,6 +586,14 @@ Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
   on-policy data, making outliers and drift easier to see than in ratio space where the
   distribution is right-skewed.</p>
 
+  <p><strong>Metric keys —</strong>
+    verl: <code>rollout_corr/rollout_is_mean</code>, <code>rollout_corr/rollout_is_max</code>,
+    <code>rollout_corr/rollout_is_min</code>,
+    <code>rollout_corr/rollout_is_ratio_fraction_high</code> / <code>…_low</code> (fractions above/below clip thresholds) ·
+    Miles: <code>train/tis</code> (mean IS ratio), <code>train/ess_ratio</code> (effective sample size ratio:
+    \(\bigl(\sum w_t\bigr)^2 / \bigl(N \sum w_t^2\bigr)\); near 1.0 = on-policy, near 0 = high variance).
+  </p>
+
   <!-- ── §6 Policy entropy ──────────────────── -->
   <h2 id="entropy">6. Policy Entropy — Collapse and Divergence</h2>
 
@@ -587,6 +622,14 @@ Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
   loop</a> described above — a rapidly falling entropy curve should prompt an immediate check
   of TIM baseline and tis_clipfrac.</p>
 
+  <p><strong>Metric keys —</strong>
+    verl: <code>actor/entropy</code> (logged directly by the actor worker each step) ·
+    Miles: <code>rollout/entropy</code> (MC estimate from −log π of sampled tokens, averaged over the
+    rollout batch; computed over response tokens using the loss mask);
+    <code>train/entropy_loss</code> (the entropy bonus term \(H[\pi]\) as it enters the loss, only
+    present when <code>entropy_coef ≠ 0</code>).
+  </p>
+
   <!-- ── §7 Advantage stats ─────────────────── -->
   <h2 id="advantages">7. Advantage Statistics — Signal Health</h2>
 
@@ -607,6 +650,15 @@ Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
     under- or over-estimating returns.</li>
   </ul>
 
+  <p><strong>Metric keys —</strong>
+    verl: <code>critic/advantages/mean</code>, <code>critic/advantages/max</code>,
+    <code>critic/advantages/min</code>; <code>critic/vf_explained_var</code>
+    (\(1 - \mathrm{Var}(R-V)/\mathrm{Var}(R)\)) as a proxy for critic overfit — approaches
+    1.0 when the critic perfectly predicts returns and the policy gradient signal is gone,
+    near 0 when the critic is uninformative ·
+    Miles: <code>rollout/advantages</code> (mean only); <code>rollout/returns</code>.
+  </p>
+
   <!-- ── §8 Grad norm ───────────────────────── -->
   <h2 id="gradnorm">8. Gradient Norm — Instability Signal</h2>
 
@@ -625,6 +677,11 @@ Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
     lower PPO clip.</li>
   </ul>
 
+  <p><strong>Metric keys —</strong>
+    verl: <code>actor/grad_norm</code> ·
+    Miles: <code>train/grad_norm</code>.
+  </p>
+
   <!-- ── §9 Response length ─────────────────── -->
   <h2 id="length">9. Response Length — Reward Gaming</h2>
 
@@ -637,56 +694,99 @@ Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
   <p>Monitor the full distribution, not just the mean — a bimodal length distribution (some
   very short, some very long) indicates the policy is splitting into multiple degenerate modes.</p>
 
+  <p><strong>Metric keys —</strong>
+    verl: <code>response_length/mean</code>, <code>response_length/max</code>,
+    <code>response_length/min</code>, <code>response_length/clip_ratio</code>
+    (fraction of responses hitting the max-length limit — a high clip ratio means many completions
+    are being cut off, which can corrupt reward signals for length-sensitive tasks) ·
+    Miles: <code>rollout/response_len/mean</code>, <code>rollout/response_len/median</code>,
+    <code>rollout/response_len/max</code>, <code>rollout/response_len/min</code>;
+    <code>rollout/truncated_ratio</code> (equivalent to verl's clip_ratio).
+  </p>
+
+  <p><strong>Policy lag tracking (Miles only) —</strong> Miles additionally logs
+  <code>rollout/weight_version/mean</code>, <code>rollout/weight_version/max</code>,
+  <code>rollout/weight_version/min</code>: the weight version number stamped on each sample at
+  generation time. A growing gap between <em>max</em> and <em>mean</em> indicates the buffer
+  contains samples from a wide range of policy versions — the older ones carry the most lag.
+  <code>rollout/weight_version/mixed_version_ratio</code> flags individual samples whose
+  tokens span a weight-sync boundary (partial rollout resumed after sync).
+  </p>
+
   <!-- ── Quick-ref summary ──────────────────── -->
   <h2 id="quickref">Quick Reference</h2>
 
   <div class="table-wrap">
     <table>
-      <tr><th>Metric</th><th>Healthy</th><th>Warning / What to do</th></tr>
+      <tr><th>Metric</th><th>Healthy</th><th>Warning / What to do</th><th>verl key</th><th>Miles key</th></tr>
       <tr>
         <td><code>pg_clipfrac</code></td>
         <td>5–20%</td>
         <td>&lt;1% at K=0 = TIM; &gt;50% = gradient dead; non-zero floor at K=0 = TIM fingerprint</td>
+        <td><code>actor/pg_clipfrac</code><br><code>actor/pg_clipfrac_lower</code></td>
+        <td><code>train/pg_clipfrac</code></td>
       </tr>
       <tr>
         <td>Pearson \(\rho\)</td>
         <td>≥ 0.97</td>
         <td>See <a href="#pearson-patterns">pattern table</a>; low floor → fix TIM; gradual drop → entropy collapse; sudden drop → policy lag</td>
+        <td colspan="2" style="color:var(--muted);font-size:0.88em;">Not built-in — requires custom hook; use <code>actor/ppo_kl</code> / <code>train/train_rollout_kl</code> as proxies</td>
       </tr>
       <tr>
         <td><code>tis_clipfrac</code></td>
         <td>&lt;10% (safety net)</td>
         <td>&gt;20–30% = TIS in constant-corrector mode; gradient bias is substantial; fix TIM source</td>
+        <td><code>rollout_corr/rollout_is_ratio_fraction_high</code></td>
+        <td><code>train/tis_clipfrac</code><br><code>train/tis_abs</code></td>
       </tr>
       <tr>
-        <td>\(\mathbb{E}[r_t]\)</td>
-        <td>≈ 1.0</td>
-        <td>Sustained drift signals systematic policy push direction</td>
+        <td>\(\mathbb{E}[r_t]\), \(\max(r_t)\)</td>
+        <td>≈ 1.0 · &lt;4</td>
+        <td>Drift from 1 = systematic shift; max &gt;10 = gradient explosion risk</td>
+        <td><code>rollout_corr/rollout_is_mean</code><br><code>rollout_corr/rollout_is_max</code></td>
+        <td><code>train/tis</code><br><code>train/ess_ratio</code></td>
       </tr>
       <tr>
-        <td>\(\max(r_t)\)</td>
-        <td>&lt;4</td>
-        <td>&gt;10 = individual token driving gradient explosion</td>
+        <td>TIM magnitude</td>
+        <td>≈ 0 (Miles); inferred (verl)</td>
+        <td>Rising = engine mismatch growing or TP drift</td>
+        <td><em>inferred from</em> <code>actor/pg_clipfrac</code> floor at K=0</td>
+        <td><code>train/train_rollout_kl</code><br><code>train/train_rollout_logprob_abs_diff</code></td>
       </tr>
       <tr>
         <td>Policy entropy \(H[\pi]\)</td>
         <td>Gradual decrease</td>
         <td>Rapid collapse = reward hacking; increase late = forgetting</td>
+        <td><code>actor/entropy</code></td>
+        <td><code>rollout/entropy</code><br><code>train/entropy_loss</code></td>
       </tr>
       <tr>
         <td>\(\mathrm{Var}(A_t)\) (pre-whiten)</td>
         <td>Non-zero, stable</td>
-        <td>→ 0 = critic overfit; gradient signal dead</td>
+        <td>→ 0 = critic overfit; use <code>vf_explained_var</code> → 1 as the direct signal</td>
+        <td><code>critic/advantages/mean</code><br><code>critic/vf_explained_var</code></td>
+        <td><code>rollout/advantages</code></td>
       </tr>
       <tr>
         <td><code>grad_norm</code></td>
         <td>Stable</td>
         <td>Sustained rise = diverging; sudden zero = NaN/dead advantages</td>
+        <td><code>actor/grad_norm</code></td>
+        <td><code>train/grad_norm</code></td>
       </tr>
       <tr>
         <td>Response length</td>
         <td>Gradual shift</td>
         <td>Sudden collapse or runaway growth = reward gaming</td>
+        <td><code>response_length/mean</code><br><code>response_length/clip_ratio</code></td>
+        <td><code>rollout/response_len/mean</code><br><code>rollout/truncated_ratio</code></td>
+      </tr>
+      <tr>
+        <td>Policy lag</td>
+        <td>Stable, low</td>
+        <td>Growing max−mean gap = stale samples in buffer</td>
+        <td><em>config only</em> (<code>staleness_threshold</code>)</td>
+        <td><code>rollout/weight_version/mean</code><br><code>rollout/weight_version/mixed_version_ratio</code></td>
       </tr>
     </table>
   </div>
