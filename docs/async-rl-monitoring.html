@@ -295,15 +295,62 @@
   is barely moving (too conservative or reward signal collapsed). Above ~50% consistently means
   the gradient is being heavily truncated — effective learning rate has dropped to near zero.</p>
 
-  <p><strong>Asymmetry matters.</strong> Track upper and lower clipfrac separately:</p>
+  <h3>Asymmetry matters — track upper and lower clipfrac separately</h3>
+
+  <p>The aggregate clipfrac hides the direction of policy movement. The ratio
+  \(r_t = \pi_{new}(a_t)/\pi_{old}(a_t)\) can exceed the clip bound from either side:</p>
+
   <ul>
-    <li><em>Upper clip</em> (\(r_t > 1+\varepsilon\)): new policy assigns higher probability
-    than old — training is pushing the policy toward the sampled actions. Normal during early
-    reward discovery.</li>
-    <li><em>Lower clip</em> (\(r_t < 1-\varepsilon\)): new policy assigns lower probability
-    — training is pushing <em>away</em> from sampled actions. Dominant lower clipfrac combined
-    with negative advantages is expected; dominant lower clipfrac with positive advantages
-    signals instability.</li>
+    <li><strong>Upper clip</strong> \((r_t > 1+\varepsilon)\): \(\pi_{new}\) has increased the
+    probability of the sampled action relative to \(\pi_{old}\). Training is pushing the policy
+    <em>toward</em> this token.</li>
+    <li><strong>Lower clip</strong> \((r_t < 1-\varepsilon)\): \(\pi_{new}\) has decreased the
+    probability of the sampled action. Training is pushing the policy <em>away</em> from this
+    token.</li>
+  </ul>
+
+  <p>Whether that movement is correct depends on the advantage sign for that token. The four
+  combinations:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr>
+        <th></th>
+        <th>Positive advantage \((A_t > 0)\)<br><span style="font-weight:400;font-size:0.85em;">action helped — should repeat it</span></th>
+        <th>Negative advantage \((A_t < 0)\)<br><span style="font-weight:400;font-size:0.85em;">action hurt — should avoid it</span></th>
+      </tr>
+      <tr>
+        <td><strong>Upper clip</strong><br><span style="font-size:0.85em;">\(\pi_{new}\) moved toward action</span></td>
+        <td style="color:#15803d;">✓ Normal — policy is reinforcing a good action. Expected during reward discovery.</td>
+        <td style="color:#b91c1c;">⚠ Wrong direction — policy is amplifying a harmful action. Signals TIM or stale IS ratios flipping the sign of the update.</td>
+      </tr>
+      <tr>
+        <td><strong>Lower clip</strong><br><span style="font-size:0.85em;">\(\pi_{new}\) moved away from action</span></td>
+        <td style="color:#b91c1c;">⚠ Wrong direction — policy is unlearning a good action. Same root causes as above.</td>
+        <td style="color:#15803d;">✓ Normal — policy is suppressing a harmful action. Expected when negative-advantage tokens dominate.</td>
+      </tr>
+    </table>
+  </div>
+
+  <p><strong>In a healthy run</strong> you expect mostly upper-clip on positive-advantage tokens
+  and lower-clip on negative-advantage tokens. These represent convergent learning — the policy
+  is moving in the direction the reward signal is pointing.</p>
+
+  <p><strong>When to worry:</strong> if lower-clipfrac is dominant <em>but</em> positive-advantage
+  tokens are the majority of the batch, the policy is unlearning its good behaviors — a reliable
+  sign of instability. Concretely this looks like: clipfrac is high, the reward curve has
+  plateaued or is falling, but the advantage distribution is still skewed positive (the critic
+  still sees value in the current actions). The most common causes:</p>
+  <ul>
+    <li><strong>Large policy lag</strong> — IS ratios computed against a stale
+    \(\pi_{old}\) can have the wrong magnitude or even wrong direction after many training
+    steps. Tighten the sync cadence.</li>
+    <li><strong>TIM flipping ratio directions</strong> — engine log-prob disagreement pushes
+    some \(r_t\) below 1 even when the policy hasn't actually moved away from those tokens.
+    Check pg_clipfrac floor at \(K=0\).</li>
+    <li><strong>Reward signal corruption</strong> — if the reward model or outcome verifier is
+    mislabeling good completions as bad, negative advantages accumulate for genuinely good
+    actions, producing coherent lower-clip on positive-advantage tokens.</li>
   </ul>
 
   <div class="note">
