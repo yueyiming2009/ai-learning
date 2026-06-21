@@ -324,15 +324,37 @@
   <p>At the extremes: \(\lambda = 0\) puts all weight on the 1-step return (pure TD(0)); \(\lambda = 1\) gives equal weight to all horizons, which telescopes to the full MC return \(G_t\).</p>
 
   <h3>Deriving GAE from the λ-return</h3>
-  <p>We want the advantage form \(\hat A_t = G_t^\lambda - V(s_t)\). From §5, the n-step advantage decomposes into a sum of TD errors:</p>
+  <p>We want the advantage form \(\hat A_t = G_t^\lambda - V(s_t)\). The first ingredient: from §5, the n-step advantage is a finite sum of TD errors (the intermediate \(V\) terms telescope away):</p>
   \[
-    G_t^{(n)} - V(s_t) = \sum_{l=0}^{n-1} \gamma^l\, \delta_{t+l}
+    G_t^{(n)} - V(s_t) = \delta_t + \gamma\delta_{t+1} + \gamma^2\delta_{t+2} + \cdots + \gamma^{n-1}\delta_{t+n-1}
   \]
-  <p>Substitute into the λ-return, then swap the order of summation (sum over \(l\) first, then count how many \(n\)-terms include \(\delta_{t+l}\)):</p>
+  <p>Now substitute this into the λ-return and write out the first few terms, one row per value of \(n\):</p>
   \[
-    \hat A_t = (1-\lambda)\sum_{n=1}^\infty \lambda^{n-1} \sum_{l=0}^{n-1} \gamma^l\delta_{t+l}
-    = \sum_{l=0}^\infty \gamma^l \delta_{t+l} \underbrace{(1-\lambda)\sum_{n=l+1}^\infty \lambda^{n-1}}_{\displaystyle = \lambda^l}
+    \begin{aligned}
+    \hat A_t
+      &= (1{-}\lambda) &&\cdot\; \delta_t &\quad[n=1]\\
+      &+\ (1{-}\lambda)\lambda &&\cdot\; [\delta_t + \gamma\delta_{t+1}] &\quad[n=2]\\
+      &+\ (1{-}\lambda)\lambda^2 &&\cdot\; [\delta_t + \gamma\delta_{t+1} + \gamma^2\delta_{t+2}] &\quad[n=3]\\
+      &+\ (1{-}\lambda)\lambda^3 &&\cdot\; [\delta_t + \gamma\delta_{t+1} + \gamma^2\delta_{t+2} + \gamma^3\delta_{t+3}] &\quad[n=4]\\
+      &+\ \cdots
+    \end{aligned}
   \]
+  <p>Now read <em>down each column</em> and collect the total coefficient for each TD error:</p>
+  <ul>
+    <li>\(\delta_t\) appears in every row (all \(n \geq 1\)) with no extra discount. Its coefficient is:
+      \[(1-\lambda)\bigl[1 + \lambda + \lambda^2 + \cdots\bigr] = (1-\lambda)\cdot\frac{1}{1-\lambda} = 1\]
+    </li>
+    <li>\(\gamma\delta_{t+1}\) first appears at \(n=2\) and is present in all rows below. Its coefficient is:
+      \[(1-\lambda)\bigl[\lambda + \lambda^2 + \lambda^3 + \cdots\bigr] = (1-\lambda)\cdot\frac{\lambda}{1-\lambda} = \lambda\]
+      So the total weight on \(\delta_{t+1}\) is \(\gamma \cdot \lambda = \gamma\lambda\).
+    </li>
+    <li>\(\gamma^2\delta_{t+2}\) first appears at \(n=3\). Its coefficient is:
+      \[(1-\lambda)\bigl[\lambda^2 + \lambda^3 + \cdots\bigr] = (1-\lambda)\cdot\frac{\lambda^2}{1-\lambda} = \lambda^2\]
+      So the total weight on \(\delta_{t+2}\) is \(\gamma^2 \cdot \lambda^2 = (\gamma\lambda)^2\).
+    </li>
+    <li>In general, \(\gamma^l\delta_{t+l}\) first appears at row \(n = l+1\). The geometric series starting at \(\lambda^l\) gives coefficient \(\lambda^l\), so the total weight on \(\delta_{t+l}\) is \(\gamma^l \cdot \lambda^l = (\gamma\lambda)^l\).</li>
+  </ul>
+  <p>Putting it all together:</p>
 
   <div class="result">
     <div class="result-label">Generalised Advantage Estimation (GAE)</div>
