@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GRPO Training Walkthrough in VeRL</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #0891b2;
+      --accent-light: #ecfeff;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --nccl-bg: #fef3c7;
+      --nccl-border: #d97706;
+      --phase-bg: #ecfeff;
+      --phase-border: #0891b2;
+      --gone-bg: #f3f4f6;
+      --gone-border: #9ca3af;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #164e63 0%, #0891b2 60%, #06b6d4 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.4rem, 3.5vw, 2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.9;
+      font-size: 0.95rem;
+      max-width: 620px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: #374151;
+    }
+    h4 {
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin: 1.2em 0 0.3em;
+      color: #4b5563;
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    a { color: var(--accent); }
+    code {
+      font-family: 'JetBrains Mono', monospace;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.85em;
+    }
+    pre {
+      font-family: 'JetBrains Mono', monospace;
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      overflow-x: auto;
+      font-size: 0.83rem;
+      line-height: 1.6;
+      margin: 1.2em 0;
+    }
+    pre code { background: none; padding: 0; border: none; color: var(--text); font-size: inherit; }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.9rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 8px 14px;
+      text-align: left;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: #fafafa; }
+    td code { font-size: 0.8em; }
+
+    /* ── Phase header ────────────────────────── */
+    .phase {
+      background: var(--phase-bg);
+      border: 1px solid var(--phase-border);
+      border-radius: 10px;
+      padding: 18px 22px;
+      margin: 2em 0 1em;
+    }
+    .phase-label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--phase-border);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 4px;
+    }
+    .phase h3 {
+      margin: 0;
+      font-size: 1rem;
+      color: #083344;
+    }
+    .phase p {
+      margin: 8px 0 0;
+      font-size: 0.9rem;
+      color: #374151;
+    }
+
+    /* ── "Gone" phase — what PPO had that GRPO drops ── */
+    .phase-gone {
+      background: var(--gone-bg);
+      border: 1px solid var(--gone-border);
+      border-radius: 10px;
+      padding: 12px 18px;
+      margin: 1.4em 0 0.6em;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+    .phase-gone-label {
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #9ca3af;
+      white-space: nowrap;
+    }
+
+    /* ── NCCL callout ────────────────────────── */
+    .nccl {
+      background: var(--nccl-bg);
+      border: 1px solid var(--nccl-border);
+      border-left: 3px solid var(--nccl-border);
+      border-radius: 0 8px 8px 0;
+      padding: 12px 16px;
+      margin: 1em 0;
+      font-size: 0.9rem;
+    }
+    .nccl-label {
+      font-weight: 600;
+      font-size: 0.8rem;
+      color: #92400e;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Note ────────────────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: #1e40af;
+    }
+
+    /* ── Result ──────────────────────────────── */
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 14px 20px;
+      margin: 1.2em 0;
+    }
+    .result-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: #16a34a;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Tensor table ────────────────────────── */
+    .tensor-table td:nth-child(2),
+    .tensor-table td:nth-child(3) {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8em;
+      color: #374151;
+    }
+
+    /* ── Responsive ──────────────────────────── */
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="#">GRPO Walkthrough</a>
+  <div class="nav-links">
+    <a href="index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#config">Config</a>
+    <a href="#memory">Memory</a>
+    <a href="#phases">Phases</a>
+    <a href="#comms">Comms</a>
+    <a href="#tensors">Tensors</a>
+    <a href="#drgrpo">Dr.GRPO</a>
+    <a href="#code">Code</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">RL Systems · GRPO</span>
+  <h1>GRPO Training Walkthrough in VeRL</h1>
+  <p>One complete GRPO step on LLaMA-7B across 8 GPUs — group rollout batching, the z-score
+  advantage reshape, the k3 KL estimator, and exactly what disappears relative to PPO.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="note">
+    This page assumes you've read the <a href="ppo-training-walkthrough.html">PPO walkthrough</a>
+    (tensor shapes, TP/DP, hybrid engine, FSDP, flash attention). It focuses on what changes.
+    Algorithm background: <a href="grpo.html">GRPO</a>; monitoring: <a href="async-rl-monitoring.html">Monitoring &amp; Diagnosis</a>.
+  </div>
+
+  <!-- ── §1 Config ──────────────────────────── -->
+  <h2 id="config">1. Concrete Configuration</h2>
+
+  <h3>1.1 Model and Hardware</h3>
+  <p>Same as the PPO walkthrough: LLaMA-7B (\(H\)=4096, \(L\)=32, \(V\)=32 000) on 8 GPUs
+  (TP=2, DP=4). The difference is model count: GRPO needs only the policy and the reference —
+  <strong>no critic</strong>.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Model</th><th>PPO</th><th>GRPO</th></tr>
+      <tr><td>Policy \(\pi_\theta\)</td><td>✓</td><td>✓</td></tr>
+      <tr><td>Reference \(\pi_\text{ref}\)</td><td>✓</td><td>✓</td></tr>
+      <tr><td>Reward model \(r_\phi\)</td><td>✓ (if learned RM)</td><td>✓ or rule-based verifier</td></tr>
+      <tr><td>Critic \(V_\psi\)</td><td>✓ (policy-sized)</td><td><strong>✗ — eliminated</strong></td></tr>
+    </table>
+  </div>
+
+  <h3>1.2 GRPO Batch Parameters</h3>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symbol</th><th>Name</th><th>Value</th><th>Notes</th></tr>
+      <tr><td>\(B\)</td><td>Prompts per step (global)</td><td>16</td><td>Same as PPO</td></tr>
+      <tr><td>\(G\)</td><td>Group size (completions per prompt)</td><td>8</td><td>Typical for math/code; 4–16 in practice</td></tr>
+      <tr><td>\(N\)</td><td>Total sequences \(= B \times G\)</td><td>128</td><td>vs 64 in PPO walkthrough</td></tr>
+      <tr><td>\(P\)</td><td>Prompt length (tokens)</td><td>512</td><td></td></tr>
+      <tr><td>\(R\)</td><td>Response length (tokens)</td><td>512</td><td></td></tr>
+      <tr><td>\(S\)</td><td>Full sequence \(= P + R\)</td><td>1024</td><td></td></tr>
+      <tr><td>\(M\)</td><td>Mini-batch size (global)</td><td>32</td><td>Out of 128; typically \(N/4\)</td></tr>
+      <tr><td>\(K\)</td><td>PPO epochs per batch</td><td>4</td><td>GRPO tolerates more epochs; no critic instability</td></tr>
+      <tr><td>\(\epsilon\)</td><td>PPO clip range</td><td>0.2</td><td></td></tr>
+      <tr><td>\(\beta\)</td><td>KL penalty coefficient</td><td>0.001–0.01</td><td>Smaller than PPO since KL is a direct loss term</td></tr>
+    </table>
+  </div>
+
+  <div class="note">
+    <strong>Why G=8?</strong> The group mean is the variance-reduced baseline. With G=1 every
+    advantage is zero (only one sample, mean equals itself). With G=4–8 the MC baseline is
+    stable enough; diminishing returns above G=16. Larger G costs more rollout compute and
+    memory — the 128 sequences here already 2× the 64 in the PPO walkthrough.
+  </div>
+
+  <!-- ── §2 Memory ───────────────────────────── -->
+  <h2 id="memory">2. Memory Layout — What Disappears</h2>
+
+  <p>With TP=2, DP=4, each GPU holds \(1/8\) of every weight shard (FSDP) or \(1/2\) during
+  rollout (AllGathered per TP rank).</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Component</th><th>Bytes / param</th><th>PPO (per GPU)</th><th>GRPO (per GPU)</th></tr>
+      <tr>
+        <td>Policy weights (bf16)</td>
+        <td>2</td>
+        <td>7B × 2 / 8 ≈ 1.75 GB</td>
+        <td>1.75 GB</td>
+      </tr>
+      <tr>
+        <td>Policy optimizer (Adam fp32)</td>
+        <td>8</td>
+        <td>7B × 8 / 8 ≈ 7 GB</td>
+        <td>7 GB</td>
+      </tr>
+      <tr>
+        <td>Reference weights (bf16, frozen)</td>
+        <td>2</td>
+        <td>1.75 GB (shared via LoRA)</td>
+        <td>1.75 GB (shared via LoRA)</td>
+      </tr>
+      <tr style="color:var(--muted);">
+        <td>Critic weights (bf16)</td>
+        <td>2</td>
+        <td>1.75 GB</td>
+        <td><strong>0 — eliminated</strong></td>
+      </tr>
+      <tr style="color:var(--muted);">
+        <td>Critic optimizer (Adam fp32)</td>
+        <td>8</td>
+        <td>7 GB</td>
+        <td><strong>0 — eliminated</strong></td>
+      </tr>
+      <tr>
+        <td><strong>Total (approx)</strong></td>
+        <td></td>
+        <td><strong>~17.25 GB</strong></td>
+        <td><strong>~10.5 GB (−39%)</strong></td>
+      </tr>
+    </table>
+  </div>
+
+  <p>The saving is almost entirely in optimizer state — Adam's \(m\) and \(v\) vectors cost 4× the
+  weight memory in fp32. Dropping the critic frees ~8.75 GB per GPU, enough to raise \(G\), extend
+  the response length, or reduce the TP degree.</p>
+
+  <!-- ── §3 Phases ──────────────────────────── -->
+  <h2 id="phases">3. Phase-by-Phase Walkthrough</h2>
+
+  <p>GRPO has 7 phases versus PPO's 10. The three that disappear are the critic forward pass
+  (Phase 6), the GAE backward scan (part of Phase 7), and the critic update (Phase 9). The
+  advantage computation is replaced by a cheap CPU z-score, and the KL penalty moves from the
+  reward signal into the actor loss.</p>
+
+  <!-- Phase 1 -->
+  <div class="phase">
+    <div class="phase-label">Phase 1</div>
+    <h3>Data Loading and Group Expansion</h3>
+    <p>Ray controller samples B=16 prompts and expands each G=8 times before scatter.</p>
+  </div>
+
+  <pre><code># Controller CPU:
+prompts          : (16, 512)  int64
+prompts_expanded : (128, 512) int64   ← repeat_interleave(prompts, G=8, dim=0)
+
+# Each DP rank receives its slice:
+prompts_local : (32, 512)   ← 128 / DP=4   per DP rank</code></pre>
+
+  <p>The interleave ordering matters for the z-score step: prompt 0's 8 completions must land
+  in consecutive rows so they can be grouped back together with a simple <code>.view(B, G)</code>.
+  VeRL preserves this ordering through all phases.</p>
+
+  <!-- Phase 2 -->
+  <div class="phase">
+    <div class="phase-label">Phase 2</div>
+    <h3>Group Rollout — G Completions per Prompt</h3>
+    <p>Each DP rank generates R=512 tokens for its 32 sequences. Communication is identical to
+    the PPO rollout (TP AllReduce per layer per decode step) — only the batch dimension is larger.</p>
+  </div>
+
+  <h4>Prefill and decode (same ops as PPO, larger batch)</h4>
+  <pre><code># Per DP rank (32 sequences, TP=2 split):
+x_prefill : (32, 512, H=4096)
+
+# Decode: 512 steps, each:
+x_decode  : (32,   1, H=4096)
+KV_cache  : (32, 16, P+t, 128)  bf16  ← grows each step</code></pre>
+
+  <div class="nccl">
+    <div class="nccl-label">NCCL — AllReduce (SUM) × 2 per layer · TP group (NVLink)</div>
+    Prefill: (32, 512, 4096) bf16 · 128 MB per AllReduce · 32 layers × 2 = <strong>~8 GB</strong><br>
+    Decode: (32, 1, 4096) bf16 · 256 KB per AllReduce · 512 steps × 32 layers × 2 = <strong>~8 GB</strong>
+  </div>
+
+  <p><strong>Rollout phase output (all DP ranks gathered on controller):</strong></p>
+  <div class="table-wrap">
+    <table class="tensor-table">
+      <tr><th>Tensor</th><th>Shape (global)</th><th>Dtype</th><th>Notes</th></tr>
+      <tr><td><code>sequences</code></td><td>(128, 1024)</td><td>int64</td><td>Prompt + response tokens</td></tr>
+      <tr><td><code>rollout_log_probs</code></td><td>(128, 512)</td><td>float32</td><td>Token-level log π<sub>old</sub>, collected during generation</td></tr>
+      <tr><td><code>response_mask</code></td><td>(128, 512)</td><td>bool</td><td>1 at response tokens, 0 at prompt/padding</td></tr>
+    </table>
+  </div>
+
+  <!-- Phase 3 -->
+  <div class="phase">
+    <div class="phase-label">Phase 3</div>
+    <h3>Reward Scoring</h3>
+    <p>One scalar reward per sequence. Either a rule-based verifier (exact-match for math, unit
+    tests for code) or a learned reward model forward pass.</p>
+  </div>
+
+  <pre><code># Rule-based (no GPU):
+rewards : (128,)  float32   ← e.g., 1.0 if correct, 0.0 if wrong
+
+# Learned RM (GPU forward, same structure as PPO Phase 3):
+rewards : (128,)  float32   ← scalar from reward head on final response token</code></pre>
+
+  <div class="note">
+    GRPO requires only outcome rewards — one scalar per complete response. Process supervision
+    (per-step rewards) is also supported (see <a href="grpo.html#advantage">grpo.html §3</a>)
+    but changes the advantage formula; most production uses are outcome-only.
+  </div>
+
+  <!-- Phase 4 -->
+  <div class="phase">
+    <div class="phase-label">Phase 4</div>
+    <h3>Reference Policy Log-Probs</h3>
+    <p>Non-autoregressive forward over all 128 sequences to get \(\log\pi_\text{ref}(o_{i,t})\)
+    for the KL penalty. Same computation as PPO Phase 5 with a larger batch.</p>
+  </div>
+
+  <pre><code># Per DP rank micro-batch of 8 sequences:
+ref_log_probs_local : (8, 512)  float32
+
+# 3-step distributed log-prob (no full-vocab V=32000 materialization):
+m_global   = AllReduce(max(logits_local, dim=-1), op=MAX)    # (8, 512)
+sum_global = AllReduce(exp(logits_local - m_global).sum(-1), op=SUM)  # (8, 512)
+log_prob   = AllReduce(log_prob_of_target, op=SUM)           # (8, 512)</code></pre>
+
+  <div class="nccl">
+    <div class="nccl-label">NCCL — AllReduce × 2 per layer (TP) + 3 × AllReduce per token (log-prob)</div>
+    Per-layer: (8, 1024, 4096) bf16 · 64 MB each · 32 layers × 2 = <strong>~4 GB</strong> (per micro-batch)
+  </div>
+
+  <p>Global output on controller: <code>ref_log_probs : (128, 512) float32</code></p>
+
+  <!-- PPO Phase removed -->
+  <div class="phase-gone">
+    <span class="phase-gone-label">Eliminated</span>
+    <span><strong>PPO Phase 6 — Value Estimation (Critic):</strong> no critic network exists; no forward pass, no AllReduce, no value tensor.</span>
+  </div>
+
+  <!-- Phase 5 -->
+  <div class="phase">
+    <div class="phase-label">Phase 5</div>
+    <h3>Group-Relative Advantage — The Z-Score Reshape</h3>
+    <p>Controller CPU. No GPU, no NCCL. Replaces GAE entirely.</p>
+  </div>
+
+  <p>The critical step is reshaping the flat <code>(128,)</code> reward vector into <code>(16, 8)</code>
+  — 16 prompts × 8 completions — so the group mean and std are computed within each prompt's group,
+  then broadcasting the per-sequence advantage back to per-token shape.</p>
+
+  <div class="result">
+    <div class="result-label">Core computation</div>
+    <pre style="text-align:left;margin:0;background:none;border:none;padding:0;font-size:0.82rem;"><code># rewards : (128,)  — one scalar per sequence
+rewards_g = rewards.view(B=16, G=8)          # (16, 8)
+mean_r    = rewards_g.mean(dim=1, keepdim=True)  # (16, 1)
+std_r     = rewards_g.std(dim=1, keepdim=True).clamp(min=1e-8)  # (16, 1)
+
+adv_g = (rewards_g - mean_r) / std_r         # (16, 8)  — z-scores
+adv_flat = adv_g.view(128)                   # (128,)
+
+# Broadcast: all tokens of sequence i get advantage adv_flat[i]
+advantages = adv_flat.unsqueeze(1).expand(-1, R=512)  # (128, 512)
+advantages = advantages * response_mask               # (128, 512) — zero padding</code></pre>
+  </div>
+
+  <p><strong>No whitening across the batch.</strong> PPO whiten() standardizes advantages to
+  zero mean and unit variance across the whole batch to calibrate the clip threshold. GRPO's
+  z-score already operates within each group, so the global distribution is roughly zero-mean
+  by construction. Batch-level whitening on top would re-scale advantages and distort the
+  group-relative signal — verl skips it for GRPO.</p>
+
+  <p><strong>Edge case: all-same-reward group.</strong> If every completion in a group gets
+  identical reward, <code>std_r ≈ 0</code> and all advantages are <code>0/ε ≈ 0</code> after
+  clamping. That prompt contributes no gradient this step — a "dead batch." The
+  <code>clamp(min=1e-8)</code> prevents NaN; the batch just makes no progress on those prompts.
+  Monitor within-group reward std (see <a href="async-rl-monitoring.html#advantages">monitoring §7</a>).</p>
+
+  <!-- PPO Phase removed -->
+  <div class="phase-gone">
+    <span class="phase-gone-label">Eliminated</span>
+    <span><strong>PPO Phase 7 — GAE backward scan:</strong> no critic values, no \(\delta_t\) recurrence, no returns tensor. Advantage is just the broadcast z-score above.</span>
+  </div>
+
+  <!-- Phase 6 -->
+  <div class="phase">
+    <div class="phase-label">Phase 6</div>
+    <h3>Actor Update — Clipped Surrogate + KL Penalty</h3>
+    <p>All 8 GPUs. K=4 epochs, mini-batch per DP rank = 8 sequences (32 global / DP=4).</p>
+  </div>
+
+  <h4>6a. FSDP AllGather + forward pass (same as PPO)</h4>
+  <div class="nccl">
+    <div class="nccl-label">NCCL — AllGather (DP, InfiniBand) + AllReduce (TP, NVLink) per layer</div>
+    AllGather: ~56 MB per layer · 32 layers = <strong>~1.8 GB</strong> per forward pass<br>
+    TP AllReduce: (8, 1024, 4096) bf16 · 64 MB each · 32 layers × 2 = <strong>~4 GB</strong>
+  </div>
+
+  <h4>6b. GRPO loss</h4>
+  <pre><code># new_log_probs : (8, 512)  from the current forward pass
+# old_log_probs : (8, 512)  rollout log-probs (stored from Phase 2)
+# ref_log_probs : (8, 512)  from Phase 4
+# advantages    : (8, 512)  from Phase 5
+
+log_ratio = new_log_probs - old_log_probs     # (8, 512)
+ratio     = log_ratio.exp()                   # (8, 512)  importance ratio ρ_{i,t}
+
+# Clipped surrogate (identical to PPO):
+surr1     = ratio * advantages
+surr2     = ratio.clamp(1 - eps, 1 + eps) * advantages
+clip_term = torch.min(surr1, surr2)           # (8, 512)
+
+# k3 KL estimator: u - log(u) - 1 where u = π_ref / π_new
+# Always ≥ 0; unbiased estimate of KL(π_new ‖ π_ref)
+u         = (ref_log_probs - new_log_probs).exp()  # (8, 512)
+kl_est    = u - (ref_log_probs - new_log_probs) - 1  # (8, 512)  u - log(u) - 1
+
+per_token = (clip_term - beta * kl_est) * response_mask  # (8, 512)
+loss      = -per_token.sum() / response_mask.sum()        # scalar  (token-mean)</code></pre>
+
+  <div class="note">
+    <strong>KL placement.</strong> PPO folds the KL into the reward signal as a per-token
+    penalty on top of \(R_t\), then computes advantages with GAE over those penalized rewards.
+    GRPO puts the KL directly in the loss — it has no GAE to fold it into, and the k3 estimator
+    (\(u - \log u - 1\)) is always non-negative, preventing the KL from acting as a reward bonus
+    on any individual sample. The net effect on the gradient is similar, but the implementation
+    differs.
+  </div>
+
+  <h4>6c. Backward + optimizer (same as PPO Phase 8)</h4>
+  <div class="nccl">
+    <div class="nccl-label">NCCL — AllReduce (TP) + ReduceScatter (DP) per layer</div>
+    TP AllReduce: ~4 GB (same as forward) · DP ReduceScatter: ~1.8 GB (FSDP re-shards grads)
+  </div>
+
+  <p><strong>K=4 epochs total:</strong> the 128 sequences are re-used for 4 optimizer steps
+  (16 mini-batch passes of 32 sequences each). Each pass recomputes <code>new_log_probs</code>
+  from the current (updated) policy weights. Since there's no critic whose value predictions
+  go stale, GRPO tolerates more epochs than PPO before gradient variance dominates.</p>
+
+  <!-- PPO Phase removed -->
+  <div class="phase-gone">
+    <span class="phase-gone-label">Eliminated</span>
+    <span><strong>PPO Phase 9 — Critic Update:</strong> no value regression loss, no separate critic backward, no second optimizer step.</span>
+  </div>
+
+  <!-- Phase 7 -->
+  <div class="phase">
+    <div class="phase-label">Phase 7</div>
+    <h3>Weight Synchronization</h3>
+    <p>After K=4 epochs, push updated actor weights to the rollout engine. Simpler than PPO:
+    only one model to sync (no critic).</p>
+  </div>
+
+  <pre><code># verl hybrid engine (same GPU, time-multiplexed):
+1. sleep_rollout_replicas()
+2. For each TP rank:
+     for layer in actor.layers:
+         AllGather(actor.W_Q_shard) → W_Q_full   # reconstruct from FSDP shards
+         rollout_engine.update_layer(W_Q_full)   # push to vllm/SGLang
+3. wake_rollout_replicas()
+
+# Miles (separate SGLang server):
+actor_trainer.broadcast_weights_to_rollout_server()
+# HTTP POST with new weight tensors; rollout server hot-swaps them without restart</code></pre>
+
+  <div class="nccl">
+    <div class="nccl-label">NCCL — AllGather (DP, InfiniBand) per weight tensor during sync</div>
+    7B params × 2 bytes = 14 GB total · DP=4 shards = <strong>~3.5 GB AllGather per DP rank</strong>
+  </div>
+
+  <!-- ── §4 Comms ───────────────────────────── -->
+  <h2 id="comms">4. Communication Summary</h2>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Phase</th><th>Operation</th><th>Group</th><th>Volume (est.)</th></tr>
+      <tr>
+        <td>Rollout prefill</td>
+        <td>AllReduce × 2 per layer</td>
+        <td>TP (NVLink)</td>
+        <td>~8 GB</td>
+      </tr>
+      <tr>
+        <td>Rollout decode (512 steps)</td>
+        <td>AllReduce × 2 per layer per step</td>
+        <td>TP (NVLink)</td>
+        <td>~8 GB</td>
+      </tr>
+      <tr>
+        <td>Ref log-probs (Phase 4)</td>
+        <td>AllReduce × 2 per layer + log-prob allreduces</td>
+        <td>TP (NVLink)</td>
+        <td>~4 GB</td>
+      </tr>
+      <tr>
+        <td>Actor fwd (each epoch × mini-batch)</td>
+        <td>AllGather (FSDP) + AllReduce (TP)</td>
+        <td>DP (IB) + TP (NVLink)</td>
+        <td>~5.8 GB per mini-batch</td>
+      </tr>
+      <tr>
+        <td>Actor bwd (each epoch × mini-batch)</td>
+        <td>AllReduce (TP) + ReduceScatter (FSDP)</td>
+        <td>TP (NVLink) + DP (IB)</td>
+        <td>~5.8 GB per mini-batch</td>
+      </tr>
+      <tr>
+        <td>Weight sync</td>
+        <td>AllGather (FSDP)</td>
+        <td>DP (IB)</td>
+        <td>~3.5 GB</td>
+      </tr>
+      <tr style="color:var(--muted);">
+        <td><em>PPO only — critic fwd</em></td>
+        <td><em>AllGather + AllReduce + ReduceScatter</em></td>
+        <td><em>DP + TP</em></td>
+        <td><em>~5.8 GB (eliminated)</em></td>
+      </tr>
+      <tr style="color:var(--muted);">
+        <td><em>PPO only — critic bwd</em></td>
+        <td><em>AllReduce + ReduceScatter</em></td>
+        <td><em>DP + TP</em></td>
+        <td><em>~5.8 GB (eliminated)</em></td>
+      </tr>
+    </table>
+  </div>
+
+  <p>GRPO's actor-update communication is larger in total (K=4 epochs × 16 mini-batch passes
+  vs. PPO's K=1 epoch × 4 passes) but each individual pass is cheaper (no GAE recomputation,
+  no critic forward). The rollout phase is heavier per step (batch size 128 vs 64) but
+  prefill/decode AllReduce volumes scale with sequence count, not sequence length — doubling
+  \(N\) doubles the allreduce tensor width but not the number of calls.</p>
+
+  <!-- ── §5 Tensors ──────────────────────────── -->
+  <h2 id="tensors">5. Tensor Inventory</h2>
+
+  <div class="table-wrap">
+    <table class="tensor-table">
+      <tr><th>Tensor</th><th>Shape</th><th>Dtype</th><th>Lives on</th></tr>
+      <tr><td><code>prompts_expanded</code></td><td>(128, 512)</td><td>int64</td><td>CPU, controller</td></tr>
+      <tr><td><code>sequences</code></td><td>(128, 1024)</td><td>int64</td><td>CPU, controller</td></tr>
+      <tr><td><code>response_mask</code></td><td>(128, 512)</td><td>bool</td><td>CPU, controller</td></tr>
+      <tr><td><code>rollout_log_probs</code></td><td>(128, 512)</td><td>float32</td><td>CPU, controller</td></tr>
+      <tr><td><code>ref_log_probs</code></td><td>(128, 512)</td><td>float32</td><td>CPU, controller</td></tr>
+      <tr><td><code>rewards</code></td><td>(128,)</td><td>float32</td><td>CPU, controller</td></tr>
+      <tr><td><code>rewards_g</code></td><td>(16, 8)</td><td>float32</td><td>CPU (view of rewards)</td></tr>
+      <tr><td><code>advantages</code></td><td>(128, 512)</td><td>float32</td><td>CPU, controller</td></tr>
+      <tr><td><code>new_log_probs</code> (per mini-batch)</td><td>(8, 512)</td><td>float32</td><td>GPU, each DP rank</td></tr>
+      <tr><td><code>ratio</code></td><td>(8, 512)</td><td>float32</td><td>GPU</td></tr>
+      <tr><td><code>kl_est</code></td><td>(8, 512)</td><td>float32</td><td>GPU</td></tr>
+      <tr><td><code>clip_term</code></td><td>(8, 512)</td><td>float32</td><td>GPU</td></tr>
+      <tr style="color:var(--muted);"><td><em>values (PPO only)</em></td><td><em>(128, 1024)</em></td><td><em>float32</em></td><td><em>eliminated</em></td></tr>
+      <tr style="color:var(--muted);"><td><em>returns (PPO only)</em></td><td><em>(128, 512)</em></td><td><em>float32</em></td><td><em>eliminated</em></td></tr>
+    </table>
+  </div>
+
+  <!-- ── §6 Dr.GRPO ──────────────────────────── -->
+  <h2 id="drgrpo">6. Dr.GRPO — Loss Aggregation in Practice</h2>
+
+  <p>Standard GRPO averages the per-token clipped term over each sequence's response tokens,
+  then averages over sequences. Longer correct sequences contribute proportionally more gradient
+  — a length bias that can push the policy toward verbosity.</p>
+
+  <h4>Standard GRPO loss (token-mean)</h4>
+  <pre><code># per_token : (8, 512)  — already masked
+loss_per_seq = per_token.sum(dim=-1) / response_mask.sum(dim=-1)  # (8,) token-mean per seq
+loss = -loss_per_seq.mean()                                        # scalar</code></pre>
+
+  <h4>Dr.GRPO loss (token-sum, constant divisor)</h4>
+  <pre><code>D = 1000.0  # constant — e.g. mean sequence length at start of training
+
+loss_per_seq = per_token.sum(dim=-1)  # (8,) token-SUM, no division by length
+loss = -loss_per_seq.mean() / D       # divide by constant, not by variable token count</code></pre>
+
+  <p>Each sequence contributes gradient proportional to its raw token-sum (not normalized by
+  its own length), so a 200-token correct answer and a 400-token correct answer with the same
+  reward contribute the same gradient per token on average — length neutrality.</p>
+
+  <p>Dr.GRPO also disables std normalization in the advantage:</p>
+  <pre><code># Standard GRPO:
+adv_g = (rewards_g - mean_r) / std_r    # z-score
+
+# Dr.GRPO:
+adv_g = rewards_g - mean_r              # mean-centered only, no std division</code></pre>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Setting</th><th>verl config</th><th>Miles config</th></tr>
+      <tr>
+        <td>Standard GRPO</td>
+        <td><code>algorithm.adv_estimator: grpo</code><br><code>algorithm.norm_adv_by_std_in_grpo: true</code><br><code>actor_rollout_ref.actor.loss_agg_mode: token-mean</code></td>
+        <td><code>--advantage-estimator grpo</code><br>(std-norm on by default)</td>
+      </tr>
+      <tr>
+        <td>Dr.GRPO</td>
+        <td><code>algorithm.norm_adv_by_std_in_grpo: false</code><br><code>actor_rollout_ref.actor.loss_agg_mode: seq-mean-token-sum-norm</code></td>
+        <td><code>--advantage-estimator grpo</code><br><code>--disable-grpo-std-normalization</code><br><code>--custom-pg-loss-reducer-function-path examples.DrGRPO.custom_reducer:get_pg_loss_reducer</code></td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- ── §7 Code pointers ────────────────────── -->
+  <h2 id="code">7. Key Code Pointers</h2>
+
+  <h3>VeRL</h3>
+  <div class="table-wrap">
+    <table>
+      <tr><th>What</th><th>File</th><th>Function / key</th></tr>
+      <tr>
+        <td>Group-relative advantage</td>
+        <td><code>verl/trainer/ppo/core_algos.py</code></td>
+        <td><code>compute_grpo_outcome_advantage()</code> (line ~268)<br>
+            <code>compute_grpo_vectorized_outcome_advantage()</code> (faster variant)</td>
+      </tr>
+      <tr>
+        <td>Algorithm selector</td>
+        <td><code>verl/trainer/config/algorithm.py</code></td>
+        <td><code>adv_estimator: "grpo"</code> (default is <code>"gae"</code>)<br>
+            <code>norm_adv_by_std_in_grpo: true/false</code></td>
+      </tr>
+      <tr>
+        <td>Loss aggregation mode</td>
+        <td><code>actor_rollout_ref.actor</code> config</td>
+        <td><code>loss_agg_mode: "token-mean"</code> or <code>"seq-mean-token-sum-norm"</code></td>
+      </tr>
+      <tr>
+        <td>GRPO metrics (clipfrac, KL)</td>
+        <td><code>verl/trainer/ppo/core_algos.py</code></td>
+        <td>Returns <code>actor/pg_clipfrac</code>, <code>actor/ppo_kl</code>,
+            <code>actor/pg_clipfrac_lower</code> — same keys as PPO</td>
+      </tr>
+      <tr>
+        <td>Pearson correlation (async)</td>
+        <td><code>verl/utils/debug/metrics.py</code></td>
+        <td><code>calculate_debug_metrics()</code> →
+            <code>training/rollout_actor_probs_pearson_corr</code></td>
+      </tr>
+    </table>
+  </div>
+
+  <h3>Miles (slime)</h3>
+  <div class="table-wrap">
+    <table>
+      <tr><th>What</th><th>File</th><th>Function / key</th></tr>
+      <tr>
+        <td>Advantage dispatch</td>
+        <td><code>miles/backends/training_utils/loss_hub/advantages.py</code></td>
+        <td><code>compute_advantages()</code> — dispatches on <code>args.advantage_estimator</code></td>
+      </tr>
+      <tr>
+        <td>GRPO returns</td>
+        <td><code>miles/backends/training_utils/loss_hub/math_utils.py</code></td>
+        <td><code>get_grpo_returns()</code> — group-relative without normalization<br>
+            normalize step in <code>normalize_advantages()</code></td>
+      </tr>
+      <tr>
+        <td>Algorithm selector</td>
+        <td><code>miles/utils/arguments.py</code></td>
+        <td><code>--advantage-estimator grpo</code> (default in Miles)<br>
+            <code>--disable-grpo-std-normalization</code> for Dr.GRPO</td>
+      </tr>
+      <tr>
+        <td>Dr.GRPO constant divisor</td>
+        <td><code>examples/DrGRPO/custom_reducer.py</code></td>
+        <td><code>get_pg_loss_reducer()</code> — divides by <code>DIVISOR=1000.0</code></td>
+      </tr>
+      <tr>
+        <td>Loss metrics</td>
+        <td><code>miles/backends/training_utils/loss_hub/losses.py</code></td>
+        <td><code>train/pg_clipfrac</code>, <code>train/ppo_kl</code>,
+            <code>train/ess_ratio</code>, <code>train/tis_clipfrac</code></td>
+      </tr>
+    </table>
+  </div>
+
+</div>
+
+<footer style="border-top:1px solid var(--border);padding:28px 24px;text-align:center;font-size:0.82rem;color:var(--muted);">
+  Personal ML notes &nbsp;·&nbsp; GRPO Training Walkthrough in VeRL
+</footer>
+
+</body>
+</html>
