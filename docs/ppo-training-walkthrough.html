@@ -666,6 +666,38 @@ advantages = whiten(advantages, response_mask)   # zero mean, unit variance</cod
     <code>response_mask</code> zeros the recurrence at padding positions and after EOS so advantages don't leak across sequence boundaries. Typical: \(\gamma=1.0\), \(\lambda=0.95\).
   </div>
 
+  <h4>Whitening</h4>
+
+  <p><code>whiten</code> standardises the advantages to zero mean and unit variance across all
+  valid (non-masked) tokens in the batch:</p>
+
+  <pre><code>valid = response_mask.bool()                            # (64, 512)
+mean  = advantages[valid].mean()                        # scalar
+var   = advantages[valid].var(unbiased=False)           # scalar
+advantages = (advantages - mean) / (var + eps).sqrt()  # (64, 512)
+advantages = advantages * valid                         # re-zero padding positions</code></pre>
+
+  <p><strong>Why it's needed — the clip threshold problem.</strong>
+  The PPO surrogate clips the importance ratio at \(1 \pm \epsilon\) (\(\epsilon = 0.2\)).
+  Whether a token's gradient is clipped depends on both the ratio and the advantage: the
+  effective gradient is \(\min(\rho,\, \text{clip}) \times A_t\). If raw advantages are on the
+  order of 10–50 (typical cumulative reward scales), then even a ratio of 1.0 produces a large
+  update, and the clip threshold of 1.2 barely constrains it. Whitening brings advantages to unit
+  scale so that \(\epsilon = 0.2\) is calibrated to a meaningful signal range — the clip then
+  consistently limits updates regardless of the reward magnitude in this particular batch.</p>
+
+  <p><strong>Why <code>returns</code> is not whitened.</strong>
+  <code>returns</code> is the regression target for the critic
+  (\(\mathcal{L}_v = (V_\theta - \text{returns})^2\)). Whitening the returns would rescale the
+  target, corrupting the value predictions used to compute future advantages — the circular
+  dependency between critic and advantage would break. The actor loss is scale-invariant (the
+  clipped ratio removes magnitude from the gradient direction); the critic loss is not.</p>
+
+  <p><strong>Why the mask matters.</strong>
+  Padding tokens have \(A_t = 0\) by construction. Including them in the mean/variance estimate
+  would deflate the variance and distort the normalisation. The mask restricts statistics to
+  tokens that actually carry signal.</p>
+
   <!-- Phase 8 -->
   <div class="phase">
     <div class="phase-label">Phase 8</div>

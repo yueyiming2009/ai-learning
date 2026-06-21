@@ -721,6 +721,38 @@ does not leak across sequence boundaries.
 
 Typical values:  `gamma=1.0`, `lam=0.95` (standard PPO).
 
+#### 7c. Whitening
+
+`whiten` standardises the advantages to zero mean and unit variance **across all valid
+(non-masked) tokens in the batch**:
+
+```python
+# Only count tokens where response_mask == 1
+valid = response_mask.bool()                        # (64, 512)
+mean  = advantages[valid].mean()                    # scalar
+var   = advantages[valid].var(unbiased=False)       # scalar
+advantages = (advantages - mean) / (var + eps).sqrt()  # (64, 512)
+advantages = advantages * valid                     # re-zero padding positions
+```
+
+**Why it's needed — the clip threshold problem.**  The PPO surrogate clips the importance ratio
+at `1 ± eps` (eps=0.2). Whether a token's gradient gets clipped depends on both `ratio` and
+`advantages`: the effective gradient is `min(ratio, clip) * advantage`. If raw advantages are
+on the order of 10–50 (typical cumulative reward scales), then even a ratio of 1.0 produces
+a large gradient update, and the clip threshold `1.2` does very little to constrain it.
+Whitening brings advantages to unit scale so that eps=0.2 is calibrated to a meaningful
+signal range. The clip then consistently constrains updates regardless of reward magnitude.
+
+**Why `returns` is not whitened.**  `returns` is used as the regression target for the critic
+(`value_loss = (value_pred - returns)^2`). Whitening the returns would change the scale of the
+critic's target, which would in turn corrupt the scale of future `values` predictions, breaking
+the circular dependency between critic and advantage. The actor loss is scale-invariant (clipped
+ratio removes the magnitude from the gradient direction); the critic loss is not.
+
+**Why the mask matters.**  Padding tokens have `advantage = 0` by construction. Including
+them in the mean/variance estimate would deflate the variance and distort the normalisation.
+The mask restricts statistics to the tokens that actually carry signal.
+
 Output:
 ```
 advantages :  (64, 512)   float32   ~128 KB
