@@ -396,30 +396,106 @@ A[T] ← 0
   </div>
 
   <h2 id="eligibility">7. Eligibility Traces — The Backward View</h2>
-  <p>The backward recursion works because you <em>stored</em> the rollout. Eligibility traces answer the same question without storage: they update weights <em>online</em>, at every step, by maintaining a running memory of which parameters were recently responsible for predictions.</p>
+  <p>The GAE backward recursion works because you stored the whole rollout first. Eligibility traces achieve the same credit assignment <em>online</em> — updating value estimates after every single step without ever storing the episode. The key idea is to flip the temporal perspective: instead of asking "at time \(t\), how much weight do I put on a future TD error?", ask "when a surprise \(\delta_k\) arrives, how much credit do I give to states I visited in the past?"</p>
 
-  <p>The key is to flip the temporal perspective. The forward view asks: <em>at time \(t\), how much weight should I put on the TD error that occurs \(l\) steps in the future?</em> Answer: \((\gamma\lambda)^l\). The backward view asks: <em>when a TD error \(\delta_k\) occurs, how much credit should a state visited at time \(t \leq k\) receive?</em> Same answer: \((\gamma\lambda)^{k-t}\). The eligibility trace tracks this decaying credit for all parameters simultaneously.</p>
+  <p>The answer to both questions is the same geometric decay \((\gamma\lambda)^l\), where \(l\) is the distance in time. The eligibility trace is the data structure that tracks this decaying credit for every state simultaneously, so that when a TD error arrives the right states get updated immediately.</p>
 
-  <h3>The trace mechanism</h3>
+  <h3>Step 1 — The tabular case: a decaying visit counter</h3>
+  <p>Start with the simplest setting: a lookup table where each state \(s\) has its own stored value \(V(s)\). The trace for state \(s\) is a scalar that rises by 1 each time \(s\) is visited and decays by \(\gamma\lambda\) on every other step:</p>
 
   <div class="result">
-    <div class="result-label">Eligibility trace update</div>
+    <div class="result-label">Tabular eligibility trace</div>
+    \[
+      e_0(s) = 0 \quad \text{for all } s, \qquad
+      e_t(s) =
+      \begin{cases}
+        \gamma\lambda\, e_{t-1}(s) + 1 & \text{if } s_t = s \\
+        \gamma\lambda\, e_{t-1}(s)     & \text{otherwise}
+      \end{cases}
+    \]
+  </div>
+
+  <p>Think of \(e_t(s)\) as a fading receipt: it records how recently (and how often) state \(s\) was responsible for a prediction. A state visited 5 steps ago has trace \((\gamma\lambda)^5\); one visited just now has trace 1.</p>
+
+  <p>When a TD error \(\delta_t\) occurs at step \(t\), every state gets a value update proportional to its current eligibility:</p>
+  \[
+    V(s) \;\leftarrow\; V(s) + \alpha\,\delta_t\, e_t(s) \quad \text{for every state } s
+  \]
+
+  <p>States with high eligibility (visited recently) absorb most of the correction. States visited long ago barely change. This is credit assignment happening backward through time, online.</p>
+
+  <div class="algo">
+    <div class="algo-title">Tabular TD(λ) — eligibility trace version</div>
+    <pre><span class="req">Initialize:</span> V(s) ← 0 for all s;  e(s) ← 0 for all s
+
+<span class="kw">for each</span> episode:
+    s ← s₀;  e(s) ← 0 for all s          <span class="cm">▷ reset traces</span>
+    <span class="kw">while</span> s is not terminal:
+        a       ← π(s)
+        r, s'   ← env.step(s, a)
+        δ       ← r + γ · V(s') − V(s)    <span class="cm">▷ TD error</span>
+        e(s)    ← e(s) + 1                 <span class="cm">▷ increment trace for current state</span>
+        <span class="kw">for all</span> states u:
+            V(u) ← V(u) + α · δ · e(u)   <span class="cm">▷ update every state by its eligibility</span>
+            e(u) ← γλ · e(u)             <span class="cm">▷ decay every trace</span>
+        s ← s'</pre>
+  </div>
+
+  <h3>Step 2 — Why "1" becomes a gradient with function approximation</h3>
+  <p>In the tabular case the update \(V(s) \leftarrow V(s) + \alpha\delta_t e_t(s)\) works because each state owns its own number \(V(s)\) that can be changed independently. The trace just needs to answer: <em>how recently was \(s\) visited?</em> A plain "+1" on each visit is enough.</p>
+
+  <p>With a neural network, \(V(s;\mathbf{w})\) is computed from shared weights \(\mathbf{w}\). You cannot update \(V(s)\) directly — you can only move \(\mathbf{w}\), and any change to \(\mathbf{w}\) ripples through <em>all</em> states. The trace needs to answer a harder question: <em>which weights were responsible for the prediction at \(s_t\)?</em></p>
+
+  <p>The answer is the gradient \(\nabla_\mathbf{w} V(s_t;\mathbf{w})\). Each component \(\partial V(s_t)/\partial w_i\) says how much weight \(w_i\) contributed to the prediction at \(s_t\): a large positive value means \(w_i\) had a big influence; zero means it had none. The gradient is the function-approximation analog of the tabular "+1" — it replaces a scalar visit indicator with a vector that identifies <em>which parameters</em> did the visiting.</p>
+
+  <div class="step">
+    <div class="step-label">The analogy made precise</div>
+    <div class="table-wrap" style="margin:0.6em 0 0;">
+      <table>
+        <tr><th></th><th>Tabular</th><th>Function approximation</th></tr>
+        <tr>
+          <td>What can we update?</td>
+          <td>\(V(s)\) — one number per state</td>
+          <td>\(\mathbf{w}\) — shared weights used by all states</td>
+        </tr>
+        <tr>
+          <td>What does "visit" mean?</td>
+          <td>\(s_t = s\) → add 1 to \(e(s)\)</td>
+          <td>\(s_t\) activates weights → add \(\nabla_\mathbf{w} V(s_t)\) to \(\mathbf{e}\)</td>
+        </tr>
+        <tr>
+          <td>What does the trace track?</td>
+          <td>How recently was state \(s\) visited?</td>
+          <td>How recently did each weight contribute to a prediction?</td>
+        </tr>
+        <tr>
+          <td>Update rule</td>
+          <td>\(V(s) \leftarrow V(s) + \alpha\delta_t e_t(s)\)</td>
+          <td>\(\mathbf{w} \leftarrow \mathbf{w} + \alpha\delta_t\mathbf{e}_t\)</td>
+        </tr>
+      </table>
+    </div>
+  </div>
+
+  <h3>Step 3 — The general eligibility trace</h3>
+  <p>Replacing the scalar "+1" with the gradient vector gives the general form that works for both tabular (where \(\nabla_\mathbf{w} V(s_t) = \mathbf{e}_{s_t}\), a one-hot indicator) and neural networks:</p>
+
+  <div class="result">
+    <div class="result-label">Eligibility trace (function approximation)</div>
     \[
       \mathbf{e}_0 = \mathbf{0}, \qquad
       \mathbf{e}_t = \gamma\lambda\,\mathbf{e}_{t-1} + \nabla_\mathbf{w} V(s_t;\mathbf{w})
     \]
   </div>
 
-  <p>\(\mathbf{e}_t\) is a vector with the same shape as the weights \(\mathbf{w}\). At each step it decays by \(\gamma\lambda\) (older states matter less) and accumulates the gradient of the current state's value prediction. It is a weighted sum of all past gradients, with more recent gradients given more weight.</p>
-
-  <p>When a TD error \(\delta_t\) occurs, instead of updating only the current state, every weight is updated in proportion to its trace:</p>
+  <p>\(\mathbf{e}_t\) has the same shape as \(\mathbf{w}\). At each step it decays (older predictions matter less) and gains a new contribution from the current state's gradient (the weights currently responsible for the prediction). When the TD error arrives, every weight moves proportionally to how much it recently contributed:</p>
   \[
     \mathbf{w} \;\leftarrow\; \mathbf{w} + \alpha\,\delta_t\,\mathbf{e}_t
   \]
 
   <div class="algo">
-    <div class="algo-title">Algorithm — TD(λ) with eligibility traces (online, no episode storage)</div>
-    <pre><span class="req">Initialize:</span> w ← random; e ← 0
+    <div class="algo-title">TD(λ) with eligibility traces — function approximation</div>
+    <pre><span class="req">Initialize:</span> w ← random;  e ← 0 (same shape as w)
 
 <span class="kw">for each</span> episode:
     s ← s₀;  e ← 0                              <span class="cm">▷ reset trace each episode</span>
@@ -427,40 +503,30 @@ A[T] ← 0
         a       ← π(s)
         r, s'   ← env.step(s, a)
         δ       ← r + γ · V(s'; w) − V(s; w)    <span class="cm">▷ TD error</span>
-        e       ← γλ · e + ∇<sub>w</sub> V(s; w)         <span class="cm">▷ decay, then add current gradient</span>
-        w       ← w + α · δ · e                  <span class="cm">▷ update ALL weights by trace</span>
+        e       ← γλ · e + ∇<sub>w</sub> V(s; w)         <span class="cm">▷ decay old, add current gradient</span>
+        w       ← w + α · δ · e                  <span class="cm">▷ every weight moves by its eligibility</span>
         s       ← s'</pre>
   </div>
 
   <h3>Why traces equal the forward view</h3>
-  <p>Consider the total update applied to \(\mathbf{w}\) due to state \(s_t\) across the full episode. Every TD error \(\delta_k\) at time \(k \geq t\) contributes \(\alpha\delta_k \cdot (\gamma\lambda)^{k-t}\nabla_\mathbf{w} V(s_t)\), because the gradient from \(s_t\) was in the trace at step \(k\) with coefficient \((\gamma\lambda)^{k-t}\). Summing:</p>
+  <p>Consider the total change applied to \(\mathbf{w}\) that can be traced back to state \(s_t\). After step \(t\), the gradient \(\nabla_\mathbf{w} V(s_t)\) sits in the trace with coefficient 1. One step later it has decayed to \(\gamma\lambda\); two steps later to \((\gamma\lambda)^2\); and so on. So every subsequent TD error \(\delta_k\) (\(k \geq t\)) multiplies the gradient by \((\gamma\lambda)^{k-t}\) before applying it to \(\mathbf{w}\). The total update from state \(s_t\) across the whole episode is:</p>
   \[
-    \text{total update at } s_t \;=\; \alpha \biggl[\sum_{k \geq t} (\gamma\lambda)^{k-t}\delta_k\biggr] \nabla_\mathbf{w} V(s_t)
-    \;=\; \alpha\,\hat A_t\,\nabla_\mathbf{w} V(s_t)
+    \Delta\mathbf{w}\big|_{s_t}
+    = \alpha \sum_{k \geq t} (\gamma\lambda)^{k-t}\delta_k \cdot \nabla_\mathbf{w} V(s_t)
+    = \alpha\,\hat A_t \cdot \nabla_\mathbf{w} V(s_t)
   \]
-  <p>This is exactly the policy gradient update the forward view would produce. The trace is the online, causal implementation of the same credit assignment.</p>
-
-  <h3>Tabular vs. neural networks</h3>
-  <div class="table-wrap">
-    <table>
-      <tr><th></th><th>Tabular</th><th>Neural network</th></tr>
-      <tr><td><strong>Trace</strong></td><td>\(e_t(s) \leftarrow \gamma\lambda\,e_{t-1}(s) + 1\) for visited \(s\); 0 otherwise</td><td>\(\mathbf{e}_t = \gamma\lambda\,\mathbf{e}_{t-1} + \nabla_\mathbf{w} V(s_t;\mathbf{w})\)</td></tr>
-      <tr><td><strong>Update</strong></td><td>\(V(s) \leftarrow V(s) + \alpha\delta_t e_t(s)\) for every \(s\)</td><td>\(\mathbf{w} \leftarrow \mathbf{w} + \alpha\delta_t\mathbf{e}_t\)</td></tr>
-      <tr><td><strong>Online?</strong></td><td>Yes — updates after every step</td><td>Yes, but expensive at network scale</td></tr>
-      <tr><td><strong>Used in practice</strong></td><td>Classic RL (gridworlds, tabular Q-learning)</td><td>Rarely — GAE backward pass is preferred</td></tr>
-    </table>
-  </div>
+  <p>This is the same update the forward view produces: scale the gradient of the value function at \(s_t\) by the GAE advantage \(\hat A_t\). The trace computed it online without ever looking forward.</p>
 
   <div class="note">
-    Modern deep RL for LLMs doesn't use online eligibility traces — maintaining a trace vector over millions of parameters and updating it every token is too expensive. Instead, a full rollout is collected, then the GAE backward recursion runs as a single \(O(T)\) batch computation. The backward recursion and online eligibility traces are mathematically equivalent; they are two implementations of the same credit assignment idea.
+    Modern deep RL for LLMs doesn't use online eligibility traces — maintaining and updating a trace vector over millions of parameters every token step is too expensive. Instead a full rollout is collected and the GAE backward recursion runs as a single \(O(T)\) batch pass. The two approaches are mathematically equivalent; the backward recursion is simply the batch-mode version of the same credit assignment.
   </div>
 
   <h3>Accumulating vs. replacing traces</h3>
-  <p>When a state is revisited within an episode, two conventions exist:</p>
+  <p>When a state is revisited within an episode, two conventions exist for the "+1" (tabular) or "+gradient" (parametric) increment:</p>
   <ul>
-    <li><strong>Accumulating:</strong> \(\mathbf{e}_t = \gamma\lambda\,\mathbf{e}_{t-1} + \nabla V(s_t)\). Credit accumulates on each revisit — used by standard TD(λ) and implicitly by GAE.</li>
-    <li><strong>Replacing:</strong> cap the trace at 1 on revisit. Prevents a frequently visited state from dominating the update — better behaved in looping environments.</li>
-    <li><strong>Dutch:</strong> \(\mathbf{e}_t = (1-\alpha)\gamma\lambda\,\mathbf{e}_{t-1} + \nabla V(s_t)\). Reduces double-counting in gradient updates with function approximation.</li>
+    <li><strong>Accumulating:</strong> always add. Credit builds up on each revisit. Standard TD(λ) and the GAE backward recursion use this implicitly.</li>
+    <li><strong>Replacing:</strong> cap the trace at 1 on revisit (tabular) or reset to the gradient (parametric). Prevents a state in a loop from dominating all updates.</li>
+    <li><strong>Dutch:</strong> \(\mathbf{e}_t = (1-\alpha)\gamma\lambda\,\mathbf{e}_{t-1} + \nabla V(s_t)\). Reduces double-counting that arises with function approximation when the same weight is adjusted twice for the same prediction.</li>
   </ul>
 
   <h2 id="qlearning">8. Q-Learning — Off-Policy TD for Q*</h2>
