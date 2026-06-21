@@ -654,14 +654,142 @@ trainer:        [step] → [step] → [step] → ...   (drains the buffer)</code
   means the <em>ranking</em> of tokens by probability is diverging, which is what actually
   drives IS ratio variance.</p>
 
+  <p><strong>Connection to IS ratio variance.</strong> If \(\log\pi_{old}\) and
+  \(\log\pi_{current}\) are jointly distributed with correlation \(\rho\) and roughly equal
+  variance \(\sigma^2\), then:</p>
+  \[
+    \mathrm{Var}(\log r_t) = \mathrm{Var}(\log\pi_{new} - \log\pi_{old})
+    = 2\sigma^2(1 - \rho)
+  \]
+  <p>At \(\rho = 0.97\): \(\mathrm{Var}(\log r_t) \approx 0.06\sigma^2\) — IS ratios tightly
+  clustered around 1. At \(\rho = 0.80\): \(\mathrm{Var}(\log r_t) \approx 0.40\sigma^2\) —
+  ratios scattered widely; many tokens above or below the PPO clip bounds on every step.</p>
+
   <p><strong>Healthy:</strong> \(\rho \geq 0.97\). Below 0.90 is a warning; sustained drop
   below 0.85 typically precedes training collapse.</p>
 
+  <h4>Diagnosing Pearson patterns</h4>
+
+  <p>The <em>shape</em> of the \(\rho\) curve over training steps, combined with \(K\), is
+  more informative than the value alone:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Pattern</th><th>What it looks like</th><th>Root cause</th><th>Fix</th></tr>
+      <tr>
+        <td><strong>Low floor at \(K=0\), step 0</strong></td>
+        <td>\(\rho\) starts at 0.8 or below before any training</td>
+        <td>Baseline TIM — engines disagree on the initial weights. FP8 rollout, TP degree
+        mismatch, or different attention kernel are the usual culprits.</td>
+        <td>Fix the engine mismatch (FP16, match TP). TIS on top of this is a band-aid.</td>
+      </tr>
+      <tr>
+        <td><strong>Gradual drop at \(K=0\) over steps</strong></td>
+        <td>Starts at 0.8, falls to 0.3 over ~50 steps with no lag change</td>
+        <td>Entropy collapse amplifying existing TIM (see below). The TIM itself is not
+        growing — the metric is becoming more sensitive as the policy sharpens.</td>
+        <td>Same as above — fix the baseline TIM. Entropy collapse cannot be stopped without
+        reducing the TIM that is driving the gradient instability.</td>
+      </tr>
+      <tr>
+        <td><strong>Sudden drop correlated with \(K\) increase</strong></td>
+        <td>\(\rho\) was healthy, drops when sync interval widens or lag grows</td>
+        <td>Policy lag — the rollout policy is genuinely behind the training policy.</td>
+        <td>Tighten <code>trigger_parameter_sync_step</code> or lower
+        <code>staleness_threshold</code>.</td>
+      </tr>
+      <tr>
+        <td><strong>Stabilized with TIS but not recovering</strong></td>
+        <td>\(\rho\) stops falling after TIS enabled, holds at 0.8</td>
+        <td>TIS broke the entropy-collapse feedback loop but the baseline TIM is unchanged.
+        TIS is now firing constantly, not occasionally (see below).</td>
+        <td>Fix the TIM source. TIS should be a safety net, not a constant corrector.</td>
+      </tr>
+    </table>
+  </div>
+
+  <h4>Entropy collapse: how TIM compounds over training</h4>
+
+  <p>The "gradual drop at \(K=0\)" pattern has a specific mechanism. At initialization, the
+  policy is relatively diffuse — log-probs span a wide range (e.g., \([-12, 0]\)). As training
+  proceeds and the policy learns to prefer correct actions, the distribution sharpens: sampled
+  tokens cluster toward \(\log p \approx 0\), while rejected tokens fall to \(-10\) or below.</p>
+
+  <p>The two engines have a fixed absolute numerical discrepancy \(\delta\) per token from TIM.
+  When log-probs are spread across a wide range, \(\delta\) rarely causes rank inversions —
+  token A is still more probable than B even with small errors. When log-probs are clustered
+  tightly near 0, the same \(\delta\) frequently swaps the relative ordering of tokens within
+  the dense cluster. Pearson, which measures rank agreement, collapses.</p>
+
+  <pre><code>Step 0:  policy diffuse, log-probs span [-12, 0]
+         engine difference δ ≈ ±0.01 per token
+         δ rarely exceeds gaps between tokens → few rank inversions → ρ = 0.80
+
+Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
+         same δ ≈ ±0.01, but now many tokens are within δ of each other
+         frequent rank inversions within the dense cluster → ρ = 0.30</code></pre>
+
+  <p>This creates a <strong>self-reinforcing feedback loop</strong>:</p>
+
+  <ol>
+    <li>TIM causes IS ratios to scatter from 1</li>
+    <li>Scattered ratios produce large, noisy gradient updates</li>
+    <li>Large updates push the policy into sharper, more confident weight regimes</li>
+    <li>Sharper policy amplifies TIM's rank-inversion effect on \(\rho\)</li>
+    <li>Lower \(\rho\) → wider IS ratio scatter → back to step 2</li>
+  </ol>
+
+  <p>This is a runaway loop. \(\rho\) falls not because TIM is growing but because entropy
+  collapse makes the existing TIM increasingly visible.</p>
+
+  <h4>When TIS stabilizes ρ — the constant-corrector trap</h4>
+
+  <p>TIS (Truncated IS) clips per-token ratios at a threshold \(c\):</p>
+  \[
+    \tilde{r}_t = \min(r_t,\; c)
+  \]
+  <p>When TIS is enabled and \(\rho\) stops falling and holds at 0.8, TIS has
+  <strong>broken the feedback loop</strong> — not fixed TIM. By capping \(r_t\), TIS bounds the
+  gradient updates, which slows entropy collapse, which prevents further amplification of TIM's
+  Pearson effect. The Pearson stabilizes at exactly the baseline TIM level from step 0.</p>
+
+  <p>But this means TIS is doing significant corrective work on <em>every training step</em>,
+  not occasionally. At \(\rho = 0.80\), IS ratios are widely scattered, so a large fraction of
+  tokens exceeds the clip threshold \(c\) at every batch. The gradient being computed is:</p>
+
+  \[
+    \tilde{g} = \sum_t \min(r_t, c) \cdot \nabla\log\pi_\theta \cdot A_t
+  \]
+  \[
+    \text{Signal thrown away} = \sum_{r_t > c} (r_t - c) \cdot \nabla\log\pi_\theta \cdot A_t
+  \]
+
+  <p>The tokens being truncated are systematically those where \(\pi_{new}\) has moved most
+  relative to \(\pi_{old}\) — exactly the strongest learning signals. This introduces:</p>
+
+  <ul>
+    <li><strong>Reduced effective learning rate</strong> — the policy moves more slowly than
+    the configured LR implies, because the largest updates are capped.</li>
+    <li><strong>Directional bias</strong> — TIS consistently underweights high-ratio tokens,
+    skewing the gradient toward smaller, more conservative policy changes. The converged policy
+    reflects a truncated objective, not the true PPO objective.</li>
+    <li><strong>Compounding bias</strong> — each step's truncation accumulates; over hundreds
+    of steps the policy drifts toward a different optimum than intended.</li>
+  </ul>
+
+  <p><strong>How to tell if TIS is in constant-corrector mode:</strong> log the fraction of
+  response tokens where \(r_t > c\) (call it <code>tis_clipfrac</code>). This is the TIS
+  analog of PPO's <code>pg_clipfrac</code>. If <code>tis_clipfrac</code> is consistently
+  above ~20–30%, TIS is not a safety net — it is the primary mechanism keeping training
+  stable, and the gradient bias is substantial. Fix the TIM source; then TIS naturally returns
+  to a low-firing safety-net role.</p>
+
   <div class="note">
-    A Pearson drop that persists <em>even after discarding stale samples</em> points to
-    systemic drift in the "fresh" samples — not buffer contamination. Likely causes: advantage
-    normalization over a mixed-staleness batch, IS ratio accumulation across multiple PPO
-    epochs on the same data, or TIM from a precision or TP mismatch.
+    <strong>The tell:</strong> TIS stabilizing \(\rho\) at its step-0 value is a confirmation
+    that the Pearson drop was entropy-collapse amplification of a pre-existing TIM, not a new
+    problem introduced by training. The stabilization level reveals the true baseline TIM. Fix
+    that baseline (FP16 precision, matched TP) and the entire loop — runaway drop, TIS
+    constant-correction, gradient bias — resolves at once.
   </div>
 
   <h4>IS ratio statistics — direct off-policy quantification</h4>
