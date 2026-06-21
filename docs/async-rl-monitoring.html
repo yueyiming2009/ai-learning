@@ -405,12 +405,20 @@
   <p><strong>Healthy:</strong> \(\rho \geq 0.97\). Below 0.90 is a warning; sustained drop
   below 0.85 typically precedes training collapse.</p>
 
-  <p><strong>Metric keys —</strong> Neither verl nor Miles exposes Pearson correlation as a
-  built-in metric. In verl, the closest proxy is <code>actor/ppo_kl</code> (mean per-token KL,
-  logged via <code>actor/</code> prefix); in Miles it is <code>train/train_rollout_kl</code>
-  (KL between rollout and training log-probs). Both are aggregate KL estimates — they capture
-  magnitude but miss rank-order divergence. Pearson requires a custom logging hook that runs
-  <code>np.corrcoef</code> over the rollout and recomputed log-prob vectors each step.</p>
+  <p><strong>Metric keys —</strong>
+    verl: <code>training/rollout_actor_probs_pearson_corr</code> — logged automatically whenever
+    <code>rollout_log_probs</code> is in the batch (i.e., whenever the rollout engine stores its
+    log-probs separately, which is the case in async/TIM-correction mode). Implemented in
+    <code>verl/utils/debug/metrics.py</code> via <code>torch.corrcoef</code> over valid response
+    tokens. <em>Note:</em> verl computes this on the probability scale
+    (\(\pi_{actor}\) vs \(\pi_{rollout}\), i.e., <code>exp(log_probs)</code>), not on
+    log-probs directly — the interpretation is the same but the numeric value will differ slightly
+    from a log-space Pearson. Companion metrics from the same call:
+    <code>training/rollout_probs_diff_mean</code>, <code>training/rollout_probs_diff_max</code>,
+    <code>training/rollout_probs_diff_std</code> (mean/max/std of \(|\pi_{actor} - \pi_{rollout}|\)
+    per token, on probability scale) ·
+    Miles: not built-in; use <code>train/train_rollout_kl</code> as the closest proxy.
+  </p>
 
   <h3 id="pearson-patterns">Diagnosing Pearson patterns</h3>
 
@@ -730,7 +738,8 @@ Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
         <td>Pearson \(\rho\)</td>
         <td>≥ 0.97</td>
         <td>See <a href="#pearson-patterns">pattern table</a>; low floor → fix TIM; gradual drop → entropy collapse; sudden drop → policy lag</td>
-        <td colspan="2" style="color:var(--muted);font-size:0.88em;">Not built-in — requires custom hook; use <code>actor/ppo_kl</code> / <code>train/train_rollout_kl</code> as proxies</td>
+        <td><code>training/rollout_actor_probs_pearson_corr</code><br><small style="color:var(--muted);">auto-logged when rollout_log_probs in batch; probability scale</small></td>
+        <td style="color:var(--muted);font-size:0.88em;">Not built-in; use <code>train/train_rollout_kl</code> as proxy</td>
       </tr>
       <tr>
         <td><code>tis_clipfrac</code></td>
