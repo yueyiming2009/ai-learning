@@ -312,6 +312,7 @@
     <a href="#rm">Reward model</a>
     <a href="#objective">RL objective</a>
     <a href="#ppo">PPO loss</a>
+    <a href="#entropy">Policy entropy</a>
     <a href="#loop">Full loop</a>
     <a href="#vs-dpo">vs. DPO</a>
     <a href="#summary">Summary</a>
@@ -504,6 +505,48 @@
     \right]
   \]
   <p>with coefficients \(c_1, c_2\). (Signs are written for minimization: maximize the clipped surrogate and entropy, minimize value error.)</p>
+
+  <h3 id="entropy">Policy Entropy</h3>
+
+  <p>The entropy of a policy at state \(s\) is the expected surprise of its action distribution:</p>
+  \[
+    H\big[\pi_\theta\big](s) = -\sum_a \pi_\theta(a \mid s)\,\log\pi_\theta(a \mid s)
+  \]
+  <p>High entropy means the policy spreads probability mass broadly — many actions look roughly
+  equally likely. Low entropy means it concentrates mass on a few actions — it is confident, or
+  possibly stuck.</p>
+
+  <p><strong>Why add it as a bonus.</strong> Without \(-c_2 S\), PPO is free to collapse the
+  policy to near-deterministic behavior as soon as it finds any high-reward sequence. The entropy
+  bonus penalizes overconfidence, keeping the policy exploratory and diverse. It is equivalent to
+  applying an \(\ell_1\) regularizer in log-probability space.</p>
+
+  <p><strong>Computing it for an LLM.</strong> The action space is the full vocabulary
+  \(|\mathcal{V}|\) — often 32k–128k tokens — so the exact sum is expensive. Two common
+  approximations:</p>
+  <ul>
+    <li><em>Sample estimate</em> — use only the sampled token \(a_t\):
+    \(H[\pi] \approx -\frac{1}{|\mathcal{T}|}\sum_{t \in \mathcal{T}} \log\pi_\theta(a_t \mid s_t)\).
+    Fast but high-variance, and biased toward the tokens the policy already prefers.</li>
+    <li><em>Top-k estimate</em> — sum over the top-k logits (e.g., \(k=50\)); captures most of
+    the mass for a peaked distribution.</li>
+  </ul>
+
+  <p><strong>What the value tells you.</strong> For a uniform distribution over a vocabulary of
+  size \(V\), the maximum entropy is \(\log V\). In practice:</p>
+  <ul>
+    <li><em>Gradually decreasing</em> — normal: the policy becomes more confident as it learns
+    which actions earn reward.</li>
+    <li><em>Rapid collapse to near zero</em> — reward hacking: the policy found a degenerate
+    pattern that scores well but has lost diversity. Often visible in entropy before it appears
+    in reward curves.</li>
+    <li><em>Rising late in training</em> — catastrophic forgetting or gradient noise overwhelming
+    the policy signal; the policy is becoming less decisive.</li>
+  </ul>
+
+  <p>For the diagnostic use of entropy during async RL training — the entropy-collapse
+  amplification loop and its interaction with TIM — see
+  <a href="async-rl-monitoring.html#entropy">Monitoring &amp; Diagnosis for Async RL</a>.</p>
 
   <h2 id="loop">5. The Full RLHF Loop</h2>
   <p>Stage 3 repeats the following until the policy converges or KL budget is exhausted:</p>
