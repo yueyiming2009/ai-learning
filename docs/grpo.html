@@ -323,6 +323,7 @@
     <a href="#loop">Loop</a>
     <a href="#vs">vs. PPO</a>
     <a href="#summary">Summary</a>
+    <a href="#drgrpo">Dr.GRPO</a>
   </div>
 </nav>
 
@@ -521,6 +522,49 @@
     </table>
   </div>
 
+  <h2 id="drgrpo">10. Dr.GRPO — Eliminating Length Bias</h2>
+  <p>Standard GRPO averages the clipped surrogate over tokens within each output (\(\tfrac{1}{|o_i|}\sum_t\)). This means a long correct answer contributes more total gradient than a short correct answer with the same reward — a <em>length bias</em> that can push the policy to prefer verbosity. Dr.GRPO (Demystifying Long Chain-of-Thought Reasoning, 2025) fixes this with two changes:</p>
+
+  <ol>
+    <li><strong>Constant loss divisor</strong> — divide by a fixed constant \(D\) rather than \(|o_i|\), so all outputs contribute equal gradient mass regardless of length. The absolute gradient scale depends on \(D\); common choices are the mean sequence length at training start or a round number (e.g., 1000).</li>
+    <li><strong>Disable std normalization</strong> — drop the \(\operatorname{std}(r)\) denominator in the advantage formula, using \(\hat A_{i,t} = r_i - \operatorname{mean}(r)\) instead of the z-score. This makes the advantage magnitude proportional to reward gap rather than reward spread, allowing the trainer to tell a 0.1-gap batch from a 0.9-gap batch.</li>
+  </ol>
+
+  <div class="note">
+    With std-norm on, the fraction-positive metric is always exactly 50/50 by construction. Turning std-norm off makes it diagnostic again: fraction positive &lt; 50% means most prompts are beyond the policy's current capability.
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Setting</th><th>Standard GRPO</th><th>Dr.GRPO</th></tr>
+      <tr>
+        <td>Std normalization</td>
+        <td>\(\hat A_i = (r_i - \mu)/\sigma\)</td>
+        <td>\(\hat A_i = r_i - \mu\) &nbsp; (no division by \(\sigma\))</td>
+      </tr>
+      <tr>
+        <td>Loss aggregation</td>
+        <td>Average over tokens per output</td>
+        <td>Sum over tokens per output, then divide by constant \(D\)</td>
+      </tr>
+      <tr>
+        <td>Length bias</td>
+        <td>Present (longer outputs dominate)</td>
+        <td>Eliminated (each output has equal gradient mass)</td>
+      </tr>
+      <tr>
+        <td>verl config</td>
+        <td><code>norm_adv_by_std_in_grpo: true</code><br><code>loss_agg_mode: token-mean</code></td>
+        <td><code>norm_adv_by_std_in_grpo: false</code><br><code>loss_agg_mode: seq-mean-token-sum-norm</code></td>
+      </tr>
+      <tr>
+        <td>Miles config</td>
+        <td>default (std-norm on)</td>
+        <td><code>--disable-grpo-std-normalization</code><br>+ <code>--custom-pg-loss-reducer-function-path examples.DrGRPO.custom_reducer:get_pg_loss_reducer</code></td>
+      </tr>
+    </table>
+  </div>
+
   <h2>What's Next</h2>
   <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; margin:1.2em 0;">
     <a href="rlhf.html" style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;text-decoration:none;color:inherit;display:block;">
@@ -542,6 +586,11 @@
       <div style="font-size:0.78rem;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Related</div>
       <div style="font-weight:600;font-size:0.95rem;margin-bottom:4px;">DPO</div>
       <p style="margin:0;font-size:0.88rem;color:#6b7280;">The fully offline alternative: preference pairs, no rollouts, no reward model required.</p>
+    </a>
+    <a href="async-rl-monitoring.html" style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;text-decoration:none;color:inherit;display:block;">
+      <div style="font-size:0.78rem;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Diagnostics</div>
+      <div style="font-weight:600;font-size:0.95rem;margin-bottom:4px;">Monitoring &amp; Diagnosis</div>
+      <p style="margin:0;font-size:0.88rem;color:#6b7280;">What to log and how to read it: pg_clipfrac, Pearson correlation, entropy collapse, IS ratios — plus GRPO-specific dead-batch detection via within-group reward diversity.</p>
     </a>
   </div>
 

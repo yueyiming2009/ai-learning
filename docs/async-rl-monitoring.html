@@ -641,29 +641,62 @@ Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
   <!-- ── §7 Advantage stats ─────────────────── -->
   <h2 id="advantages">7. Advantage Statistics — Signal Health</h2>
 
-  <p>Computed after GAE but <em>before</em> whitening, so they reflect the raw reward signal
-  strength:</p>
+  <p>Measured <em>before</em> whitening, so they reflect raw reward signal strength. The
+  diagnostic meaning differs between PPO (critic-estimated baseline) and GRPO (group-mean
+  baseline):</p>
 
   <ul>
     <li><strong>\(\mathrm{Var}(A_t)\) before whitening</strong> — the spread of raw advantages.
-    If this collapses toward zero, the critic has overfit to the current batch and is predicting
-    near-perfect returns — the policy gradient signal is dead. This is a common early warning
-    before reward hacking becomes visible in reward curves.</li>
-    <li><strong>Fraction of tokens with \(A_t > 0\) vs \(A_t < 0\)</strong> — in a healthy
-    batch, roughly 50% of response tokens should be above and below the baseline. A strong
-    imbalance means the reward signal is nearly one-sided: either all actions look good (reward
-    ceiling) or all look bad (reward floor, often caused by a miscalibrated KL penalty).</li>
-    <li><strong>Advantage mean before whitening</strong> — should be near zero since GAE is
-    baselined by the critic. A persistent non-zero mean signals the critic is systematically
-    under- or over-estimating returns.</li>
+      <ul style="margin-top:0.4em;">
+        <li><strong>PPO:</strong> collapse toward zero means the critic has overfit and is
+        predicting near-perfect returns — the policy gradient signal is dead. Cross-check with
+        <code>vf_explained_var</code> → 1.0. Common early warning before reward hacking appears
+        in reward curves.</li>
+        <li><strong>GRPO:</strong> collapse toward zero means <em>reward collapse</em> — all
+        outputs in the group received the same score, so z-scored advantages are all near zero
+        and the batch provides no training signal. Root cause is usually prompt difficulty
+        mismatch (all too easy or too hard) or a miscalibrated reward function. Fix: check
+        within-group reward std and adjust prompt difficulty sampling.</li>
+      </ul>
+    </li>
+    <li><strong>Fraction of tokens with \(A_t > 0\) vs \(A_t < 0\)</strong>
+      <ul style="margin-top:0.4em;">
+        <li><strong>PPO:</strong> roughly 50% above and below the baseline in a healthy batch.
+        A strong imbalance signals a nearly one-sided reward (ceiling or floor, or miscalibrated
+        KL penalty).</li>
+        <li><strong>GRPO with std-norm (default):</strong> always exactly 50/50 by construction
+        — z-scoring forces the group mean to zero. This metric is uninformative in standard
+        GRPO; ignore it.</li>
+        <li><strong>GRPO / Dr.GRPO (std-norm off,
+        <code>norm_adv_by_std_in_grpo: false</code>):</strong> fraction positive reflects
+        actual reward difficulty — a majority negative means the policy is mostly wrong on the
+        current prompt distribution.</li>
+      </ul>
+    </li>
+    <li><strong>Advantage mean before whitening</strong> — should be near zero (GAE is
+    critic-baselined in PPO; z-score mean is exactly zero in standard GRPO). A persistent
+    non-zero mean in PPO signals the critic is systematically off; in GRPO it only arises
+    with std-norm disabled.</li>
   </ul>
+
+  <h3>PPO only: <code>vf_explained_var</code> — critic quality</h3>
+  <p>\(1 - \mathrm{Var}(R-V)/\mathrm{Var}(R)\): approaches 1.0 when the critic perfectly
+  predicts returns (policy gradient signal is dead); near 0 when the critic is uninformative.
+  <strong>This metric does not exist in GRPO runs</strong> — there is no critic to overfit.
+  verl key: <code>critic/vf_explained_var</code>; Miles: not logged.</p>
+
+  <h3>GRPO only: within-group reward std — dead-batch detection</h3>
+  <p>The standard deviation of raw rewards within each group:
+  \(\mathrm{std}(\{r_1,\ldots,r_G\})\) per prompt. Near zero means all completions scored
+  identically — the group provides no contrastive signal and the gradient update is noise.
+  Neither verl nor Miles logs this as a first-class metric; add a custom logger that reads
+  raw rewards before normalization. As a proxy, watch <code>critic/advantages/std</code>
+  (verl) or <code>rollout/advantages</code> (Miles) — when reward diversity collapses,
+  advantage std follows.</p>
 
   <p><strong>Metric keys —</strong>
     verl: <code>critic/advantages/mean</code>, <code>critic/advantages/max</code>,
-    <code>critic/advantages/min</code>; <code>critic/vf_explained_var</code>
-    (\(1 - \mathrm{Var}(R-V)/\mathrm{Var}(R)\)) as a proxy for critic overfit — approaches
-    1.0 when the critic perfectly predicts returns and the policy gradient signal is gone,
-    near 0 when the critic is uninformative ·
+    <code>critic/advantages/min</code>; PPO only: <code>critic/vf_explained_var</code> ·
     Miles: <code>rollout/advantages</code> (mean only); <code>rollout/returns</code>.
   </p>
 
@@ -772,9 +805,16 @@ Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
       <tr>
         <td>\(\mathrm{Var}(A_t)\) (pre-whiten)</td>
         <td>Non-zero, stable</td>
-        <td>→ 0 = critic overfit; use <code>vf_explained_var</code> → 1 as the direct signal</td>
-        <td><code>critic/advantages/mean</code><br><code>critic/vf_explained_var</code></td>
+        <td>PPO → 0 = critic overfit (<code>vf_explained_var</code> → 1 is the direct signal); GRPO → 0 = reward collapse (dead batch)</td>
+        <td><code>critic/advantages/mean</code><br><small style="color:var(--muted);">PPO only: <code>critic/vf_explained_var</code></small></td>
         <td><code>rollout/advantages</code></td>
+      </tr>
+      <tr>
+        <td>Within-group reward std <small style="color:var(--muted);">(GRPO only)</small></td>
+        <td>≥ 0.1</td>
+        <td>&lt; 0.01 = dead batch; no contrastive signal this step; check prompt difficulty</td>
+        <td style="color:var(--muted);font-size:0.88em;">Custom log; proxy: <code>critic/advantages/std</code></td>
+        <td style="color:var(--muted);font-size:0.88em;">Custom log; proxy: <code>rollout/advantages</code></td>
       </tr>
       <tr>
         <td><code>grad_norm</code></td>
