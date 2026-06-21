@@ -140,6 +140,7 @@
     <a href="#bias-variance">Bias vs Variance</a>
     <a href="#nstep">n-Step TD</a>
     <a href="#tdlambda">TD(λ) and GAE</a>
+    <a href="#eligibility">Eligibility Traces</a>
     <a href="#qlearning">Q-Learning</a>
     <a href="#llm">In LLM RL</a>
     <a href="#next">What's Next</a>
@@ -298,7 +299,7 @@
   <p>The n-step advantage is just a discounted sum of one-step TD errors. This is not a coincidence — it falls directly out of the Bellman recursion and is the algebraic key that makes GAE possible.</p>
 
   <h2 id="tdlambda">6. TD(λ) and GAE</h2>
-  <p>Rather than commit to one value of \(n\), <strong>TD(λ)</strong> takes an exponentially-weighted average of all \(n\)-step returns at once, controlled by \(\lambda \in [0,1]\):</p>
+  <p>Rather than commit to one value of \(n\), <strong>TD(λ)</strong> takes a weighted average of <em>all</em> \(n\)-step returns simultaneously. The mixing parameter \(\lambda \in [0,1]\) controls how much weight each horizon receives:</p>
 
   <div class="result">
     <div class="result-label">λ-return (TD(λ) target)</div>
@@ -307,22 +308,140 @@
     \]
   </div>
 
-  <p>The weights \((1-\lambda)\lambda^{n-1}\) sum to 1 and decay geometrically — short-horizon returns get the most weight when \(\lambda\) is small; long-horizon returns dominate as \(\lambda \to 1\). At the extremes:</p>
-  <ul>
-    <li>\(\lambda = 0\): only the 1-step return — pure TD(0). Low variance, higher bias.</li>
-    <li>\(\lambda = 1\): all \(n\)-step returns weighted equally — telescopes to the full MC return \(G_t\). Unbiased, high variance.</li>
-  </ul>
+  <p>The factor \((1-\lambda)\lambda^{n-1}\) is a geometric distribution over \(n\): each extra step gets \(\lambda\) times the weight of the previous one, and the \((1-\lambda)\) normalises the total to 1. Example with \(\lambda = 0.9\):</p>
 
-  <div class="step">
-    <div class="step-label">TD(λ) as GAE</div>
-    <p>Substituting the n-step advantage \(\sum_{l=0}^{n-1}\gamma^l \delta_{t+l}\) into the λ-return and collecting the coefficient of each \(\delta_{t+l}\) gives:</p>
-    \[
-      \hat A_t^{\text{GAE}(\gamma,\lambda)} = G_t^\lambda - V(s_t) = \sum_{l=0}^{\infty} (\gamma\lambda)^l\, \delta_{t+l}
-    \]
-    <p>This is exactly <strong>Generalised Advantage Estimation</strong> (GAE) — the advantage estimator used in PPO. TD(λ) <em>is</em> GAE. The full derivation and the backward-pass recursion \(\hat A_t = \delta_t + \gamma\lambda\,\hat A_{t+1}\) are on the <a href="policy-gradient.html#gae" style="color:var(--accent);">Policy Gradient page</a>.</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Horizon \(n\)</th><th>Weight \((1-\lambda)\lambda^{n-1}\)</th><th>What the return is</th></tr>
+      <tr><td>1</td><td>0.100</td><td>1 real reward, then bootstrap — TD(0)</td></tr>
+      <tr><td>2</td><td>0.090</td><td>2 real rewards, then bootstrap</td></tr>
+      <tr><td>3</td><td>0.081</td><td>3 real rewards, then bootstrap</td></tr>
+      <tr><td>10</td><td>0.039</td><td>10 real rewards, then bootstrap</td></tr>
+      <tr><td>∞</td><td>→ 0</td><td>Full MC return — no bootstrap at all</td></tr>
+    </table>
   </div>
 
-  <h2 id="qlearning">7. Q-Learning — Off-Policy TD for Q*</h2>
+  <p>At the extremes: \(\lambda = 0\) puts all weight on the 1-step return (pure TD(0)); \(\lambda = 1\) gives equal weight to all horizons, which telescopes to the full MC return \(G_t\).</p>
+
+  <h3>Deriving GAE from the λ-return</h3>
+  <p>We want the advantage form \(\hat A_t = G_t^\lambda - V(s_t)\). From §5, the n-step advantage decomposes into a sum of TD errors:</p>
+  \[
+    G_t^{(n)} - V(s_t) = \sum_{l=0}^{n-1} \gamma^l\, \delta_{t+l}
+  \]
+  <p>Substitute into the λ-return, then swap the order of summation (sum over \(l\) first, then count how many \(n\)-terms include \(\delta_{t+l}\)):</p>
+  \[
+    \hat A_t = (1-\lambda)\sum_{n=1}^\infty \lambda^{n-1} \sum_{l=0}^{n-1} \gamma^l\delta_{t+l}
+    = \sum_{l=0}^\infty \gamma^l \delta_{t+l} \underbrace{(1-\lambda)\sum_{n=l+1}^\infty \lambda^{n-1}}_{\displaystyle = \lambda^l}
+  \]
+
+  <div class="result">
+    <div class="result-label">Generalised Advantage Estimation (GAE)</div>
+    \[
+      \hat A_t = G_t^\lambda - V(s_t) = \sum_{l=0}^{\infty} (\gamma\lambda)^l\, \delta_{t+l}
+    \]
+    <p style="font-size:0.85rem;color:var(--muted);margin:8px 0 0;">Every future TD error \(\delta_{t+l}\) contributes, but its influence decays geometrically. A surprise two steps away matters \(\gamma\lambda\) times less than a surprise one step away. \(\lambda\) is the decay knob: small \(\lambda\) means only nearby surprises matter; \(\lambda \to 1\) means all surprises matter equally.</p>
+  </div>
+
+  <h3>The backward recursion — how GAE is actually computed</h3>
+  <p>The sum \(\sum_{l\geq 0}(\gamma\lambda)^l\delta_{t+l}\) looks forward in time, but in practice you first collect a full rollout and then compute advantages in a single backward pass:</p>
+
+  <div class="result">
+    <div class="result-label">GAE backward recursion</div>
+    \[
+      \hat A_T = 0, \qquad \hat A_t = \delta_t + \gamma\lambda\,\hat A_{t+1}
+    \]
+  </div>
+
+  <div class="step">
+    <div class="step-label">Why the recursion equals the forward sum</div>
+    <p>Unroll from \(t\):</p>
+    \[
+      \hat A_t = \delta_t + \gamma\lambda\bigl(\delta_{t+1} + \gamma\lambda\bigl(\delta_{t+2} + \cdots\bigr)\bigr)
+      = \sum_{l=0}^\infty (\gamma\lambda)^l \delta_{t+l}
+    \]
+    <p>Identical. The recursion is the forward sum written inside-out — and it computes every \(\hat A_t\) in \(O(T)\) with a single backward loop.</p>
+  </div>
+
+  <div class="algo">
+    <div class="algo-title">GAE backward pass — used in every PPO implementation</div>
+    <pre><span class="req">Given:</span> stored rollout δ[0..T−1], discount γ, trace parameter λ
+
+A[T] ← 0
+<span class="kw">for</span> t <span class="kw">in</span> reversed(range(T)):
+    A[t] ← δ[t] + γ · λ · A[t+1]   <span class="cm">▷ one multiply-add per step</span>
+
+<span class="cm">▷ A[t] = Σ_l (γλ)^l δ[t+l] — the full GAE advantage at every position</span></pre>
+  </div>
+
+  <h2 id="eligibility">7. Eligibility Traces — The Backward View</h2>
+  <p>The backward recursion works because you <em>stored</em> the rollout. Eligibility traces answer the same question without storage: they update weights <em>online</em>, at every step, by maintaining a running memory of which parameters were recently responsible for predictions.</p>
+
+  <p>The key is to flip the temporal perspective. The forward view asks: <em>at time \(t\), how much weight should I put on the TD error that occurs \(l\) steps in the future?</em> Answer: \((\gamma\lambda)^l\). The backward view asks: <em>when a TD error \(\delta_k\) occurs, how much credit should a state visited at time \(t \leq k\) receive?</em> Same answer: \((\gamma\lambda)^{k-t}\). The eligibility trace tracks this decaying credit for all parameters simultaneously.</p>
+
+  <h3>The trace mechanism</h3>
+
+  <div class="result">
+    <div class="result-label">Eligibility trace update</div>
+    \[
+      \mathbf{e}_0 = \mathbf{0}, \qquad
+      \mathbf{e}_t = \gamma\lambda\,\mathbf{e}_{t-1} + \nabla_\mathbf{w} V(s_t;\mathbf{w})
+    \]
+  </div>
+
+  <p>\(\mathbf{e}_t\) is a vector with the same shape as the weights \(\mathbf{w}\). At each step it decays by \(\gamma\lambda\) (older states matter less) and accumulates the gradient of the current state's value prediction. It is a weighted sum of all past gradients, with more recent gradients given more weight.</p>
+
+  <p>When a TD error \(\delta_t\) occurs, instead of updating only the current state, every weight is updated in proportion to its trace:</p>
+  \[
+    \mathbf{w} \;\leftarrow\; \mathbf{w} + \alpha\,\delta_t\,\mathbf{e}_t
+  \]
+
+  <div class="algo">
+    <div class="algo-title">Algorithm — TD(λ) with eligibility traces (online, no episode storage)</div>
+    <pre><span class="req">Initialize:</span> w ← random; e ← 0
+
+<span class="kw">for each</span> episode:
+    s ← s₀;  e ← 0                              <span class="cm">▷ reset trace each episode</span>
+    <span class="kw">while</span> s is not terminal:
+        a       ← π(s)
+        r, s'   ← env.step(s, a)
+        δ       ← r + γ · V(s'; w) − V(s; w)    <span class="cm">▷ TD error</span>
+        e       ← γλ · e + ∇<sub>w</sub> V(s; w)         <span class="cm">▷ decay, then add current gradient</span>
+        w       ← w + α · δ · e                  <span class="cm">▷ update ALL weights by trace</span>
+        s       ← s'</pre>
+  </div>
+
+  <h3>Why traces equal the forward view</h3>
+  <p>Consider the total update applied to \(\mathbf{w}\) due to state \(s_t\) across the full episode. Every TD error \(\delta_k\) at time \(k \geq t\) contributes \(\alpha\delta_k \cdot (\gamma\lambda)^{k-t}\nabla_\mathbf{w} V(s_t)\), because the gradient from \(s_t\) was in the trace at step \(k\) with coefficient \((\gamma\lambda)^{k-t}\). Summing:</p>
+  \[
+    \text{total update at } s_t \;=\; \alpha \biggl[\sum_{k \geq t} (\gamma\lambda)^{k-t}\delta_k\biggr] \nabla_\mathbf{w} V(s_t)
+    \;=\; \alpha\,\hat A_t\,\nabla_\mathbf{w} V(s_t)
+  \]
+  <p>This is exactly the policy gradient update the forward view would produce. The trace is the online, causal implementation of the same credit assignment.</p>
+
+  <h3>Tabular vs. neural networks</h3>
+  <div class="table-wrap">
+    <table>
+      <tr><th></th><th>Tabular</th><th>Neural network</th></tr>
+      <tr><td><strong>Trace</strong></td><td>\(e_t(s) \leftarrow \gamma\lambda\,e_{t-1}(s) + 1\) for visited \(s\); 0 otherwise</td><td>\(\mathbf{e}_t = \gamma\lambda\,\mathbf{e}_{t-1} + \nabla_\mathbf{w} V(s_t;\mathbf{w})\)</td></tr>
+      <tr><td><strong>Update</strong></td><td>\(V(s) \leftarrow V(s) + \alpha\delta_t e_t(s)\) for every \(s\)</td><td>\(\mathbf{w} \leftarrow \mathbf{w} + \alpha\delta_t\mathbf{e}_t\)</td></tr>
+      <tr><td><strong>Online?</strong></td><td>Yes — updates after every step</td><td>Yes, but expensive at network scale</td></tr>
+      <tr><td><strong>Used in practice</strong></td><td>Classic RL (gridworlds, tabular Q-learning)</td><td>Rarely — GAE backward pass is preferred</td></tr>
+    </table>
+  </div>
+
+  <div class="note">
+    Modern deep RL for LLMs doesn't use online eligibility traces — maintaining a trace vector over millions of parameters and updating it every token is too expensive. Instead, a full rollout is collected, then the GAE backward recursion runs as a single \(O(T)\) batch computation. The backward recursion and online eligibility traces are mathematically equivalent; they are two implementations of the same credit assignment idea.
+  </div>
+
+  <h3>Accumulating vs. replacing traces</h3>
+  <p>When a state is revisited within an episode, two conventions exist:</p>
+  <ul>
+    <li><strong>Accumulating:</strong> \(\mathbf{e}_t = \gamma\lambda\,\mathbf{e}_{t-1} + \nabla V(s_t)\). Credit accumulates on each revisit — used by standard TD(λ) and implicitly by GAE.</li>
+    <li><strong>Replacing:</strong> cap the trace at 1 on revisit. Prevents a frequently visited state from dominating the update — better behaved in looping environments.</li>
+    <li><strong>Dutch:</strong> \(\mathbf{e}_t = (1-\alpha)\gamma\lambda\,\mathbf{e}_{t-1} + \nabla V(s_t)\). Reduces double-counting in gradient updates with function approximation.</li>
+  </ul>
+
+  <h2 id="qlearning">8. Q-Learning — Off-Policy TD for Q*</h2>
   <p>TD(0) evaluates a fixed policy \(\pi\) — it estimates \(V^\pi\). <strong>Q-learning</strong> (Watkins, 1989) uses TD to directly learn the <em>optimal</em> Q-function \(Q^*\), without needing to know or follow the optimal policy during data collection.</p>
 
   <p>The key change: replace the one-step bootstrap with a greedy maximum over next actions.</p>
@@ -370,7 +489,7 @@
   \]
   <p>The name comes from the tuple \((s_t, a_t, r_t, s_{t+1}, a_{t+1})\) it uses. Because it evaluates the policy that's actually being followed, SARSA is safer in environments where exploration mistakes are costly — the policy it learns accounts for the fact that it sometimes takes random actions.</p>
 
-  <h2 id="llm">8. TD Learning in LLM RL</h2>
+  <h2 id="llm">9. TD Learning in LLM RL</h2>
   <p>LLM RL doesn't use tabular TD — the state space is too large. But the TD error \(\delta_t\) and the TD(λ)/GAE framework are central to PPO.</p>
 
   <div class="table-wrap">
@@ -400,7 +519,7 @@
     <p>Training the critic \(V_\psi\) is expensive and unstable — it requires a second forward pass on all rollout tokens, regresses toward noisy targets, and can diverge. GRPO sidesteps this by using the group-average reward as a Monte Carlo estimate of \(V(s_0)\), assigning a uniform advantage across all tokens in a response. It trades the per-token credit assignment that TD enables for simplicity and stability. See the <a href="grpo.html" style="color:var(--accent);">GRPO page</a>.</p>
   </div>
 
-  <h2 id="next">9. What's Next</h2>
+  <h2 id="next">10. What's Next</h2>
   <div class="next-grid">
     <a class="next-card" href="dqn.html">
       <div class="next-card-label">Next</div>
@@ -439,8 +558,16 @@
       <p>\(G_t^{(n)} = \sum_{l=0}^{n-1}\gamma^l r_{t+l} + \gamma^n V(s_{t+n})\)</p>
     </div>
     <div class="summary-card">
-      <div class="summary-card-label">TD(λ) / GAE</div>
-      <p>\(\hat A_t = \sum_{l \ge 0}(\gamma\lambda)^l\delta_{t+l}\)</p>
+      <div class="summary-card-label">GAE (forward view)</div>
+      <p>\(\hat A_t = \sum_{l \ge 0}(\gamma\lambda)^l\delta_{t+l}\) — weighted sum of future TD errors</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">GAE (backward recursion)</div>
+      <p>\(\hat A_T = 0,\;\hat A_t = \delta_t + \gamma\lambda\hat A_{t+1}\) — how PPO computes it</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Eligibility trace</div>
+      <p>\(\mathbf{e}_t = \gamma\lambda\mathbf{e}_{t-1} + \nabla V(s_t)\); update \(\mathbf{w} \leftarrow \mathbf{w} + \alpha\delta_t\mathbf{e}_t\)</p>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">Q-learning update</div>
