@@ -130,6 +130,13 @@
       margin: 1.6em 0 0.4em;
       color: #374151;
     }
+    h4 {
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin: 1.3em 0 0.3em;
+      color: var(--accent);
+    }
+    .placement-card h4 { margin: 0 0 8px; color: var(--accent); }
     p { margin: 0.6em 0; }
     ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
     li { margin-bottom: 0.4em; }
@@ -427,51 +434,95 @@ mapping = {
   <!-- ── §3 Placement Strategies ───────────────── -->
   <h2 id="strategies">3. Placement Strategies</h2>
 
-  <div class="placement-grid">
+  <p>The right pool layout depends on your <strong>algorithm first</strong>, then on two
+  orthogonal dimensions: whether the rollout runs synchronously on the actor's GPUs or
+  asynchronously on a dedicated pool, and — for PPO only — where the critic lives.</p>
+
+  <!-- ── GRPO ───────────────────────────────────── -->
+  <h3>GRPO — no critic</h3>
+
+  <p>GRPO removes the critic and derives advantages from the rollout batch itself. There is
+  exactly one placement decision: does the rollout share GPUs with the actor, or get its own
+  pool?</p>
+
+  <h4>Colocated (default)</h4>
+
+  <p>Actor, rollout, and reference policy share one pool. The hybrid engine alternates between
+  FSDP training mode and vLLM generation mode on the same GPUs. Keep
+  <code>gpu_memory_utilization</code> low enough that FSDP can resume after vLLM releases.</p>
+
+  <pre><code>resource_pool_spec = {
+    'actor_rollout_ref': ResourcePool(process_on_nodes=[8]),
+}
+mapping = {
+    ActorRolloutRefWorker: 'actor_rollout_ref',
+}</code></pre>
+
+  <h4>Disaggregated async</h4>
+
+  <p>Rollout workers move to a dedicated GPU pool and run continuously; the trainer never idles
+  waiting for generation. Generation scales by adding rollout replicas without touching the
+  training cluster. The rollout pool can use near-maximum <code>gpu_memory_utilization</code>
+  because FSDP never runs there.</p>
+
+  <pre><code>resource_pool_spec = {
+    'actor_ref': ResourcePool(process_on_nodes=[8]),   # training
+    'rollout':   ResourcePool(process_on_nodes=[8]),   # generation (dedicated)
+}
+# fully_async=True in the trainer config</code></pre>
+
+  <div class="note">
+    <strong>Weight sync (async only):</strong> VeRL pushes updated weights from the actor pool
+    to the rollout pool via NCCL AllGather every <code>trigger_parameter_sync_step</code>
+    training steps. For a 7B BF16 model: ~5–15 s over NVLink, 3–5× slower over InfiniBand.
+    This introduces policy lag — pair with <a href="async-rl.html#is">IS correction</a>.
+    See <a href="async-rl.html#knobs">VeRL async knobs</a>.
+  </div>
+
+  <!-- ── PPO ────────────────────────────────────── -->
+  <h3>PPO — two independent dimensions</h3>
+
+  <p>PPO adds a critic, introducing a second placement choice that is orthogonal to the
+  sync/async decision. Reason through them separately.</p>
+
+  <h4>Dimension 1 — Critic placement</h4>
+
+  <p>In synchronous PPO the critic computes value estimates after every rollout. You decide
+  whether it shares the actor's pool or runs on its own GPUs:</p>
+
+  <div class="placement-grid" style="grid-template-columns: 1fr 1fr; margin: 0.8em 0 1.2em;">
     <div class="placement-card">
-      <h4>Fully Colocated</h4>
-      <p style="font-size:0.85rem;margin:0 0 8px;">All workers share one resource pool.</p>
+      <h4>Fully colocated</h4>
+      <p style="font-size:0.85rem;margin:0 0 8px;">Actor + rollout + ref + critic on one pool.</p>
       <ul>
         <li>Minimum GPU count</li>
-        <li>No concurrent actor + critic</li>
-        <li>Low <code>gpu_memory_utilization</code> required (leaves room for FSDP)</li>
-        <li>Best for small clusters / tight GPU budgets</li>
+        <li>Critic and actor forward passes <em>serialize</em></li>
+        <li>Lowest <code>gpu_memory_utilization</code> needed</li>
+        <li>Best for: small clusters, critic is a lightweight value head</li>
       </ul>
     </div>
     <div class="placement-card">
-      <h4>Split Pools (sync)</h4>
-      <p style="font-size:0.85rem;margin:0 0 8px;">ActorRollout and Critic on separate pools.</p>
+      <h4>Split critic pool</h4>
+      <p style="font-size:0.85rem;margin:0 0 8px;">Critic on a dedicated pool; actor+rollout+ref on another.</p>
       <ul>
-        <li>Critic and actor forward passes can overlap</li>
-        <li>Higher <code>gpu_memory_utilization</code> for rollout pool</li>
-        <li>Critic pool sized independently (often smaller model)</li>
-        <li>Standard choice for 70B+ or when critic is a separate model</li>
-      </ul>
-    </div>
-    <div class="placement-card">
-      <h4>Disaggregated (async)</h4>
-      <p style="font-size:0.85rem;margin:0 0 8px;">Rollout on a dedicated GPU pool; training on another.</p>
-      <ul>
-        <li>Training and generation fully overlap in time</li>
-        <li>Rollout pool can use <code>gpu_memory_utilization ≥ 0.85</code></li>
-        <li>Requires weight sync (NCCL AllGather across pools)</li>
-        <li>Introduces policy lag — must pair with <a href="async-rl.html">IS correction</a></li>
+        <li>Critic forward can overlap actor update step</li>
+        <li>Critic pool sized independently (often a smaller model)</li>
+        <li>Higher <code>gpu_memory_utilization</code> on actor pool</li>
+        <li>Best for: 30B–70B; critic is a separate full model</li>
       </ul>
     </div>
   </div>
 
-  <h3>Colocated — pool spec</h3>
-  <pre><code># All workers on 8 GPUs
+  <pre><code># Fully colocated PPO
 resource_pool_spec = {
     'shared': ResourcePool(process_on_nodes=[8]),
 }
 mapping = {
     ActorRolloutRefWorker: 'shared',
     CriticWorker:          'shared',
-}</code></pre>
+}
 
-  <h3>Split pools — pool spec</h3>
-  <pre><code># Actor+rollout+ref on 8 GPUs; critic on 4 GPUs
+# Split critic pool PPO
 resource_pool_spec = {
     'actor_rollout_ref': ResourcePool(process_on_nodes=[8]),
     'critic':            ResourcePool(process_on_nodes=[4]),
@@ -481,97 +532,81 @@ mapping = {
     CriticWorker:          'critic',
 }</code></pre>
 
-  <h3>Disaggregated async — pool spec</h3>
-  <pre><code># Training on 8 GPUs; dedicated rollout on 8 more
+  <h4>Dimension 2 — Sync vs async rollout</h4>
+
+  <p>Independently of critic placement, you can move the rollout worker to its own pool.
+  This is the same async pattern as GRPO above — the critic pool is a third independent pool:</p>
+
+  <pre><code># Disaggregated async PPO (with split critic)
 resource_pool_spec = {
-    'actor_ref':   ResourcePool(process_on_nodes=[8]),  # training cluster
-    'rollout':     ResourcePool(process_on_nodes=[8]),  # generation cluster
-    'critic':      ResourcePool(process_on_nodes=[4]),
+    'actor_ref': ResourcePool(process_on_nodes=[8]),   # training
+    'rollout':   ResourcePool(process_on_nodes=[8]),   # generation (dedicated)
+    'critic':    ResourcePool(process_on_nodes=[4]),   # value function
 }
-# In async mode VeRL's fully_async=True routes rollout workers to 'rollout' pool</code></pre>
+# fully_async=True; critic still advances synchronously with the actor update</code></pre>
 
   <div class="note">
-    <strong>Weight sync cost</strong>: in disaggregated mode, VeRL pushes updated weights from
-    the actor pool to the rollout pool via NCCL AllGather after every
-    <code>trigger_parameter_sync_step</code> training steps. For a 7B BF16 model this takes
-    roughly 5–15 seconds over NVLink; over InfiniBand it is 3–5× slower.
-    Setting <code>trigger_parameter_sync_step</code> too small makes sync a bottleneck;
-    too large increases policy lag. See <a href="async-rl.html#knobs">VeRL async knobs</a>.
+    Even in async mode, the critic runs synchronously with the actor update — only the rollout
+    is decoupled. Critic pool GPUs are idle during generation but active during training, so the
+    split-critic overlap benefit is preserved.
   </div>
 
+  <!-- ── Effective cluster utilization ─────────── -->
   <h3>Effective cluster utilization</h3>
 
   <p><code>gpu_memory_utilization</code> is a vLLM KV-cache knob — it says nothing about whether
-  the GPU's SMs are doing useful work. The more important efficiency question is:
-  <strong>what fraction of GPU-seconds across a full RL step is spent on actual compute?</strong></p>
+  SMs are doing useful work. Autoregressive generation is memory-bandwidth-bound (SM utilization
+  20–45%); FSDP training is compute-bound (50–80%). In synchronous runs the two phases
+  alternate and are separated by a transition penalty (FSDP AllGather + vLLM init/teardown,
+  typically 5–30 s per step). In async runs they fully overlap.</p>
 
-  <p>Each phase has a different compute character:</p>
-  <ul>
-    <li><strong>Rollout</strong> — autoregressive generation is memory-bandwidth-bound. Each decode
-    step loads the full KV cache plus model weights but does very little arithmetic. SM utilization
-    typically runs 20–45%.</li>
-    <li><strong>Training</strong> — FSDP forward + backward is compute-bound. Flash attention and
-    large matmuls drive SM utilization to 50–80%, limited by NCCL overlap and activation
-    checkpointing overhead.</li>
-    <li><strong>Transition overhead</strong> — the FSDP AllGather, vLLM weight load, and vLLM
-    teardown at each phase boundary contribute 5–30 s of near-zero utilization per step. This cost
-    is often invisible in per-phase timing logs but real in wall-clock throughput.</li>
-  </ul>
-
-  <p>The effective utilization of the cluster over a complete RL step is:</p>
+  <p>Effective cluster utilization over one RL step:</p>
 
   \[
     U_{\text{eff}} = \frac{U_{\text{rollout}} \cdot T_{\text{rollout}} \;+\; U_{\text{train}} \cdot T_{\text{train}}}
                          {T_{\text{rollout}} + T_{\text{train}} + T_{\text{transition}}}
   \]
 
-  <p>With representative numbers — \(U_{\text{rollout}} = 0.35\), \(U_{\text{train}} = 0.65\),
-  \(T_{\text{rollout}} = 60\text{ s}\), \(T_{\text{train}} = 20\text{ s}\),
-  \(T_{\text{transition}} = 10\text{ s}\) — the effective utilization is:</p>
-
-  \[
-    U_{\text{eff}} \approx \frac{0.35 \times 60 + 0.65 \times 20}{60 + 20 + 10} \approx \mathbf{0.42}
-  \]
-
-  <p>Less than half of GPU-seconds are spent on useful compute. How each strategy changes this:</p>
+  <p>With \(T_{\text{rollout}} = 60\text{ s}\), \(T_{\text{train}} = 20\text{ s}\),
+  \(T_{\text{transition}} = 10\text{ s}\): \(U_{\text{eff}} \approx 0.42\) — less than half of
+  GPU-seconds on useful compute.</p>
 
   <div class="table-wrap">
     <table>
       <tr>
-        <th>Strategy</th>
+        <th>Config</th>
+        <th>Applies to</th>
         <th>Rollout phase</th>
         <th>Training phase</th>
-        <th>Transition cost</th>
         <th>Typical \(U_{\text{eff}}\)</th>
       </tr>
       <tr>
-        <td><strong>Fully colocated (sync)</strong></td>
-        <td>All GPUs do generation (mem-BW bound)</td>
-        <td>All GPUs do FSDP (compute bound)</td>
-        <td>10–30 s (AllGather + vLLM init/teardown every step)</td>
+        <td><strong>Colocated, sync</strong></td>
+        <td>GRPO / PPO</td>
+        <td>All GPUs generate (mem-BW bound)</td>
+        <td>All GPUs train (compute bound)</td>
         <td>35–50%</td>
       </tr>
       <tr>
-        <td><strong>Split pools (sync)</strong></td>
+        <td><strong>Split critic, sync</strong></td>
+        <td>PPO only</td>
         <td>Actor pool generates; critic pool idle</td>
-        <td>Actor + critic pools run concurrently (critic overlaps actor update)</td>
-        <td>Same transition on actor pool; critic free to start sooner</td>
+        <td>Actor + critic pools run concurrently</td>
         <td>45–60%</td>
       </tr>
       <tr>
         <td><strong>Disaggregated async</strong></td>
-        <td>Rollout pool generates continuously</td>
-        <td>Training pool trains continuously; phases fully overlap</td>
-        <td>Weight sync amortized over many steps; not on critical path</td>
+        <td>GRPO / PPO</td>
+        <td>Rollout pool generates <em>continuously</em></td>
+        <td>Training pool trains <em>continuously</em>; fully overlap</td>
         <td>65–80%</td>
       </tr>
     </table>
   </div>
 
-  <p>The practical upshot: if your cluster is expensive and rollout dominates step time, the jump
-  from colocated to disaggregated async is the single highest-leverage utilization improvement.
-  Split pools are a cheaper middle ground when the critic is a large model that would otherwise
-  serialize with actor training.</p>
+  <p>If rollout dominates step time, disaggregated async is the single highest-leverage
+  utilization improvement. Splitting the critic is a cheaper incremental gain when the critic
+  is large enough to meaningfully serialize with actor training.</p>
 
   <!-- ── §4 Memory Budget ───────────────────────── -->
   <h2 id="memory">4. Memory Budget Per GPU</h2>
@@ -640,12 +675,12 @@ resource_pool_spec = {
         <td>Must leave ~40% for FSDP params + grads + optimizer + activations during training phase.</td>
       </tr>
       <tr>
-        <td>Split pools (actor only, no critic on same pool)</td>
+        <td>Split critic pool (actor+rollout on one pool, critic on another)</td>
         <td>0.55 – 0.70</td>
         <td>Slightly more headroom since critic optimizer states are on a separate pool.</td>
       </tr>
       <tr>
-        <td>Disaggregated rollout (dedicated pool)</td>
+        <td>Disaggregated async (dedicated rollout pool)</td>
         <td>0.85 – 0.92</td>
         <td>No FSDP ever runs on this pool; near-maximum KV cache is safe.</td>
       </tr>
@@ -866,17 +901,17 @@ async_config:
       </tr>
       <tr>
         <td>30B–70B model; critic is a separate model</td>
-        <td>Split pools (actor_rollout_ref / critic)</td>
+        <td>PPO split critic pool</td>
         <td><code>gpu_memory_utilization: 0.60–0.70</code> on actor pool</td>
       </tr>
       <tr>
         <td>Long responses (2K–8K tokens); rollout is the bottleneck</td>
-        <td>Disaggregated async with dedicated rollout GPUs</td>
+        <td>Disaggregated async</td>
         <td><code>fully_async: true</code>; <code>trigger_parameter_sync_step: 5–20</code></td>
       </tr>
       <tr>
         <td>MoE model (expert parallelism)</td>
-        <td>Split pools; actor pool must match TP degree with rollout pool for TIM control</td>
+        <td>Split critic pool (PPO) or colocated (GRPO); actor pool must match rollout TP degree for TIM control</td>
         <td>Set equal <code>tensor_model_parallel_size</code> in both engines</td>
       </tr>
       <tr>
