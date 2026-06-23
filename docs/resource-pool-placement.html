@@ -458,6 +458,30 @@ mapping = {
     ActorRolloutRefWorker: 'actor_rollout_ref',
 }</code></pre>
 
+  <h4>Disaggregated sync</h4>
+
+  <p>Rollout workers move to a dedicated GPU pool, but the step loop stays synchronous: training
+  waits for rollout to finish before starting, and rollout waits for the updated weights before
+  generating again. The two pools take turns.</p>
+
+  <p>This is useful when the colocated memory constraint is the bottleneck — the rollout pool
+  can run vLLM at near-maximum <code>gpu_memory_utilization</code> (no FSDP ever runs there),
+  while training retains full GPU memory for FSDP. Policy lag is zero; no IS correction needed.</p>
+
+  <pre><code>resource_pool_spec = {
+    'actor_ref': ResourcePool(process_on_nodes=[8]),   # training
+    'rollout':   ResourcePool(process_on_nodes=[8]),   # generation (dedicated)
+}
+# fully_async=False (default) — synchronous even with separate pools
+# Weight sync happens at step boundary; rollout idles during training and vice versa</code></pre>
+
+  <div class="note">
+    The price of disaggregated sync is GPU idle time: the rollout pool sits idle during every
+    training phase, and the training pool sits idle during every rollout phase. Total GPU-hours
+    consumed is 2× what colocated uses for the same work. Disaggregated async recovers this
+    by overlapping the two — see below.
+  </div>
+
   <h4>Disaggregated async</h4>
 
   <p>Rollout workers move to a dedicated GPU pool and run continuously; the trainer never idles
@@ -586,6 +610,13 @@ resource_pool_spec = {
         <td>All GPUs generate (mem-BW bound)</td>
         <td>All GPUs train (compute bound)</td>
         <td>35–50%</td>
+      </tr>
+      <tr>
+        <td><strong>Disaggregated, sync</strong></td>
+        <td>GRPO / PPO</td>
+        <td>Rollout pool generates; training pool idle</td>
+        <td>Training pool trains; rollout pool idle</td>
+        <td>20–35% <em>(pools take turns — low utilization, but full memory for each)</em></td>
       </tr>
       <tr>
         <td><strong>Split critic, sync</strong></td>
