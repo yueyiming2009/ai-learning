@@ -499,6 +499,80 @@ resource_pool_spec = {
     too large increases policy lag. See <a href="async-rl.html#knobs">VeRL async knobs</a>.
   </div>
 
+  <h3>Effective cluster utilization</h3>
+
+  <p><code>gpu_memory_utilization</code> is a vLLM KV-cache knob — it says nothing about whether
+  the GPU's SMs are doing useful work. The more important efficiency question is:
+  <strong>what fraction of GPU-seconds across a full RL step is spent on actual compute?</strong></p>
+
+  <p>Each phase has a different compute character:</p>
+  <ul>
+    <li><strong>Rollout</strong> — autoregressive generation is memory-bandwidth-bound. Each decode
+    step loads the full KV cache plus model weights but does very little arithmetic. SM utilization
+    typically runs 20–45%.</li>
+    <li><strong>Training</strong> — FSDP forward + backward is compute-bound. Flash attention and
+    large matmuls drive SM utilization to 50–80%, limited by NCCL overlap and activation
+    checkpointing overhead.</li>
+    <li><strong>Transition overhead</strong> — the FSDP AllGather, vLLM weight load, and vLLM
+    teardown at each phase boundary contribute 5–30 s of near-zero utilization per step. This cost
+    is often invisible in per-phase timing logs but real in wall-clock throughput.</li>
+  </ul>
+
+  <p>The effective utilization of the cluster over a complete RL step is:</p>
+
+  \[
+    U_{\text{eff}} = \frac{U_{\text{rollout}} \cdot T_{\text{rollout}} \;+\; U_{\text{train}} \cdot T_{\text{train}}}
+                         {T_{\text{rollout}} + T_{\text{train}} + T_{\text{transition}}}
+  \]
+
+  <p>With representative numbers — \(U_{\text{rollout}} = 0.35\), \(U_{\text{train}} = 0.65\),
+  \(T_{\text{rollout}} = 60\text{ s}\), \(T_{\text{train}} = 20\text{ s}\),
+  \(T_{\text{transition}} = 10\text{ s}\) — the effective utilization is:</p>
+
+  \[
+    U_{\text{eff}} \approx \frac{0.35 \times 60 + 0.65 \times 20}{60 + 20 + 10} \approx \mathbf{0.42}
+  \]
+
+  <p>Less than half of GPU-seconds are spent on useful compute. How each strategy changes this:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr>
+        <th>Strategy</th>
+        <th>Rollout phase</th>
+        <th>Training phase</th>
+        <th>Transition cost</th>
+        <th>Typical \(U_{\text{eff}}\)</th>
+      </tr>
+      <tr>
+        <td><strong>Fully colocated (sync)</strong></td>
+        <td>All GPUs do generation (mem-BW bound)</td>
+        <td>All GPUs do FSDP (compute bound)</td>
+        <td>10–30 s (AllGather + vLLM init/teardown every step)</td>
+        <td>35–50%</td>
+      </tr>
+      <tr>
+        <td><strong>Split pools (sync)</strong></td>
+        <td>Actor pool generates; critic pool idle</td>
+        <td>Actor + critic pools run concurrently (critic overlaps actor update)</td>
+        <td>Same transition on actor pool; critic free to start sooner</td>
+        <td>45–60%</td>
+      </tr>
+      <tr>
+        <td><strong>Disaggregated async</strong></td>
+        <td>Rollout pool generates continuously</td>
+        <td>Training pool trains continuously; phases fully overlap</td>
+        <td>Weight sync amortized over many steps; not on critical path</td>
+        <td>65–80%</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>The practical upshot: if your cluster is expensive and rollout dominates step time, the jump
+  from colocated to disaggregated async is the single highest-leverage utilization improvement.
+  Split pools are a cheaper middle ground when the critic is a large model that would otherwise
+  serialize with actor training.</p>
+
   <!-- ── §4 Memory Budget ───────────────────────── -->
   <h2 id="memory">4. Memory Budget Per GPU</h2>
 
