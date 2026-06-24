@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Prefill &amp; Decode — Two Phases of LLM Inference</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      --bg: #ffffff; --surface: #f8f9fa; --border: #e8eaed;
+      --text: #1a1a2e; --muted: #6b7280;
+      --accent: #2563eb; --accent-light: #eff6ff;
+      --warning-bg: #fffbeb; --warning-border: #f59e0b;
+      --step-bg: #f9fafb; --step-border: #d1d5db;
+      --boxed-bg: #eff6ff; --boxed-border: #3b82f6;
+      --compare-bg: #faf5ff; --compare-border: #8b5cf6;
+    }
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 0; line-height: 1.75; font-size: 16px; }
+    nav { position: sticky; top: 0; z-index: 100; background: rgba(255,255,255,0.92); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 52px; }
+    .nav-brand { font-weight: 600; font-size: 0.9rem; color: var(--accent); text-decoration: none; white-space: nowrap; }
+    .nav-links { display: flex; gap: 4px; overflow-x: auto; flex: 1; }
+    .nav-links a { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; white-space: nowrap; transition: color 0.15s, background 0.15s; }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .nav-back { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); white-space: nowrap; transition: color 0.15s; margin-left: auto; flex-shrink: 0; }
+    .nav-back:hover { color: var(--text); }
+    .hero { background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%); color: white; padding: 56px 24px 48px; text-align: center; }
+    .hero h1 { font-size: clamp(1.5rem, 4vw, 2.2rem); font-weight: 600; margin: 0 0 12px; letter-spacing: -0.02em; }
+    .hero p { margin: 0 auto; opacity: 0.85; font-size: 0.97rem; max-width: 580px; }
+    .hero-pill { display: inline-block; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 100px; font-size: 0.78rem; padding: 3px 12px; margin-bottom: 16px; letter-spacing: 0.04em; text-transform: uppercase; }
+    .page-wrap { max-width: 820px; margin: 0 auto; padding: 48px 24px 80px; }
+    h2 { font-size: 1.15rem; font-weight: 600; margin: 2.8em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); color: var(--text); }
+    h3 { font-size: 0.97rem; font-weight: 600; margin: 1.6em 0 0.4em; color: #374151; }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    code { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
+    p code, li code, td code { background: #f1f5f9; padding: 1px 6px; border-radius: 4px; font-size: 0.88em; color: #1d4ed8; }
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
+    th, td { border: 1px solid var(--border); padding: 9px 16px; text-align: left; vertical-align: top; }
+    th { background: var(--surface); font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+    tr:hover td { background: #fafafa; }
+    td.ctr, th.ctr { text-align: center; }
+    .step { background: var(--step-bg); border: 1px solid var(--step-border); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 1.2em 0; }
+    .step-label { font-weight: 600; font-size: 0.88rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+    .step-label::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+    .note { background: var(--warning-bg); border-left: 3px solid var(--warning-border); border-radius: 0 8px 8px 0; padding: 10px 16px; margin: 1em 0; font-size: 0.92em; color: #78350f; }
+    .note::before { content: '⚠ '; }
+    .result { background: var(--boxed-bg); border: 1.5px solid var(--boxed-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; text-align: center; }
+    .result-label { font-size: 0.8rem; font-weight: 600; color: #2563eb; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+    .compare { background: var(--compare-bg); border: 1.5px solid var(--compare-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; }
+    .compare-label { font-size: 0.8rem; font-weight: 600; color: #6d28d9; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
+    .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 1.2em 0; }
+    .summary-card { background: var(--accent-light); border: 1px solid #bfdbfe; border-radius: 8px; padding: 14px 16px; }
+    .summary-card-label { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+    .xref { background: var(--accent-light); border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px 18px; margin: 1.4em 0; font-size: 0.92rem; }
+    .xref a { color: var(--accent); font-weight: 600; text-decoration: none; }
+    .xref a:hover { text-decoration: underline; }
+    .spec-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 1.2em 0; }
+    .spec { background: #0f172a; color: #e2e8f0; border-radius: 10px; padding: 12px 14px; }
+    .spec-num { font-size: 1.25rem; font-weight: 600; color: #93c5fd; font-family: ui-monospace, monospace; }
+    .spec-key { font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; margin-top: 2px; }
+    .diagram { background: linear-gradient(180deg, #f9fafb 0%, #eff6ff 100%); border: 1px solid #bfdbfe; border-radius: 12px; padding: 18px 20px; margin: 1.6em 0; }
+    .diagram-title { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+    .diagram-hint { font-size: 0.8rem; color: var(--muted); margin-bottom: 14px; }
+    .diagram-stage { background: white; border-radius: 8px; padding: 16px; overflow-x: auto; }
+    .calc-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 10px; }
+    .calc-row label { font-size: 0.88rem; min-width: 180px; color: #374151; }
+    .calc-row b { font-family: ui-monospace, monospace; color: var(--accent); }
+    select { font-size: 0.88rem; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: white; }
+    input[type=range] { accent-color: var(--accent); width: 200px; max-width: 50vw; }
+    .regime-badge { display: inline-block; padding: 3px 12px; border-radius: 100px; font-size: 0.82rem; font-weight: 600; }
+    .regime-mem { background: #fee2e2; color: #dc2626; }
+    .regime-comp { background: #dcfce7; color: #16a34a; }
+    footer { border-top: 1px solid var(--border); padding: 28px 24px; text-align: center; font-size: 0.82rem; color: var(--muted); }
+    @media (max-width: 600px) { .hero { padding: 40px 16px 36px; } .page-wrap { padding: 32px 16px 60px; } }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="#">Prefill &amp; Decode</a>
+  <div class="nav-links">
+    <a href="index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#phases">Two phases</a>
+    <a href="#intensity">Arithmetic intensity</a>
+    <a href="#memory-wall">Memory wall</a>
+    <a href="#batch">Batch crossover</a>
+    <a href="#ttft-tpot">TTFT &amp; TPOT</a>
+    <a href="#summary">Summary</a>
+  </div>
+  <a class="nav-back" href="index.html">Home</a>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Systems · Inference</span>
+  <h1>Prefill &amp; Decode — Two Phases of LLM Inference</h1>
+  <p>Every LLM inference request splits into two phases with fundamentally different hardware bottlenecks: a compute-bound prefill and a memory-bandwidth-bound decode. Every optimization in the inference stack — KV cache, continuous batching, speculative decoding — traces back to this split.</p>
+</div>
+
+<div class="page-wrap">
+
+<p>
+  Training a transformer is a single-regime problem: large matrix multiplications with high arithmetic intensity, comfortably compute-bound on modern accelerators. Inference is not. Generating text requires two phases that are bottlenecked by completely different hardware resources, and understanding why is the prerequisite for every technique in this series.
+</p>
+
+<!-- ═══════════════════════════════════════════ TWO PHASES -->
+<h2 id="phases">1 · The two phases</h2>
+
+<div class="step">
+  <div class="step-label">Prefill — process the prompt in parallel</div>
+  <p style="margin-top:0">
+    The model receives all \(T_p\) prompt tokens simultaneously. Every token attends to every prior token in the prompt. All linear projections run over the full sequence, producing query, key, and value tensors for the entire input in a single forward pass. The output: logits for the last token (the first generated token) and a populated KV cache for every prompt position.
+  </p>
+  <p style="margin-bottom:0">
+    <em>Shape:</em> weight matrices \(W \in \mathbb{R}^{D \times D}\) multiply an activation matrix \(X \in \mathbb{R}^{T_p \times D}\). This is a large matrix–matrix multiply — the shape that Tensor Cores are designed for.
+  </p>
+</div>
+
+<div class="step">
+  <div class="step-label">Decode — generate one token at a time</div>
+  <p style="margin-top:0">
+    After prefill, tokens are generated autoregressively. Each step takes the most recent token, computes its query projection, attends over all cached keys and values from previous positions, and produces the next token's logits. One token in, one token out, per step.
+  </p>
+  <p style="margin-bottom:0">
+    <em>Shape:</em> weight matrices \(W \in \mathbb{R}^{D \times D}\) multiply a single-token activation \(x \in \mathbb{R}^{1 \times D}\). This is a matrix–vector multiply — and matrix–vector multiplies are bandwidth-bound, not compute-bound.
+  </p>
+</div>
+
+<p>
+  The two phases do not just differ in shape — they differ in which hardware resource is the bottleneck. The roofline model makes this precise.
+</p>
+
+<!-- ═══════════════════════════════════════════ ARITHMETIC INTENSITY -->
+<h2 id="intensity">2 · Arithmetic intensity — where each phase sits on the roofline</h2>
+
+<p>
+  <strong>Arithmetic intensity</strong> \(I\) is the ratio of floating-point operations to bytes transferred from memory: \(I = \text{FLOPs} / \text{bytes}\). A GPU's achievable throughput is bounded by the lower of two limits — memory bandwidth or peak compute:
+</p>
+
+<div class="result">
+  <div class="result-label">Roofline bound</div>
+  \[ \text{Achievable TFLOP/s} = \min\!\bigl(I \times \text{peak bandwidth},\ \text{peak FLOP/s}\bigr) \]
+  <div style="font-size:0.85rem;color:#6b7280;margin-top:6px">
+    Left of the ridge (\(I &lt; I^*\)): memory-bound. Right (\(I &gt; I^*\)): compute-bound. Ridge point \(I^* = \text{peak FLOP/s} / \text{peak bandwidth}\).
+  </div>
+</div>
+
+<p>
+  For a single linear layer \(W \in \mathbb{R}^{D_{\rm in} \times D_{\rm out}}\), computing \(Y = XW\) for a batch of \(B\) tokens:
+</p>
+
+<div class="step">
+  <div class="step-label">Arithmetic intensity of a linear layer at batch B</div>
+  <ul style="margin-bottom:0">
+    <li><strong>FLOPs:</strong> \(2 \cdot B \cdot D_{\rm in} \cdot D_{\rm out}\) — each of the \(B \cdot D_{\rm out}\) output elements requires a length-\(D_{\rm in}\) dot product (multiply + accumulate = 2 FLOPs each).</li>
+    <li><strong>Weight bytes (FP16):</strong> \(2 \cdot D_{\rm in} \cdot D_{\rm out}\) — loaded once from HBM, reused across all \(B\) tokens in the batch.</li>
+    <li><strong>Intensity:</strong> \(I = \dfrac{2B \cdot D_{\rm in} D_{\rm out}}{2 \cdot D_{\rm in} D_{\rm out}} = B\) FLOP/byte.</li>
+  </ul>
+</div>
+
+<div class="result">
+  <div class="result-label">Key result</div>
+  \[ I = B \;\; \text{FLOP/byte} \]
+  <div style="font-size:0.85rem;color:#6b7280;margin-top:6px">Independent of layer size. Each additional token in the batch raises intensity by exactly 1 FLOP/byte.</div>
+</div>
+
+<p>Applied to the two phases:</p>
+<div class="compare">
+  <div class="compare-label">Prefill vs. Decode on the roofline</div>
+  <div class="table-wrap" style="margin:0">
+    <table style="margin:0">
+      <thead><tr><th>Phase</th><th>Effective batch</th><th>Intensity (FLOP/byte)</th><th>Typical regime</th></tr></thead>
+      <tbody>
+        <tr><td>Prefill</td><td>\(T_p\) (prompt length)</td><td>\(T_p\) (often 512–8K)</td><td>Compute-bound for long prompts</td></tr>
+        <tr><td>Decode (1 user)</td><td>1</td><td>1</td><td>Deep in memory-bound region</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<p>
+  The ridge point \(I^* = \text{peak FLOP/s} / \text{peak bandwidth}\) is the batch size at which the linear layers transition from memory-bound to compute-bound:
+</p>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>GPU</th><th class="ctr">BF16 Peak (TFLOP/s)</th><th class="ctr">HBM Bandwidth (TB/s)</th><th class="ctr">Ridge \(I^*\) (≈ tokens)</th></tr></thead>
+    <tbody>
+      <tr><td>H100 SXM5</td><td class="ctr">989</td><td class="ctr">3.35</td><td class="ctr">~295</td></tr>
+      <tr><td>A100 SXM 80GB</td><td class="ctr">312</td><td class="ctr">2.0</td><td class="ctr">~156</td></tr>
+      <tr><td>A100 40GB</td><td class="ctr">312</td><td class="ctr">1.56</td><td class="ctr">~200</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>
+  Single-user decode sits at \(I = 1\) — roughly three orders of magnitude below the H100 ridge. The Tensor Cores are almost entirely idle; the bottleneck is the rate at which model weights can be read from HBM.
+</p>
+
+<!-- ═══════════════════════════════════════════ MEMORY WALL -->
+<h2 id="memory-wall">3 · The memory wall in decode</h2>
+
+<p>
+  At batch size 1, every decode step loads essentially the entire model's weight parameters from HBM to compute a single output token. For a model with \(N\) non-embedding parameters stored in FP16, that is \(2N\) bytes per step. This sets a hard lower bound on time-per-output-token:
+</p>
+
+<div class="result">
+  <div class="result-label">Minimum TPOT at batch = 1</div>
+  \[ \text{TPOT}_{\min} = \frac{2N}{\text{peak HBM bandwidth}} \]
+</div>
+
+<p>Plugging in concrete numbers for a single H100 SXM5 (3.35 TB/s HBM bandwidth):</p>
+
+<div class="spec-grid">
+  <div class="spec"><div class="spec-num">4.2 ms</div><div class="spec-key">7B model · min TPOT</div></div>
+  <div class="spec"><div class="spec-num">7.8 ms</div><div class="spec-key">13B model · min TPOT</div></div>
+  <div class="spec"><div class="spec-num">20.3 ms</div><div class="spec-key">34B model · min TPOT</div></div>
+  <div class="spec"><div class="spec-num">41.8 ms</div><div class="spec-key">70B model · min TPOT</div></div>
+</div>
+
+<p>
+  These are theoretical floors assuming 100% HBM bandwidth utilization — actual single-stream TPOT is higher due to attention over the KV cache, non-weight memory reads, and kernel launch overhead. But two practical consequences follow directly:
+</p>
+<ul>
+  <li>Larger models are strictly slower per token in single-user decode, proportionally to parameter count.</li>
+  <li>Nothing in the software stack can escape this floor; only wider HBM bandwidth, reduced precision (fewer bytes per weight), or multi-GPU tensor parallelism can lower it.</li>
+</ul>
+
+<div class="note">
+  The KV cache also contributes to memory bandwidth consumption during decode. Each step reads the cached K and V tensors for all prior tokens: \(2 \times T \times h_{\rm kv} \times d_h \times 2\) bytes (K and V in FP16). At long context this term grows with generation length and becomes non-trivial — which is precisely why KV cache quantization and GQA exist.
+</div>
+
+<!-- ═══════════════════════════════════════════ BATCH CROSSOVER -->
+<h2 id="batch">4 · Batch size and the crossover point</h2>
+
+<p>
+  Serving multiple requests concurrently raises the effective batch size \(B\). From the intensity formula \(I = B\), each additional concurrent request adds 1 FLOP/byte of intensity. The weights are loaded once and shared across all \(B\) requests, so throughput scales linearly with \(B\) — until the linear layers hit the compute ceiling at \(B = I^*\), after which adding more requests no longer improves tokens/s.
+</p>
+
+<div class="result">
+  <div class="result-label">Decode throughput as a function of batch size</div>
+  \[
+    \text{tokens/s}(B) \;=\; \min\!\left(\frac{B \cdot \text{peak\_bw}}{2N},\;\frac{\text{peak\_flop/s}}{2N}\right)
+  \]
+  <div style="font-size:0.85rem;color:#6b7280;margin-top:6px">
+    Memory-bound (left term, linear in \(B\)) until \(B = I^*\), then compute-bound (right term, constant).
+  </div>
+</div>
+
+<div class="diagram">
+  <div class="diagram-title">▸ Decode throughput &amp; TPOT calculator</div>
+  <div class="diagram-hint">Move the batch size slider to see how arithmetic intensity, throughput, and TPOT change. FLOPs per token ≈ 2N for the linear layers (KV attention not included).</div>
+  <div class="diagram-stage">
+    <div class="calc-row">
+      <label>GPU:</label>
+      <select id="rc-gpu">
+        <option value="h100">H100 SXM5 — 989 TFLOP/s, 3.35 TB/s</option>
+        <option value="a100_80">A100 80GB — 312 TFLOP/s, 2.0 TB/s</option>
+        <option value="a100_40">A100 40GB — 312 TFLOP/s, 1.56 TB/s</option>
+      </select>
+    </div>
+    <div class="calc-row">
+      <label>Model size:</label>
+      <select id="rc-model">
+        <option value="7">7B parameters</option>
+        <option value="13">13B parameters</option>
+        <option value="34">34B parameters</option>
+        <option value="70">70B parameters</option>
+      </select>
+    </div>
+    <div class="calc-row">
+      <label>Batch size \(B\): <b id="rc-b-val">1</b></label>
+      <input type="range" id="rc-b" min="1" max="512" value="1">
+    </div>
+    <div style="margin-top:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">
+      <div class="spec"><div class="spec-num" id="rc-intensity">1</div><div class="spec-key">Intensity (FLOP/byte)</div></div>
+      <div class="spec"><div class="spec-num" id="rc-ridge">295</div><div class="spec-key">Ridge I* (FLOP/byte)</div></div>
+      <div class="spec"><div class="spec-num" id="rc-toks">239</div><div class="spec-key">Throughput (tok/s)</div></div>
+      <div class="spec"><div class="spec-num" id="rc-tpot">4.18</div><div class="spec-key">TPOT (ms/token)</div></div>
+    </div>
+    <p style="margin-top:12px;font-size:0.88rem;margin-bottom:0">
+      Regime: <span class="regime-badge regime-mem" id="rc-regime">Memory-bandwidth-bound</span>
+    </p>
+  </div>
+</div>
+
+<p>Two practical implications follow directly:</p>
+<ol>
+  <li>
+    <strong>Batching is the primary lever for decode throughput.</strong> Every additional concurrent request improves GPU utilization proportionally until \(B = I^*\). This is why continuous batching (keeping \(B\) high at all times) is the single most important serving technique.
+  </li>
+  <li>
+    <strong>Weight quantization helps only in the memory-bound regime.</strong> Halving weight precision (INT8) halves \(2N\) bytes → doubles memory-bound throughput. Above the ridge, the bottleneck shifts to compute and quantization no longer helps throughput (though it reduces memory footprint).
+  </li>
+</ol>
+
+<!-- ═══════════════════════════════════════════ TTFT / TPOT -->
+<h2 id="ttft-tpot">5 · TTFT and TPOT — what each workload optimizes for</h2>
+
+<p>Two numbers describe the latency of an inference request end to end:</p>
+
+<div class="compare">
+  <div class="compare-label">The two latency metrics</div>
+  <ul style="margin:0">
+    <li><strong>TTFT (Time To First Token)</strong> — elapsed time from request arrival to the first output token. Dominated by: queuing delay + prefill computation. Prefill time grows with prompt length \(T_p\) and is roughly compute-limited for long prompts.</li>
+    <li style="margin-top:10px"><strong>TPOT (Time Per Output Token)</strong> — time between successive tokens during decode. At low batch sizes, TPOT approaches the bandwidth floor derived above. At high batch sizes, TPOT rises as the batch competes for compute capacity. This is what users perceive as "streaming speed."</li>
+  </ul>
+</div>
+
+<p>End-to-end latency for a request generating \(T_d\) output tokens:</p>
+
+<div class="result">
+  <div class="result-label">End-to-end latency</div>
+  \[ \text{latency} = \text{TTFT} + \text{TPOT} \times (T_d - 1) \]
+</div>
+
+<p>The dominant term depends on output length:</p>
+<ul>
+  <li><strong>Short completions</strong> (RAG, classification, short answers): TTFT dominates. A slow prefill is the entire user experience problem.</li>
+  <li><strong>Long completions</strong> (code generation, reasoning chains, long-form writing): TPOT × \(T_d\) dominates. Users wait for the stream.</li>
+  <li><strong>Offline batch inference:</strong> neither per-request metric matters directly — only aggregate tokens/s and cost.</li>
+  <li><strong>RL rollout generation:</strong> total throughput across the batch matters; strict per-request TPOT SLOs do not.</li>
+</ul>
+
+<div class="note">
+  TTFT and TPOT can conflict. Running a long prefill for a new request steals GPU cycles from ongoing decode steps, spiking TPOT for all in-flight requests. Chunked prefill — interleaving the new prompt in small pieces with ongoing decode — is the standard mitigation (see <a href="continuous-batching.html" style="color:#92400e">Batching for Inference</a>).
+</div>
+
+<!-- ═══════════════════════════════════════════ SUMMARY -->
+<h2 id="summary">6 · Summary</h2>
+
+<div class="summary-grid">
+  <div class="summary-card">
+    <div class="summary-card-label">Two phases</div>
+    <p>Prefill processes all prompt tokens in parallel (matrix–matrix, compute-bound). Decode generates one token at a time (matrix–vector, memory-bandwidth-bound).</p>
+  </div>
+  <div class="summary-card">
+    <div class="summary-card-label">Arithmetic intensity</div>
+    <p>For a linear layer at batch \(B\): \(I = B\) FLOP/byte. Single-token decode sits at \(I = 1\), far left of the GPU roofline ridge.</p>
+  </div>
+  <div class="summary-card">
+    <div class="summary-card-label">Ridge point</div>
+    <p>H100: \(I^* \approx 295\) tokens. Below this, throughput scales linearly with batch size. Above it, the GPU is compute-saturated.</p>
+  </div>
+  <div class="summary-card">
+    <div class="summary-card-label">TPOT floor</div>
+    <p>Minimum decode latency = \(2N / \text{peak\_bw}\). ~4.2 ms for 7B on a single H100. Larger models are proportionally slower.</p>
+  </div>
+  <div class="summary-card">
+    <div class="summary-card-label">TTFT vs. TPOT</div>
+    <p>TTFT is driven by prefill compute and prompt length. TPOT is driven by HBM bandwidth and batch size. Short completions care about TTFT; long completions about TPOT.</p>
+  </div>
+  <div class="summary-card">
+    <div class="summary-card-label">The implication</div>
+    <p>Every inference optimization targets this split: KV cache (avoid recompute), batching (raise intensity), quantization (reduce bytes per weight), speculative decoding (reduce decode steps).</p>
+  </div>
+</div>
+
+<div class="xref">
+  <strong>Next in this series:</strong>
+  <a href="kv-cache.html">KV Cache →</a> — how caching K and V tensors eliminates quadratic recomputation, and what it costs in memory per request.
+  &nbsp;·&nbsp;
+  <a href="continuous-batching.html">Batching for Inference →</a> — why continuous batching keeps \(B\) high as requests arrive and finish asynchronously.
+  <br><br>
+  <strong>Prerequisites:</strong>
+  <a href="gpu-hardware.html">GPU Hardware →</a> (memory hierarchy, roofline) &nbsp;·&nbsp;
+  <a href="mfu.html">MFU →</a> (FLOPs per token, the 6N rule).
+</div>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; Prefill &amp; Decode — Two Phases of LLM Inference
+  &nbsp;·&nbsp; <a href="index.html" style="color:inherit">← All notes</a>
+</footer>
+
+<script>
+(function () {
+  const gpus = {
+    h100:    { bw: 3.35e12, flop: 989e12 },
+    a100_80: { bw: 2.0e12,  flop: 312e12 },
+    a100_40: { bw: 1.555e12, flop: 312e12 },
+  };
+  const $ = id => document.getElementById(id);
+
+  function update() {
+    const gpu = gpus[$('rc-gpu').value];
+    const N   = parseFloat($('rc-model').value) * 1e9;
+    const B   = parseInt($('rc-b').value);
+
+    $('rc-b-val').textContent = B;
+
+    const param_bytes = 2 * N;                      // FP16 weights
+    const ridge       = Math.round(gpu.flop / gpu.bw);
+    const toks_mem    = B * gpu.bw / param_bytes;   // memory-bound throughput
+    const toks_comp   = gpu.flop / (2 * N);         // compute-bound throughput
+    const toks        = Math.min(toks_mem, toks_comp);
+    const tpot_ms     = 1000 / toks;
+
+    $('rc-intensity').textContent = B;
+    $('rc-ridge').textContent     = ridge;
+    $('rc-toks').textContent      = toks >= 1e6 ? (toks/1e6).toFixed(2)+'M'
+                                  : toks >= 1e3 ? (toks/1e3).toFixed(1)+'K'
+                                  : toks.toFixed(0);
+    $('rc-tpot').textContent      = tpot_ms < 1 ? tpot_ms.toFixed(3)
+                                  : tpot_ms < 10 ? tpot_ms.toFixed(2)
+                                  : tpot_ms.toFixed(1);
+
+    const reg = $('rc-regime');
+    if (B >= ridge) {
+      reg.textContent = 'Compute-bound';
+      reg.className   = 'regime-badge regime-comp';
+    } else {
+      reg.textContent = 'Memory-bandwidth-bound';
+      reg.className   = 'regime-badge regime-mem';
+    }
+  }
+
+  $('rc-gpu').addEventListener('change', update);
+  $('rc-model').addEventListener('change', update);
+  $('rc-b').addEventListener('input', update);
+  update();
+})();
+</script>
+
+</body>
+</html>
