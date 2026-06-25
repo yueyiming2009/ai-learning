@@ -157,7 +157,8 @@
 <ul>
   <li><strong>Pack the KV cache.</strong> Use <a href="paged-attention.html">PagedAttention</a>-based allocation to avoid fragmentation waste. Fill all available GPU memory with KV pages.</li>
   <li><strong>Reduce KV footprint per request.</strong> Use models with GQA/MQA (LLaMA-3, Mistral, Qwen2) which have 4–8× fewer KV heads. At fixed GPU memory, this means proportionally more concurrent requests.</li>
-  <li><strong>Limit max output length.</strong> Don't set <code>max_new_tokens=2048</code> if the task never needs more than 256. Each token of output holds a KV slot for the full duration of the request.</li>
+  <li><strong>Quantize the KV cache.</strong> FP8 KV cache (<code>kv_cache_dtype=fp8</code> in vLLM) roughly halves KV memory per request. At fixed GPU memory, this allows ~2× more concurrent sequences in the decode batch — a direct throughput multiplier. Near-lossless on H100; use alongside weight quantization below.</li>
+  <li><strong>Limit max output length.</strong> Don't set <code>max_new_tokens=2048</code> if the task never needs more than 256. Each output token holds a KV slot for the full duration of the request. Capping <code>max_tokens</code> tightly is one of the highest-leverage knobs for batch size.</li>
 </ul>
 
 <h3>Layer 2 — Reduce bytes per parameter (quantization)</h3>
@@ -184,6 +185,20 @@
 <p>
   Greedy decoding (temperature=0) has acceptance rate α→1 for a good draft model. From the <a href="speculative-decoding.html">speculative decoding page</a>, speedup = \(E[\text{tokens}] / (\gamma c + 1)\). At α=0.9, γ=4, c=0.1: \(E[\text{tokens}] = 4.6\), speedup ≈ 3.8×. This is multiplicative on top of the quantization and batching gains.
 </p>
+
+<h3>Layer 6 — Chunked prefill for long inputs</h3>
+<p>
+  For inputs longer than ~4K tokens, a full monolithic prefill may OOM even with PagedAttention, because the full context's KV blocks must be allocated before generation begins. Chunked prefill (<a href="continuous-batching.html#chunked">covered in detail on the batching page</a>) processes \(C\) tokens per step and allocates KV blocks incrementally. For offline batch, the payoff is <strong>memory headroom</strong>, not latency — TTFT is irrelevant here. Enable chunked prefill to accept longer inputs without forcing a smaller <code>max_num_seqs</code> to compensate for peak allocation spikes.
+</p>
+
+<h3>Layer 7 — CUDA graph capture and FlashAttention-3</h3>
+<p>
+  Two kernel-level gains that compose with all the above:
+</p>
+<ul>
+  <li><strong>CUDA graph capture</strong> (<code>enforce_eager=False</code> in vLLM, which is the default): captures each decode step as a CUDA graph, eliminating CPU kernel-launch overhead per step. In the bandwidth-bound decode regime this overhead is a meaningful fraction of step time — expect 5–15% throughput improvement at typical batch sizes.</li>
+  <li><strong>FlashAttention-3</strong> (H100/H200): uses async pipelining between WGMMA and TMA instructions to hide memory latency on the attention GEMM, achieving near-peak HBM throughput. Enabled by default in current vLLM and SGLang on H100.</li>
+</ul>
 
 <!-- ═══════════════════════════════════════════ PLAYBOOK -->
 <h2 id="playbook">4 · Offline batch playbook</h2>
@@ -234,8 +249,8 @@
   <div class="playbook-step">
     <div class="playbook-num">7</div>
     <div class="playbook-body">
-      <strong>Scale horizontally</strong>
-      <p>Multiple independent GPU workers process disjoint shards of the dataset in parallel. No coordination needed (unlike online serving). Linear throughput scaling with GPU count.</p>
+      <strong>Scale with data-parallel replicas</strong>
+      <p>If the model fits on one GPU, run N independent replicas each processing a disjoint shard of the dataset — not tensor parallelism across GPUs. Data-parallel replicas eliminate all cross-GPU collectives and scale linearly with GPU count. Tensor / pipeline parallelism is only needed when the model is too large to fit on a single GPU.</p>
     </div>
   </div>
 </div>

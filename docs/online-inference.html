@@ -198,6 +198,19 @@
   Speculative decoding helps when the decode batch is small (low concurrency). At high concurrency, the batch is large enough that the GPU is saturated and speculative decoding doesn't improve wall-clock TPOT. Add speculative decoding for chatbot workloads where user queries tend toward common continuations.
 </p>
 
+<h3>CUDA graph capture — per-step launch overhead</h3>
+<p>
+  With eager execution, each decode step pays CPU kernel-launch overhead for every CUDA op in the step. CUDA graph capture records the step once and replays it with minimal CPU involvement. In vLLM, this is enabled by default (<code>enforce_eager=False</code>). In online serving, where TPOT is the primary SLO, eliminating this overhead reduces median TPOT by 5–15% and flattens the TPOT curve at mid-concurrency.
+</p>
+
+<h3>FlashAttention-3 and tensor/pipeline parallelism</h3>
+<p>
+  <strong>FlashAttention-3</strong> (H100/H200): async-pipelined attention kernel that saturates HBM bandwidth on the attention GEMM. Enabled by default in vLLM/SGLang on H100.
+</p>
+<p>
+  <strong>Tensor / pipeline parallelism (TP/PP):</strong> when the model does not fit on a single GPU, shard it across GPUs using TP (within a node) or PP (across nodes). For a 70B model on H100-80GB (140 GB weights in BF16), TP=2 is the minimum. TP reduces per-GPU memory but introduces AllReduce collectives per decode step — each collect adds ~5–10 ms on NVLink at TP=8. Minimize TP size and prefer data-parallel replicas for throughput when the model fits on fewer GPUs.
+</p>
+
 <!-- ═══════════════════════════════════════════ PD DISAGGREGATION -->
 <h2 id="pd-disag">5 · Prefill–decode disaggregation at scale</h2>
 
