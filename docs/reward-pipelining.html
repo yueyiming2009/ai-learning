@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reward Pipelining in RL Post-Training</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #7c3aed;
+      --accent-light: #f5f3ff;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #1e1b4b 0%, #4c1d95 60%, #7c3aed 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.9;
+      font-size: 0.97rem;
+      max-width: 600px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: #374151;
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: #374151; }
+    a { color: var(--accent); }
+    code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+    pre {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      line-height: 1.55;
+      margin: 1.2em 0;
+    }
+    pre code { background: none; padding: 0; color: var(--text); }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: #fafafa; }
+
+    /* ── Step boxes ──────────────────────────── */
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    /* ── Callout / note ──────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: #1e40af;
+    }
+
+    /* ── Result / boxed equation ─────────────── */
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #16a34a;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Two-column regime ───────────────────── */
+    .regime-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .regime-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .regime-card.warn { border-top: 3px solid #f59e0b; }
+    .regime-card.bad  { border-top: 3px solid #ef4444; }
+    .regime-card h4 {
+      margin: 0 0 6px;
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+    .regime-card.warn h4 { color: #b45309; }
+    .regime-card.bad  h4 { color: #b91c1c; }
+    .regime-card p { font-size: 0.88rem; margin: 0; }
+
+    /* ── Responsive ──────────────────────────── */
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+      .regime-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="#">Reward Pipelining</a>
+  <div class="nav-links">
+    <a href="index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#bottleneck">Bottleneck</a>
+    <a href="#pipeline">Pipelining</a>
+    <a href="#sources">Reward sources</a>
+    <a href="#queue">Queue mechanics</a>
+    <a href="#off-policy">Off-policy</a>
+    <a href="#compose">Async RL composition</a>
+    <a href="#refs">References</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">RL Systems</span>
+  <h1>Reward Pipelining in RL Post-Training</h1>
+  <p>Decoupling reward computation from trajectory generation to hide reward latency,
+  queue mechanics, and how reward pipelining composes with async RL.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="note">
+    Prerequisite: <a href="rl-inference.html">Inference in RL</a> (rollout vs. reward model serving,
+    throughput matching) and <a href="async-rl.html">Async RL</a> (policy lag, IS correction).
+    This page covers the <em>reward-specific</em> latency problem and how to pipeline around it.
+  </div>
+
+  <!-- ── §1 Bottleneck ──────────────────────── -->
+  <h2 id="bottleneck">1. The Reward Bottleneck</h2>
+
+  <p>In synchronous RL, reward computation is on the critical path between rollout and training:</p>
+
+  <pre><code>rollout → [wait for all rewards] → train → repeat</code></pre>
+
+  <p>For simple rule-based rewards — format checks, exact-match, regex — the cost is negligible. For richer sources it is not:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Reward source</th><th>Latency per trajectory</th><th>Blocking?</th></tr>
+      <tr><td>Rule-based verifier (math, code)</td><td>1–50 ms</td><td>Mild</td></tr>
+      <tr><td>Process reward model (PRM)</td><td>0.5–2 s (N forward passes)</td><td>Yes</td></tr>
+      <tr><td>LLM-as-judge</td><td>2–15 s (separate model call)</td><td>Yes</td></tr>
+      <tr><td>Sandboxed code execution</td><td>5–60 s (spawn + run)</td><td>Severe</td></tr>
+    </table>
+  </div>
+
+  <p>When generation takes 3 s and the reward call takes 8 s, rollout workers sit idle for 8 s per step. You can speed up decoding all you want and the bottleneck remains — the two latencies do not trade off against each other in a synchronous design.</p>
+
+  <!-- ── §2 Pipelining ──────────────────────── -->
+  <h2 id="pipeline">2. Reward Pipelining: Decoupling Reward from Generation</h2>
+
+  <p>Reward pipelining overlaps reward computation with the next generation batch:</p>
+
+  <pre><code>rollout pool:   [gen batch 1] → [gen batch 2] → [gen batch 3] → ...
+reward workers:              [rew batch 1] → [rew batch 2] → ...
+trainer:                                   [train on batch 1] → ...</code></pre>
+
+  <p>Trajectories are submitted to a reward queue immediately upon completion. Generation starts on the next prompt batch before any rewards return. Rewards trickle back asynchronously and are matched with their trajectories in a training buffer. The trainer drains the buffer whenever a sample has both a trajectory and a reward attached.</p>
+
+  <p>The reward workers form an independent service — one or more reward models, verifiers, or judge LLMs running continuously, processing trajectories from the queue and writing scalars back.</p>
+
+  <p><strong>What this requires:</strong></p>
+  <ul>
+    <li>A queue or buffer holding <code>(trajectory, prompt_id, reward_placeholder)</code> tuples</li>
+    <li>A matching step that joins trajectory + reward before the trainer sees the sample</li>
+    <li>A staleness policy for rewards that take too long (drop or use a fallback)</li>
+  </ul>
+
+  <!-- ── §3 Reward sources ──────────────────── -->
+  <h2 id="sources">3. Reward Sources and Batching</h2>
+
+  <p>The pipelining benefit depends on how reward calls can be structured:</p>
+
+  <h3>Batched verifier calls</h3>
+
+  <p>Rule-based verifiers and lightweight discriminators are embarrassingly parallel. Accumulate \(B\) trajectories and evaluate them in one call — per-trajectory overhead amortizes across the batch. The reward worker runs the verifier in a loop; the main loop never blocks.</p>
+
+  <h3>Batched reward model inference</h3>
+
+  <p>A PRM or outcome reward model is a standard LLM inference job. Treat it like the rollout model: batch trajectories, run prefill + a short decode (or just prefill for the scalar head), return results. With prefix caching the shared prompt prefix is computed once per batch. The reward worker is a vLLM/SGLang instance, not a bespoke service.</p>
+
+  <p>Key sizing constraint: the reward throughput \(T_r\) must satisfy:</p>
+
+  <div class="result">
+    <div class="result-label">Throughput requirement</div>
+    \[ T_r \;\geq\; T_{rollout} \]
+    <p style="font-size:0.88rem; color:#374151; margin-top:8px;">
+      If reward throughput falls behind rollout throughput, the queue grows without bound — reward becomes the new bottleneck regardless of pipelining.
+    </p>
+  </div>
+
+  <h3>LLM-as-judge</h3>
+
+  <p>The judge is a separate (often larger) model. Reward pipelining is most valuable here — judge latency (2–15 s) far exceeds generation latency for short responses. The judge call goes into the queue; generation continues. Satisfying \(T_r \geq T_{rollout}\) usually requires either a smaller judge or multiple judge replicas.</p>
+
+  <h3>Multi-source rewards</h3>
+
+  <p>Production systems mix reward sources: a fast rule-based component (grammar, format) plus a slow judge. Pipeline only the slow component. The fast reward is computed inline and attached immediately; the slow reward is added asynchronously. The training buffer waits for the union of both.</p>
+
+  <!-- ── §4 Queue mechanics ─────────────────── -->
+  <h2 id="queue">4. Queue Depth and Back-Pressure</h2>
+
+  <p>The natural queue depth — the number of in-flight reward requests at steady state — is:</p>
+
+  <div class="result">
+    <div class="result-label">Steady-state queue depth</div>
+    \[ d \approx L_{reward} \times T_r \]
+    <p style="font-size:0.88rem; color:#374151; margin-top:8px;">
+      \(L_{reward}\) = end-to-end latency of one reward call &nbsp;·&nbsp; \(T_r\) = reward throughput (trajectories / s)
+    </p>
+  </div>
+
+  <div class="regime-grid">
+    <div class="regime-card warn">
+      <h4>Too shallow</h4>
+      <p>Reward is still on the critical path — the trainer drains the buffer faster than rewards arrive and stalls waiting for completions. Pipelining bought nothing.</p>
+    </div>
+    <div class="regime-card bad">
+      <h4>Too deep</h4>
+      <p>High memory pressure (all in-flight trajectories held in the buffer) and high reward staleness — rewards arrive well after the trainer has moved on.</p>
+    </div>
+  </div>
+
+  <p><strong>Back-pressure:</strong> if the trainer is slower than reward computation, the buffer fills. Bound the buffer and pause submission of new trajectories to the reward queue when the buffer is full — this propagates back-pressure to the rollout pool and prevents unbounded memory growth.</p>
+
+  <!-- ── §5 Off-policy ──────────────────────── -->
+  <h2 id="off-policy">5. Off-Policy Implications</h2>
+
+  <p>For most reward formulations, reward pipelining does <em>not</em> introduce off-policy bias. The reward is a function of the trajectory alone — correctness of an answer, format compliance, code execution output — and does not depend on the current policy \(\pi_\theta\). A trajectory generated at step \(t\) gets the same reward whether it is evaluated at step \(t\) or step \(t+K\).</p>
+
+  <p>The exception is a <strong>policy-conditioned reward</strong>: a value-based PRM that uses \(V^\pi\) to score intermediate states, or a relative reward that compares the trajectory against the current policy's distribution. If the reward explicitly depends on \(\pi_{\theta_{current}}\) and the policy has advanced \(K\) steps, the reward is stale in a way IS correction cannot fix — the reward function itself has drifted, not just the generation distribution.</p>
+
+  <div class="note">
+    In practice most deployed reward sources (outcome RM, LLM-as-judge, code verifier) are trajectory-only and do not condition on the policy. The policy-conditioned concern applies mainly to PRM designs that incorporate a learnable value function.
+  </div>
+
+  <h3>Reward staleness budget</h3>
+
+  <p>Bound the reward queue age independently of the generation staleness budget. Define a reward freshness threshold \(K_{rew}\): if a reward has not arrived within \(K_{rew}\) training steps since the trajectory was generated, drop the sample (or substitute a fallback reward). This is analogous to <code>staleness_threshold</code> for generation lag but operates on reward latency, not policy lag.</p>
+
+  <!-- ── §6 Async RL composition ────────────── -->
+  <h2 id="compose">6. Composing with Async RL</h2>
+
+  <p><a href="async-rl.html">Async RL</a> decouples generation from training. Reward pipelining decouples reward from generation. The two compose naturally into a fully decoupled three-stage pipeline:</p>
+
+  <pre><code>generation workers:   [gen] → [gen] → [gen] → ...    (continuous)
+reward workers:       [rew] → [rew] → [rew] → ...    (continuous)
+trainer:              [step] → [step] → [step] → ...  (continuous)</code></pre>
+
+  <p>There are now two independent lag parameters:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Lag</th><th>Source</th><th>Corrected by</th></tr>
+      <tr>
+        <td>\(K_{gen}\)</td>
+        <td>Policy drift between generation and training</td>
+        <td>IS correction (token-level or sequence-level), <code>staleness_threshold</code></td>
+      </tr>
+      <tr>
+        <td>\(K_{rew}\)</td>
+        <td>Delay between trajectory completion and reward arrival</td>
+        <td>Queue depth bound, reward freshness threshold \(K_{rew,max}\)</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>The total staleness is the sum. If \(K_{gen} + K_{rew}\) is large, IS correction must handle a wider distribution shift — the IS ratio \(\pi_{new}(a_t|s_t)/\pi_{old}(a_t|s_t)\) is more extreme because \(\pi_{old}\) is further back in training history.</p>
+
+  <div class="note">
+    <strong>Tuning priority:</strong> minimize \(K_{rew}\) first — reward lag adds staleness with no IS correction benefit. Then tune \(K_{gen}\) to the maximum value stable under IS correction. Do not let a large reward queue silently inflate the effective policy lag beyond what IS can handle.
+  </div>
+
+  <!-- ── §7 References ──────────────────────── -->
+  <h2 id="refs">7. Key References</h2>
+
+  <div class="table-wrap">
+    <table>
+      <tr>
+        <td><a href="rl-inference.html">Inference in RL — Rollout and Reward Model Serving</a></td>
+        <td>Rollout vs. reward model throughput matching; GRPO prefix sharing; placement tradeoffs</td>
+      </tr>
+      <tr>
+        <td><a href="async-rl.html">Async RL — Policy Lag, IS Correction, and TIM</a></td>
+        <td>Generation-to-training decoupling; IS correction math; training-inference mismatch</td>
+      </tr>
+      <tr>
+        <td><a href="https://newsletter.semianalysis.com/p/rl-systems-mind-the-gap-matching">RL Systems: Mind the Gap</a></td>
+        <td>Throughput-matching framework; reward model as a pipeline stage (SemiAnalysis)</td>
+      </tr>
+      <tr>
+        <td><a href="https://github.com/OpenRLHF/OpenRLHF">OpenRLHF</a></td>
+        <td>Open-source async reward scheduling in production RLHF</td>
+      </tr>
+      <tr>
+        <td><a href="https://verl.readthedocs.io/en/latest/advance/fully_async.html">VeRL fully-async docs</a></td>
+        <td><code>trigger_parameter_sync_step</code>, <code>staleness_threshold</code>, <code>partial_rollout</code></td>
+      </tr>
+    </table>
+  </div>
+
+</div>
+</body>
+</html>
