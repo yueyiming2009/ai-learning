@@ -467,7 +467,21 @@ trainer:              [step] → [step] → [step] → ...  (continuous)</code><
       <li><strong>Rule-based reward</strong> (no reward model) — cheap enough to run in parallel safely</li>
       <li><strong>Learned RM with <code>reward_model.enable_resource_pool: true</code></strong> — RM runs on a separate GPU pool</li>
     </ol>
-    <p>When handles are available, <code>AgentLoopWorker._compute_score</code> issues <code>await handle.compute_score.remote(data)</code> — a non-blocking Ray call. Multiple trajectories can have rewards computed concurrently on different workers while the agent loop continues. This is <strong>intra-batch parallelism across trajectories</strong>, not cross-batch pipelining, but it does reduce reward latency on the critical path.</p>
+    <p>When handles are available, <code>AgentLoopWorker._compute_score</code> issues <code>await handle.compute_score.remote(data)</code> — a non-blocking Ray call. Multiple trajectories can have rewards computed concurrently on different workers while the agent loop continues.</p>
+
+    <p><strong>Intra-batch parallelism across trajectories</strong>: within a single batch of \(N\) rollouts, all \(N\) reward computations fire simultaneously instead of sequentially.</p>
+
+    <pre><code># sequential (no parallelism)
+reward(traj_1) → reward(traj_2) → ... → reward(traj_N)
+total ≈ N × latency_per_reward
+
+# intra-batch parallel
+reward(traj_1) ┐
+reward(traj_2) ├─ all dispatched at once
+...            ┘
+total ≈ latency_per_reward</code></pre>
+
+    <p>It collapses \(N \times\) latency into \(1 \times\) latency (given enough workers). What it does not solve: the trainer still waits for the last reward in the batch before training begins, and generation for the next batch has not started yet. Cross-batch pipelining (<a href="#pipeline">§2</a>) would hide even that remaining single-call latency by overlapping it with the next generation batch.</p>
     <p>When <code>enable_resource_pool</code> is false and a learned RM is enabled, handles return <code>None</code> and reward is synchronous on the colocated pool.</p>
   </div>
 

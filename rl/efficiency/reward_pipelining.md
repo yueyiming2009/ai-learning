@@ -143,7 +143,23 @@ VeRL has two reward execution paths with different async properties.
 1. Rule-based reward (no reward model) — reward is cheap enough to run in parallel safely
 2. Learned reward model with `reward_model.enable_resource_pool: true` — the RM runs on a separate GPU pool
 
-When handles are returned, `AgentLoopWorker._compute_score` issues `await selected_reward_loop_worker_handle.compute_score.remote(data)` — a non-blocking Ray call. Multiple trajectories can have their reward computed concurrently on different workers while the agent loop continues generating. This is intra-batch parallelism across trajectories (not cross-batch pipelining), but it does overlap reward computation with other in-flight agentic steps.
+When handles are returned, `AgentLoopWorker._compute_score` issues `await selected_reward_loop_worker_handle.compute_score.remote(data)` — a non-blocking Ray call. Multiple trajectories can have their reward computed concurrently on different workers while the agent loop continues generating.
+
+This is **intra-batch parallelism across trajectories**: within a single batch of $N$ rollouts, all $N$ reward computations fire simultaneously instead of sequentially.
+
+```
+# sequential (no parallelism)
+reward(traj_1) → reward(traj_2) → ... → reward(traj_N)
+total ≈ N × latency_per_reward
+
+# intra-batch parallel
+reward(traj_1) ┐
+reward(traj_2) ├─ all dispatched at once
+...            ┘
+total ≈ latency_per_reward
+```
+
+It collapses $N \times$ latency into $1 \times$ latency (given enough workers). What it does not solve: the trainer still waits for the last reward in the batch before training begins, and generation for the next batch has not started yet. Cross-batch pipelining (§2) would hide even that remaining single-call latency by overlapping it with the next generation batch.
 
 When `enable_resource_pool` is false and a learned RM is enabled, `reward_loop_worker_handles` returns `None` and reward is computed synchronously on the colocated pool.
 
