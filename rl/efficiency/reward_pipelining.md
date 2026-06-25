@@ -130,65 +130,63 @@ The total staleness budget is the sum. If $K_{gen} + K_{rew}$ is large, IS corre
 
 ---
 
-## 7. VeRL and slime/Miles: Implementation Patterns
-
-Both systems run reward computation synchronously in their baseline walkthroughs (Phase 3, after rollout completes). The architecture of each system provides a different natural hook for pipelining.
+## 7. VeRL and slime/Miles: Current State
 
 ### VeRL
 
-VeRL assigns each logical role to a Ray worker class. The `RewardModel` worker is a first-class citizen, not embedded in the `ActorRollout` hybrid engine. When placed on a **separate resource pool** (separate GPUs), it gets its own Ray execution slot and can run concurrently with the rollout pool.
+VeRL has two reward execution paths with different async properties.
 
+**Standard trainer (`verl/trainer/ppo/`):** reward is synchronous. `RewardLoopManager.compute_rm_score` dispatches work to `RewardLoopWorker` Ray actors, then calls `ray.get()` — it blocks until all reward scores return before the training loop proceeds. No cross-batch pipelining.
+
+**Experimental agent loop (`verl/experimental/reward_loop/`, `verl/experimental/agent_loop/`):** async reward workers exist. `RewardLoopManager.reward_loop_worker_handles` returns Ray actor handles under two conditions:
+
+1. Rule-based reward (no reward model) — reward is cheap enough to run in parallel safely
+2. Learned reward model with `reward_model.enable_resource_pool: true` — the RM runs on a separate GPU pool
+
+When handles are returned, `AgentLoopWorker._compute_score` issues `await selected_reward_loop_worker_handle.compute_score.remote(data)` — a non-blocking Ray call. Multiple trajectories can have their reward computed concurrently on different workers while the agent loop continues generating. This is intra-batch parallelism across trajectories (not cross-batch pipelining), but it does overlap reward computation with other in-flight agentic steps.
+
+When `enable_resource_pool` is false and a learned RM is enabled, `reward_loop_worker_handles` returns `None` and reward is computed synchronously on the colocated pool.
+
+Config knobs (reward section of VeRL YAML):
+```yaml
+reward:
+  num_workers: 8                       # parallel reward loop workers (Ray actors)
+  reward_model:
+    enable: false
+    enable_resource_pool: false        # true → separate GPU pool → async handles enabled
+    n_gpus_per_node: 8
+    nnodes: 0
 ```
-# verl resource_pool YAML (disaggregated)
-resource_pool_spec:
-  actor_rollout_pool:   {n_gpus: 8}
-  reward_pool:          {n_gpus: 2}   # runs concurrently with rollout
-mapping:
-  actor: actor_rollout_pool
-  rollout: actor_rollout_pool
-  reward_model: reward_pool
-```
 
-In the synchronous default, VeRL calls `reward_model.compute_reward(rollout_output)` and `await`s the result before submitting samples to the training buffer. To pipeline, the call becomes non-blocking — the controller submits the reward request to `reward_pool`, immediately starts the next rollout batch on `actor_rollout_pool`, then joins the reward future before handing the completed sample to the trainer.
-
-The training buffer holds partially-rewarded samples during the overlap window. VeRL's existing staleness machinery (`staleness_threshold`, `trigger_parameter_sync_step`) bounds generation-to-training lag; reward queue depth is a separate bound on how long the buffer holds an unrewarded sample.
-
-**Colocated reward model:** if `reward_model` shares the `actor_rollout_pool`, no concurrent execution is possible — the reward forward pass time-multiplexes with rollout on the same GPUs. Pipelining requires a separate pool.
+The experimental label is significant — these paths are not part of the stable PPO/GRPO trainer used in most deployments.
 
 ### slime/Miles
 
-slime's controller is a Python process that talks to two independent services over HTTP: the SGLang rollout server and the Megatron training process. This process-boundary design naturally extends to a third service: a reward HTTP server (a separate vLLM/SGLang instance running the RM, or a Python verifier service).
+Miles pipelines **generation with training**, not reward with generation. The main loop in `train_async.py` is:
 
-In the synchronous baseline, the controller loop is:
 ```python
-trajectories = requests.post(sglang_url, prompts)   # blocking
-rewards      = compute_reward(trajectories)           # blocking
-submit_to_megatron(trajectories, rewards)             # blocking
+rollout_data_next_future = rollout_manager.generate.remote(rollout_id + 1)  # start next gen
+await actor_model.train(rollout_id, rollout_data_curr_ref)                   # train current
 ```
 
-To pipeline, the controller switches to async I/O:
-```python
-trajectories = await sglang_client.generate(prompts)
-reward_future = asyncio.create_task(reward_client.score(trajectories))
-next_trajectories = await sglang_client.generate(next_prompts)  # overlaps reward
-rewards = await reward_future
-submit_to_megatron(trajectories, rewards)
-```
+Generation batch N+1 runs on the rollout cluster while the trainer steps on batch N. Reward is computed **inside** `generate()` via `batched_async_rm`, which uses `asyncio.gather` to score all samples in the batch concurrently. Because reward is embedded in `generate()`, its latency is absorbed into the generation-training overlap window — reward is effectively hidden from the training critical path as a side effect of the generation pipeline, not as a dedicated reward pipeline.
 
-The reward server is just another HTTP service on its own GPU pool — slime's HTTP-based architecture makes adding it cheaper than restructuring an in-process Ray actor graph. The reward server can be placed on machines separate from both SGLang and Megatron, independently scaled (add replicas), and upgraded without touching the training or rollout cluster.
+This means:
+- Rule-based rewards (fast): negligible cost, absorbed easily.
+- Learned RM or LLM judge (slow): if reward latency causes `generate()` to take longer than the training step, generation becomes the new bottleneck and reward latency bleeds through to wall-clock time.
+
+There is no separate reward service, no reward queue, and no reward staleness config in Miles. Intra-batch reward parallelism (`asyncio.gather`) is the only optimization present.
 
 ### Comparison
 
-| Dimension | VeRL | slime/Miles |
-|---|---|---|
-| Baseline reward scheduling | Synchronous Ray call to `RewardModel` worker | Synchronous Python call in controller loop |
-| Pipelining mechanism | Non-blocking Ray `.remote()` call; separate `reward_pool` | Async HTTP (`asyncio.create_task`) to reward service |
-| Concurrent execution requires | Separate GPU resource pool for RewardModel | Reward server on any reachable host |
-| Reward pool scale-out | Add `reward_pool` GPUs; re-specify mapping | Add reward server replicas; load-balance in controller |
-| Buffer for in-flight rewards | Ray object store (same mechanism as other tensors) | Controller-side dict keyed by trajectory ID |
-| Reward staleness knob | Ad-hoc freshness threshold (not built-in to async config) | Ad-hoc; no built-in staleness config |
-
-Neither system has native reward pipelining as a first-class config option today — it requires controller-side changes in both cases. VeRL's separate resource pool is the key prerequisite on the infrastructure side; slime's HTTP boundary makes the async I/O pattern straightforward.
+| Dimension | VeRL (standard trainer) | VeRL (experimental agent loop) | Miles |
+|---|---|---|---|
+| Reward scheduling | Synchronous (`ray.get`) | Async Ray `.remote()` per trajectory | Synchronous within `generate()` |
+| Cross-batch pipelining | No | No | No (reward hidden inside generation-training pipeline) |
+| Intra-batch parallelism | Yes (Ray actor pool) | Yes (async worker handles) | Yes (`asyncio.gather`) |
+| Async reward enabled when | — | Rule-based OR separate RM pool | Always (but blocks generation return) |
+| Key config knob | — | `reward_model.enable_resource_pool` | None |
+| Reward latency visible on critical path | Yes | Reduced (parallel across trajectories) | Only if reward > training step |
 
 ---
 

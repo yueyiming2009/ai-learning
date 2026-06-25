@@ -449,91 +449,105 @@ trainer:              [step] → [step] → [step] → ...  (continuous)</code><
   </div>
 
   <!-- ── §7 VeRL vs Miles ──────────────────── -->
-  <h2 id="impl">7. VeRL and slime/Miles: Implementation Patterns</h2>
-
-  <p>Both systems run reward computation synchronously in their baseline walkthroughs (Phase 3, after rollout completes). The architecture of each system provides a different natural hook for pipelining.</p>
+  <h2 id="impl">7. VeRL and slime/Miles: Current State</h2>
 
   <h3>VeRL</h3>
 
-  <p>VeRL assigns each logical role to a Ray worker class. The <code>RewardModel</code> worker is a first-class citizen, not embedded in the <code>ActorRollout</code> hybrid engine. When placed on a <strong>separate resource pool</strong>, it gets its own Ray execution slot and can run concurrently with the rollout pool:</p>
+  <p>VeRL has two reward execution paths with different async properties.</p>
 
-  <pre><code># verl resource_pool YAML (disaggregated)
-resource_pool_spec:
-  actor_rollout_pool:   {n_gpus: 8}
-  reward_pool:          {n_gpus: 2}   # runs concurrently with rollout
-mapping:
-  actor:        actor_rollout_pool
-  rollout:      actor_rollout_pool
-  reward_model: reward_pool</code></pre>
+  <div class="step">
+    <div class="step-label">Standard trainer (verl/trainer/ppo/)</div>
+    <p>Reward is synchronous. <code>RewardLoopManager.compute_rm_score</code> dispatches work to <code>RewardLoopWorker</code> Ray actors, then calls <code>ray.get()</code> — it blocks until all reward scores return before the training loop proceeds. No cross-batch pipelining.</p>
+  </div>
 
-  <p>In the synchronous default, VeRL calls <code>reward_model.compute_reward(rollout_output)</code> and awaits the result before submitting samples to the training buffer. To pipeline, the call becomes non-blocking — the controller submits the reward request to <code>reward_pool</code>, immediately starts the next rollout batch on <code>actor_rollout_pool</code>, then joins the reward future before handing the completed sample to the trainer.</p>
+  <div class="step">
+    <div class="step-label">Experimental agent loop (verl/experimental/reward_loop/)</div>
+    <p>Async reward workers exist. <code>RewardLoopManager.reward_loop_worker_handles</code> returns Ray actor handles under two conditions:</p>
+    <ol>
+      <li><strong>Rule-based reward</strong> (no reward model) — cheap enough to run in parallel safely</li>
+      <li><strong>Learned RM with <code>reward_model.enable_resource_pool: true</code></strong> — RM runs on a separate GPU pool</li>
+    </ol>
+    <p>When handles are available, <code>AgentLoopWorker._compute_score</code> issues <code>await handle.compute_score.remote(data)</code> — a non-blocking Ray call. Multiple trajectories can have rewards computed concurrently on different workers while the agent loop continues. This is <strong>intra-batch parallelism across trajectories</strong>, not cross-batch pipelining, but it does reduce reward latency on the critical path.</p>
+    <p>When <code>enable_resource_pool</code> is false and a learned RM is enabled, handles return <code>None</code> and reward is synchronous on the colocated pool.</p>
+  </div>
 
-  <p>The training buffer holds partially-rewarded samples during the overlap window. VeRL's existing staleness machinery (<code>staleness_threshold</code>, <code>trigger_parameter_sync_step</code>) bounds generation-to-training lag; reward queue depth is a separate bound on how long the buffer holds an unrewarded sample.</p>
+  <p>Config knobs (reward section of VeRL YAML):</p>
+  <pre><code>reward:
+  num_workers: 8                       # parallel reward loop workers (Ray actors)
+  reward_model:
+    enable: false
+    enable_resource_pool: false        # true → separate GPU pool → async handles enabled
+    n_gpus_per_node: 8
+    nnodes: 0</code></pre>
 
   <div class="note">
-    <strong>Colocated reward model:</strong> if <code>reward_model</code> shares the <code>actor_rollout_pool</code>, no concurrent execution is possible — the reward forward pass time-multiplexes with rollout on the same GPUs. Pipelining requires a separate pool.
+    The experimental label matters — these paths are not part of the stable PPO/GRPO trainer used in most deployments. The standard trainer always blocks on <code>ray.get()</code>.
   </div>
 
   <h3>slime/Miles</h3>
 
-  <p>slime's controller is a Python process that communicates with two independent services over HTTP: the SGLang rollout server and the Megatron training process. This process-boundary design naturally extends to a third service — a reward HTTP server (a separate vLLM/SGLang instance running the RM, or a Python verifier service).</p>
+  <p>Miles pipelines <strong>generation with training</strong>, not reward with generation. The main loop in <code>train_async.py</code> is:</p>
 
-  <p>In the synchronous baseline, the controller loop is:</p>
+  <pre><code>rollout_data_next_future = rollout_manager.generate.remote(rollout_id + 1)  # start next gen
+await actor_model.train(rollout_id, rollout_data_curr_ref)                   # train current</code></pre>
 
-  <pre><code>trajectories = requests.post(sglang_url, prompts)   # blocking
-rewards      = compute_reward(trajectories)           # blocking
-submit_to_megatron(trajectories, rewards)             # blocking</code></pre>
+  <p>Generation batch N+1 runs on the rollout cluster while the trainer steps on batch N. Reward is computed <strong>inside</strong> <code>generate()</code> via <code>batched_async_rm</code>, which uses <code>asyncio.gather</code> to score all samples in the batch concurrently. Because reward is embedded in <code>generate()</code>, its latency is absorbed into the generation–training overlap window — reward is effectively hidden from the training critical path <em>as a side effect of the generation pipeline</em>, not as a dedicated reward pipeline.</p>
 
-  <p>To pipeline, the controller switches to async I/O:</p>
+  <p>This means:</p>
+  <ul>
+    <li><strong>Rule-based rewards (fast)</strong>: negligible cost, absorbed easily into the generation window.</li>
+    <li><strong>Learned RM or LLM judge (slow)</strong>: if reward latency causes <code>generate()</code> to take longer than the training step, generation becomes the bottleneck and reward latency bleeds through to wall-clock time.</li>
+  </ul>
 
-  <pre><code>trajectories  = await sglang_client.generate(prompts)
-reward_future = asyncio.create_task(reward_client.score(trajectories))
-next_traj     = await sglang_client.generate(next_prompts)  # overlaps reward
-rewards       = await reward_future
-submit_to_megatron(trajectories, rewards)</code></pre>
-
-  <p>The reward server is just another HTTP service on its own GPU pool — slime's HTTP-based architecture makes adding it cheaper than restructuring an in-process Ray actor graph. The reward server can be placed on machines separate from both SGLang and Megatron, independently scaled (add replicas), and upgraded without touching the training or rollout cluster.</p>
+  <p>There is no separate reward service, no reward queue, and no reward staleness config in Miles. Intra-batch reward parallelism via <code>asyncio.gather</code> is the only optimization present.</p>
 
   <h3>Side-by-side</h3>
 
   <div class="table-wrap">
     <table>
-      <tr><th>Dimension</th><th>VeRL</th><th>slime/Miles</th></tr>
       <tr>
-        <td>Baseline reward scheduling</td>
-        <td>Synchronous Ray call to <code>RewardModel</code> worker</td>
-        <td>Synchronous Python call in controller loop</td>
+        <th>Dimension</th>
+        <th>VeRL (standard trainer)</th>
+        <th>VeRL (experimental agent loop)</th>
+        <th>Miles</th>
       </tr>
       <tr>
-        <td>Pipelining mechanism</td>
-        <td>Non-blocking <code>.remote()</code> call; separate <code>reward_pool</code></td>
-        <td>Async HTTP (<code>asyncio.create_task</code>) to reward service</td>
+        <td>Reward scheduling</td>
+        <td>Synchronous (<code>ray.get</code>)</td>
+        <td>Async Ray <code>.remote()</code> per trajectory</td>
+        <td>Synchronous within <code>generate()</code></td>
       </tr>
       <tr>
-        <td>Concurrent execution requires</td>
-        <td>Separate GPU resource pool for RewardModel</td>
-        <td>Reward server on any reachable host</td>
+        <td>Cross-batch pipelining</td>
+        <td>No</td>
+        <td>No</td>
+        <td>No — reward hidden inside generation–training pipeline</td>
       </tr>
       <tr>
-        <td>Reward pool scale-out</td>
-        <td>Add <code>reward_pool</code> GPUs; re-specify mapping</td>
-        <td>Add reward server replicas; load-balance in controller</td>
+        <td>Intra-batch parallelism</td>
+        <td>Yes (Ray actor pool)</td>
+        <td>Yes (async worker handles)</td>
+        <td>Yes (<code>asyncio.gather</code>)</td>
       </tr>
       <tr>
-        <td>Buffer for in-flight rewards</td>
-        <td>Ray object store (same mechanism as other tensors)</td>
-        <td>Controller-side dict keyed by trajectory ID</td>
+        <td>Async reward enabled when</td>
+        <td>—</td>
+        <td>Rule-based OR separate RM pool</td>
+        <td>Always (but blocks <code>generate()</code> return)</td>
       </tr>
       <tr>
-        <td>Reward staleness knob</td>
-        <td>Ad-hoc freshness threshold (not built-in to async config)</td>
-        <td>Ad-hoc; no built-in staleness config</td>
+        <td>Key config knob</td>
+        <td>—</td>
+        <td><code>reward_model.enable_resource_pool</code></td>
+        <td>None</td>
+      </tr>
+      <tr>
+        <td>Reward latency on critical path</td>
+        <td>Yes</td>
+        <td>Reduced (parallel across trajectories)</td>
+        <td>Only if reward latency &gt; training step duration</td>
       </tr>
     </table>
-  </div>
-
-  <div class="note">
-    Neither system has native reward pipelining as a first-class config option today — it requires controller-side changes in both cases. VeRL's separate resource pool is the key prerequisite on the infrastructure side; slime's HTTP boundary makes the async I/O pattern straightforward to add.
   </div>
 
   <!-- ── §8 References ──────────────────────── -->
