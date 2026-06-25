@@ -45,6 +45,8 @@
     li { margin-bottom: 0.4em; }
     code { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
     p code, li code, td code { background: #f1f5f9; padding: 1px 6px; border-radius: 4px; font-size: 0.88em; color: #0369a1; }
+    pre { background: var(--step-bg); border: 1px solid var(--step-border); border-radius: 8px; padding: 14px 18px; overflow-x: auto; font-size: 0.85rem; line-height: 1.55; margin: 1.2em 0; }
+    pre code { background: none; padding: 0; color: var(--text); }
     .table-wrap { overflow-x: auto; margin: 1.2em 0; }
     table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
     th, td { border: 1px solid var(--border); padding: 9px 16px; text-align: left; vertical-align: top; }
@@ -201,6 +203,39 @@
 <p>
   Because allocation is incremental, a request only uses as much memory as it actually needs — no over-allocation. Internal fragmentation is at most one partial block per request (the last block), giving at most \(B - 1\) tokens of waste per request — negligible for \(B = 16\).
 </p>
+
+<pre><code>class BlockManager:
+    """Maps a request's logical KV positions to physical GPU memory blocks."""
+    def __init__(self, total_blocks, block_size=16):
+        self.block_size = block_size
+        self.free       = list(range(total_blocks))  # free block indices
+        self.tables     = {}   # req_id -> [phys_block_idx, ...]
+        self.ref_counts = [0] * total_blocks
+        self.seq_lens   = {}
+
+    def allocate(self, req_id, prompt_len):
+        n = (prompt_len + self.block_size - 1) // self.block_size
+        blocks = [self.free.pop() for _ in range(n)]
+        self.tables[req_id], self.seq_lens[req_id] = blocks, prompt_len
+        for b in blocks: self.ref_counts[b] = 1
+
+    def append_token(self, req_id):
+        self.seq_lens[req_id] += 1
+        if self.seq_lens[req_id] % self.block_size == 1:  # current block just filled
+            b = self.free.pop()
+            self.ref_counts[b] = 1
+            self.tables[req_id].append(b)
+
+    def free_request(self, req_id):
+        for b in self.tables.pop(req_id):
+            self.ref_counts[b] -= 1
+            if self.ref_counts[b] == 0:
+                self.free.append(b)   # immediately available to another request
+        del self.seq_lens[req_id]
+
+    def physical_block(self, req_id, logical_idx):
+        return self.tables[req_id][logical_idx]
+</code></pre>
 
 <div class="result">
   <div class="result-label">Maximum waste per request</div>

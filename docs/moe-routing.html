@@ -262,6 +262,31 @@
     \(\mathbf{x} \xrightarrow{W_g} \mathbf{s} \xrightarrow{\text{softmax}} \mathbf{p} \xrightarrow{\text{top-}K} \mathcal{S} \xrightarrow{\text{renorm}} \tilde{\mathbf{p}} \xrightarrow{\sum \tilde{p}_i \cdot \text{FFN}_i} \mathbf{y}\)
   </div>
 
+<pre><code>import torch, torch.nn.functional as F
+
+def moe_forward(x, W_gate, experts, K=2):
+    # x: [T, D]  W_gate: [D, E]  experts: list of E FFN modules
+    T, E = x.shape[0], len(experts)
+
+    # step 1: linear gate + softmax → router probabilities
+    probs = F.softmax(x @ W_gate, dim=-1)               # [T, E]
+
+    # step 2: select top-K experts per token, renormalize weights to sum to 1
+    topk_w, topk_i = probs.topk(K, dim=-1)              # [T, K] each
+    topk_w = topk_w / topk_w.sum(-1, keepdim=True)      # renorm
+
+    # step 3: dispatch — route each token, accumulate weighted expert outputs
+    # (production code replaces this loop with scatter/gather + batched matmul)
+    out = torch.zeros_like(x)
+    for k in range(K):
+        for e in range(E):
+            mask = topk_i[:, k] == e              # tokens routed to expert e at slot k
+            if not mask.any():
+                continue
+            out[mask] += topk_w[mask, k:k+1] * experts[e](x[mask])
+    return out
+</code></pre>
+
   <!-- ════════════════════════ GRADIENT FLOW ════════════════════════ -->
   <h2 id="gradients">4 · Gradient flow through the gate</h2>
 

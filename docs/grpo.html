@@ -145,6 +145,8 @@
       padding: 1px 5px;
       font-size: 0.88em;
     }
+    pre { background: var(--step-bg); border: 1px solid var(--step-border); border-radius: 8px; padding: 14px 18px; overflow-x: auto; font-size: 0.85rem; line-height: 1.55; margin: 1.2em 0; }
+    pre code { background: none; border: none; padding: 0; color: var(--text); }
 
     /* ── Table ───────────────────────────────── */
     .table-wrap { overflow-x: auto; margin: 1.2em 0; }
@@ -426,6 +428,33 @@
         \mathrm{clip}\big(\rho_{i,t}(\theta),\, 1-\epsilon,\, 1+\epsilon\big)\,\hat A_{i,t} \Big)
     \]
   </div>
+
+<pre><code>import torch
+
+def grpo_loss(logprobs, old_logprobs, ref_logprobs, rewards, eps=0.2, beta=0.04):
+    """
+    logprobs:     [G, T] — log π_θ(o_t | ...)     current policy (being trained)
+    old_logprobs: [G, T] — log π_θ_old(o_t | ...) frozen snapshot that generated outputs
+    ref_logprobs: [G, T] — log π_ref(o_t | ...)   frozen reference policy
+    rewards:      [G]    — one scalar reward per output in the group
+    """
+    # group-relative advantage: z-score the G rewards for this prompt
+    adv = (rewards - rewards.mean()) / (rewards.std() + 1e-8)  # [G]
+    adv = adv[:, None]   # [G, 1] → broadcast over token dimension
+
+    # importance ratio ρ_{i,t} = π_θ / π_θ_old
+    ratio   = torch.exp(logprobs - old_logprobs)          # [G, T]
+
+    # PPO clipped surrogate C_{i,t}
+    clipped = torch.clamp(ratio, 1 - eps, 1 + eps)
+    pg      = torch.min(ratio * adv, clipped * adv)       # [G, T]
+
+    # KL penalty: k3 estimator u − log u − 1 where u = π_ref / π_θ, always ≥ 0
+    u  = torch.exp(ref_logprobs - logprobs)
+    kl = u - torch.log(u) - 1                             # [G, T]
+
+    return -(pg - beta * kl).mean()   # minimize negative objective
+</code></pre>
 
   <p>Reading it: average over the group \((\tfrac1G\sum_i)\), average over tokens \((\tfrac{1}{|o_i|}\sum_t)\), and at each token take the PPO clipped term \(\mathcal{C}_{i,t}\) minus a per-token KL penalty toward the reference. Maximizing \(\mathcal{J}_{\text{GRPO}}\) raises the probability of tokens in better-than-average answers while clipping bounds the step size and the KL term keeps the policy near \(\pi_{\text{ref}}\).</p>
 

@@ -45,6 +45,8 @@
     li { margin-bottom: 0.4em; }
     code { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
     p code, li code, td code { background: #f1f5f9; padding: 1px 6px; border-radius: 4px; font-size: 0.88em; color: #4338ca; }
+    pre { background: var(--step-bg); border: 1px solid var(--step-border); border-radius: 8px; padding: 14px 18px; overflow-x: auto; font-size: 0.85rem; line-height: 1.55; margin: 1.2em 0; }
+    pre code { background: none; padding: 0; color: var(--text); }
     .table-wrap { overflow-x: auto; margin: 1.2em 0; }
     table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
     th, td { border: 1px solid var(--border); padding: 9px 16px; text-align: left; vertical-align: top; }
@@ -182,6 +184,31 @@
     <li><strong>Read</strong> the full cache \(K^\ell, V^\ell\) from HBM to compute the attention scores and weighted sum.</li>
   </ol>
 </div>
+
+<p>In code, this is a pre-allocated buffer filled one slot at a time:</p>
+<pre><code>import torch
+
+# Pre-allocate KV buffers for one layer; T_max = maximum context length
+# Shape: [T_max, h_kv, d_h]
+K_cache = torch.zeros(4096, 8, 128, dtype=torch.bfloat16, device="cuda")
+V_cache = torch.zeros(4096, 8, 128, dtype=torch.bfloat16, device="cuda")
+
+def decode_step(x_t, W_Q, W_K, W_V, t):
+    # x_t: [1, D] — hidden state of the single new token
+    q_t = x_t @ W_Q     # [1, h_q, d_h]
+    k_t = x_t @ W_K     # [1, h_kv, d_h]
+    v_t = x_t @ W_V     # [1, h_kv, d_h]
+
+    K_cache[t] = k_t    # O(1) append — one slot written
+    V_cache[t] = v_t
+
+    K = K_cache[:t+1]   # O(T) HBM read — all prior keys
+    V = V_cache[:t+1]
+
+    scale  = K.shape[-1] ** 0.5
+    scores = (q_t @ K.transpose(-2, -1)) / scale  # [1, h_q, T]
+    return  (scores.softmax(-1) @ V)               # [1, h_q, d_h]
+</code></pre>
 
 <p>
   The key insight: steps 1–3 require \(O(1)\) new computation per layer. Step 4 reads \(O(T)\) bytes — growing with context length, but serving as a simple sequential HBM read rather than recomputed matrix multiplications.

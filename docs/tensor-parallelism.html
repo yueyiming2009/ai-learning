@@ -580,6 +580,26 @@
     never gathered.
   </div>
 
+<pre><code>import torch, torch.distributed as dist
+
+def col_parallel_linear(x, W_col):
+    # x: [B, D] replicated; W_col: [D, F/tp] local shard
+    # Contraction axis D is not sharded → Case 1, no communication
+    return x @ W_col                           # [B, F/tp], sharded
+
+def row_parallel_linear(z, W_row, tp_group):
+    # z: [B, F/tp] sharded; W_row: [F/tp, D] local shard
+    # Contraction axis F is sharded → Case 3, local result is a partial sum
+    y = z @ W_row                              # [B, D], {U_X} unreduced
+    dist.all_reduce(y, group=tp_group)         # sum across TP group
+    return y                                   # [B, D], replicated
+
+def tp_mlp(x, W_in, W_out, tp_group):
+    z = col_parallel_linear(x, W_in)          # free: no comm
+    a = torch.nn.functional.gelu(z)           # free: elementwise, stays sharded
+    return row_parallel_linear(a, W_out, tp_group)  # 1 AllReduce total
+</code></pre>
+
   <h3>What the backward pass costs</h3>
   <p>
     By the <a href="collectives.html#duality">forward/backward duality</a>, we don’t re-derive the comm — we read

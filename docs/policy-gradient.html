@@ -55,6 +55,8 @@
     li { margin-bottom: 0.4em; }
     em { color: #374151; }
     code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-size: 0.88em; }
+    pre { background: var(--step-bg); border: 1px solid var(--step-border); border-radius: 8px; padding: 14px 18px; overflow-x: auto; font-size: 0.85rem; line-height: 1.55; margin: 1.2em 0; }
+    pre code { background: none; border: none; padding: 0; color: var(--text); }
 
     .table-wrap { overflow-x: auto; margin: 1.2em 0; }
     table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
@@ -195,6 +197,36 @@
       \nabla_\theta J(\theta) = \mathbb{E}\!\left[\sum_t \nabla_\theta \log \pi_\theta(a_t\mid s_t)\;R(\tau)\right]
     \]
   </div>
+
+<pre><code>import torch
+
+def reinforce(policy, env, optimizer, gamma=0.99):
+    log_probs, rewards = [], []
+    obs, done = env.reset(), False
+    while not done:
+        dist   = policy(torch.tensor(obs, dtype=torch.float32))
+        action = dist.sample()
+        log_probs.append(dist.log_prob(action))   # tracks gradient through π_θ
+        obs, r, done, _ = env.step(action.item())
+        rewards.append(r)
+
+    # reward-to-go: G_t = r_t + γ r_{t+1} + γ² r_{t+2} + ...
+    G, returns = 0.0, []
+    for r in reversed(rewards):
+        G = r + gamma * G
+        returns.insert(0, G)
+    returns = torch.tensor(returns, dtype=torch.float32)
+    returns = (returns - returns.mean()) / (returns.std() + 1e-8)  # baseline
+
+    # ∇J(θ) ≈ Σ_t G_t · ∇ log π_θ(a_t | s_t)
+    # returns is a plain tensor (no grad); .detach() would be needed if returns
+    # came from a learned critic V_ψ(s_t) to stop gradients flowing into it
+    loss = -(torch.stack(log_probs) * returns).sum()
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+</code></pre>
+
   <p>Each action's <em>score function</em> \(\nabla\log\pi_\theta(a_t\mid s_t)\) points in the direction that makes \(a_t\) more likely; weighting it by the return reinforces actions from good trajectories and suppresses those from bad ones. This is the REINFORCE algorithm — see <a href="mc-rollouts.html#reinforce" style="color:var(--accent);">Monte Carlo Rollouts §5</a> for the algorithm and worked example.</p>
 
   <h2 id="advantage">2. Variance Reduction: From Return to Advantage</h2>
