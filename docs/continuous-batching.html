@@ -335,6 +335,21 @@
 <!-- ═══════════════════════════════════════════ SCHEDULING TENSION -->
 <h2 id="scheduling">4 · TTFT vs. TPOT — the scheduling tension</h2>
 
+<div class="compare">
+  <div class="compare-label">Two latency metrics every serving stack optimizes</div>
+  <ul style="margin:0">
+    <li>
+      <strong>TTFT — Time to First Token.</strong> Wall-clock time from when the client sends a request to when the first output token arrives. Dominated by queue wait time and prefill duration. High TTFT feels like the model is "thinking" before it starts talking. SLO target is typically &lt;500 ms for interactive use.
+    </li>
+    <li style="margin-top:10px">
+      <strong>TPOT — Time Per Output Token.</strong> Average time between consecutive output tokens once generation has started (inverse of decode throughput per request). High TPOT makes streaming text feel slow or choppy. SLO target is typically &lt;50 ms/token so the stream appears fluid.
+    </li>
+  </ul>
+  <p style="margin:10px 0 0;font-size:0.88rem;color:#6b7280">
+    Together they decompose end-to-end latency: \(\text{E2E} \approx \text{TTFT} + T_{\rm out} \times \text{TPOT}\), where \(T_{\rm out}\) is the number of output tokens. Throughput-focused metrics (tokens/s across all requests) are orthogonal — a serving system can have high aggregate throughput while individual requests have high TTFT or TPOT.
+  </p>
+</div>
+
 <p>
   Continuous batching maximizes throughput but creates a new tension: a waiting request can only be admitted when a slot is free — and until it is admitted, its TTFT grows. Meanwhile, once admitted, its prefill computation runs in the same steps as the ongoing decodes, competing for GPU time.
 </p>
