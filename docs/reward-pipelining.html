@@ -282,6 +282,7 @@
     <a href="#queue">Queue mechanics</a>
     <a href="#off-policy">Off-policy</a>
     <a href="#compose">Async RL composition</a>
+    <a href="#impl">VeRL vs Miles</a>
     <a href="#refs">References</a>
   </div>
 </nav>
@@ -447,8 +448,96 @@ trainer:              [step] → [step] → [step] → ...  (continuous)</code><
     <strong>Tuning priority:</strong> minimize \(K_{rew}\) first — reward lag adds staleness with no IS correction benefit. Then tune \(K_{gen}\) to the maximum value stable under IS correction. Do not let a large reward queue silently inflate the effective policy lag beyond what IS can handle.
   </div>
 
-  <!-- ── §7 References ──────────────────────── -->
-  <h2 id="refs">7. Key References</h2>
+  <!-- ── §7 VeRL vs Miles ──────────────────── -->
+  <h2 id="impl">7. VeRL and slime/Miles: Implementation Patterns</h2>
+
+  <p>Both systems run reward computation synchronously in their baseline walkthroughs (Phase 3, after rollout completes). The architecture of each system provides a different natural hook for pipelining.</p>
+
+  <h3>VeRL</h3>
+
+  <p>VeRL assigns each logical role to a Ray worker class. The <code>RewardModel</code> worker is a first-class citizen, not embedded in the <code>ActorRollout</code> hybrid engine. When placed on a <strong>separate resource pool</strong>, it gets its own Ray execution slot and can run concurrently with the rollout pool:</p>
+
+  <pre><code># verl resource_pool YAML (disaggregated)
+resource_pool_spec:
+  actor_rollout_pool:   {n_gpus: 8}
+  reward_pool:          {n_gpus: 2}   # runs concurrently with rollout
+mapping:
+  actor:        actor_rollout_pool
+  rollout:      actor_rollout_pool
+  reward_model: reward_pool</code></pre>
+
+  <p>In the synchronous default, VeRL calls <code>reward_model.compute_reward(rollout_output)</code> and awaits the result before submitting samples to the training buffer. To pipeline, the call becomes non-blocking — the controller submits the reward request to <code>reward_pool</code>, immediately starts the next rollout batch on <code>actor_rollout_pool</code>, then joins the reward future before handing the completed sample to the trainer.</p>
+
+  <p>The training buffer holds partially-rewarded samples during the overlap window. VeRL's existing staleness machinery (<code>staleness_threshold</code>, <code>trigger_parameter_sync_step</code>) bounds generation-to-training lag; reward queue depth is a separate bound on how long the buffer holds an unrewarded sample.</p>
+
+  <div class="note">
+    <strong>Colocated reward model:</strong> if <code>reward_model</code> shares the <code>actor_rollout_pool</code>, no concurrent execution is possible — the reward forward pass time-multiplexes with rollout on the same GPUs. Pipelining requires a separate pool.
+  </div>
+
+  <h3>slime/Miles</h3>
+
+  <p>slime's controller is a Python process that communicates with two independent services over HTTP: the SGLang rollout server and the Megatron training process. This process-boundary design naturally extends to a third service — a reward HTTP server (a separate vLLM/SGLang instance running the RM, or a Python verifier service).</p>
+
+  <p>In the synchronous baseline, the controller loop is:</p>
+
+  <pre><code>trajectories = requests.post(sglang_url, prompts)   # blocking
+rewards      = compute_reward(trajectories)           # blocking
+submit_to_megatron(trajectories, rewards)             # blocking</code></pre>
+
+  <p>To pipeline, the controller switches to async I/O:</p>
+
+  <pre><code>trajectories  = await sglang_client.generate(prompts)
+reward_future = asyncio.create_task(reward_client.score(trajectories))
+next_traj     = await sglang_client.generate(next_prompts)  # overlaps reward
+rewards       = await reward_future
+submit_to_megatron(trajectories, rewards)</code></pre>
+
+  <p>The reward server is just another HTTP service on its own GPU pool — slime's HTTP-based architecture makes adding it cheaper than restructuring an in-process Ray actor graph. The reward server can be placed on machines separate from both SGLang and Megatron, independently scaled (add replicas), and upgraded without touching the training or rollout cluster.</p>
+
+  <h3>Side-by-side</h3>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Dimension</th><th>VeRL</th><th>slime/Miles</th></tr>
+      <tr>
+        <td>Baseline reward scheduling</td>
+        <td>Synchronous Ray call to <code>RewardModel</code> worker</td>
+        <td>Synchronous Python call in controller loop</td>
+      </tr>
+      <tr>
+        <td>Pipelining mechanism</td>
+        <td>Non-blocking <code>.remote()</code> call; separate <code>reward_pool</code></td>
+        <td>Async HTTP (<code>asyncio.create_task</code>) to reward service</td>
+      </tr>
+      <tr>
+        <td>Concurrent execution requires</td>
+        <td>Separate GPU resource pool for RewardModel</td>
+        <td>Reward server on any reachable host</td>
+      </tr>
+      <tr>
+        <td>Reward pool scale-out</td>
+        <td>Add <code>reward_pool</code> GPUs; re-specify mapping</td>
+        <td>Add reward server replicas; load-balance in controller</td>
+      </tr>
+      <tr>
+        <td>Buffer for in-flight rewards</td>
+        <td>Ray object store (same mechanism as other tensors)</td>
+        <td>Controller-side dict keyed by trajectory ID</td>
+      </tr>
+      <tr>
+        <td>Reward staleness knob</td>
+        <td>Ad-hoc freshness threshold (not built-in to async config)</td>
+        <td>Ad-hoc; no built-in staleness config</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="note">
+    Neither system has native reward pipelining as a first-class config option today — it requires controller-side changes in both cases. VeRL's separate resource pool is the key prerequisite on the infrastructure side; slime's HTTP boundary makes the async I/O pattern straightforward to add.
+  </div>
+
+  <!-- ── §8 References ──────────────────────── -->
+  <h2 id="refs">8. Key References</h2>
 
   <div class="table-wrap">
     <table>
