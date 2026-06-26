@@ -305,6 +305,24 @@
   </li>
 </ol>
 
+<div class="note" style="background:#fef9c3; border-left-color:#ca8a04; color:#713f12">
+  <strong>Caveat: the calculator above covers only linear layers.</strong> Attention does not follow the same batch-size scaling, and it is why measured GPU utilization stays low even at large batches.
+  <p style="margin:8px 0 0 0"><strong>Why attention's arithmetic intensity doesn't scale with \(B\).</strong>
+  For a linear layer, batching \(B\) sequences shares the weight matrix across all \(B\) tokens — one load, \(B\) reuses, so intensity is \(I = B\). Attention is different: each sequence has its own KV cache, and computing attention for sequence \(i\) requires reading the entire KV history of sequence \(i\) from HBM. Adding more sequences adds more independent memory reads, not more reuse. The arithmetic intensity of the attention kernel is therefore bounded by the sequence length \(S\), not the batch size:
+  \[ I_{\text{attn}} \;\approx\; \frac{2 \cdot S}{\text{bytes per KV entry}} \]
+  This is a fixed number for a given sequence length — adding more sequences in the batch doesn't change it. Attention stays memory-bound at all practical batch sizes.</p>
+  <p style="margin:8px 0 0 0"><strong>Consequence: the whole-step utilization ceiling.</strong>
+  Decode alternates between linear layers (intensity scales with \(B\)) and attention (intensity fixed). Even when the linear layers reach the compute ridge at \(B = I^*\), the attention kernels remain memory-bound and continue to dominate total step time at long context. Empirically this shows up as:
+  <ul style="margin:6px 0 0 0">
+    <li>No model exceeds ~35% average warp utilization during decode, even at maximum batch sizes (across OPT, Llama-2 families on A100/H100).</li>
+    <li>H100 decode SM utilization: ~30% at production batch sizes, vs. 92% during prefill.</li>
+    <li>Tensor cores &gt;88% idle during decode across tested architectures — the HMMA pipeline sits empty while warps wait for KV cache reads.</li>
+    <li>At large batches, DRAM bandwidth saturates first; adding more sequences stalls on bandwidth before hitting the compute ceiling.</li>
+  </ul>
+  </p>
+  <p style="margin:6px 0 0 0">The practical implication: techniques that target the linear-layer bottleneck (weight quantization, larger batch) help decode throughput but cannot push SM or tensor-core utilization to prefill-like levels, because attention always pulls it back down. Techniques that reduce KV memory traffic — KV quantization, sliding-window attention, MLA — are the only lever that moves the attention bottleneck.</p>
+</div>
+
 <!-- ═══════════════════════════════════════════ TTFT / TPOT -->
 <h2 id="ttft-tpot">5 · TTFT and TPOT — what each workload optimizes for</h2>
 

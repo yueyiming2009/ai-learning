@@ -267,15 +267,30 @@
     Tensor Cores and ALUs never idle even though every individual memory access is slow. The fraction of the SM’s
     warp capacity you actually use (up to <strong>64 warps/SM</strong> on Hopper) is called <strong>occupancy</strong>.
   </p>
-  <div class="note" style="background:#ecfccb; border-left-color:#65a30d; color:#3f6212">
+  <div class=”note” style=”background:#ecfccb; border-left-color:#65a30d; color:#3f6212”>
     <strong>Foundation for kernel optimization →</strong> occupancy is the knob that hides HBM latency. Too few
     warps (often from using too many registers or too much shared memory per block) leaves the SM stalling on
     memory with no other work to switch to — the “low-occupancy” trap. This is why kernels budget registers and
     shared memory carefully.
   </div>
 
+  <div class=”note” style=”background:#fef9c3; border-left-color:#ca8a04; color:#713f12”>
+    <strong>SM utilization ≠ Tensor-Core active.</strong> These are two distinct profiler metrics that measure different levels of the hierarchy — and confusing them is the most common misread of GPU profiling output.
+    <ul style=”margin:8px 0 0 0”>
+      <li><strong>SM utilization</strong> (<code>sm__active_cycles</code>) — fraction of elapsed cycles where the SM has at least one active warp. The SM is “active” even if every warp inside it is stalled waiting for HBM.</li>
+      <li><strong>Tensor-Core active</strong> (<code>sm__pipe_tensor_op_hmma_cycles_active</code>) — fraction of cycles where the tensor-core pipeline is actually issuing a matrix-multiply instruction.</li>
+    </ul>
+    <p style=”margin:8px 0 0 0”>During decode on an H100, SM utilization is typically 20–40% (warps are scheduled), but tensor-core active is 5–12% (those warps are mostly stalled on HBM reads, not computing). The gap between the two is the fraction of SM-active time spent waiting for memory — which is the definition of memory-bound.</p>
+    <p style=”margin:6px 0 0 0”><strong>Warp stall types</strong> (visible in Nsight Compute as “warp stall reasons”) tell you <em>why</em> a warp is not issuing:
+      <ul style=”margin:4px 0 0 0”>
+        <li><em>Memory pipe stall</em> — warp is waiting for an HBM or L2 load to return. Dominant during decode; the KV cache and weight reads are what trigger these.</li>
+        <li><em>Instruction dependency stall</em> — warp is waiting for a prior arithmetic result before it can issue the next instruction. More common during prefill, where large matmuls generate long chains of dependent tile accumulations.</li>
+      </ul>
+    Both phases show ~75% stalled cycles overall (paper: prefill 27% active cycles, decode 24%), but for different reasons — memory waits in decode, compute dependencies in prefill.</p>
+  </div>
+
   <!-- ════════════════════════ INSIDE AN SM ════════════════════════ -->
-  <h2 id="sm">3 · Inside an SM: cores, Tensor Cores, and the register file</h2>
+  <h2 id=”sm”>3 · Inside an SM: cores, Tensor Cores, and the register file</h2>
   <p>
     Each of the 132 SMs is a small independent processor. Splitting it into its four scheduler partitions, one SM
     holds:
