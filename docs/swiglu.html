@@ -244,6 +244,39 @@
     }
     .summary-card p { margin: 0; font-size: 0.9rem; }
 
+    /* ── Figure / plot ───────────────────────── */
+    .figure {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 16px 14px;
+      margin: 1.6em 0;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .figure canvas {
+      width: 100%;
+      height: 300px;
+      display: block;
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      justify-content: center;
+      margin-top: 12px;
+      font-size: 0.82rem;
+      color: var(--text);
+    }
+    .legend-item { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, #9ca3af 0 5px, transparent 5px 9px); }
+    .figure-caption {
+      font-size: 0.85rem;
+      color: var(--muted);
+      line-height: 1.6;
+      margin: 14px 4px 2px;
+    }
+
     /* ── Footer ──────────────────────────────── */
     footer {
       border-top: 1px solid var(--border);
@@ -316,6 +349,22 @@
     Both \(\sigma(z)\) and \(\mathrm{Swish}(z)\) are already computed in the forward pass, so the backward pass reuses them for free — no additional transcendental functions required.
   </div>
 
+  <div class="figure">
+    <canvas id="plot-swish" aria-label="Plot of Swish, ReLU, and the Swish derivative versus input z"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg dash"></span> ReLU(z)</span>
+      <span class="legend-item"><span class="lg" style="--c:#6d28d9"></span> Swish(z) = z·σ(z)</span>
+      <span class="legend-item"><span class="lg" style="--c:#0d9488"></span> Swish′(z)</span>
+    </div>
+    <p class="figure-caption">
+      <strong>Swish is a smooth, self-gated ReLU.</strong> It tracks ReLU (gray, dashed) for large \(|z|\),
+      but bends smoothly through the origin and dips slightly below zero near \(z \approx -1.28\). That
+      non-monotone dip keeps a usable gradient where ReLU is flat-zero — so negative neurons can still
+      recover. Its derivative (teal) is smooth: it can exceed 1 and go slightly negative, unlike ReLU's
+      hard 0/1 step.
+    </p>
+  </div>
+
   <h2 id="forward">2. Forward Pass</h2>
   <ol>
     <li><strong>Gate pre-activation</strong> &nbsp; \(\mathbf{u} = \mathbf{x}W_g\)</li>
@@ -328,6 +377,23 @@
     </li>
     <li><strong>Output projection</strong> &nbsp; \(\mathbf{y} = \mathbf{h}\,W_o\)</li>
   </ol>
+
+  <div class="figure">
+    <canvas id="plot-swiglu" aria-label="Plot of SwiGLU output versus gate input for several fixed value magnitudes"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:#6d28d9"></span> v = 2</span>
+      <span class="legend-item"><span class="lg" style="--c:#a78bfa"></span> v = 1 (gate itself)</span>
+      <span class="legend-item"><span class="lg" style="--c:#f59e0b"></span> v = −1</span>
+      <span class="legend-item"><span class="lg" style="--c:#d97706"></span> v = −2</span>
+    </div>
+    <p class="figure-caption">
+      <strong>SwiGLU is a data-dependent valve.</strong> Each curve is \(h = \mathrm{Swish}(u)\cdot v\) for a
+      fixed value \(v\), plotted against the gate input \(u\). When \(u\) is large positive the gate opens and
+      the value passes through almost unchanged (\(h \approx v\)); when \(u\) is large negative the gate closes
+      and \(h \to 0\). The sign of \(v\) reflects the curve, and the small bump near \(u \approx -1\) is the
+      Swish dip scaled by \(v\). The \(v = 1\) curve is exactly the Swish gate from the plot above.
+    </p>
+  </div>
 
   <div class="note">
     In LLaMA, the gate projection is sometimes called <em>gate_proj</em>, the value projection <em>up_proj</em>, and the output projection <em>down_proj</em>. The hidden width is typically set to \(\tfrac{2}{3} \cdot 4d\) (rounded to a multiple of 64) so that parameter count matches a standard \(4d\) FFN after adding the extra gate path.
@@ -444,6 +510,109 @@
 <footer>
   Personal ML notes &nbsp;·&nbsp; SwiGLU forward and backward pass
 </footer>
+
+<script>
+(function () {
+  function sigmoid(z) { return 1 / (1 + Math.exp(-z)); }
+  function swish(z)   { return z * sigmoid(z); }
+  function swishP(z)  { const s = sigmoid(z); return s + z * s * (1 - s); }
+  function relu(z)    { return z > 0 ? z : 0; }
+
+  function drawPlot(canvas, cfg) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const mL = 44, mR = 14, mT = 14, mB = 30;
+    const pw = cssW - mL - mR, ph = cssH - mT - mB;
+    const { xMin, xMax, yMin, yMax } = cfg;
+    const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
+    const Y = y => mT + (yMax - y) / (yMax - yMin) * ph;
+
+    // gridlines + tick labels
+    ctx.font = '11px Inter, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = '#eceef1';
+    ctx.fillStyle = '#9ca3af';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(t => {
+      const px = X(t);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.fillText(String(t), px, mT + ph + 6);
+    });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(t => {
+      const py = Y(t);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+      ctx.fillText(String(t), mL - 8, py);
+    });
+
+    // emphasized zero axes
+    ctx.strokeStyle = '#c7cbd1';
+    ctx.lineWidth = 1.25;
+    if (yMin < 0 && yMax > 0) { const py = Y(0); ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke(); }
+    if (xMin < 0 && xMax > 0) { const px = X(0); ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke(); }
+
+    // curves (clipped to plot area)
+    ctx.save();
+    ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    ctx.lineJoin = 'round';
+    cfg.series.forEach(s => {
+      ctx.beginPath();
+      ctx.lineWidth = s.width || 2;
+      ctx.strokeStyle = s.color;
+      ctx.setLineDash(s.dash || []);
+      const N = 260;
+      for (let i = 0; i <= N; i++) {
+        const x = xMin + (xMax - xMin) * i / N;
+        const px = X(x), py = Y(s.fn(x));
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  const plots = [];
+  const swishCanvas = document.getElementById('plot-swish');
+  if (swishCanvas) plots.push([swishCanvas, {
+    xMin: -5, xMax: 4, yMin: -1, yMax: 4,
+    xTicks: [-4, -2, 0, 2, 4],
+    yTicks: [-1, 0, 1, 2, 3, 4],
+    series: [
+      { fn: relu,   color: '#9ca3af', width: 1.75, dash: [5, 4] },
+      { fn: swish,  color: '#6d28d9', width: 2.75 },
+      { fn: swishP, color: '#0d9488', width: 2 }
+    ]
+  }]);
+
+  const swigluCanvas = document.getElementById('plot-swiglu');
+  if (swigluCanvas) plots.push([swigluCanvas, {
+    xMin: -5, xMax: 3, yMin: -6, yMax: 6,
+    xTicks: [-4, -2, 0, 2],
+    yTicks: [-6, -4, -2, 0, 2, 4, 6],
+    series: [
+      { fn: u => swish(u) *  2, color: '#6d28d9', width: 2.5 },
+      { fn: u => swish(u) *  1, color: '#a78bfa', width: 2.5 },
+      { fn: u => swish(u) * -1, color: '#f59e0b', width: 2.5 },
+      { fn: u => swish(u) * -2, color: '#d97706', width: 2.5 }
+    ]
+  }]);
+
+  function renderAll() { plots.forEach(([c, cfg]) => drawPlot(c, cfg)); }
+  renderAll();
+  let raf;
+  window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(renderAll); });
+})();
+</script>
 
 </body>
 </html>
