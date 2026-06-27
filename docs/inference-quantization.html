@@ -85,6 +85,7 @@
     <a href="#weight-only">Weight-only</a>
     <a href="#wawa">W+A quantization</a>
     <a href="#fp8">FP8</a>
+    <a href="#fp4">FP4</a>
     <a href="#kv-quant">KV cache</a>
     <a href="#methods">Methods</a>
     <a href="#tradeoffs">Tradeoff table</a>
@@ -227,8 +228,40 @@
   Quality compared to INT8: FP8 E4M3 has the same number of bits as INT8, but the floating-point representation handles outliers more gracefully because the exponent field provides dynamic range. In practice, FP8 quantization requires minimal calibration and achieves near-BF16 quality on most benchmarks. DeepSeek-V3 was both trained and served in FP8.
 </p>
 
+<!-- ═══════════════════════════════════════════ FP4 / MICROSCALING -->
+<h2 id="fp4">5 · FP4 and microscaling (Blackwell)</h2>
+
+<p>
+  NVIDIA Blackwell (B200/B300) adds <strong>FP4</strong> through the 2nd-generation Transformer Engine. Four bits is a steep cut — a raw FP4 float (<code>E2M1</code>: 1 sign, 2 exponent, 1 mantissa) has only 16 levels and almost no dynamic range — so FP4 is never used alone. It is paired with <strong>microscaling</strong>: the tensor is split into small contiguous blocks, and each block carries its own scale factor, restoring effective dynamic range where the values in that block actually live.
+</p>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>Format</th><th>Element</th><th>Block</th><th>Per-block scale</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>INT4</strong></td><td>4-bit integer</td><td>group</td><td>group scale (AWQ/GPTQ)</td><td>weight-only; no native 4-bit Tensor Core math</td></tr>
+      <tr><td><strong>MXFP4</strong> (OCP)</td><td>E2M1</td><td>32</td><td>E8M0 (power-of-two)</td><td>open standard; coarse scale</td></tr>
+      <tr><td><strong>NVFP4</strong> (NVIDIA)</td><td>E2M1</td><td>16</td><td>FP8 E4M3 + per-tensor FP32</td><td>finer blocks + higher-precision scale ⇒ better accuracy</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>
+  Why FP4 beats naïve INT4: the per-block <em>floating</em> scale tracks local magnitude, so an outlier in one block does not crush the resolution of another — the same dynamic-range argument that makes FP8 beat INT8, now applied at 4 bits with finer granularity. NVFP4's smaller 16-element block and FP8 scale (vs. MXFP4's 32-element power-of-two scale) is what buys most of its accuracy edge.
+</p>
+
+<p>
+  The throughput case follows the same prefill/decode split as FP8. Decode is memory-bandwidth-bound, so halving the bytes per weight versus FP8 roughly doubles the decode-limited throughput; compute-bound prefill and training matmuls gain from Blackwell's FP4 Tensor Cores, which deliver on the order of 2× the FP8 math throughput. As with FP8, sensitive layers (the LM head, some attention projections) are usually kept at higher precision.
+</p>
+
+<p>
+  For the hardware that runs FP4 — the 2nd-gen Transformer Engine, the dual-die GPU, and the 72-GPU NVLink domain — see <a href="blackwell.html">Blackwell (B200 &amp; B300)</a>.
+</p>
+
 <!-- ═══════════════════════════════════════════ KV CACHE QUANTIZATION -->
-<h2 id="kv-quant">5 · KV cache quantization</h2>
+<h2 id="kv-quant">6 · KV cache quantization</h2>
 
 <p>
   The KV cache grows with context length and limits batch size (see <a href="kv-cache.html">KV Cache</a>). Quantizing K and V tensors from FP16 to INT8 or FP8 halves KV memory, enabling either 2× more concurrent requests or 2× longer contexts at the same request count.
@@ -251,7 +284,7 @@
 </ul>
 
 <!-- ═══════════════════════════════════════════ METHODS -->
-<h2 id="methods">6 · Calibration methods — AWQ, GPTQ, and SmoothQuant</h2>
+<h2 id="methods">7 · Calibration methods — AWQ, GPTQ, and SmoothQuant</h2>
 
 <div class="table-wrap">
   <table>
@@ -294,7 +327,7 @@
 </div>
 
 <!-- ═══════════════════════════════════════════ TRADEOFFS -->
-<h2 id="tradeoffs">7 · Precision trade-off summary</h2>
+<h2 id="tradeoffs">8 · Precision trade-off summary</h2>
 
 <div class="table-wrap">
   <table>
@@ -366,7 +399,7 @@
 </div>
 
 <!-- ═══════════════════════════════════════════ SUMMARY -->
-<h2 id="summary">8 · Summary</h2>
+<h2 id="summary">9 · Summary</h2>
 
 <div class="summary-grid">
   <div class="summary-card">
