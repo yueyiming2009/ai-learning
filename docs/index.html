@@ -132,12 +132,14 @@
 
     /* ── Subsection label (was h2) ───────────── */
     h2 {
-      font-size: 0.78rem;
-      font-weight: 600;
+      font-size: 0.95rem;
+      font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.06em;
-      color: #6b7280;
-      margin: 36px 0 14px;
+      letter-spacing: 0.05em;
+      color: #1a1a2e;
+      margin: 40px 0 16px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #e8eaed;
     }
     .domain > h2:first-of-type { margin-top: 8px; }
 
@@ -240,8 +242,8 @@
   <p>Worked derivations, algorithm walkthroughs, and systems notes — the math, procedures, and engineering that show up when training and running modern ML models.</p>
   <div class="hero-domains">
     <a href="#foundations">01 · Foundations</a>
-    <a href="#rl">02 · RL</a>
-    <a href="#systems">03 · Systems</a>
+    <a href="#systems">02 · Systems</a>
+    <a href="#rl">03 · RL</a>
     <a href="#inference">04 · Inference</a>
   </div>
 </div>
@@ -362,9 +364,96 @@
     </div>
   </details>
 
-  <details class="domain domain-rl" id="rl">
+<details class="domain domain-systems" id="systems">
     <summary class="domain-header">
       <span class="domain-num">02</span>
+      <h1>Systems &amp; Hardware</h1>
+      <span class="chevron" aria-hidden="true">▸</span>
+    </summary>
+    <p class="domain-desc">Engineering notes, built bottom-up — the hardware substrate, the GPU kernels that run on it, the collective communication between chips, and the distributed plumbing that turns the math into a working training run.</p>
+    <h2>Hardware</h2>
+    <div class="card-grid">
+      <a class="card" href="gpu-hardware.html">
+        <span class="card-tag tag-hw">GPU Hardware</span>
+        <div class="card-title">GPU Hardware for ML</div>
+        <p class="card-desc">The physical basis for compute and comm: the SIMT execution model (warps, occupancy), inside an SM (Tensor Cores, the managed scratchpad, TMA), the memory hierarchy and roofline, the NVSwitch crossbar, and the bandwidth cliff onto the network.</p>
+        <div class="card-arrow">Read guide →</div>
+      </a>
+      <a class="card" href="mfu.html">
+        <span class="card-tag tag-hw">MFU</span>
+        <div class="card-title">MFU — Model FLOPs Utilization</div>
+        <p class="card-desc">The whole-run roofline verdict: derive the 6N FLOPs-per-token rule and its 12·L·D·T attention correction, turn measured tokens/sec into achieved FLOP/s, MFU vs HFU under recomputation, a worked 7B example, and an interactive calculator.</p>
+        <div class="card-arrow">Read guide →</div>
+      </a>
+      <a class="card" href="tpu-hardware.html">
+        <span class="card-tag tag-hw">TPU Hardware</span>
+        <div class="card-title">TPU Hardware for ML</div>
+        <p class="card-desc">The MXU systolic array (animated), VMEM/HBM memory, and the ICI nearest-neighbor torus that makes the collective cost model's "ring" literally true — plus a GPU-vs-TPU contrast.</p>
+        <div class="card-arrow">Read guide →</div>
+      </a>
+    </div>
+    <h2>GPU Kernels (Triton)</h2>
+    <div class="card-grid">
+      <a class="card" href="triton-kernels.html">
+        <span class="card-tag tag-kern">Triton</span>
+        <div class="card-title">GPU Kernels in Triton</div>
+        <p class="card-desc">The SPMD programming model, blocks and program IDs, masked loads — then two worked kernels: vector add (warmup) and fused row-wise softmax (eliminates 2 of 4 HBM round-trips vs. the naive 3-op chain). Original Colab notebooks archived inside.</p>
+        <div class="card-arrow">Read guide →</div>
+      </a>
+    </div>
+    <h2>Communication &amp; Parallelism</h2>
+    <div class="card-grid">
+      <a class="card" href="collectives.html">
+        <span class="card-tag tag-par">Collectives</span>
+        <div class="card-title">Sharding &amp; Collectives — The Communication Math</div>
+        <p class="card-desc">The foundation for the parallelism series: sharding notation, the <em>{U<sub>X</sub>}</em> unreduced state, the bytes-per-GPU cost model, and AllGather / ReduceScatter / AllReduce / AllToAll derived — plus which collective a sharded matmul forces.</p>
+        <div class="card-arrow">Read guide →</div>
+      </a>
+      <a class="card" href="nccl.html">
+        <span class="card-tag tag-nccl">NCCL</span>
+        <div class="card-title">NCCL — How Collectives Actually Run</div>
+        <p class="card-desc">The implementation layer: the five-layer stack (topology, algorithm, protocol, channels, selection), a ring-AllReduce animation, the double binary tree, NVLS in-switch reduction, the LL/LL128/Simple protocols, and how NCCL picks per message size.</p>
+        <div class="card-arrow">Read guide →</div>
+      </a>
+      <a class="card" href="tensor-parallelism.html">
+        <span class="card-tag tag-par">Tensor Parallel</span>
+        <div class="card-title">Tensor Parallelism — The Collective Math</div>
+        <p class="card-desc">Megatron-style TP derived from the cost model: column- then row-parallel weights so each MLP and attention block costs one AllReduce forward and one backward — and exactly why that pins TP to a single NVLink node.</p>
+        <div class="card-arrow">Read derivation →</div>
+      </a>
+      <a class="card" href="pipeline-parallelism.html">
+        <span class="card-tag tag-par">Pipeline Parallel</span>
+        <div class="card-title">Pipeline Parallelism — Stages, Schedules, and the Bubble</div>
+        <p class="card-desc">When the model overflows one NVLink node, split it by depth. Derives the three schedules — GPipe, 1F1B, and interleaved 1F1B — through their bubble-fraction and memory formulas, and shows when PP is the right axis to reach for.</p>
+        <div class="card-arrow">Read guide →</div>
+      </a>
+      <a class="card" href="sequence-parallelism.html">
+        <span class="card-tag tag-par">Sequence Parallel</span>
+        <div class="card-title">Sequence Parallelism — Megatron-SP, Ring Attention, and Ulysses</div>
+        <p class="card-desc">When sequence length fills GPU memory before model parameters do, shard the token axis. Three approaches with different communication primitives, memory profiles, and scaling limits — Megatron-SP (free, pairs with TP), Ring Attention (unlimited scale, pipelined P2P), and Ulysses (AlltoAll on heads).</p>
+        <div class="card-arrow">Read guide →</div>
+      </a>
+      <a class="card" href="moe-parallelism.html">
+        <span class="card-tag tag-par">MoE Parallel</span>
+        <div class="card-title">MoE Parallelism — EP, TP, and Throughput Tradeoffs</div>
+        <p class="card-desc">Why MoE models need Expert Parallelism: the AlltoAll dispatch cost model, the arithmetic-intensity argument for EP over TP on expert FFN weights, load-imbalance as the EP ceiling, and how to reason about TP × EP × DP degrees — with a worked TP=2, EP=2, DP=2 example and the MoE throughput cross-over formula.</p>
+        <div class="card-arrow">Read guide →</div>
+      </a>
+    </div>
+    <h2>Distributed Training</h2>
+    <div class="card-grid">
+      <a class="card" href="torch-distributed.html">
+        <span class="card-tag tag-dist">Data Parallel</span>
+        <div class="card-title">Data Parallelism — Replicate, Shard, and the ZeRO Ladder</div>
+        <p class="card-desc">The one dial — how much model state each GPU keeps — read off bytes-per-GPU: DDP replicates (the 16-bytes/param wall), FSDP shards with an animated all-gather/free lifecycle, the ZeRO ladder derives the 1.5×-comm-for-1/N-state trade, and DeviceMesh composes data parallelism with the orthogonal tensor/pipeline axes — all on <code>torch.distributed</code> collectives.</p>
+        <div class="card-arrow">Read guide →</div>
+      </a>
+    </div>
+  </details>
+
+<details class="domain domain-rl" id="rl">
+    <summary class="domain-header">
+      <span class="domain-num">03</span>
       <h1>Reinforcement Learning</h1>
       <span class="chevron" aria-hidden="true">▸</span>
     </summary>
@@ -522,94 +611,7 @@
     </div>
   </details>
 
-  <details class="domain domain-systems" id="systems">
-    <summary class="domain-header">
-      <span class="domain-num">03</span>
-      <h1>Systems &amp; Hardware</h1>
-      <span class="chevron" aria-hidden="true">▸</span>
-    </summary>
-    <p class="domain-desc">Engineering notes, built bottom-up — the hardware substrate, the GPU kernels that run on it, the collective communication between chips, and the distributed plumbing that turns the math into a working training run.</p>
-    <h2>Hardware</h2>
-    <div class="card-grid">
-      <a class="card" href="gpu-hardware.html">
-        <span class="card-tag tag-hw">GPU Hardware</span>
-        <div class="card-title">GPU Hardware for ML</div>
-        <p class="card-desc">The physical basis for compute and comm: the SIMT execution model (warps, occupancy), inside an SM (Tensor Cores, the managed scratchpad, TMA), the memory hierarchy and roofline, the NVSwitch crossbar, and the bandwidth cliff onto the network.</p>
-        <div class="card-arrow">Read guide →</div>
-      </a>
-      <a class="card" href="mfu.html">
-        <span class="card-tag tag-hw">MFU</span>
-        <div class="card-title">MFU — Model FLOPs Utilization</div>
-        <p class="card-desc">The whole-run roofline verdict: derive the 6N FLOPs-per-token rule and its 12·L·D·T attention correction, turn measured tokens/sec into achieved FLOP/s, MFU vs HFU under recomputation, a worked 7B example, and an interactive calculator.</p>
-        <div class="card-arrow">Read guide →</div>
-      </a>
-      <a class="card" href="tpu-hardware.html">
-        <span class="card-tag tag-hw">TPU Hardware</span>
-        <div class="card-title">TPU Hardware for ML</div>
-        <p class="card-desc">The MXU systolic array (animated), VMEM/HBM memory, and the ICI nearest-neighbor torus that makes the collective cost model's "ring" literally true — plus a GPU-vs-TPU contrast.</p>
-        <div class="card-arrow">Read guide →</div>
-      </a>
-    </div>
-    <h2>GPU Kernels (Triton)</h2>
-    <div class="card-grid">
-      <a class="card" href="triton-kernels.html">
-        <span class="card-tag tag-kern">Triton</span>
-        <div class="card-title">GPU Kernels in Triton</div>
-        <p class="card-desc">The SPMD programming model, blocks and program IDs, masked loads — then two worked kernels: vector add (warmup) and fused row-wise softmax (eliminates 2 of 4 HBM round-trips vs. the naive 3-op chain). Original Colab notebooks archived inside.</p>
-        <div class="card-arrow">Read guide →</div>
-      </a>
-    </div>
-    <h2>Communication &amp; Parallelism</h2>
-    <div class="card-grid">
-      <a class="card" href="collectives.html">
-        <span class="card-tag tag-par">Collectives</span>
-        <div class="card-title">Sharding &amp; Collectives — The Communication Math</div>
-        <p class="card-desc">The foundation for the parallelism series: sharding notation, the <em>{U<sub>X</sub>}</em> unreduced state, the bytes-per-GPU cost model, and AllGather / ReduceScatter / AllReduce / AllToAll derived — plus which collective a sharded matmul forces.</p>
-        <div class="card-arrow">Read guide →</div>
-      </a>
-      <a class="card" href="nccl.html">
-        <span class="card-tag tag-nccl">NCCL</span>
-        <div class="card-title">NCCL — How Collectives Actually Run</div>
-        <p class="card-desc">The implementation layer: the five-layer stack (topology, algorithm, protocol, channels, selection), a ring-AllReduce animation, the double binary tree, NVLS in-switch reduction, the LL/LL128/Simple protocols, and how NCCL picks per message size.</p>
-        <div class="card-arrow">Read guide →</div>
-      </a>
-      <a class="card" href="tensor-parallelism.html">
-        <span class="card-tag tag-par">Tensor Parallel</span>
-        <div class="card-title">Tensor Parallelism — The Collective Math</div>
-        <p class="card-desc">Megatron-style TP derived from the cost model: column- then row-parallel weights so each MLP and attention block costs one AllReduce forward and one backward — and exactly why that pins TP to a single NVLink node.</p>
-        <div class="card-arrow">Read derivation →</div>
-      </a>
-      <a class="card" href="pipeline-parallelism.html">
-        <span class="card-tag tag-par">Pipeline Parallel</span>
-        <div class="card-title">Pipeline Parallelism — Stages, Schedules, and the Bubble</div>
-        <p class="card-desc">When the model overflows one NVLink node, split it by depth. Derives the three schedules — GPipe, 1F1B, and interleaved 1F1B — through their bubble-fraction and memory formulas, and shows when PP is the right axis to reach for.</p>
-        <div class="card-arrow">Read guide →</div>
-      </a>
-      <a class="card" href="sequence-parallelism.html">
-        <span class="card-tag tag-par">Sequence Parallel</span>
-        <div class="card-title">Sequence Parallelism — Megatron-SP, Ring Attention, and Ulysses</div>
-        <p class="card-desc">When sequence length fills GPU memory before model parameters do, shard the token axis. Three approaches with different communication primitives, memory profiles, and scaling limits — Megatron-SP (free, pairs with TP), Ring Attention (unlimited scale, pipelined P2P), and Ulysses (AlltoAll on heads).</p>
-        <div class="card-arrow">Read guide →</div>
-      </a>
-      <a class="card" href="moe-parallelism.html">
-        <span class="card-tag tag-par">MoE Parallel</span>
-        <div class="card-title">MoE Parallelism — EP, TP, and Throughput Tradeoffs</div>
-        <p class="card-desc">Why MoE models need Expert Parallelism: the AlltoAll dispatch cost model, the arithmetic-intensity argument for EP over TP on expert FFN weights, load-imbalance as the EP ceiling, and how to reason about TP × EP × DP degrees — with a worked TP=2, EP=2, DP=2 example and the MoE throughput cross-over formula.</p>
-        <div class="card-arrow">Read guide →</div>
-      </a>
-    </div>
-    <h2>Distributed Training</h2>
-    <div class="card-grid">
-      <a class="card" href="torch-distributed.html">
-        <span class="card-tag tag-dist">Data Parallel</span>
-        <div class="card-title">Data Parallelism — Replicate, Shard, and the ZeRO Ladder</div>
-        <p class="card-desc">The one dial — how much model state each GPU keeps — read off bytes-per-GPU: DDP replicates (the 16-bytes/param wall), FSDP shards with an animated all-gather/free lifecycle, the ZeRO ladder derives the 1.5×-comm-for-1/N-state trade, and DeviceMesh composes data parallelism with the orthogonal tensor/pipeline axes — all on <code>torch.distributed</code> collectives.</p>
-        <div class="card-arrow">Read guide →</div>
-      </a>
-    </div>
-  </details>
-
-  <details class="domain domain-inference" id="inference">
+<details class="domain domain-inference" id="inference">
     <summary class="domain-header">
       <span class="domain-num">04</span>
       <h1>Inference</h1>

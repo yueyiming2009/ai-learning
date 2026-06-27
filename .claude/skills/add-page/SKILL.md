@@ -26,12 +26,12 @@ workloads).
 | # | Domain (`id` / class / accent) | Subsections (in page order) | A page belongs here if it's about… |
 |---|---|---|---|
 | 01 | **Deep Learning Foundations** — `#foundations` / `domain-foundations` / indigo | Foundations · Loss Functions · Normalization · Activations & FFN · Positional Encoding · Optimization · Sampling & Estimation · Tokenization · Architecture | the math of how a model computes & trains: a gradient, a loss's probabilistic basis, an optimizer rule, the tokenizer/routing math |
-| 02 | **Reinforcement Learning** — `#rl` / `domain-rl` / teal | RL Theory · Alignment & RLHF · Training Walkthroughs · RL Efficiency | anything RL — the theory (MDP → tree search), the alignment methods (RLHF/GRPO/DPO/…), and the systems that run RL jobs (walkthroughs, async RL, efficiency) |
-| 03 | **Systems & Hardware** — `#systems` / `domain-systems` / orange | Hardware · GPU Kernels (Triton) · Communication & Parallelism · Distributed Training | the training substrate: chips, kernels, collectives, parallelism, distributed plumbing |
+| 02 | **Systems & Hardware** — `#systems` / `domain-systems` / orange | Hardware · GPU Kernels (Triton) · Communication & Parallelism · Distributed Training | the training substrate: chips, kernels, collectives, parallelism, distributed plumbing |
+| 03 | **Reinforcement Learning** — `#rl` / `domain-rl` / teal | RL Theory · Alignment & RLHF · Training Walkthroughs · RL Efficiency | anything RL — the theory (MDP → tree search), the alignment methods (RLHF/GRPO/DPO/…), and the systems that run RL jobs (walkthroughs, async RL, efficiency) |
 | 04 | **Inference** — `#inference` / `domain-inference` / blue | Inference Foundations · Inference Techniques · Inference Workloads | serving a trained model fast: the prefill/decode compute model, its optimizations, and serving workloads |
 
-Rule of thumb: **Foundations = "why the formula is true," RL = "anything reinforcement
-learning, theory through production," Systems & Hardware = "the machine that trains it,"
+Rule of thumb: **Foundations = "why the formula is true," Systems & Hardware = "the machine
+that trains it," RL = "anything reinforcement learning, theory through production,"
 Inference = "serving it fast."** RL and Inference each own their *whole* vertical — an RL
 training walkthrough goes under RL (not a generic "practices" bucket), and an inference serving
 recipe goes under Inference.
