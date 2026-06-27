@@ -14,7 +14,9 @@ triton/      Triton GPU kernel notebooks
 rl/          Reinforcement-learning systems notes
 ```
 
-The site index is organized into three top-level domains.
+The site index ([`docs/index.html`](https://yueyiming2009.github.io/ai-learning)) is
+organized into four top-level domains and is the canonical, complete list of pages. The
+tables below are a high-level map of each domain, not an exhaustive index.
 
 ### 01 · Math — [docs/](docs/)
 Worked derivations from scratch: gradients, probabilistic principles, and the
@@ -38,9 +40,11 @@ algebra behind common losses, layers, and RL objectives.
 | [GRPO](https://yueyiming2009.github.io/ai-learning/grpo.html) | DeepSeek-R1's critic-free PPO with group-relative advantages |
 | [DPO](https://yueyiming2009.github.io/ai-learning/dpo-loss.html) | KL-constrained RLHF → closed-form policy → logistic loss |
 
-### 02 · Algorithms — [docs/](docs/)
-Procedures and data structures — how core ML algorithms are actually
-implemented when correctness and speed both matter.
+### 02 · Algorithms & Methods — [docs/](docs/)
+Procedures and training methods — tokenization, architecture mechanisms, the RL
+theory stack (MDP → value functions → MC/TD → policy gradient → MCTS/AlphaZero →
+tree search for LLMs), and the alignment methods (RLHF, GRPO, DPO, distillation)
+that apply them to post-training.
 
 | Page | Topic |
 |---|---|
@@ -63,6 +67,19 @@ plumbing that turns the math into a working training run.
 | [Fused Softmax kernel](triton/fused_softmax.ipynb) | Row-wise online softmax in one fused Triton kernel |
 | [PPO training walkthrough (verl)](https://yueyiming2009.github.io/ai-learning/ppo-training-walkthrough.html) | One PPO step on LLaMA-7B/8 GPUs: every shape, every NCCL call, TP/DP/PP |
 | [Async RL — policy lag, IS correction, TIM](https://yueyiming2009.github.io/ai-learning/async-rl.html) | Decoupled generation/training, token vs sequence IS, eliminate/correct/precision TIM fix families |
+
+### 04 · Practices — [rl/](rl/), [docs/](docs/)
+Running real jobs — end-to-end training walkthroughs of production RL systems,
+efficiency and diagnosis techniques, and inference serving workloads.
+
+| Page | Topic |
+|---|---|
+| [PPO walkthrough (VeRL)](https://yueyiming2009.github.io/ai-learning/ppo-training-walkthrough.html) | One PPO step on LLaMA-7B/8 GPUs: every shape, every NCCL call, TP/DP/PP |
+| [GRPO walkthrough (VeRL)](https://yueyiming2009.github.io/ai-learning/grpo-training-walkthrough.html) | Group rollout batching, z-score advantage, k3 KL, what disappears vs PPO |
+| [slime / Miles walkthrough](https://yueyiming2009.github.io/ai-learning/slime-miles-walkthrough.html) | One PPO step on a 30B MoE: SGLang rollout server, Megatron EP, TIM elimination |
+| [Resource pool placement](https://yueyiming2009.github.io/ai-learning/resource-pool-placement.html) | Actor/rollout/critic GPU allocation; hybrid-engine FSDP↔vLLM transitions |
+| [Async RL](https://yueyiming2009.github.io/ai-learning/async-rl.html) | Policy lag, token vs sequence IS correction, eliminate/correct/precision TIM fixes |
+| [Reward pipelining](https://yueyiming2009.github.io/ai-learning/reward-pipelining.html) | Hiding slow-reward latency behind a decoupled queue; how reward lag composes with policy lag |
 
 ## Publishing
 
