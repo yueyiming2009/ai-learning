@@ -13,24 +13,28 @@ the right place on the index. This skill is the single source of truth for *wher
 Related: [`add-plot`](../add-plot/SKILL.md) governs the figures *inside* a page; this skill
 governs the page's *entry on the index*.
 
-## The taxonomy (4 domains — keep it)
+## The taxonomy (4 collapsible domains)
 
-`docs/index.html` is organized into four top-level **domains** (`<section class="domain">`,
-each with a numbered badge, an `<h1>`, and a one-line description). Inside each domain are
-**subsections** (`<h2>`, restyled as small uppercase labels) that hold a `card-grid` of cards.
-Domains are ordered by abstraction; within Systems the subsections run bottom-up (hardware → up).
+`docs/index.html` is organized into four top-level **domains**, each a
+`<details class="domain" id="…">` that is **collapsed by default** (no `open` attribute). Its
+`<summary class="domain-header">` carries the numbered badge, the `<h1>`, and a `▸` chevron;
+inside the `<details>` come a `<p class="domain-desc">` and the **subsections** (`<h2>`,
+restyled as small uppercase labels), each holding a `card-grid` of cards. Within Systems &
+Hardware and within Inference the subsections run bottom-up (hardware → up; foundations →
+workloads).
 
 | # | Domain (`id` / class / accent) | Subsections (in page order) | A page belongs here if it's about… |
 |---|---|---|---|
-| 01 | **Math** — `#math` / `domain-math` / indigo | Foundations · Loss Functions · Normalization · Activations & FFN · Positional Encoding · Optimization · Sampling & Estimation | a worked derivation from scratch: a gradient, a loss's probabilistic basis, an update rule |
-| 02 | **Algorithms & Methods** — `#algorithms` / `domain-algo` / teal | Tokenization · Architecture · RL Theory · Alignment & RLHF | a procedure or training method: a data-structure algorithm, an architecture mechanism, an RL algorithm, a post-training method |
-| 03 | **Systems** — `#systems` / `domain-sys` / orange | Hardware · GPU Kernels (Triton) · Communication & Parallelism · Distributed Training · Inference Foundations · Inference Techniques | the engineering substrate: chips, kernels, collectives, parallelism, the inference compute model and its optimizations |
-| 04 | **Practices** — `#practices` / `domain-prac` / green | Training Walkthroughs · RL Efficiency · Inference Workloads | running a *real* job: an end-to-end walkthrough, an efficiency/diagnosis technique, a serving workload |
+| 01 | **Deep Learning Foundations** — `#foundations` / `domain-foundations` / indigo | Foundations · Loss Functions · Normalization · Activations & FFN · Positional Encoding · Optimization · Sampling & Estimation · Tokenization · Architecture | the math of how a model computes & trains: a gradient, a loss's probabilistic basis, an optimizer rule, the tokenizer/routing math |
+| 02 | **Reinforcement Learning** — `#rl` / `domain-rl` / teal | RL Theory · Alignment & RLHF · Training Walkthroughs · RL Efficiency | anything RL — the theory (MDP → tree search), the alignment methods (RLHF/GRPO/DPO/…), and the systems that run RL jobs (walkthroughs, async RL, efficiency) |
+| 03 | **Systems & Hardware** — `#systems` / `domain-systems` / orange | Hardware · GPU Kernels (Triton) · Communication & Parallelism · Distributed Training | the training substrate: chips, kernels, collectives, parallelism, distributed plumbing |
+| 04 | **Inference** — `#inference` / `domain-inference` / blue | Inference Foundations · Inference Techniques · Inference Workloads | serving a trained model fast: the prefill/decode compute model, its optimizations, and serving workloads |
 
-Rule of thumb: **Math = "why the formula is true," Algorithms = "the method/procedure,"
-Systems = "the machine that runs it," Practices = "operating it in production."** If a page
-explains a concept, it's Math/Algorithms; if it explains making that concept fast or running
-it at scale, it's Systems/Practices.
+Rule of thumb: **Foundations = "why the formula is true," RL = "anything reinforcement
+learning, theory through production," Systems & Hardware = "the machine that trains it,"
+Inference = "serving it fast."** RL and Inference each own their *whole* vertical — an RL
+training walkthrough goes under RL (not a generic "practices" bucket), and an inference serving
+recipe goes under Inference.
 
 ## How to add the card
 
@@ -52,14 +56,32 @@ it at scale, it's Systems/Practices.
    </a>
    ```
    - `href` is the bare filename (`kv-cache.html`), no `docs/` prefix — the index lives in `docs/`.
-   - `card-arrow` text matches the page type: `Read derivation →` (Math), `Read algorithm →`,
-     `Read guide →`, `Read walkthrough →` (Practices), `Read reference →` (diagnostic pages).
+   - `card-arrow` text matches the page type: `Read derivation →` (Foundations), `Read algorithm →`,
+     `Read guide →`, `Read walkthrough →` (RL walkthroughs), `Read reference →` (diagnostic pages).
    - **Tag class**: reuse an existing one — don't add a new CSS class for a one-off. Available:
      `tag-found tag-loss tag-norm tag-pos tag-act tag-opt tag-algo tag-rl-theory tag-rl tag-grpo`
      `tag-kern tag-hw tag-par tag-nccl tag-dist tag-infer`. If none fit the color you want, use
      an inline `style="background:#…;color:#…;"` on the `<span>` (as the Cascade/Agentic/
      Distillation cards do) rather than defining a new class.
 4. If the page is also listed in `README.md`, add a row there too (see "Keep sources in sync").
+
+## The page's own top-left home link
+
+Every content page's sticky `<nav>` opens with a `nav-brand` that is the **home icon + the page
+title, both linking to `index.html`** (not `#`):
+
+```html
+<a class="nav-brand" href="index.html" aria-label="Home — all notes">
+  <svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none"
+       stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+       aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+  Page Title
+</a>
+```
+
+The `.nav-brand` CSS rule must include `display:inline-flex; align-items:center; gap:7px;` so the
+icon (which inherits the page accent via `currentColor`) sits beside the title. Easiest path:
+copy the whole `<nav>` from an existing page (e.g. `swiglu.html`) when scaffolding a new one.
 
 ## Reminder — when the *structure* needs to change (ask, don't silently restructure)
 
@@ -72,16 +94,16 @@ instead of acting on them:
   it → propose a *new subsection* (cheap, in-domain) and confirm the label with the user.
 - **It fits no domain, or fits two.** A topic that spans domains (or none) is a sign the seams
   are off → flag it; don't force it into the least-bad bucket.
-- **A new top-level domain seems needed.** STOP. Adding a 5th domain changes hero pills
-  (`.hero-domains`), needs a new `domain-*` accent block in the CSS, a numbered badge, and a
-  README domain — confirm scope with the user first. (A previously-discussed candidate: promoting
-  Inference out of Systems into its own domain once it outgrows two subsections.)
+- **A new top-level domain seems needed.** STOP. Adding a 5th domain changes the hero pills
+  (`.hero-domains`), needs a new `domain-*` accent block in the CSS, a numbered badge, and a new
+  collapsed `<details id="…">` whose `id` the open-on-hash script will match — plus a README
+  domain. Confirm scope with the user first.
 - **A subsection exceeds ~6–8 cards, or a domain exceeds ~6 subsections.** The page is getting
   dense again — the exact problem this structure was built to fix. Flag it as a split candidate.
 
-When the taxonomy *does* change (with user sign-off), update all three in the same commit:
-`docs/index.html` (sections + `.hero-domains` pills + `.domain-*` accent CSS), `README.md`,
-and **this skill's taxonomy table**, so they never disagree.
+When the taxonomy *does* change (with user sign-off), update all of them in the same commit so
+they never disagree: `docs/index.html` (the `<details>` sections + `.hero-domains` pills +
+`.domain-*` accent CSS + the open-on-hash JS), `README.md`, and **this skill's taxonomy table**.
 
 ## Verify before finishing
 
