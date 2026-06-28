@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pretraining — The Next-Token Objective and the Training Loop</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #7c3aed;
+      --accent-light: #f5f3ff;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #5b21b6 0%, #7c3aed 50%, #8b5cf6 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.85;
+      font-size: 0.97rem;
+      max-width: 580px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: #374151;
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: #374151; }
+    code {
+      font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+      font-size: 0.88em;
+      background: var(--surface);
+      padding: 1px 5px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+    }
+    pre {
+      background: #1e1b2e;
+      color: #e9e6f5;
+      border-radius: 8px;
+      padding: 16px 18px;
+      overflow-x: auto;
+      font-size: 0.84rem;
+      line-height: 1.6;
+      margin: 1.2em 0;
+    }
+    pre code { background: none; border: none; padding: 0; color: inherit; font-size: inherit; }
+    .cm { color: #9b8fb8; }
+    .kw { color: #c4b5fd; }
+    .fn { color: #93c5fd; }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: #fafafa; }
+
+    /* ── Step boxes ──────────────────────────── */
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    /* ── Callout / note ──────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: #1e40af;
+    }
+    .note::before { content: '💡 '; }
+
+    /* ── Result / boxed equation ─────────────── */
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #16a34a;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Token alignment strip ───────────────── */
+    .tokstrip { margin: 1.4em 0; font-size: 0.9rem; }
+    .tokrow { display: flex; align-items: center; gap: 6px; margin: 6px 0; flex-wrap: nowrap; overflow-x: auto; }
+    .tokrow-label { flex: 0 0 84px; font-size: 0.78rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+    .tok {
+      flex: 0 0 auto;
+      min-width: 58px;
+      text-align: center;
+      padding: 7px 10px;
+      border-radius: 7px;
+      font-family: ui-monospace, monospace;
+      font-size: 0.82rem;
+      border: 1px solid;
+    }
+    .tok-in  { background: #eef2ff; border-color: #c7d2fe; color: #4338ca; }
+    .tok-out { background: #f0fdf4; border-color: #bbf7d0; color: #15803d; }
+    .tok-x   { background: #fef2f2; border-color: #fecaca; color: #b91c1c; }
+
+    /* ── Summary card ────────────────────────── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .summary-card {
+      background: var(--accent-light);
+      border: 1px solid #ddd6fe;
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .summary-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    /* ── Interactive ─────────────────────────── */
+    .viz {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      margin: 1.6em 0;
+    }
+    .viz-title { font-size: 0.9rem; font-weight: 600; margin-bottom: 4px; }
+    .viz-sub { font-size: 0.84rem; color: var(--muted); margin-bottom: 14px; }
+    .viz-controls { display: flex; flex-wrap: wrap; gap: 18px; align-items: center; margin-bottom: 16px; }
+    .viz-control { display: flex; flex-direction: column; gap: 2px; min-width: 150px; flex: 1; }
+    .viz-control label { font-size: 0.78rem; color: var(--muted); font-weight: 500; }
+    .viz-control input[type=range] { width: 100%; accent-color: var(--accent); }
+    .viz-toggle { display: flex; align-items: center; gap: 7px; font-size: 0.84rem; }
+    .viz-toggle input { accent-color: var(--accent); width: 16px; height: 16px; }
+    .membar { display: flex; height: 46px; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); margin-bottom: 10px; }
+    .membar div { display: flex; align-items: center; justify-content: center; color: white; font-size: 0.72rem; font-weight: 600; min-width: 0; transition: width 0.2s; white-space: nowrap; overflow: hidden; }
+    .seg-p { background: #6366f1; }
+    .seg-g { background: #0d9488; }
+    .seg-o { background: #c2410c; }
+    .seg-a { background: #db2777; }
+    .memleg { display: flex; gap: 16px; flex-wrap: wrap; font-size: 0.82rem; }
+    .memleg span { display: inline-flex; align-items: center; gap: 6px; }
+    .memleg i { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+    .memtot { margin-top: 12px; font-size: 0.9rem; }
+    .memtot b { color: var(--accent); font-variant-numeric: tabular-nums; }
+
+    /* ── Footer ──────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    /* ── Responsive ──────────────────────────── */
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Pretraining</a>
+  <div class="nav-links">
+    <a href="index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#objective">Objective</a>
+    <a href="#teacher">Teacher Forcing</a>
+    <a href="#loss">The Loss</a>
+    <a href="#loop">The Loop</a>
+    <a href="#accum">Grad Accumulation</a>
+    <a href="#amp">Mixed Precision</a>
+    <a href="#ckpt">Checkpointing</a>
+    <a href="#memory">Memory</a>
+    <a href="#summary">Summary</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Transformer &amp; Pretraining</span>
+  <h1>Pretraining the Transformer</h1>
+  <p>The objective that turns a stack of blocks into a language model — next-token prediction — and the single-device training loop that optimizes it: shifted-label cross entropy, gradient accumulation, mixed precision, and activation checkpointing.</p>
+</div>
+
+<div class="page-wrap">
+
+  <p>The <a href="transformer-block.html" style="color:var(--accent);">previous page</a> assembled the model; its \(12Ld^2\) weights are still random. Pretraining is what fills them with knowledge. The remarkable thing is how simple the objective is: <strong>predict the next token</strong>, over and over, on a large corpus. Everything a base model knows is squeezed out of that one self-supervised signal.</p>
+
+  <h2 id="objective">1. The Objective — Next-Token Prediction</h2>
+  <p>Factor the probability of a sequence with the chain rule of probability — exactly, with no approximation:</p>
+  \[
+    p_\theta(x_1, x_2, \ldots, x_T) = \prod_{t=1}^{T} p_\theta(x_t \mid x_{<t})
+  \]
+  <p>The model's whole job is to produce each conditional \(p_\theta(x_t\mid x_{<t})\): given everything so far, a distribution over the vocabulary for what comes next. Training maximizes the likelihood the model assigns to real text, which — taking logs and negating — is the <a href="nll-loss.html" style="color:var(--accent);">negative log-likelihood</a> objective this whole site keeps returning to:</p>
+
+  \[
+    \mathcal{L}(\theta) = -\sum_{t=1}^{T} \log p_\theta(x_t \mid x_{<t})
+  \]
+
+  <div class="note">
+    This is why pretraining is called <em>self-supervised</em>: nobody labels the data. The label for position \(t\) is just the token that actually occurred at \(t+1\), already sitting in the corpus. A single document of length \(T\) yields \(T-1\) prediction targets for free.
+  </div>
+
+  <h2 id="teacher">2. Teacher Forcing &amp; Shifted Labels</h2>
+  <p>Here is the trick that makes this efficient on a transformer. Naively, producing \(T\) conditionals sounds sequential — predict token 2, then 3, then 4. But during training we <em>already know</em> the true sequence, so we feed the real tokens as input rather than the model's own predictions. This is <strong>teacher forcing</strong>, and it lets all \(T\) positions train in one parallel forward pass.</p>
+
+  <p>The mechanism is just a one-position shift: the input is the sequence, the label is the same sequence shifted left by one.</p>
+
+  <div class="tokstrip">
+    <div class="tokrow"><span class="tokrow-label">input</span>
+      <span class="tok tok-in">The</span><span class="tok tok-in">cat</span><span class="tok tok-in">sat</span><span class="tok tok-in">on</span><span class="tok tok-in">the</span>
+    </div>
+    <div class="tokrow"><span class="tokrow-label">target</span>
+      <span class="tok tok-out">cat</span><span class="tok tok-out">sat</span><span class="tok tok-out">on</span><span class="tok tok-out">the</span><span class="tok tok-out">mat</span>
+    </div>
+  </div>
+
+  <p>Position 1 sees <code>The</code> and is trained to predict <code>cat</code>; position 2 sees <code>The cat</code> and predicts <code>sat</code>; and so on. In code the shift is one line:</p>
+
+<pre><code><span class="cm"># tokens: (B, T+1) batch of token ids</span>
+inputs  = tokens[:, :-<span class="kw">1</span>]   <span class="cm"># everything but the last</span>
+targets = tokens[:,  <span class="kw">1</span>:]   <span class="cm"># everything but the first</span>
+logits  = model(inputs)     <span class="cm"># (B, T, V) — one distribution per position</span>
+loss    = cross_entropy(logits.reshape(-<span class="kw">1</span>, V), targets.reshape(-<span class="kw">1</span>))</code></pre>
+
+  <div class="note">
+    The <a href="attention.html" style="color:#1e40af;">causal mask</a> is what makes teacher forcing valid: even though the full sequence is fed in at once, position \(t\) physically cannot attend to positions \(>t\). Without the mask, predicting the next token would be trivial — the answer is right there in the input. The mask is what keeps each position honest.
+  </div>
+
+  <h2 id="loss">3. The Loss in Practice</h2>
+  <p>Each position contributes a <a href="cross-entropy.html" style="color:var(--accent);">cross-entropy</a> term between the predicted distribution \(\mathrm{softmax}(\mathbf{z}_t)\) and the one-hot true token. Averaged over all positions in the batch:</p>
+
+  \[
+    \mathcal{L} = -\frac{1}{B\,T}\sum_{b=1}^{B}\sum_{t=1}^{T} \log \mathrm{softmax}(\mathbf{z}_{b,t})_{\,x_{b,t+1}}
+  \]
+
+  <p>Two quantities are worth knowing because they are how everyone actually talks about training progress:</p>
+  <ul>
+    <li><strong>Perplexity</strong> \(= e^{\mathcal L}\) — the effective number of equally-likely tokens the model is choosing between. A perplexity of 10 means the model is about as confused as if it were guessing uniformly among 10 options.</li>
+    <li><strong>Bits per token</strong> \(= \mathcal L / \ln 2\) — the same loss in compression units. Pretraining is, quite literally, learning to compress the corpus.</li>
+  </ul>
+
+  <div class="note">
+    A useful sanity check: an untrained model outputs near-uniform logits over a vocab of size \(V\), so its initial loss should be \(\approx \ln V\). For \(V=128{,}000\) that is \(\ln(128000)\approx 11.76\). If step 0 isn't near that number, something is wrong with the init or the loss.
+  </div>
+
+  <h2 id="loop">4. The Training Loop</h2>
+  <p>With objective and loss defined, the loop is the same five-beat cycle as any neural net — only the scale differs. Each iteration consumes one batch of token sequences:</p>
+
+  <div class="step">
+    <div class="step-label">The five beats of one optimizer step</div>
+    <ol style="margin:0;">
+      <li><strong>Forward</strong> — run the batch through the stack to logits, compute the shifted-label loss.</li>
+      <li><strong>Backward</strong> — <a href="backprop.html" style="color:var(--accent);">backpropagate</a> to get \(\partial\mathcal L/\partial\theta\) for every weight.</li>
+      <li><strong>Clip</strong> — rescale gradients so \(\lVert g\rVert \le\) some max (typically 1.0); tames the rare loss spike.</li>
+      <li><strong>Step</strong> — the <a href="optimizers.html" style="color:var(--accent);">AdamW</a> update applies the gradients under the warmup→cosine learning-rate schedule.</li>
+      <li><strong>Zero</strong> — clear the gradient buffers for the next iteration.</li>
+    </ol>
+  </div>
+
+<pre><code><span class="kw">for</span> step, batch <span class="kw">in</span> <span class="fn">enumerate</span>(loader):
+    inputs, targets = batch[:, :-<span class="kw">1</span>], batch[:, <span class="kw">1</span>:]
+    logits = model(inputs)
+    loss   = cross_entropy(logits.reshape(-<span class="kw">1</span>, V), targets.reshape(-<span class="kw">1</span>))
+
+    loss.<span class="fn">backward</span>()                              <span class="cm"># accumulate grads</span>
+    clip_grad_norm_(model.parameters(), <span class="kw">1.0</span>)    <span class="cm"># clip</span>
+    optimizer.<span class="fn">step</span>()                            <span class="cm"># AdamW update</span>
+    scheduler.<span class="fn">step</span>()                            <span class="cm"># advance LR schedule</span>
+    optimizer.<span class="fn">zero_grad</span>()                       <span class="cm"># reset for next step</span></code></pre>
+
+  <p>The "loss curve goes down" story everyone shows is just this loop run for \(10^5\)–\(10^6\) steps. The rest of this page is the three modifications that make each step fit and run fast on real hardware.</p>
+
+  <h2 id="accum">5. Gradient Accumulation — Decoupling Batch Size from Memory</h2>
+  <p>Large-batch training is more stable, but a big batch may not fit in memory. Gradient accumulation buys the statistics of a large batch at the memory cost of a small one: run several <em>micro-batches</em>, summing their gradients, and step only once.</p>
+
+  \[
+    g = \sum_{m=1}^{M} \nabla\mathcal L^{(m)}, \qquad
+    \text{effective batch} = M \times (\text{micro-batch})
+  \]
+
+  <p>Because <code>backward()</code> <em>accumulates</em> into <code>.grad</code> rather than overwriting, you simply call it \(M\) times before stepping. The only subtlety is normalization — divide each micro-batch loss by \(M\) so the summed gradient matches a true average over the full effective batch:</p>
+
+<pre><code>optimizer.<span class="fn">zero_grad</span>()
+<span class="kw">for</span> m <span class="kw">in</span> <span class="fn">range</span>(M):                      <span class="cm"># M micro-batches</span>
+    loss = compute_loss(micro_batch[m]) / M    <span class="cm"># scale so sum = mean</span>
+    loss.<span class="fn">backward</span>()                          <span class="cm"># grads add up</span>
+clip_grad_norm_(model.parameters(), <span class="kw">1.0</span>)
+optimizer.<span class="fn">step</span>()</code></pre>
+
+  <div class="note">
+    Gradient accumulation is the single-device cousin of <a href="torch-distributed.html" style="color:#1e40af;">data parallelism</a>: accumulating \(M\) micro-batches in time is what DP does across \(M\) GPUs in space. Same effective batch, same math — one trades memory for time, the other for hardware.
+  </div>
+
+  <h2 id="amp">6. Mixed Precision &amp; Loss Scaling</h2>
+  <p>Storing and multiplying weights in 16-bit instead of 32-bit roughly halves memory and doubles throughput on Tensor Cores. But 16-bit floats have a narrow exponent range, and small gradients <em>underflow to zero</em> — they vanish before the optimizer sees them. Two ideas fix this:</p>
+
+  <div class="step">
+    <div class="step-label">Mixed precision (autocast)</div>
+    <p>Keep a <strong>master copy of the weights in FP32</strong>, but run the forward/backward matmuls in <strong>BF16 or FP16</strong>. Matmuls and convolutions go low-precision; reductions, norms, and the softmax stay FP32 where range matters. BF16 (same exponent range as FP32, fewer mantissa bits) is now the default on Ampere/Hopper and needs no loss scaling.</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Loss scaling (FP16 only)</div>
+    <p>FP16 has the throughput but not the range, so gradients can underflow. The fix: multiply the loss by a large factor \(S\) <em>before</em> backward, shifting every gradient up into FP16's representable range, then divide the gradients by \(S\) before the optimizer step. By the chain rule, scaling the loss scales every gradient by the same \(S\) — the update is unchanged, only the intermediate representation is rescued.</p>
+    \[
+      \tilde g = \nabla(S\cdot\mathcal L) = S\,\nabla\mathcal L
+      \quad\xrightarrow{\ \div S\ }\quad
+      \nabla\mathcal L
+    \]
+    <p>Dynamic loss scaling adjusts \(S\) automatically: raise it when gradients are finite, halve it and skip the step when they overflow to <code>inf</code>/<code>NaN</code>.</p>
+  </div>
+
+  <div class="note">
+    Rule of thumb: on modern hardware reach for <strong>BF16</strong> and skip loss scaling entirely. FP16 + dynamic loss scaling is the legacy path for hardware without BF16, or where the extra mantissa precision matters. The FP8/FP4 frontier is covered on the <a href="gpu-hardware.html" style="color:#1e40af;">hardware</a> page.
+  </div>
+
+  <h2 id="ckpt">7. Activation Checkpointing — Trading Compute for Memory</h2>
+  <p>The forward pass stashes every intermediate activation because the <a href="backprop.html" style="color:var(--accent);">backward pass</a> needs them. For a deep model on long sequences, these activations — not the weights — are usually the largest single consumer of memory.</p>
+
+  <p><strong>Activation checkpointing</strong> (a.k.a. gradient checkpointing) keeps only a few activations — typically each block's input — and <em>recomputes</em> the rest on the fly during backward. The trade is explicit:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th></th><th>Activation memory</th><th>Forward FLOPs</th></tr>
+      <tr><td>Store everything</td><td>\(O(L)\) — grows with depth</td><td>1× (baseline)</td></tr>
+      <tr><td>Checkpoint each block</td><td>\(O(\sqrt{L})\) or per-block input only</td><td>~1.33× (one extra forward)</td></tr>
+    </table>
+  </div>
+
+  <p>Roughly one extra forward pass (≈33% more compute) buys a large drop in activation memory — frequently the difference between a model fitting on a GPU or not. This is exactly the "HFU vs MFU" gap quantified on the <a href="mfu.html" style="color:var(--accent);">MFU</a> page: recomputation inflates the hardware FLOPs without doing new useful work.</p>
+
+  <h2 id="memory">8. The Training Memory Budget</h2>
+  <p>Putting it together — for a single device, training memory has four parts. With the Adam optimizer in mixed precision, per parameter you pay for the FP32 master weights, FP32 first &amp; second moments, plus the working gradients and the activations:</p>
+
+  <div class="viz">
+    <div class="viz-title">Single-device training memory</div>
+    <div class="viz-sub">AdamW + mixed precision. Parameters / gradients / optimizer states scale with model size; activations scale with batch × sequence × depth. Toggle the two levers and watch the activation slice move.</div>
+    <div class="viz-controls">
+      <div class="viz-control">
+        <label>parameters \(N\) = <span id="n-val">1.5</span> B</label>
+        <input type="range" id="n" min="0.1" max="13" value="1.5" step="0.1">
+      </div>
+      <div class="viz-control">
+        <label>batch × seq tokens = <span id="t-val">32k</span></label>
+        <input type="range" id="t" min="1" max="256" value="32" step="1">
+      </div>
+    </div>
+    <div class="viz-controls" style="margin-top:-4px;">
+      <label class="viz-toggle"><input type="checkbox" id="amp" checked> mixed precision (BF16 compute)</label>
+      <label class="viz-toggle"><input type="checkbox" id="ckpt"> activation checkpointing</label>
+    </div>
+    <div class="membar" id="bar"></div>
+    <div class="memleg">
+      <span><i class="seg-p"></i>params <b id="lg-p"></b></span>
+      <span><i class="seg-g"></i>grads <b id="lg-g"></b></span>
+      <span><i class="seg-o"></i>optimizer <b id="lg-o"></b></span>
+      <span><i class="seg-a"></i>activations <b id="lg-a"></b></span>
+    </div>
+    <div class="memtot">total: <b id="lg-tot"></b> &nbsp;·&nbsp; <span id="lg-note" style="font-size:0.84rem;color:var(--muted);"></span></div>
+  </div>
+
+  <p>The "16 bytes/parameter" floor — 2 (master) + 2 (grad, accounted in FP32 here) + 4 + 4 (Adam moments) ... regardless of activations, <em>parameter-related state alone</em> is the wall that <a href="torch-distributed.html" style="color:var(--accent);">ZeRO and FSDP</a> are built to shard. That is the hand-off into the next domain: this page trains on one device; <strong>Systems &amp; Scaling</strong> spreads exactly this loop across thousands.</p>
+
+  <h2 id="summary">9. Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">Objective</div>
+      <p>Maximize \(\prod_t p_\theta(x_t\mid x_{<t})\) → minimize summed NLL</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Teacher forcing</div>
+      <p>Feed true tokens; label = input shifted left by 1; all \(T\) positions in parallel</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Loop</div>
+      <p>forward → backward → clip → step → zero, ×10⁵–10⁶</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Grad accumulation</div>
+      <p>Sum \(M\) micro-batch grads → big effective batch, small memory</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Mixed precision</div>
+      <p>BF16 compute, FP32 master; FP16 needs loss scaling for range</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Checkpointing</div>
+      <p>Recompute activations in backward: ~+33% FLOPs, big memory cut</p>
+    </div>
+  </div>
+
+  <p style="margin-top:2em;color:var(--muted);font-size:0.9rem;">This is single-device pretraining end to end. The next domain — <strong>Systems &amp; Scaling</strong> — takes this exact loop and makes it run fast (kernels, FlashAttention) and across many chips (collectives, tensor/pipeline/data parallelism). After that: <strong>RL</strong> post-trains the result, and <strong>Inference</strong> serves it.</p>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; The next-token objective and the pretraining loop
+</footer>
+
+<script>
+(function () {
+  var bar = document.getElementById('bar');
+  if (!bar) return;
+  var nEl = document.getElementById('n'), tEl = document.getElementById('t');
+  var ampEl = document.getElementById('amp'), ckptEl = document.getElementById('ckpt');
+  var nVal = document.getElementById('n-val'), tVal = document.getElementById('t-val');
+
+  function fmt(gb) {
+    if (gb >= 1) return gb.toFixed(1) + ' GB';
+    return (gb * 1024).toFixed(0) + ' MB';
+  }
+
+  function draw() {
+    var N = +nEl.value * 1e9;          // parameters
+    var tok = +tEl.value * 1000;       // batch*seq tokens
+    var amp = ampEl.checked;
+    var ckpt = ckptEl.checked;
+
+    nVal.textContent = (+nEl.value).toFixed(1);
+    tVal.textContent = (+tEl.value) + 'k';
+
+    // Per-parameter bytes (AdamW). Master weights fp32 (4) + grads (4) + 2 moments (4+4).
+    // Mixed precision adds a bf16 working copy of weights (2) but we fold compute copy in.
+    var paramsB = N * (amp ? 2 : 4);            // working weights used in matmuls
+    var masterB = amp ? N * 4 : 0;              // fp32 master only exists in AMP
+    var gradsB  = N * 4;                         // fp32 grads
+    var optB    = N * 8;                         // Adam m + v in fp32
+
+    // Treat master copy as part of "params" slice for the bar.
+    paramsB += masterB;
+
+    // Activations: rough proxy. Per token, ~ a few hundred bytes * depth factor.
+    // Use a simple proxy that scales with tokens and sqrt-ish with N (depth/width).
+    // bytes ≈ tokens * c * (N^0.33), checkpointing cuts ~5x.
+    var actScale = amp ? 2 : 4;
+    var actB = tok * actScale * 120 * Math.pow(N / 1e9, 0.34);
+    if (ckpt) actB /= 5.0;
+
+    var GB = 1024 * 1024 * 1024;
+    var p = paramsB / GB, g = gradsB / GB, o = optB / GB, a = actB / GB;
+    var tot = p + g + o + a;
+
+    var segs = [['seg-p', p], ['seg-g', g], ['seg-o', o], ['seg-a', a]];
+    bar.innerHTML = '';
+    segs.forEach(function (s) {
+      var d = document.createElement('div');
+      d.className = s[0];
+      d.style.width = (100 * s[1] / tot) + '%';
+      var pct = 100 * s[1] / tot;
+      d.textContent = pct > 9 ? fmt(s[1]) : '';
+      bar.appendChild(d);
+    });
+
+    document.getElementById('lg-p').textContent = fmt(p);
+    document.getElementById('lg-g').textContent = fmt(g);
+    document.getElementById('lg-o').textContent = fmt(o);
+    document.getElementById('lg-a').textContent = fmt(a);
+    document.getElementById('lg-tot').textContent = fmt(tot);
+
+    var note = (p + g + o) > 0
+      ? 'parameter state alone = ' + fmt(p + g + o) + (ckpt ? ' · activations recomputed' : '')
+      : '';
+    document.getElementById('lg-note').textContent = note;
+  }
+
+  [nEl, tEl].forEach(function (e) { e.addEventListener('input', draw); });
+  [ampEl, ckptEl].forEach(function (e) { e.addEventListener('change', draw); });
+  draw();
+})();
+</script>
+
+</body>
+</html>

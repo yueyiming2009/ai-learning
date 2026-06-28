@@ -126,8 +126,10 @@
 
     /* ── Domain accent colors ────────────────── */
     .domain-foundations .domain-num { background: #eef2ff; color: #4f46e5; }
-    .domain-rl          .domain-num { background: #f0fdfa; color: #0d9488; }
+    .domain-hardware    .domain-num { background: #ecfccb; color: #4d7c0f; }
+    .domain-transformer .domain-num { background: #f5f3ff; color: #7c3aed; }
     .domain-systems     .domain-num { background: #fff7ed; color: #c2410c; }
+    .domain-rl          .domain-num { background: #f0fdfa; color: #0d9488; }
     .domain-inference   .domain-num { background: #eff6ff; color: #1d4ed8; }
 
     /* ── Subsection label (was h2) ───────────── */
@@ -180,6 +182,7 @@
     .tag-act   { background: #f5f3ff; color: #6d28d9; }
     .tag-loss  { background: #fff5f5; color: #dc2626; }
     .tag-found { background: #eef2ff; color: #4f46e5; }
+    .tag-tf    { background: #f5f3ff; color: #7c3aed; }
     .tag-rl    { background: #fff7ed; color: #ea580c; }
     .tag-opt   { background: #f0f9ff; color: #0369a1; }
     .tag-grpo  { background: #ecfeff; color: #0891b2; }
@@ -242,9 +245,11 @@
   <p>Worked derivations, algorithm walkthroughs, and systems notes — the math, procedures, and engineering that show up when training and running modern ML models.</p>
   <div class="hero-domains">
     <a href="#foundations">01 · Foundations</a>
-    <a href="#systems">02 · Systems</a>
-    <a href="#rl">03 · RL</a>
-    <a href="#inference">04 · Inference</a>
+    <a href="#hardware">02 · Hardware</a>
+    <a href="#transformer">03 · Transformer</a>
+    <a href="#systems">04 · Systems</a>
+    <a href="#rl">05 · RL</a>
+    <a href="#inference">06 · Inference</a>
   </div>
 </div>
 
@@ -355,12 +360,6 @@
     </div>
     <h2>Architecture</h2>
     <div class="card-grid">
-      <a class="card" href="attention.html">
-        <span class="card-tag tag-found">Self-Attention</span>
-        <div class="card-title">Self-Attention — Forward &amp; Backward Pass</div>
-        <p class="card-desc">The transformer's mixing operation, end to end: Q/K/V projections, scaled dot-product \(\mathrm{softmax}(QK^\top/\sqrt{d_k})V\), why the \(1/\sqrt{d_k}\) factor stops softmax saturation (with an interactive plot), multi-head, and the full backward pass through softmax — including the \(\mathbf{do}_i\!\cdot\!\mathbf{o}_i\) row constant that FlashAttention recomputes.</p>
-        <div class="card-arrow">Read derivation →</div>
-      </a>
       <a class="card" href="moe-routing.html">
         <span class="card-tag tag-algo">MoE Routing</span>
         <div class="card-title">MoE Routing — Gating, Top-K Selection, and Load Balancing</div>
@@ -379,25 +378,19 @@
     </div>
   </details>
 
-<details class="domain domain-systems" id="systems">
+<details class="domain domain-hardware" id="hardware">
     <summary class="domain-header">
       <span class="domain-num">02</span>
-      <h1>Systems &amp; Hardware</h1>
+      <h1>Hardware</h1>
       <span class="chevron" aria-hidden="true">▸</span>
     </summary>
-    <p class="domain-desc">Engineering notes, built bottom-up — the hardware substrate, the GPU kernels that run on it, the collective communication between chips, and the distributed plumbing that turns the math into a working training run.</p>
-    <h2>Hardware</h2>
+    <p class="domain-desc">The physical substrate everything else runs on — read first. The GPU's SIMT execution model and memory hierarchy, and the TPU's systolic array and interconnect; every later choice about kernels, parallelism, and training precision is a response to the limits set here.</p>
+    <h2>Accelerators</h2>
     <div class="card-grid">
       <a class="card" href="gpu-hardware.html">
         <span class="card-tag tag-hw">GPU Hardware</span>
         <div class="card-title">GPU Hardware for ML</div>
         <p class="card-desc">The physical basis for compute and comm: the SIMT execution model (warps, occupancy), inside an SM (Tensor Cores, the managed scratchpad, TMA), the memory hierarchy and roofline, the NVSwitch crossbar, and the bandwidth cliff onto the network — then Blackwell (dual-die, FP4 microscaling, NVL72) and the H100/H200/B200/B300 lineup.</p>
-        <div class="card-arrow">Read guide →</div>
-      </a>
-      <a class="card" href="mfu.html">
-        <span class="card-tag tag-hw">MFU</span>
-        <div class="card-title">MFU — Model FLOPs Utilization</div>
-        <p class="card-desc">The whole-run roofline verdict: derive the 6N FLOPs-per-token rule and its 12·L·D·T attention correction, turn measured tokens/sec into achieved FLOP/s, MFU vs HFU under recomputation, a worked 7B example, and an interactive calculator.</p>
         <div class="card-arrow">Read guide →</div>
       </a>
       <a class="card" href="tpu-hardware.html">
@@ -407,8 +400,56 @@
         <div class="card-arrow">Read guide →</div>
       </a>
     </div>
-    <h2>GPU Kernels</h2>
+  </details>
+
+<details class="domain domain-transformer" id="transformer">
+    <summary class="domain-header">
+      <span class="domain-num">03</span>
+      <h1>Transformer &amp; Pretraining</h1>
+      <span class="chevron" aria-hidden="true">▸</span>
+    </summary>
+    <p class="domain-desc">Assemble the Foundations pieces into a working model and train it on a single device — self-attention and the multi-head split, the pre-norm residual block stacked into a decoder, and the next-token objective with the loop that optimizes it. The bridge from isolated derivations to a real training run.</p>
+    <h2>Architecture</h2>
     <div class="card-grid">
+      <a class="card" href="attention.html">
+        <span class="card-tag tag-tf">Attention</span>
+        <div class="card-title">Self-Attention — Forward &amp; Backward Pass</div>
+        <p class="card-desc">The one block where tokens look at each other: Q/K/V projections, scaled dot-product \(\mathrm{softmax}(QK^\top/\sqrt{d_k})V\), why the \(1/\sqrt{d_k}\) factor stops softmax saturation (with an interactive plot), the causal mask, the multi-head split, and the full backward pass through softmax — plus the \(O(T^2)\) wall that drives FlashAttention and KV caching.</p>
+        <div class="card-arrow">Read derivation →</div>
+      </a>
+      <a class="card" href="transformer-block.html">
+        <span class="card-tag tag-tf">Transformer</span>
+        <div class="card-title">The Transformer Block</div>
+        <p class="card-desc">How norm, attention, MLP, and residuals snap into one repeatable block: the residual stream as a gradient highway, why every modern LLM is pre-norm, the attention-mixes / MLP-transforms division of labor, the embed → stack → unembed skeleton, weight tying, and the \(12d^2\) params-per-block budget.</p>
+        <div class="card-arrow">Read guide →</div>
+      </a>
+    </div>
+    <h2>Training</h2>
+    <div class="card-grid">
+      <a class="card" href="pretraining.html">
+        <span class="card-tag tag-tf">Pretraining</span>
+        <div class="card-title">Pretraining — The Next-Token Objective &amp; Training Loop</div>
+        <p class="card-desc">What turns a stack of blocks into a language model: the chain-rule factorization and next-token NLL, teacher forcing with shifted labels, the forward→backward→clip→step loop, gradient accumulation, mixed precision &amp; loss scaling, activation checkpointing, and an interactive training-memory budget.</p>
+        <div class="card-arrow">Read guide →</div>
+      </a>
+    </div>
+  </details>
+
+<details class="domain domain-systems" id="systems">
+    <summary class="domain-header">
+      <span class="domain-num">04</span>
+      <h1>Systems &amp; Scaling</h1>
+      <span class="chevron" aria-hidden="true">▸</span>
+    </summary>
+    <p class="domain-desc">Take the single-device training loop and make it fast and big — the execution model and the kernels that close the operator-performance gap, the whole-run FLOPs verdict, the collective-communication math, and the parallelism strategies that spread one model across thousands of chips.</p>
+    <h2>Performance &amp; Kernels</h2>
+    <div class="card-grid">
+      <a class="card" href="mfu.html">
+        <span class="card-tag tag-hw">MFU</span>
+        <div class="card-title">MFU — Model FLOPs Utilization</div>
+        <p class="card-desc">The whole-run roofline verdict: derive the 6N FLOPs-per-token rule and its 12·L·D·T attention correction, turn measured tokens/sec into achieved FLOP/s, MFU vs HFU under recomputation, a worked 7B example, and an interactive calculator.</p>
+        <div class="card-arrow">Read guide →</div>
+      </a>
       <a class="card" href="pytorch-execution.html">
         <span class="card-tag" style="background:#fde2dc;color:#c2410c;">PyTorch</span>
         <div class="card-title">The PyTorch Execution Model</div>
@@ -474,7 +515,7 @@
 
 <details class="domain domain-rl" id="rl">
     <summary class="domain-header">
-      <span class="domain-num">03</span>
+      <span class="domain-num">05</span>
       <h1>Reinforcement Learning</h1>
       <span class="chevron" aria-hidden="true">▸</span>
     </summary>
@@ -640,7 +681,7 @@
 
 <details class="domain domain-inference" id="inference">
     <summary class="domain-header">
-      <span class="domain-num">04</span>
+      <span class="domain-num">06</span>
       <h1>Inference</h1>
       <span class="chevron" aria-hidden="true">▸</span>
     </summary>
