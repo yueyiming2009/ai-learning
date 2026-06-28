@@ -32,7 +32,7 @@ tensor/pipeline/sequence/MoE parallelism, and the ZeRO/FSDP distributed-training
 
 ### 03 · Reinforcement Learning — [docs/](docs/), [rl/](rl/)
 From first-principles RL theory to LLM post-training and the systems that run it.
-**Theory:** MDP → value functions → Monte Carlo → TD → DQN → policy gradient → MCTS →
+**Theory:** MDP → value functions → Monte Carlo → TD → DQN → policy gradient → PPO → MCTS →
 AlphaZero → tree search for LLMs. **Alignment:** RLHF, GRPO, DPO, DeepSeek-R1, cascade RL,
 agentic RL, distillation. **At scale:** PPO/GRPO/slime–Miles training walkthroughs,
 resource-pool placement, async RL and its monitoring, reward pipelining.

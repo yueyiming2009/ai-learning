@@ -312,8 +312,7 @@
     <a href="#pipeline">Pipeline</a>
     <a href="#rm">Reward model</a>
     <a href="#objective">RL objective</a>
-    <a href="#ppo">PPO loss</a>
-    <a href="#entropy">Policy entropy</a>
+    <a href="#ppo">PPO optimizer</a>
     <a href="#loop">Full loop</a>
     <a href="#vs-dpo">vs. DPO</a>
     <a href="#summary">Summary</a>
@@ -368,14 +367,14 @@
     <div class="pipe-stage">
       <div class="pipe-num">Stage 3</div>
       <div class="pipe-title">RL (PPO)</div>
-      <div class="pipe-desc">Optimize \(\pi_\theta\) against \(r_\phi\) with a KL leash (§3–7).</div>
+      <div class="pipe-desc">Optimize \(\pi_\theta\) against \(r_\phi\) with a KL leash (§3–5).</div>
     </div>
   </div>
 
   <p>This page focuses on the math of Stages 2 and 3. Stage 1 is ordinary cross-entropy fine-tuning — see the <a href="cross-entropy.html" style="color:var(--accent);">cross-entropy page</a>.</p>
 
   <div class="note">
-    This page is the applied capstone of the RL Theory series. The policy gradient theorem, advantage estimation, and GAE are derived on the <a href="policy-gradient.html" style="color:#1e40af;">Policy Gradient page</a> — reading that first makes §4 here click into place. The clipped surrogate in §4 is the <a href="importance-sampling.html" style="color:#1e40af;">importance-sampling</a> ratio bounded by a clip.
+    This page is the applied capstone of the RL series. The policy-gradient theorem, advantage estimation, and GAE are derived on the <a href="policy-gradient.html" style="color:#1e40af;">Policy Gradient page</a>; the PPO optimizer they feed — the clipped surrogate, actor–critic value loss, entropy bonus, and update loop — is on the <a href="ppo.html" style="color:#1e40af;">PPO page</a>. RLHF is what those add up to once the environment is a language model: a reward model, a reference-policy KL leash, and a rollouter that is its own inference engine.
   </div>
 
   <h2 id="rm">2. Reward Model</h2>
@@ -478,11 +477,8 @@
   \]
   <p>Push up the log-probability of actions that outperformed expectations (\(\hat A_t > 0\)); suppress those that underperformed. The PPO objective below clips this gradient to prevent a destructive large step.</p>
 
-  <h2 id="ppo">4. The PPO Clipped Objective</h2>
-  <p>Vanilla policy gradients are unstable: one large step can collapse the policy. <strong>PPO</strong> keeps each update close to the policy that collected the data, \(\pi_{\theta_{\text{old}}}\), via a clipped <a href="importance-sampling.html" style="color:var(--accent);">importance ratio</a> — the reweighting that lets the old policy's rollouts estimate the new policy's objective. Define the probability ratio:</p>
-  \[
-    \rho_t(\theta) = \frac{\pi_\theta(a_t\mid s_t)}{\pi_{\theta_{\text{old}}}(a_t\mid s_t)}
-  \]
+  <h2 id="ppo">4. The Optimizer: PPO</h2>
+  <p>With per-token rewards \(R_t\) and advantages \(\hat A_t\) in hand, Stage 3 maximizes the objective with <strong>PPO</strong> — a clipped policy-gradient update that keeps each step inside a trust region of the policy that collected the rollouts, \(\pi_{\theta_{\text{old}}}\). Writing the probability ratio \(\rho_t(\theta) = \pi_\theta(a_t\mid s_t)/\pi_{\theta_{\text{old}}}(a_t\mid s_t)\):</p>
 
   <div class="result">
     <div class="result-label">PPO clipped surrogate</div>
@@ -494,68 +490,15 @@
     \]
   </div>
 
-  <p>The \(\min\) of the clipped and unclipped terms means: once the ratio moves more than \(\epsilon\) (e.g. 0.2) in the direction that would help, the objective flattens — removing the incentive to take a huge step. It is a cheap, first-order way to enforce a trust region.</p>
-
-  <h3>Full PPO loss</h3>
-  <p>The complete per-step loss adds the value-function regression and an entropy bonus \(S\) that encourages exploration:</p>
-  \[
-    \mathcal{L}_{\text{PPO}} = \mathbb{E}_t\!\left[
-      -\,\mathcal{L}^{\text{CLIP}}_t
-      \;+\; c_1\, \big(V_\psi(s_t) - \hat R_t\big)^2
-      \;-\; c_2\, S\big[\pi_\theta\big](s_t)
-    \right]
-  \]
-  <p>with coefficients \(c_1, c_2\). (Signs are written for minimization: maximize the clipped surrogate and entropy, minimize value error.)</p>
-
-  <h3 id="entropy">Policy Entropy</h3>
-
-  <p>The entropy of a policy at state \(s\) is the expected surprise of its action distribution:</p>
-  \[
-    H\big[\pi_\theta\big](s) = -\sum_a \pi_\theta(a \mid s)\,\log\pi_\theta(a \mid s)
-  \]
-  <p>High entropy means the policy spreads probability mass broadly — many actions look roughly
-  equally likely. Low entropy means it concentrates mass on a few actions — it is confident, or
-  possibly stuck.</p>
-
-  <p><strong>Why add it as a bonus.</strong> Without \(-c_2 S\), PPO is free to collapse the
-  policy to near-deterministic behavior as soon as it finds any high-reward sequence. The entropy
-  bonus penalizes overconfidence, keeping the policy exploratory and diverse. It is equivalent to
-  applying an \(\ell_1\) regularizer in log-probability space.</p>
-
-  <p><strong>Computing it for an LLM.</strong> The action space is the full vocabulary
-  \(|\mathcal{V}|\) — often 32k–128k tokens — so the exact sum is expensive. Two common
-  approximations:</p>
-  <ul>
-    <li><em>Sample estimate</em> — use only the sampled token \(a_t\):
-    \(H[\pi] \approx -\frac{1}{|\mathcal{T}|}\sum_{t \in \mathcal{T}} \log\pi_\theta(a_t \mid s_t)\).
-    Fast but high-variance, and biased toward the tokens the policy already prefers.</li>
-    <li><em>Top-k estimate</em> — sum over the top-k logits (e.g., \(k=50\)); captures most of
-    the mass for a peaked distribution.</li>
-  </ul>
-
-  <p><strong>What the value tells you.</strong> For a uniform distribution over a vocabulary of
-  size \(V\), the maximum entropy is \(\log V\). In practice:</p>
-  <ul>
-    <li><em>Gradually decreasing</em> — normal: the policy becomes more confident as it learns
-    which actions earn reward.</li>
-    <li><em>Rapid collapse to near zero</em> — reward hacking: the policy found a degenerate
-    pattern that scores well but has lost diversity. Often visible in entropy before it appears
-    in reward curves.</li>
-    <li><em>Rising late in training</em> — catastrophic forgetting or gradient noise overwhelming
-    the policy signal; the policy is becoming less decisive.</li>
-  </ul>
-
-  <p>For the diagnostic use of entropy during async RL training — the entropy-collapse
-  amplification loop and its interaction with TIM — see
-  <a href="async-rl-monitoring.html#entropy">Monitoring &amp; Diagnosis for Async RL</a>.</p>
+  <p>The clip removes the incentive to take a destructive large step and lets each batch of (expensive) rollouts fund several gradient epochs. The full objective adds the critic's value regression and an entropy bonus, \(\mathcal{L}_{\text{PPO}} = -\mathcal{L}^{\text{CLIP}} + c_1(V_\psi(s_t) - \hat R_t)^2 - c_2\,S[\pi_\theta]\). The mechanics — the trust-region rationale, the actor–critic value head, the entropy term, and the \(K\)-epoch update loop — are derived on the <a href="ppo.html" style="color:var(--accent);">PPO page</a>. Everything RLHF adds sits <em>around</em> this optimizer (reward model, reference-policy KL, the token-level MDP), not inside it.</p>
 
   <h2 id="loop">5. The Full RLHF Loop</h2>
   <p>Stage 3 repeats the following until the policy converges or KL budget is exhausted:</p>
   <ol>
-    <li><strong>Rollout</strong> — sample prompts \(x\sim\mathcal{D}\), generate completions \(y\sim\pi_\theta(\cdot\mid x)\).</li>
+    <li><strong>Rollout</strong> — sample prompts \(x\sim\mathcal{D}\) and generate completions \(y\sim\pi_{\theta_{\text{old}}}(\cdot\mid x)\). Unlike a gym, the "environment" is the model decoding its own tokens, so this step is run by a dedicated inference engine (vLLM / SGLang) — the <em>rollouter</em> — and is usually the most expensive part of the loop. See <a href="rl-inference.html" style="color:var(--accent);">RL Inference</a>.</li>
     <li><strong>Score</strong> — compute the terminal reward \(r_\phi(x,y)\) and the per-token KL penalty to form \(R_t\) (§3).</li>
     <li><strong>Estimate</strong> — run the critic \(V_\psi\) and compute advantages \(\hat A_t\) via GAE (see <a href="policy-gradient.html#gae" style="color:var(--accent);">Policy Gradient §3</a>).</li>
-    <li><strong>Optimize</strong> — take several PPO epochs of minibatch updates on \(\mathcal{L}_{\text{PPO}}\) (§4), then refresh \(\pi_{\theta_{\text{old}}}\).</li>
+    <li><strong>Optimize</strong> — take several PPO epochs of minibatch updates on \(\mathcal{L}_{\text{PPO}}\) (see the <a href="ppo.html" style="color:var(--accent);">PPO page</a>), then refresh \(\pi_{\theta_{\text{old}}}\).</li>
   </ol>
   <div class="note">
     This requires <em>four</em> models in memory: the policy \(\pi_\theta\), the critic \(V_\psi\), the frozen reference \(\pi_{\text{ref}}\), and the reward model \(r_\phi\). That cost and instability is precisely the pain DPO removes. <a href="grpo.html" style="color:#1e40af;">GRPO</a> takes a different path: drop the critic entirely and use a group of sampled completions as the baseline, reducing memory to three models.
@@ -616,6 +559,11 @@
 
   <h2>What's Next</h2>
   <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; margin:1.2em 0;">
+    <a href="ppo.html" style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;text-decoration:none;color:inherit;display:block;transition:border-color 0.15s,box-shadow 0.15s;">
+      <div style="font-size:0.78rem;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Optimizer</div>
+      <div style="font-weight:600;font-size:0.95rem;margin-bottom:4px;">PPO</div>
+      <p style="margin:0;font-size:0.88rem;color:var(--muted);">The clipped surrogate, actor–critic value loss, entropy bonus, and K-epoch update loop that Stage 3 runs — derived domain-agnostic, before the LM wrapper.</p>
+    </a>
     <a href="grpo.html" style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;text-decoration:none;color:inherit;display:block;transition:border-color 0.15s,box-shadow 0.15s;">
       <div style="font-size:0.78rem;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Next</div>
       <div style="font-weight:600;font-size:0.95rem;margin-bottom:4px;">GRPO</div>
