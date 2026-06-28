@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TRL — HuggingFace's RL Post-Training Library</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #0d9488;
+      --accent-light: #f0fdfa;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    .hero {
+      background: linear-gradient(135deg, #064e3b 0%, #065f46 55%, #0d9488 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.9;
+      font-size: 0.97rem;
+      max-width: 640px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: #374151;
+    }
+    h4 {
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin: 1.3em 0 0.3em;
+      color: var(--accent);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: #374151; }
+    a { color: var(--accent); }
+    code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+    pre {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      line-height: 1.55;
+      margin: 1.2em 0;
+    }
+    pre code { background: none; padding: 0; border: none; color: var(--text); }
+
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: #fafafa; }
+
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: #1e40af;
+    }
+
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #16a34a;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .col-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .col-card h4 { margin: 0 0 8px; }
+    .col-card ul { padding-left: 1.2em; margin: 0; }
+    .col-card li { font-size: 0.87rem; margin-bottom: 5px; }
+
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+      .two-col { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>TRL</a>
+  <div class="nav-links">
+    <a href="index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#what">What TRL is</a>
+    <a href="#design">Design model</a>
+    <a href="#grpo">A GRPO run</a>
+    <a href="#generation">Generation &amp; vLLM</a>
+    <a href="#vs-verl">TRL vs verl</a>
+    <a href="#choose">When to choose</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">RL Frameworks · TRL</span>
+  <h1>TRL — HuggingFace's RL Post-Training Library</h1>
+  <p>The <code>Trainer</code>-based, single-program design that makes preference and RL
+  post-training a few lines on top of the HuggingFace stack — how it is built, what a GRPO run looks
+  like, how it now generates with vLLM, and where it fits versus a multi-controller framework like verl.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="note">
+    Read this against <a href="verl-architecture.html">verl Architecture</a>: the two libraries
+    target the same problem (online RL on LLMs) from opposite ends — TRL optimizes for
+    <em>ergonomics inside the HuggingFace ecosystem</em>, verl for <em>throughput at scale</em>. The
+    <a href="rl-frameworks-landscape.html">Landscape</a> page places both among the wider field.
+  </div>
+
+  <!-- ── §1 What TRL is ─────────────────────────── -->
+  <h2 id="what">1. What TRL Is</h2>
+
+  <p><strong>TRL</strong> (Transformer Reinforcement Learning) is HuggingFace's library for the full
+  post-training menu. Each method is a <code>Trainer</code> subclass that drops into the same
+  ecosystem as <code>transformers</code> — <code>datasets</code>, the Hub, <code>peft</code> (LoRA),
+  <code>accelerate</code>, and bitsandbytes quantization all compose with it:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Stage</th><th>Trainers</th></tr>
+      <tr><td>Supervised fine-tuning</td><td><code>SFTTrainer</code></td></tr>
+      <tr><td>Reward modeling</td><td><code>RewardTrainer</code>, <code>PRMTrainer</code></td></tr>
+      <tr><td>Online RL (generate during training)</td><td><code>GRPOTrainer</code>, <code>PPOTrainer</code>, <code>RLOOTrainer</code>, <code>OnlineDPOTrainer</code>, <code>NashMDTrainer</code></td></tr>
+      <tr><td>Offline preference optimization</td><td><code>DPOTrainer</code>, <code>KTOTrainer</code>, <code>ORPOTrainer</code>, <code>CPOTrainer</code>, <code>BCOTrainer</code></td></tr>
+      <tr><td>On-policy distillation</td><td><code>GKDTrainer</code></td></tr>
+    </table>
+  </div>
+
+  <p>The conceptual unit is the loss, not the cluster. You bring a model, a dataset, and (for RL) a
+  reward; TRL brings the trainer that wires generation, scoring, and the gradient step together. The
+  algorithms themselves are covered elsewhere in these notes —
+  <a href="grpo.html">GRPO</a>, <a href="ppo.html">PPO</a>, <a href="dpo-loss.html">DPO</a>,
+  <a href="rlhf.html">RLHF</a>; this page is about TRL's <em>engineering design</em>.</p>
+
+  <!-- ── §2 Design model ────────────────────────── -->
+  <h2 id="design">2. The Design Model — One Program, Replicated</h2>
+
+  <p>TRL has no separate orchestration plane. A run is a single training script launched as
+  <em>N identical processes</em> by <code>accelerate</code>; each process runs the same
+  <code>Trainer.train()</code> loop on its data-parallel shard, and sharding/offload is delegated to
+  <strong>DeepSpeed (ZeRO-1/2/3)</strong> or <strong>FSDP</strong> underneath. This is the classic
+  SPMD launch model — the same one described in <a href="torch-distributed.html">Data Parallelism &amp;
+  the ZeRO ladder</a>.</p>
+
+  <pre><code># launch: 8 GPUs, ZeRO-3 sharding
+accelerate launch --config_file deepspeed_zero3.yaml train_grpo.py</code></pre>
+
+  <p>Contrast this with verl. verl runs a <em>single-controller driver</em> that holds handles to
+  several role WorkerGroups and choreographs the dataflow between them. TRL keeps everything inside
+  one Trainer process group: the policy, the reference model, generation, and the loss all live in
+  the same program, and "parallelism" means data-parallel replicas + ZeRO/FSDP sharding — not a mesh
+  of role-specialized actor pools.</p>
+
+  <div class="two-col">
+    <div class="col-card">
+      <h4>TRL — Trainer / SPMD</h4>
+      <ul>
+        <li>One script; <code>accelerate launch</code> spawns identical ranks.</li>
+        <li>Roles (policy, ref, reward) coexist in each process.</li>
+        <li>Scale = data-parallel + DeepSpeed/FSDP sharding.</li>
+        <li>Subclass <code>Trainer</code>, override <code>compute_loss</code>.</li>
+      </ul>
+    </div>
+    <div class="col-card">
+      <h4>verl — hybrid controller</h4>
+      <ul>
+        <li>A driver orchestrates the dataflow between stages.</li>
+        <li>Roles are separate <a href="verl-architecture.html">WorkerGroups</a> on resource pools.</li>
+        <li>Scale = 4-D parallelism (Megatron) + placement.</li>
+        <li>Write the algorithm in <code>fit()</code>; dispatch fans it out.</li>
+      </ul>
+    </div>
+  </div>
+
+  <p>The payoff of TRL's simplicity is that the entire training run is a readable Python file with no
+  distributed-systems scaffolding; the cost is that the heavyweight, role-disaggregated layouts verl
+  enables (a dedicated rollout pool, Megatron TP/PP/EP for a 100B+ MoE) are not TRL's native turf.</p>
+
+  <!-- ── §3 A GRPO run ──────────────────────────── -->
+  <h2 id="grpo">3. Anatomy of a GRPO Run</h2>
+
+  <p>The whole training program is the trainer construction plus <code>.train()</code>. Rewards are
+  just Python callables (or a reward model), which is what makes TRL so fast to prototype with —
+  verifiable rewards need no extra infrastructure:</p>
+
+  <pre><code>from trl import GRPOTrainer, GRPOConfig
+
+# A reward function: takes the generated completions, returns a score per sample.
+def reward_len(completions, **kwargs):
+    return [-abs(64 - len(c)) for c in completions]   # toy: prefer ~64-char answers
+
+config = GRPOConfig(
+    output_dir="qwen-grpo",
+    num_generations=8,                  # group size G (the GRPO baseline)
+    per_device_train_batch_size=8,
+    gradient_accumulation_steps=4,
+    bf16=True,
+    use_vllm=True,                      # generate with vLLM (see §4)
+    vllm_mode="colocate",
+)
+
+trainer = GRPOTrainer(
+    model="Qwen/Qwen2.5-7B",
+    reward_funcs=[reward_len],          # callable | list | reward-model id
+    args=config,
+    train_dataset=dataset,             # a 'prompt' column
+)
+trainer.train()</code></pre>
+
+  <p>Inside, each step does the GRPO loop: sample <code>num_generations</code> completions per
+  prompt, score them with <code>reward_funcs</code>, compute the group-relative advantage
+  (z-score within the group — no critic), and take a clipped policy-gradient step with a KL leash to
+  the reference. The mechanics are <a href="grpo.html">GRPO</a>; TRL's contribution is that they are
+  configured, not coded. <code>peft_config=LoraConfig(...)</code> turns the same run into LoRA RL,
+  and a 4-bit base model makes it fit on one consumer GPU.</p>
+
+  <!-- ── §4 Generation & vLLM ───────────────────── -->
+  <h2 id="generation">4. Generation — From HF <code>.generate()</code> to vLLM</h2>
+
+  <p>Online RL spends most of its wall-clock in generation, and a plain
+  <code>model.generate()</code> is far slower than a paged-attention engine. TRL closes that gap with
+  a <strong>vLLM</strong> integration that mirrors verl's colocated-vs-disaggregated split — see
+  <a href="resource-pool-placement.html">Placement</a> for the same trade-off in verl terms:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Mode</th><th>Where vLLM runs</th><th>Best for</th></tr>
+      <tr><td><code>vllm_mode="colocate"</code></td><td>In the training processes, sharing their GPUs (the HybridEngine idea)</td><td>Single node; no spare GPUs to dedicate</td></tr>
+      <tr><td><code>vllm_mode="server"</code></td><td>A standalone <code>trl vllm-serve</code> process on its own GPUs; the trainer calls it</td><td>Dedicated generation GPUs; higher rollout throughput</td></tr>
+    </table>
+  </div>
+
+  <pre><code># server mode: start a dedicated vLLM generation server on its own GPUs…
+trl vllm-serve --model Qwen/Qwen2.5-7B --tensor-parallel-size 2
+# …then launch training pointing at it (use_vllm=True, vllm_mode="server")</code></pre>
+
+  <p>Either way the trainer must push freshly updated weights into the vLLM engine between
+  optimizer steps — the same <a href="verl-architecture.html#resharding">weight-resharding</a>
+  problem verl solves with its sharding manager. TRL's online RL is on-policy (weights sync every
+  step), so it does not carry the policy-lag / IS-correction machinery that
+  <a href="async-rl.html">async, disaggregated</a> training requires.</p>
+
+  <!-- ── §5 TRL vs verl ─────────────────────────── -->
+  <h2 id="vs-verl">5. TRL vs verl — The Direct Comparison</h2>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Axis</th><th>TRL</th><th>verl</th></tr>
+      <tr><td>Programming model</td><td>Subclass <code>Trainer</code>; SPMD launch</td><td>Single-controller <code>fit()</code> + multi-controller workers</td></tr>
+      <tr><td>Training backend</td><td>DeepSpeed ZeRO, FSDP</td><td>FSDP <em>or</em> Megatron (TP/PP/EP/CP)</td></tr>
+      <tr><td>Generation</td><td>HF generate; vLLM (colocate/server)</td><td>vLLM / SGLang, colocated or disaggregated</td></tr>
+      <tr><td>Role placement</td><td>All roles in one process group</td><td>Separate WorkerGroups on resource pools</td></tr>
+      <tr><td>Async / off-policy RL</td><td>On-policy; no first-class async</td><td>First-class disaggregated async + IS correction</td></tr>
+      <tr><td>Method breadth</td><td>Very broad (SFT→DPO/KTO/ORPO→PPO/GRPO/RLOO/online-DPO/GKD)</td><td>Focused on PPO/GRPO-family RL</td></tr>
+      <tr><td>Ecosystem</td><td>Deep HF integration (Hub, PEFT, quantization, datasets)</td><td>Ray-native; integrates inference + training engines</td></tr>
+      <tr><td>Sweet-spot scale</td><td>1 GPU → modest multi-node</td><td>Multi-node, large dense / MoE, production RL</td></tr>
+    </table>
+  </div>
+
+  <p>They are not really competitors so much as different rungs. Many teams prototype an algorithm or
+  reward in TRL on a few GPUs, then port the recipe to verl when they need Megatron parallelism,
+  disaggregated rollout, or async throughput.</p>
+
+  <!-- ── §6 When to choose ──────────────────────── -->
+  <h2 id="choose">6. When to Reach for TRL</h2>
+
+  <div class="two-col">
+    <div class="col-card">
+      <h4>Choose TRL when…</h4>
+      <ul>
+        <li>You want the broadest menu of preference/RL methods behind one API.</li>
+        <li>You live in the HF ecosystem — Hub models, <code>datasets</code>, LoRA, quantization.</li>
+        <li>You are on 1–8 GPUs and value a readable single-file run.</li>
+        <li>You are iterating on the <em>algorithm or reward</em>, not the systems.</li>
+      </ul>
+    </div>
+    <div class="col-card">
+      <h4>Outgrow it toward verl when…</h4>
+      <ul>
+        <li>The model needs Megatron 4-D parallelism (very large dense or MoE).</li>
+        <li>Rollout dominates and you need a dedicated/disaggregated generation pool.</li>
+        <li>You want async, off-policy RL with IS correction at scale.</li>
+        <li>You need fine-grained <a href="resource-pool-placement.html">resource-pool placement</a> across roles.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="result">
+    <div class="result-label">The one-line distinction</div>
+    <p style="margin:0;">TRL makes post-training a <strong>loss you configure on top of the
+    HuggingFace stack</strong>; verl makes it a <strong>dataflow you orchestrate across a cluster of
+    role-specialized engines</strong>. Start with the former; graduate to the latter when scale
+    forces the issue.</p>
+  </div>
+
+  <!-- ── References ─────────────────────────────── -->
+  <h2>References</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><td><a href="https://huggingface.co/docs/trl">TRL documentation</a></td><td>Trainer reference, GRPO/PPO/DPO guides, vLLM integration, scaling with DeepSpeed/FSDP</td></tr>
+      <tr><td><a href="https://github.com/huggingface/trl">huggingface/trl (GitHub)</a></td><td>Source for every trainer; example scripts under <code>examples/</code></td></tr>
+      <tr><td><a href="verl-architecture.html">verl Architecture</a></td><td>The contrasting hybrid single/multi-controller design</td></tr>
+      <tr><td><a href="rl-frameworks-landscape.html">RL Frameworks Landscape</a></td><td>TRL and verl among OpenRLHF, NeMo-Aligner, slime</td></tr>
+      <tr><td><a href="grpo.html">GRPO</a> · <a href="dpo-loss.html">DPO</a> · <a href="ppo.html">PPO</a></td><td>The algorithms behind TRL's trainers</td></tr>
+    </table>
+  </div>
+
+</div>
+</body>
+</html>

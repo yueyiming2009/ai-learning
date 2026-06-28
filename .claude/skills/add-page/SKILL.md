@@ -27,7 +27,7 @@ workloads).
 |---|---|---|---|
 | 01 | **Deep Learning Foundations** — `#foundations` / `domain-foundations` / indigo | Foundations · Loss Functions · Normalization · Activations & FFN · Positional Encoding · Optimization · Sampling & Estimation · Tokenization · Architecture | the math of how a model computes & trains: a gradient, a loss's probabilistic basis, an optimizer rule, the tokenizer/routing math |
 | 02 | **Systems & Hardware** — `#systems` / `domain-systems` / orange | Hardware · GPU Kernels · Communication & Parallelism · Distributed Training | the training substrate: chips, kernels, collectives, parallelism, distributed plumbing |
-| 03 | **Reinforcement Learning** — `#rl` / `domain-rl` / teal | RL Theory · Alignment & RLHF · Training Walkthroughs · RL Efficiency | anything RL — the theory (MDP → tree search), the alignment methods (RLHF/GRPO/DPO/…), and the systems that run RL jobs (walkthroughs, async RL, efficiency) |
+| 03 | **Reinforcement Learning** — `#rl` / `domain-rl` / teal | RL Theory · Alignment & RLHF · RL Frameworks · Training Walkthroughs · RL Efficiency | anything RL — the theory (MDP → tree search), the alignment methods (RLHF/GRPO/DPO/…), the frameworks that run RL jobs (verl/TRL/landscape/placement), and the systems pages (walkthroughs, async RL, efficiency) |
 | 04 | **Inference** — `#inference` / `domain-inference` / blue | Inference Foundations · Inference Techniques · Inference Workloads | serving a trained model fast: the prefill/decode compute model, its optimizations, and serving workloads |
 
 Rule of thumb: **Foundations = "why the formula is true," Systems & Hardware = "the machine
