@@ -500,29 +500,7 @@ optimizer.<span class="fn">step</span>()</code></pre>
     </table>
   </div>
 
-  <h3>Where the \(O(\sqrt{L})\) comes from</h3>
-  <p>Model the network as a chain of \(L\) blocks. The backward pass through block \(i\) needs that block's input \(x_{i-1}\), so "activation memory" is really "how many of the \(x_i\) sit resident at once." Vanilla autograd keeps all of them, \(M_\text{naive}=L\). Checkpointing adds one knob — a <em>segment length</em> \(k\): keep a checkpoint only every \(k\)-th boundary and discard the activations inside each segment. In backward, re-run one segment's forward from its left checkpoint to regenerate its internals, backprop through them, then free them.</p>
-
-  <p>Peak memory is then a sum of two competing terms — the checkpoints you hold the whole time, plus the one segment you are recomputing right now:</p>
-
-  <div class="result">
-    <div class="result-label">Peak activation memory</div>
-    \[
-      M(k) = \underbrace{\frac{L}{k}}_{\text{checkpoints kept}} \;+\; \underbrace{k}_{\text{one segment recomputed}}
-    \]
-  </div>
-
-  <p>Larger segments mean fewer checkpoints but a bigger recompute buffer, and vice versa — so there is an interior optimum. Set the derivative to zero:</p>
-  \[
-    \frac{dM}{dk} = -\frac{L}{k^2} + 1 = 0
-    \;\;\Longrightarrow\;\; k^\star = \sqrt{L}
-    \;\;\Longrightarrow\;\; M(\sqrt{L}) = \sqrt{L} + \sqrt{L} = 2\sqrt{L} = O(\sqrt{L}).
-  \]
-  <p>The optimum is \(\sqrt{L}\) segments of \(\sqrt{L}\) blocks each, and the two terms balance exactly — the signature of any \(a/k + k\) minimization. For \(L=100\) blocks that is \(2\sqrt{100}=20\) units instead of 100 (a 5× cut); at \(L=10{,}000\) it is 50×. The deeper the model, the larger the win.</p>
-
-  <div class="note">
-    Two granularities get blended in practice. <strong>Per-block checkpointing</strong> (the <code>torch.utils.checkpoint</code> default) checkpoints <em>every</em> block — it stays \(O(L)\) in block count but drops each block's heavy <em>internals</em> (attention scores, softmax, MLP hidden), a large constant-factor win and the common case. True \(O(\sqrt{L})\) needs the segmented scheme above, storing only every \(\sqrt{L}\)-th boundary. Generalizing to \(c\) nested levels of recomputation gives \(M=O(L^{1/(c+1)})\) at the cost of \(c\) extra forward passes — \(c=1\) (one extra forward, \(\sqrt{L}\) memory) is the sweet spot everyone quotes.
-  </div>
+  <p>The \(O(\sqrt{L})\) row is the classic sublinear-memory result of <a href="https://arxiv.org/abs/1604.06174" style="color:var(--accent);">Chen et al. (2016), <em>Training Deep Nets with Sublinear Memory Cost</em></a> — checkpoint every \(\sqrt{L}\)-th block and recompute the rest, which also generalizes to \(O(L^{1/(c+1)})\) memory for \(c\) extra forward passes. PyTorch's <code>torch.utils.checkpoint</code> implements the per-block variant.</p>
 
   <p>Roughly one extra forward pass (≈33% more compute) buys a large drop in activation memory — frequently the difference between a model fitting on a GPU or not. This is exactly the "HFU vs MFU" gap quantified on the <a href="mfu.html" style="color:var(--accent);">MFU</a> page: recomputation inflates the hardware FLOPs without doing new useful work.</p>
 
