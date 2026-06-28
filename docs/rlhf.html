@@ -453,6 +453,10 @@
 
   <p>This is the <em>same</em> objective DPO starts from — DPO solves it in closed form, whereas standard RLHF optimizes it directly with reinforcement learning. The rest of this page is how that direct optimization works.</p>
 
+  <div class="note">
+    This \(\beta\,\mathrm{KL}(\pi_\theta\|\pi_{\text{ref}})\) leash is the same device as PPO's entropy bonus, which is a KL pull toward the <em>uniform</em> policy (\(H[\pi] = \log|\mathcal{A}| - \mathrm{KL}(\pi\|u)\); see <a href="ppo.html#entropy" style="color:#1e40af;">PPO §6</a>). Same regularizer, different anchor — \(\pi_{\text{ref}}\) here, uniform there. Because this reference KL already arrests entropy collapse and anchors at a fluent distribution, RLHF usually sets the entropy coefficient \(c_2 \approx 0\); it matters again only when the KL leash is weak or absent, as in verifiable-reward GRPO.
+  </div>
+
   <h3>Folding the KL into a per-token reward</h3>
   <p>In practice the KL is not computed exactly, because written as a sum, \(\mathrm{KL} = \sum_y \pi_\theta(y\mid x)\log\frac{\pi_\theta(y\mid x)}{\pi_{\text{ref}}(y\mid x)}\), it ranges over <em>every possible completion</em> \(y\) — \(|\text{vocab}|^{\text{length}}\) sequences, far too many to enumerate (the same wall as \(Z(x)\) on the DPO page).</p>
   <p>But the very same quantity is an <em>expectation</em>, \(\mathrm{KL} = \mathbb{E}_{y\sim\pi_\theta}\big[\log\frac{\pi_\theta(y\mid x)}{\pi_{\text{ref}}(y\mid x)}\big]\), and RLHF is already sampling \(y\sim\pi_\theta\) to generate rollouts. So the log-ratio on that one sampled sequence is a free, unbiased Monte-Carlo estimate of the KL. Absorbing it into the reward gives the effective reward:</p>

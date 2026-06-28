@@ -260,10 +260,58 @@
   equally likely. Low entropy means it concentrates mass on a few actions — it is confident, or
   possibly stuck.</p>
 
-  <p><strong>Why add it as a bonus.</strong> Without \(-c_2 S\), PPO is free to collapse the
-  policy to near-deterministic behavior as soon as it finds any high-reward action. The entropy
-  bonus penalizes overconfidence, keeping the policy exploratory and diverse. It is equivalent to
-  applying an \(\ell_1\) regularizer in log-probability space.</p>
+  <p><strong>Why add it as a bonus.</strong> Policy gradient is on-policy — it only learns from
+  actions it actually samples. If the policy gets confident too early it stops sampling the
+  alternatives, so it stops receiving any gradient about them, so it can never discover that one
+  was better: a positive-feedback trap that ends in a collapsed, possibly suboptimal policy.
+  Without \(-c_2 S\), PPO walks straight into it the moment it finds any high-reward action. The
+  entropy bonus is the counter-force that keeps the policy exploratory long enough to evaluate
+  its options.</p>
+
+  <h3>What the bonus does to the gradient</h3>
+  <p>Differentiating the entropy makes its effect precise. From \(\nabla_\theta H = -\sum_a \nabla_\theta\pi_\theta\,(\log\pi_\theta + 1)\), the \(+1\) term drops because the score function sums to zero, \(\sum_a \nabla_\theta\pi_\theta = \nabla_\theta\sum_a\pi_\theta = \nabla_\theta 1 = 0\):</p>
+  \[
+    \nabla_\theta H[\pi_\theta](s) = -\,\mathbb{E}_{a\sim\pi_\theta}\!\big[\log\pi_\theta(a\mid s)\,\nabla_\theta\log\pi_\theta(a\mid s)\big]
+  \]
+  <p>The weight \(-\log\pi_\theta(a\mid s)\) is large for rare actions and near zero for likely ones, so this gradient lifts the log-probability of <em>under-represented</em> actions more than dominant ones — a flattening force, the exact opponent of the reward gradient that sharpens the distribution onto whatever currently scores well. This is the precise sense in which the bonus acts as a regularizer in log-probability space.</p>
+
+  <h3>Entropy is a KL leash to the uniform policy</h3>
+  <p>Writing \(u\) for the uniform distribution over the \(|\mathcal{A}|\) actions, the entropy is a constant minus a KL divergence:</p>
+  <div class="result">
+    <div class="result-label">Entropy as KL to uniform</div>
+    \[
+      H[\pi] = \log|\mathcal{A}| - \mathrm{KL}\!\big(\pi \,\|\, u\big)
+      \qquad\Longrightarrow\qquad
+      \max_\theta\, H[\pi_\theta] \;\equiv\; \min_\theta\, \mathrm{KL}\!\big(\pi_\theta \,\|\, u\big)
+    \]
+  </div>
+  <p>Since \(\log|\mathcal{A}|\) has no gradient, the entropy bonus's gradient <em>is</em> \(-c_2\,\nabla_\theta\mathrm{KL}(\pi_\theta\|u)\): an entropy bonus is exactly a KL penalty pulling the policy toward uniform. That makes it the structural twin of <a href="rlhf.html#objective" style="color:var(--accent);">RLHF's reference-KL</a> \(-\beta\,\mathrm{KL}(\pi_\theta\|\pi_{\text{ref}})\) — the same leash, a different anchor (uniform vs. the SFT model). It is also the policy-gradient counterpart of <a href="dqn.html" style="color:var(--accent);">DQN's \(\epsilon\)-greedy</a>: both inject exploration, but \(\epsilon\)-greedy bolts external randomness onto a greedy policy, while the entropy bonus shapes the policy's own distribution. Pushed to its limit — augmenting the reward itself with \(\alpha H\) at every step — this becomes maximum-entropy RL ("act as randomly as possible while still maximizing reward"), the principle behind soft actor-critic.</p>
+
+  <div class="figure">
+    <canvas id="plot-entropy" aria-label="Entropy and KL-to-uniform of a two-action policy versus its probability p, showing they sum to a constant"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:#0d9488"></span> \(H[\pi]\) — entropy (the bonus)</span>
+      <span class="legend-item"><span class="lg" style="--c:#d97706"></span> \(\mathrm{KL}(\pi\,\|\,u)\) — equivalent penalty</span>
+      <span class="legend-item"><span class="lg dash"></span> \(H + \mathrm{KL} = \log|\mathcal{A}|\)</span>
+    </div>
+    <p class="figure-caption">
+      <strong>The bonus and the penalty are the same curve, flipped.</strong> For a two-action policy
+      \(\pi = (p,\,1-p)\), entropy (teal) and KL-to-uniform (amber) are mirror images that sum to the
+      constant \(\log|\mathcal{A}| = \log 2 \approx 0.69\) (dashed). Maximizing the entropy bonus
+      <em>is</em> minimizing KL to uniform. Both are extremal at \(p = 0.5\) (maximally uncertain —
+      entropy peaks, KL vanishes) and at the deterministic corners \(p \in \{0, 1\}\) (collapsed —
+      entropy vanishes, KL peaks). The reward gradient is always trying to drag the policy toward a
+      corner; \(c_2\) sets how hard the bonus pulls back toward the middle.
+    </p>
+  </div>
+
+  <h3>Setting \(c_2\) in practice</h3>
+  <ul>
+    <li><strong>Classic PPO</strong> (Atari, control): \(c_2 \approx 0.01\) is standard — with no reference policy, the entropy bonus is the main thing preventing premature collapse.</li>
+    <li><strong>RLHF with a KL leash</strong>: \(c_2\) is often set to \(0\). The reference-KL already arrests collapse, and it anchors at \(\pi_{\text{ref}}\) — a fluent, sensible distribution — whereas pulling toward uniform over a 100k-token vocabulary is a crude and sometimes harmful prior.</li>
+    <li><strong>Verifiable-reward GRPO / "RL-zero" reasoning</strong>: with little or no KL leash, entropy management is load-bearing again — too small and the policy collapses into a single template that games the reward. This is the regime the <a href="async-rl-monitoring.html#entropy" style="color:var(--accent);">entropy-collapse diagnostics</a> are built for.</li>
+    <li><strong>Annealing</strong>: \(c_2\) is sometimes decayed over training — explore early, exploit late — mirroring \(\epsilon\)-decay. Adaptive schemes (as in soft actor-critic) instead tune it to hit a <em>target</em> entropy rather than fixing it.</li>
+  </ul>
 
   <p><strong>Computing it for an LLM.</strong> The action space is the full vocabulary
   \(|\mathcal{V}|\) — often 32k–128k tokens — so the exact sum is expensive. Two common
@@ -371,6 +419,11 @@
   // Per-sample clipped surrogate term as a function of the ratio r, for fixed advantage A.
   function lclip(r, A, eps) { return Math.min(r * A, clamp(r, 1 - eps, 1 + eps) * A); }
 
+  // Two-action policy (p, 1-p): entropy and KL to the uniform distribution.
+  function xlogx(x)  { return x <= 0 ? 0 : x * Math.log(x); }   // x log x, with 0 log 0 = 0
+  function Hbin(p)   { return -xlogx(p) - xlogx(1 - p); }       // entropy of (p, 1-p)
+  function KLuni(p)  { return Math.LN2 - Hbin(p); }             // KL(π ‖ uniform) = log2 − H
+
   function drawPlot(canvas, cfg) {
     const dpr = window.devicePixelRatio || 1;
     const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
@@ -443,6 +496,18 @@
     series: [
       { fn: r => lclip(r,  1, 0.2), color: '#0d9488', width: 2.75 },
       { fn: r => lclip(r, -1, 0.2), color: '#d97706', width: 2.75 }
+    ]
+  }]);
+
+  const entCanvas = document.getElementById('plot-entropy');
+  if (entCanvas) plots.push([entCanvas, {
+    xMin: 0, xMax: 1, yMin: 0, yMax: 0.75,
+    xTicks: [0, 0.25, 0.5, 0.75, 1],
+    yTicks: [0, 0.35, 0.69],
+    series: [
+      { fn: Hbin,         color: '#0d9488', width: 2.75 },
+      { fn: KLuni,        color: '#d97706', width: 2.75 },
+      { fn: () => Math.LN2, color: '#9ca3af', width: 1.75, dash: [5, 4] }
     ]
   }]);
 
