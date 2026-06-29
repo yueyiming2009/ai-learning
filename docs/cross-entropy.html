@@ -139,6 +139,9 @@
     ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
     li { margin-bottom: 0.4em; }
     em { color: #374151; }
+    code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-size: 0.88em; }
+    pre { background: var(--step-bg); border: 1px solid var(--step-border); border-radius: 8px; padding: 14px 18px; overflow-x: auto; font-size: 0.85rem; line-height: 1.55; margin: 1.2em 0; }
+    pre code { background: none; border: none; padding: 0; color: var(--text); }
 
     /* ── Table ───────────────────────────────── */
     .table-wrap { overflow-x: auto; margin: 1.2em 0; }
@@ -422,6 +425,17 @@
   <div class="note">
     This simplicity is not a coincidence. Cross entropy is the natural loss for softmax because they are conjugate in the exponential family — the log in the loss exactly cancels the exp in the softmax, leaving a linear residual.
   </div>
+
+  <p>In code, both passes collapse to a line each — the stable forward is a single library call, and the gradient is just the softmax with \(1\) subtracted at the true class:</p>
+<pre><code>import torch.nn.functional as F
+
+loss = F.cross_entropy(logits, targets)   # stable -z_k + logsumexp(z), averaged over N
+
+# gradient dL/dz is the p - y residual:
+grad = F.softmax(logits, dim=-1)          # p
+grad[range(N), targets] -= 1              # subtract y (one-hot) at the true class
+grad /= N                                 # average, matching the loss
+</code></pre>
 
   <h2 id="batch">4. Batch Formulation</h2>
   <p>In practice, loss is averaged over a mini-batch of \(N\) examples. Let \(Z \in \mathbb{R}^{N \times V}\) be the logit matrix and \(k_1, \ldots, k_N\) the true class indices.</p>

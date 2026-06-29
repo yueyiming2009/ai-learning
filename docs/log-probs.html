@@ -146,6 +146,8 @@
       padding: 1px 5px;
       font-size: 0.88em;
     }
+    pre { background: var(--step-bg); border: 1px solid var(--step-border); border-radius: 8px; padding: 14px 18px; overflow-x: auto; font-size: 0.85rem; line-height: 1.55; margin: 1.2em 0; }
+    pre code { background: none; border: none; padding: 0; color: var(--text); }
 
     /* ── Table ───────────────────────────────── */
     .table-wrap { overflow-x: auto; margin: 1.2em 0; }
@@ -388,6 +390,21 @@
   </div>
 
   <p>Each term is one gather from one position's log-softmax row; the sequence log-prob is their sum. (This is the same "fold the sequence into the batch" move the loss uses — a per-token quantity summed along the time axis — except the gathered index at each step is the token the policy <em>sampled</em>, not a fixed label.)</p>
+
+  <p>In code the whole computation is four lines — and the bugs live in the three practical details the math glosses over: the <strong>teacher-forcing shift</strong> (position \(t\)'s logits score token \(t{+}1\)), the <strong>gather dimension</strong>, and <strong>masking</strong> out prompt and padding tokens before the sum:</p>
+<pre><code>import torch.nn.functional as F
+
+def sequence_logprobs(logits, tokens, mask):
+    # logits: (B, T, V) model outputs;  tokens: (B, T) sampled/target ids
+    # mask:   (B, T) 1 for tokens that count (response, non-pad), else 0
+    logp = F.log_softmax(logits[:, :-1], dim=-1)        # z - logsumexp(z), stable; t predicts t+1
+    tok  = tokens[:, 1:]
+    tok_logp = logp.gather(-1, tok.unsqueeze(-1)).squeeze(-1)  # gather the sampled index a_t
+    return (tok_logp * mask[:, 1:]).sum(-1)             # sum per-token logs over the sequence
+</code></pre>
+  <div class="note">
+    Each line maps to a step above — <code>log_softmax</code> is §1, <code>gather</code> is §2, <code>* mask).sum</code> is §3. This is essentially what verl's <code>compute_log_probs</code> and TRL's log-prob helpers run on every rollout to score \(\pi_\theta\) and \(\pi_{\theta_{\text{old}}}\).
+  </div>
 
   <h2 id="example">4. A worked example</h2>
   <p>Take a two-token generation over a tiny vocabulary, and compute its sequence log-prob.</p>
