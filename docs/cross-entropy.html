@@ -270,6 +270,7 @@
     <a href="#notation">Notation</a>
     <a href="#forward">Forward</a>
     <a href="#stability">Stability</a>
+    <a href="#logprobs">Log-probs</a>
     <a href="#backward">Backward</a>
     <a href="#batch">Batch</a>
     <a href="#summary">Summary</a>
@@ -361,7 +362,66 @@
     PyTorch's <code>F.cross_entropy</code> and JAX's <code>optax.softmax_cross_entropy</code> both apply this shift internally. You rarely need to implement it by hand, but understanding it is important for writing numerically stable custom kernels.
   </div>
 
-  <h2 id="backward">3. Backward Pass</h2>
+  <h2 id="logprobs">3. Log-Probabilities — the Same Quantity, Read Two Ways</h2>
+  <p>Sections 1–2 built one machine: turn logits \(\mathbf{z}\) into a normalized distribution and read off the log-probability of a chosen index, stably. Cross entropy is what you get when that index is the <em>target</em> class and you negate it. But the exact same quantity — evaluated at the token the model actually <em>sampled</em> — is the \(\log\pi\) that every policy-gradient, PPO/GRPO, and RLHF objective is built on. Nothing new needs deriving; this section just reads the §1–2 result the second way.</p>
+
+  <h3>The log-softmax operator</h3>
+  <p>Take the log of softmax directly, rather than forming \(\mathbf{p}\) and then logging it:</p>
+  \[
+    \log \operatorname{softmax}(\mathbf{z})_a
+      = \log \frac{e^{z_a}}{S}
+      = z_a - \log \sum_{j=1}^{V} e^{z_j}
+      = z_a - \operatorname{logsumexp}(\mathbf{z})
+  \]
+  <p>This is exactly the \(-z_k + \log S\) of §1 with the sign flipped and the index left free. The \(\log\sum_j e^{z_j}\) term — the <strong>log-partition</strong>, or <code>logsumexp</code> — is the same one §2 stabilized by subtracting \(m=\max_j z_j\), so in practice:</p>
+  \[
+    \log \operatorname{softmax}(\mathbf{z})_a = (z_a - m) - \log \sum_{j=1}^{V} e^{z_j - m}
+  \]
+
+  <div class="result">
+    <div class="result-label">Log-probability of one token</div>
+    \[
+      \log p_a \;=\; \log \operatorname{softmax}(\mathbf{z})_a \;=\; z_a - \operatorname{logsumexp}(\mathbf{z})
+    \]
+  </div>
+
+  <div class="note">
+    Computing it this way — never materializing \(\mathbf{p}\) — is why frameworks expose <code>log_softmax</code> followed by a <em>gather</em> rather than <code>log(softmax(...))</code>: it sidesteps both the overflow of large \(e^{z}\) and the underflow of \(\log\) on a tiny \(p\).
+  </div>
+
+  <h3>Loss vs. policy — only the gathered index differs</h3>
+  <p>The forward pass produces the whole vector \(\log\operatorname{softmax}(\mathbf{z}) \in \mathbb{R}^V\). Which single entry you pull out, and its sign, is the only difference between training a classifier and scoring an action:</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Reading</th><th>Gathered index</th><th>Quantity</th><th>Role</th></tr>
+      <tr><td>Cross entropy (loss)</td><td>target class \(k\)</td><td>\(-\log\operatorname{softmax}(\mathbf{z})_k\)</td><td>minimize</td></tr>
+      <tr><td>Policy log-prob</td><td>sampled token \(a\)</td><td>\(+\log\operatorname{softmax}(\mathbf{z})_a\)</td><td>score \(\nabla_\theta \log\pi\)</td></tr>
+    </table>
+  </div>
+  <p>So cross entropy is just the negative log-prob at the token you <em>wanted</em>; the RL log-prob is the (positive) log-prob at the token you <em>got</em>. Same `gather`, different index.</p>
+
+  <h3>Gather, then sum over the sequence</h3>
+  <p>A language model emits one logit vector \(\mathbf{z}^{(t)}\) per position. Generation is autoregressive, so the probability of a whole sequence factorizes into a product — and the log turns that product into a sum:</p>
+  \[
+    \log \pi_\theta(y \mid x)
+      = \log \prod_{t=1}^{T} \pi_\theta(a_t \mid s_t)
+      = \sum_{t=1}^{T} \log \operatorname{softmax}\!\big(\mathbf{z}^{(t)}\big)_{a_t}
+  \]
+  <p>Each term is one gather from one position's log-softmax row; the sequence log-prob is their sum. (This is the same "fold sequence into the batch" move as §5 — a per-token quantity summed along the time axis.)</p>
+
+  <h3>A tiny worked example</h3>
+  <p>Take one position with three candidate tokens and logits \(\mathbf{z} = [\,2.0,\ 1.0,\ 0.1\,]\). With \(m = 2.0\):</p>
+  \[
+    \operatorname{logsumexp}(\mathbf{z}) = 2.0 + \log\!\big(e^{0} + e^{-1} + e^{-1.9}\big)
+      = 2.0 + \log(1.5174) = 2.4170
+  \]
+  <p>The three log-probs are \(z_a - 2.4170 = [-0.417,\ -1.417,\ -2.317]\), i.e. probabilities \([0.659,\ 0.242,\ 0.099]\) (they sum to 1, as they must). If the model sampled token 0, its contribution to the sequence log-prob is \(\log p_0 = -0.417\); the optimizer then pushes \(z_0\) up or down through the §4 gradient \(p - y\), now applied at the <em>sampled</em> index.</p>
+
+  <div class="note">
+    Where this lands downstream: <a href="policy-gradient.html" style="color:var(--accent);">policy gradient</a> differentiates \(\log\pi_\theta(a_t\mid s_t)\); the <a href="ppo.html" style="color:var(--accent);">PPO</a> / <a href="grpo.html" style="color:var(--accent);">GRPO</a> ratio is \(\exp\!\big(\log\pi_\theta - \log\pi_{\text{old}}\big)\) — a <em>difference</em> of two of these gathers, exponentiated — and the <a href="rlhf.html" style="color:var(--accent);">RLHF</a> KL penalty is a per-token difference \(\log\pi_\theta(a_t\mid s_t) - \log\pi_{\text{ref}}(a_t\mid s_t)\) summed over the sequence.
+  </div>
+
+  <h2 id="backward">4. Backward Pass</h2>
   <p>We want \(\partial L / \partial z_i\) for each logit. The derivation goes through the Jacobian of softmax.</p>
 
   <div class="step">
@@ -423,7 +483,7 @@
     This simplicity is not a coincidence. Cross entropy is the natural loss for softmax because they are conjugate in the exponential family — the log in the loss exactly cancels the exp in the softmax, leaving a linear residual.
   </div>
 
-  <h2 id="batch">4. Batch Formulation</h2>
+  <h2 id="batch">5. Batch Formulation</h2>
   <p>In practice, loss is averaged over a mini-batch of \(N\) examples. Let \(Z \in \mathbb{R}^{N \times V}\) be the logit matrix and \(k_1, \ldots, k_N\) the true class indices.</p>
 
   \[
@@ -442,7 +502,7 @@
     In language modelling the sequence dimension is typically folded into the batch, so the effective \(N\) is \(\text{batch} \times \text{sequence length}\). The same formula applies without modification.
   </div>
 
-  <h2 id="summary">5. Summary</h2>
+  <h2 id="summary">6. Summary</h2>
   <div class="summary-grid">
     <div class="summary-card">
       <div class="summary-card-label">Softmax</div>
@@ -451,6 +511,10 @@
     <div class="summary-card">
       <div class="summary-card-label">Loss</div>
       <p>\(L = -\log p_k = -z_k + \log S\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Log-prob (RL)</div>
+      <p>\(\log p_a = z_a - \operatorname{logsumexp}(\mathbf{z})\); sum over the sequence</p>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">dz (single)</div>
@@ -475,6 +539,7 @@
       <tr><th>Quantity</th><th>Formula</th><th>Shape</th></tr>
       <tr><td>Softmax \(\mathbf{p}\)</td><td>\(e^{\mathbf{z}} / \sum_j e^{z_j}\)</td><td>\(\mathbb{R}^V\)</td></tr>
       <tr><td>Loss \(L\)</td><td>\(-\log p_k\)</td><td>scalar</td></tr>
+      <tr><td>Log-prob \(\log p_a\) (sampled token)</td><td>\(z_a - \operatorname{logsumexp}(\mathbf{z})\)</td><td>scalar (entry \(a\))</td></tr>
       <tr><td>Gradient \(d\mathbf{z}\) (true class \(k\))</td><td>\(p_k - 1\)</td><td>scalar (entry \(k\))</td></tr>
       <tr><td>Gradient \(d\mathbf{z}\) (other classes)</td><td>\(p_i\)</td><td>scalar (entry \(i \ne k\))</td></tr>
       <tr><td>Gradient \(d\mathbf{z}\) (vectorized)</td><td>\(\mathbf{p} - \mathbf{y}\)</td><td>\(\mathbb{R}^V\)</td></tr>
@@ -482,7 +547,7 @@
     </table>
   </div>
 
-  <p style="margin-top:2em;color:var(--muted);font-size:0.9rem;"><strong>Used in:</strong> this is the per-token loss of <a href="pretraining.html" style="color:var(--accent);">pretraining</a> — summed over the sequence under teacher forcing — and the same numerically-stable softmax reappears inside <a href="attention.html" style="color:var(--accent);">self-attention</a>.</p>
+  <p style="margin-top:2em;color:var(--muted);font-size:0.9rem;"><strong>Used in:</strong> this is the per-token loss of <a href="pretraining.html" style="color:var(--accent);">pretraining</a> — summed over the sequence under teacher forcing — and the same numerically-stable softmax reappears inside <a href="attention.html" style="color:var(--accent);">self-attention</a>. Read at the <em>sampled</em> token instead of the target (§3), the same machinery produces the \(\log\pi\) behind <a href="policy-gradient.html" style="color:var(--accent);">policy gradient</a>, <a href="ppo.html" style="color:var(--accent);">PPO</a>, <a href="grpo.html" style="color:var(--accent);">GRPO</a>, and <a href="rlhf.html" style="color:var(--accent);">RLHF</a>.</p>
 
 </div>
 
