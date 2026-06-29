@@ -663,6 +663,8 @@ advantages = stack(reversed(advantages))   # (64, 512)
 returns    = advantages + values           # (64, 512)
 advantages = whiten(advantages, response_mask)   # zero mean, unit variance</code></pre>
 
+  <p style="font-size:0.88rem;color:var(--muted);">▸ Real source (and a note on the exact masking): <a href="#code">§8.2</a>.</p>
+
   <div class="note">
     <code>response_mask</code> zeros the recurrence at padding positions and after EOS so advantages don't leak across sequence boundaries. Typical: \(\gamma=1.0\), \(\lambda=0.95\).
   </div>
@@ -729,6 +731,8 @@ surr2 = clamp(ratio, 1-eps, 1+eps) * advantages     # (4, 512)  eps=0.2
 
 actor_loss = -mean(min(surr1, surr2) * response_mask)   # scalar</code></pre>
 
+  <p style="font-size:0.88rem;color:var(--muted);">▸ Real source (with asymmetric + dual clip): <a href="#code">§8.3</a>.</p>
+
   <h4>8d. Backward pass</h4>
   <div class="nccl">
     <div class="nccl-label">NCCL — AllReduce (TP) + ReduceScatter (DP) per layer</div>
@@ -758,6 +762,8 @@ v_shard (var)   :  ~875 MB per GPU (float32)
   </div>
   <pre><code>value_clipped = clip(value_pred, old_values - eps_v, old_values + eps_v)
 value_loss    = 0.5 * mean((value_clipped - returns)^2 * response_mask)</code></pre>
+
+  <p style="font-size:0.88rem;color:var(--muted);">▸ Real source: <a href="#code">§8.4</a>.</p>
 
   <!-- Phase 10 -->
   <div class="phase">
@@ -897,19 +903,258 @@ value_loss    = 0.5 * mean((value_clipped - returns)^2 * response_mask)</code></
     </table>
   </div>
 
-  <!-- ── §8 Code pointers ───────────────────── -->
-  <h2 id="code">8. Key Code Pointers</h2>
+  <!-- ── §8 Code-level trace ─────────────────── -->
+  <h2 id="code">8. The Code: verl Source, End to End</h2>
+
+  <p>The phases above are the systems view — shapes and NCCL calls. This section is the same
+  pipeline in <strong>real verl source</strong>, drilling from the driver loop down to the loss
+  kernels. Every block is actual code from verl at commit <code>8a694930</code>, lightly elided
+  (<code>…</code>) for length; the comment at the top of each block is the <code>file:line</code> of
+  the original. Phase numbers in comments map back to §4.</p>
+
+  <h3>8.1 The driver loop — <code>RayPPOTrainer.fit()</code></h3>
+
+  <p>One iteration of this loop is one PPO step. It runs on the Ray controller (CPU) and dispatches
+  each phase to the worker groups. Note the order: <strong>critic updates before actor</strong>, and
+  the actor update is gated behind <code>critic_warmup</code>.</p>
+
+  <pre><code># verl/trainer/ppo/ray_trainer.py — RayPPOTrainer.fit()   (def at :1359)
+
+for batch_dict in self.train_dataloader:               # one PPO step per dataloader batch
+    batch = DataProto.from_single_dict(batch_dict)
+    batch.non_tensor_batch["uid"] = np.array([str(uuid.uuid4()) ...])   # group id (GRPO)
+    gen_batch = self._get_gen_batch(batch)
+    gen_batch = gen_batch.repeat(repeat_times=rollout_n, interleave=True)   # n rollouts / prompt
+
+    with marked_timer("step", timing_raw):
+        # ── Phase 2 · Rollout ───────────────────────────────────
+        with marked_timer("gen", timing_raw, color="red"):
+            gen_output = self.async_rollout_manager.generate_sequences(gen_batch)
+        batch = batch.repeat(rollout_n, interleave=True).union(gen_output)
+        batch.batch["response_mask"] = compute_response_mask(batch)
+
+        # ── Phase 3 · Reward ────────────────────────────────────
+        with marked_timer("reward", timing_raw, color="yellow"):
+            reward_tensor, reward_extra = extract_reward(batch)
+
+        # ── Phase 4 · old log-probs  (proximal anchor π_old) ────
+        with marked_timer("old_log_prob", timing_raw, color="blue"):
+            old_log_prob, _ = self._compute_old_log_prob(batch)
+            batch = batch.union(old_log_prob)
+
+        # ── Phase 5 · reference log-probs  (frozen π_ref) ───────
+        if self.use_reference_policy:
+            with marked_timer(str(Role.RefPolicy), timing_raw, color="olive"):
+                batch = batch.union(self._compute_ref_log_prob(batch))
+
+        # ── Phase 6 · critic values ─────────────────────────────
+        if self.use_critic:
+            with marked_timer("values", timing_raw, color="cyan"):
+                batch = batch.union(self._compute_values(batch))
+
+        # ── Phase 7 · token-level rewards (+KL) and GAE  (driver CPU) ──
+        with marked_timer("adv", timing_raw, color="brown"):
+            batch.batch["token_level_scores"] = reward_tensor
+            if self.config.algorithm.use_kl_in_reward:
+                batch, kl_metrics = apply_kl_penalty(batch, kl_ctrl=self.kl_ctrl_in_reward, ...)
+            else:
+                batch.batch["token_level_rewards"] = batch.batch["token_level_scores"]
+            batch = compute_advantage(batch,
+                                      adv_estimator=self.config.algorithm.adv_estimator,
+                                      gamma=..., lam=..., config=self.config.algorithm)
+
+        # ── Phase 9 · critic update  (before actor) ─────────────
+        if self.use_critic:
+            with marked_timer("update_critic", timing_raw, color="pink"):
+                critic_output = self._update_critic(batch)
+
+        # ── Phase 8 · actor update  (skipped during critic warmup) ──
+        if self.config.trainer.critic_warmup &lt;= self.global_steps:
+            with marked_timer("update_actor", timing_raw, color="red"):
+                actor_output = self._update_actor(batch)
+
+        # ── Phase 10 · weight sync → rollout engine (hybrid engine) ──
+        with marked_timer("update_weights", timing_raw, color="red"):
+            self.checkpoint_manager.update_weights(self.global_steps)</code></pre>
+
+  <p>The <code>_compute_*</code> and <code>_update_*</code> helpers are thin: they reshape the
+  <code>DataProto</code>, then call a method on a worker group (<code>self.actor_rollout_wg</code>,
+  <code>self.critic_wg</code>) whose Ray dispatch decorator fans the call out across all 8 GPUs.</p>
+
+  <h3>8.2 Phase 7 — advantages: <code>compute_advantage</code> → GAE</h3>
+
+  <p>The driver routes to one of a dozen registered estimators. For PPO it is GAE:</p>
+
+  <pre><code># verl/trainer/ppo/ray_trainer.py — compute_advantage()   (def at :187)
+
+if adv_estimator == AdvantageEstimator.GAE:
+    advantages, returns = core_algos.compute_gae_advantage_return(
+        token_level_rewards=data.batch["token_level_rewards"],
+        values=data.batch["values"],
+        response_mask=data.batch["response_mask"],
+        gamma=gamma, lam=lam)
+    data.batch["advantages"] = advantages
+    data.batch["returns"]    = returns</code></pre>
+
+  <pre><code># verl/trainer/ppo/core_algos.py — compute_gae_advantage_return()   (:216)
+
+with torch.no_grad():
+    nextvalues = 0
+    lastgaelam = 0
+    advantages_reversed = []
+    gen_len = token_level_rewards.shape[-1]
+
+    for t in reversed(range(gen_len)):
+        delta       = token_level_rewards[:, t] + gamma * nextvalues - values[:, t]
+        lastgaelam_ = delta + gamma * lam * lastgaelam
+
+        # skip values and TD-error on observation (non-response) tokens
+        nextvalues = values[:, t] * response_mask[:, t] + (1 - response_mask[:, t]) * nextvalues
+        lastgaelam = lastgaelam_ * response_mask[:, t] + (1 - response_mask[:, t]) * lastgaelam
+        advantages_reversed.append(lastgaelam)
+
+    advantages = torch.stack(advantages_reversed[::-1], dim=1)
+    returns    = advantages + values
+    advantages = verl_F.masked_whiten(advantages, response_mask)   # zero-mean, unit-var
+return advantages, returns</code></pre>
+
+  <div class="note">
+    The teaching pseudo-code in Phase 7 writes <code>nextvalues = values[:, t] * response_mask[:, t]</code>.
+    The real masking <em>carries the previous value forward</em> at masked positions
+    (<code>+ (1 - mask) * nextvalues</code>) instead of zeroing it, so a run of padding/observation
+    tokens between response spans doesn't reset the recurrence to zero. Same idea, more careful at the
+    boundaries.
+  </div>
+
+  <h3>8.3 Phase 8 — actor loss: <code>ppo_loss</code> → <code>compute_policy_loss_vanilla</code></h3>
+
+  <p>The worker's loss function (<code>ppo_loss</code>) selects the relevant fields, looks up the
+  configured policy-loss variant, and adds optional entropy/KL terms:</p>
+
+  <pre><code># verl/workers/utils/losses.py — ppo_loss()   (:57)
+
+data = data.select("response_mask", "old_log_probs", "advantages", ...).to_padded_tensor()
+response_mask = data["response_mask"].to(bool)
+
+policy_loss_fn = get_policy_loss_fn(config.policy_loss.get("loss_mode", "vanilla"))
+pg_loss, pg_metrics = policy_loss_fn(
+    old_log_prob=data["old_log_probs"], log_prob=log_prob,
+    advantages=data["advantages"], response_mask=response_mask,
+    loss_agg_mode=config.loss_agg_mode, config=config, rollout_is_weights=...)
+
+policy_loss = pg_loss
+if entropy is not None:                          # optional exploration bonus
+    policy_loss -= config.entropy_coeff * agg_loss(entropy, response_mask, ...)
+if config.use_kl_loss:                           # optional KL-in-loss (vs KL-in-reward)
+    kld = kl_penalty(log_prob, data["ref_log_prob"], config.kl_loss_type)
+    policy_loss += config.kl_loss_coef * agg_loss(kld, response_mask, ...)
+return policy_loss, metrics</code></pre>
+
+  <p>The clipped surrogate itself. Beyond the textbook two-term <code>min</code>, production verl adds
+  <strong>asymmetric clipping</strong> (separate low/high ε) and <strong>dual-clip</strong>
+  (<code>clip_ratio_c</code>) that bounds the loss when an advantage is negative:</p>
+
+  <pre><code># verl/trainer/ppo/core_algos.py — compute_policy_loss_vanilla()   (:1279)
+
+negative_approx_kl = torch.clamp(log_prob - old_log_prob, min=-20.0, max=20.0)  # stability
+ratio = torch.exp(negative_approx_kl)                                # ρ = π_θ / π_old   (4, 512)
+
+pg_losses1 = -advantages * ratio                                    # −ρ·A
+pg_losses2 = -advantages * torch.clamp(ratio, 1 - cliprange_low, 1 + cliprange_high)
+clip_pg_losses1 = torch.maximum(pg_losses1, pg_losses2)             # standard PPO clip
+
+# dual-clip: when A &lt; 0, also cap the loss at −c·A so a huge ratio can't blow it up
+pg_losses3 = -advantages * clip_ratio_c                             # c = 3.0
+clip_pg_losses2 = torch.min(pg_losses3, clip_pg_losses1)
+pg_losses = torch.where(advantages &lt; 0, clip_pg_losses2, clip_pg_losses1)
+
+pg_loss = agg_loss(loss_mat=pg_losses, loss_mask=response_mask,     # masked token-mean → scalar
+                   loss_agg_mode=loss_agg_mode, **config.global_batch_info)
+return pg_loss, {"actor/pg_clipfrac": ..., "actor/ppo_kl": ..., "actor/pg_clipfrac_lower": ...}</code></pre>
+
+  <h3>8.4 Phase 9 — critic loss: <code>value_loss</code> → <code>compute_value_loss</code></h3>
+
+  <pre><code># verl/workers/utils/losses.py — value_loss()  (:147)
+#   then verl/trainer/ppo/core_algos.py — compute_value_loss()  (:2084)
+
+vpredclipped = verl_F.clip_by_value(vpreds, values - cliprange_value,    # clip around old V
+                                            values + cliprange_value)
+vf_losses1 = (vpreds       - returns) ** 2
+vf_losses2 = (vpredclipped - returns) ** 2
+clipped_vf_losses = torch.max(vf_losses1, vf_losses2)                    # pessimistic on V
+vf_loss = 0.5 * agg_loss(clipped_vf_losses, loss_mask=response_mask, loss_agg_mode=...)
+return vf_loss, vf_clipfrac</code></pre>
+
+  <div class="note">
+    The clip-around-old-value mirrors the actor's ratio clip: it stops the critic from moving its
+    prediction too far in a single update, the same trust-region intuition applied to the value head.
+    <code>returns</code> is the (un-whitened) regression target — see Phase 7 on why it is <em>not</em>
+    whitened while advantages are.
+  </div>
+
+  <h3>8.5 Inside a worker — the DP collectives (Phases 8e–8f)</h3>
+
+  <p>Each worker runs the mini-batch loop. The two NCCL calls visible at this level are an
+  <strong>AllGather</strong> of per-rank token counts (for correct global-mean loss scaling) and an
+  <strong>AllReduce</strong> of the scalar loss across the DP group. The FSDP AllGather/ReduceScatter
+  of weights and gradients happen one level deeper, inside <code>self.engine.train_batch(...)</code>.</p>
+
+  <pre><code># verl/workers/engine_workers.py — train_mini_batch()  (:234)
+
+dataloader = tu.make_iterator(data, mini_batch_size=mini_batch_size_per_gpu,
+                              epochs=epochs, seed=seed + dp_rank, ...)
+with self.engine.train_mode():
+    for batch_idx, mini_batch_td in enumerate(dataloader):
+        global_token_num = mini_batch_td["input_ids"].offsets().diff().tolist()
+        # AllGather token counts across DP so every rank scales the loss by the same denominator
+        torch.distributed.all_gather_object(
+            global_token_num_output, global_token_num, self.engine.get_data_parallel_group())
+        actor_output = self.train_batch(mini_batch_td)   # → engine.train_batch runs fwd+bwd+step
+
+# verl/workers/engine_workers.py — train_batch()  (:325)
+output = self.engine.train_batch(data, loss_function=self.loss_fn)   # FSDP AllGather/ReduceScatter
+                                                                     # + TP AllReduce live in here
+
+# verl/workers/engine_workers.py — _postprocess_output()  (:172)
+loss = torch.sum(torch.tensor(output.pop("loss"), device=self.device_name))
+dp_group = self.engine.get_data_parallel_group()
+if dp_group is not None:
+    torch.distributed.all_reduce(loss, op=torch.distributed.ReduceOp.AVG, group=dp_group)  # 8f</code></pre>
+
+  <h3>8.6 Phases 4–6 — log-probs &amp; values: driver → worker dispatch</h3>
+
+  <p>Phases 4, 5, 6 are the same forward-pass machinery with different weights. The driver helper
+  reshapes the batch and dispatches one worker-group call; the <code>@register(dispatch_mode=...)</code>
+  decorator on the worker method is what turns a single Python call into a collective across all GPUs:</p>
+
+  <pre><code># verl/trainer/ppo/ray_trainer.py — _compute_old_log_prob()  (:1253)
+
+batch_td = left_right_2_no_padding(batch.to_tensordict())
+tu.assign_non_tensor(batch_td, calculate_entropy=True, compute_loss=False)
+output = self.actor_rollout_wg.compute_log_prob(batch_td)     # fan-out to all actor workers
+log_probs = no_padding_2_padding(tu.get(output, "log_probs"), batch_td)
+return DataProto.from_tensordict({"old_log_probs": log_probs.float(), ...}), mfu</code></pre>
+
+  <p><code>_compute_ref_log_prob</code> (Phase 5) and <code>_compute_values</code> (Phase 6) follow the
+  exact same shape — only the target worker group and the output key differ.</p>
+
+  <!-- ── §8.7 Pointer index ─────────────────── -->
+  <h3>8.7 Pointer index</h3>
 
   <div class="table-wrap">
     <table>
-      <tr><th>Concept</th><th>File</th><th>Lines</th></tr>
-      <tr><td>PPO training loop</td><td><code>verl/trainer/ppo/ray_trainer.py</code></td><td>1260–1654</td></tr>
-      <tr><td>GAE advantage computation</td><td><code>verl/trainer/ppo/core_algos.py</code></td><td>216–263</td></tr>
-      <tr><td>GRPO advantage computation</td><td><code>verl/trainer/ppo/core_algos.py</code></td><td>268–334</td></tr>
-      <tr><td>Worker <code>train_mini_batch</code></td><td><code>verl/workers/engine_workers.py</code></td><td>235–323</td></tr>
-      <tr><td>DP loss AllReduce</td><td><code>verl/workers/engine_workers.py</code></td><td>195–198</td></tr>
-      <tr><td>DP token count AllGather</td><td><code>verl/workers/engine_workers.py</code></td><td>286–292</td></tr>
-      <tr><td>Rollout device mesh</td><td><code>verl/workers/engine_workers.py</code></td><td>592–601</td></tr>
+      <tr><th>Concept</th><th>File</th><th>Symbol / Lines</th></tr>
+      <tr><td>PPO training loop</td><td><code>verl/trainer/ppo/ray_trainer.py</code></td><td><code>fit()</code> · 1359, body 1420–1672</td></tr>
+      <tr><td>Advantage dispatch</td><td><code>verl/trainer/ppo/ray_trainer.py</code></td><td><code>compute_advantage()</code> · 187</td></tr>
+      <tr><td>GAE advantage / return</td><td><code>verl/trainer/ppo/core_algos.py</code></td><td><code>compute_gae_advantage_return()</code> · 216</td></tr>
+      <tr><td>GRPO advantage</td><td><code>verl/trainer/ppo/core_algos.py</code></td><td><code>compute_grpo_outcome_advantage()</code> · 268</td></tr>
+      <tr><td>Actor (PPO clip) loss</td><td><code>verl/trainer/ppo/core_algos.py</code></td><td><code>compute_policy_loss_vanilla()</code> · 1279</td></tr>
+      <tr><td>Critic (value) loss</td><td><code>verl/trainer/ppo/core_algos.py</code></td><td><code>compute_value_loss()</code> · 2084</td></tr>
+      <tr><td>Loss assembly (actor/critic)</td><td><code>verl/workers/utils/losses.py</code></td><td><code>ppo_loss()</code> · 57 · <code>value_loss()</code> · 147</td></tr>
+      <tr><td>Worker mini-batch loop</td><td><code>verl/workers/engine_workers.py</code></td><td><code>train_mini_batch()</code> · 234</td></tr>
+      <tr><td>DP loss AllReduce</td><td><code>verl/workers/engine_workers.py</code></td><td><code>_postprocess_output()</code> · 189</td></tr>
+      <tr><td>DP token-count AllGather</td><td><code>verl/workers/engine_workers.py</code></td><td>288</td></tr>
+      <tr><td>Old / ref log-prob dispatch</td><td><code>verl/trainer/ppo/ray_trainer.py</code></td><td><code>_compute_old_log_prob()</code> · 1253</td></tr>
       <tr><td>DataProto protocol</td><td><code>verl/protocol.py</code></td><td>—</td></tr>
     </table>
   </div>
