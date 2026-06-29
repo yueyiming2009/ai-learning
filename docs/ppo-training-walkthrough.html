@@ -935,7 +935,9 @@ for batch_dict in self.train_dataloader:               # one PPO step per datalo
 
         # ── Phase 3 · Reward ────────────────────────────────────
         with marked_timer("reward", timing_raw, color="yellow"):
-            reward_tensor, reward_extra = extract_reward(batch)
+            if self.use_rm and "rm_scores" not in batch.batch:        # skip if a verifier
+                batch = batch.union(self._compute_reward_colocate(batch))  # already wrote scores
+            reward_tensor, reward_extra = extract_reward(batch)        # getter: reads rm_scores
 
         # ── Phase 4 · old log-probs  (proximal anchor π_old) ────
         with marked_timer("old_log_prob", timing_raw, color="blue"):
