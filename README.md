@@ -23,7 +23,7 @@ Worked derivations from scratch — the notation, the probabilistic principle be
 losses, the gradients through each architecture block, the optimizer update rules, and the
 tokenizer/routing math around the model. Representative pages: math notation, backpropagation
 (vector–Jacobian products), NLL & cross-entropy, LayerNorm/RMSNorm/BatchNorm gradients,
-SwiGLU, RoPE, optimizers, importance sampling, production BPE, self-attention (forward &
+SwiGLU, RoPE, optimizers, importance sampling, log-probabilities from logits, production BPE, self-attention (forward &
 backward), MoE routing.
 
 ### 02 · Systems & Hardware — [docs/](docs/), [triton/](triton/)
