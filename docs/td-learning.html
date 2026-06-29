@@ -70,6 +70,13 @@
     .note { background: var(--warning-bg); border-left: 3px solid var(--warning-border); border-radius: 0 8px 8px 0; padding: 10px 16px; margin: 1em 0; font-size: 0.92em; color: #1e40af; }
     .note::before { content: '💡 '; }
 
+    table.conv td, table.conv th { text-align: center; }
+    table.conv td:first-child, table.conv th:first-child { text-align: left; }
+    table.conv .y { color: #16a34a; font-weight: 700; }
+    table.conv .n { color: #dc2626; font-weight: 700; }
+    table.conv .c { color: #b45309; font-weight: 700; }
+    .caption { font-size: 0.88rem; color: var(--muted); margin-top: -0.4em; }
+
     .result { background: var(--boxed-bg); border: 1.5px solid var(--boxed-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; text-align: center; }
     .result-label { font-size: 0.8rem; font-weight: 600; color: #16a34a; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
 
@@ -577,6 +584,35 @@ A[T] ← 0
     Q(s_t, a_t) \leftarrow Q(s_t, a_t) + \alpha\left[r_t + \gamma\, Q(s_{t+1}, a_{t+1}) - Q(s_t, a_t)\right]
   \]
   <p>The name comes from the tuple \((s_t, a_t, r_t, s_{t+1}, a_{t+1})\) it uses. Because it evaluates the policy that's actually being followed, SARSA is safer in environments where exploration mistakes are costly — the policy it learns accounts for the fact that it sometimes takes random actions.</p>
+
+  <h3>When does TD actually converge?</h3>
+  <p>Tabular TD converges; the picture gets subtle once you add function approximation and off-policy data. David Silver's Lecture 6 tabulates the full story for <em>prediction</em> (evaluating a fixed policy):</p>
+
+  <div class="table-wrap">
+    <table class="conv">
+      <tr><th>Policy</th><th>Algorithm</th><th>Table lookup</th><th>Linear FA</th><th>Non-linear FA</th></tr>
+      <tr><td rowspan="3">On-policy</td><td>MC</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+      <tr><td>TD(0)</td><td class="y">✓</td><td class="y">✓</td><td class="n">✗</td></tr>
+      <tr><td>TD(λ)</td><td class="y">✓</td><td class="y">✓</td><td class="n">✗</td></tr>
+      <tr><td rowspan="3">Off-policy</td><td>MC</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+      <tr><td>TD(0)</td><td class="y">✓</td><td class="n">✗</td><td class="n">✗</td></tr>
+      <tr><td>TD(λ)</td><td class="y">✓</td><td class="n">✗</td><td class="n">✗</td></tr>
+    </table>
+  </div>
+
+  <p class="caption"><strong>How to read it:</strong> ✓ converges, ✗ can diverge. MC is unconditionally safe because it never bootstraps. TD is safe on-policy with linear features, but the <em>off-policy + non-linear</em> corner is where off-policy data, bootstrapping, and function approximation all stack up — the deadly triad from the note above. <strong>Gradient TD</strong> follows the true gradient of the projected Bellman error and restores convergence everywhere TD lost it:</p>
+
+  <div class="table-wrap">
+    <table class="conv">
+      <tr><th>Policy</th><th>Algorithm</th><th>Table lookup</th><th>Linear FA</th><th>Non-linear FA</th></tr>
+      <tr><td rowspan="2">On-policy</td><td>TD</td><td class="y">✓</td><td class="y">✓</td><td class="n">✗</td></tr>
+      <tr><td>Gradient TD</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+      <tr><td rowspan="2">Off-policy</td><td>TD</td><td class="y">✓</td><td class="n">✗</td><td class="n">✗</td></tr>
+      <tr><td>Gradient TD</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+    </table>
+  </div>
+
+  <p class="caption">(MC rows are unchanged from the table above and omitted here.) Transcribed from <a href="https://www.davidsilver.uk/teaching/" style="color:var(--accent);">David Silver's RL course, Lecture 6 (Value Function Approximation)</a>; the underlying results are from Sutton &amp; Barto, <em>Reinforcement Learning: An Introduction</em>.</p>
 
   <h2 id="llm">9. TD Learning in LLM RL</h2>
   <p>LLM RL doesn't use tabular TD — the state space is too large. But the TD error \(\delta_t\) and the TD(λ)/GAE framework are central to PPO.</p>
