@@ -139,6 +139,9 @@
     ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
     li { margin-bottom: 0.4em; }
     em { color: #374151; }
+    code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-size: 0.88em; }
+    pre { background: var(--step-bg); border: 1px solid var(--step-border); border-radius: 8px; padding: 14px 18px; overflow-x: auto; font-size: 0.85rem; line-height: 1.55; margin: 1.2em 0; }
+    pre code { background: none; border: none; padding: 0; color: var(--text); }
 
     /* ── Table ───────────────────────────────── */
     .table-wrap { overflow-x: auto; margin: 1.2em 0; }
@@ -465,6 +468,31 @@
   \[
     dW_g = X^\top \, dU, \qquad dW_v = X^\top \, dV, \qquad dW_o = H^\top \, dY
   \]
+
+  <p>In code, the whole layer is the forward one-liner every LLaMA FFN runs — \(\mathrm{Swish}(\mathbf{x}W_g)\odot\mathbf{x}W_v\), then the down-projection. Autograd derives the backward from it; the manual version below is what a fused kernel writes by hand, and it reuses the cached \(\boldsymbol{\sigma}(\mathbf{u})\) so the gradient needs no new \(\exp\):</p>
+<pre><code>import torch, torch.nn.functional as F
+
+# Forward — X is the batched input (rows = tokens). The LLaMA FFN is one line:
+#   gate_proj = W_g,  up_proj = W_v,  down_proj = W_o
+def swiglu(X, Wg, Wv, Wo):
+    H = F.silu(X @ Wg) * (X @ Wv)        # Swish(u) ⊙ v        (§2)
+    return H @ Wo                        # Y = H W_o
+
+# Manual backward — autograd writes this for you; you hand-code it only for a fused kernel.
+def swiglu_backward(dY, X, Wg, Wv, Wo):
+    U, V  = X @ Wg, X @ Wv
+    s     = torch.sigmoid(U)             # cached from forward — no new exp
+    swish = U * s
+    H     = swish * V
+    dH = dY @ Wo.T                       # Step A
+    dU = dH * V * (s + swish * (1 - s))  # Step B:  ⊙ Swish'(u)
+    dV = dH * swish                      # Step B:  ⊙ Swish(u)
+    dX = dU @ Wg.T + dV @ Wv.T           # Step C
+    return dX, X.T @ dU, X.T @ dV, H.T @ dY   # dX, dWg, dWv, dWo   (§4)
+</code></pre>
+  <div class="note">
+    Each backward line is one row of the table below — and the payoff of the derivation is the cache: \(\boldsymbol{\sigma}(\mathbf{u})\) and \(\mathrm{Swish}(\mathbf{u})\) already exist from the forward, so the gradient adds <em>no</em> new transcendental calls. That reuse is exactly what a fused SwiGLU Triton/CUDA kernel exploits.
+  </div>
 
   <h2 id="summary">5. Summary</h2>
   <div class="summary-grid">
