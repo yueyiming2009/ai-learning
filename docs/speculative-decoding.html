@@ -321,12 +321,44 @@
 
 <h3>Parallel and semi-autoregressive drafters</h3>
 
-<p>The variants above draft <em>autoregressively</em> — each of the \(\gamma\) draft steps waits on the previous one, so draft latency grows with \(\gamma\) and forces short blocks and shallow networks. <strong>Parallel drafters</strong> (PARD, DART, and DeepSeek's <strong>DFlash</strong>) instead produce the entire block in a single forward pass: the drafter takes an anchor token plus \(\gamma\) mask positions, attends to hidden states injected from the target model, and emits all \(\gamma\) logits at once. Draft cost becomes nearly <em>independent of \(\gamma\)</em> — like a prefill over the block — which frees the drafter to use larger blocks and deeper networks under the same latency budget.</p>
+<p>The variants above draft <em>autoregressively</em> — each of the \(\gamma\) draft steps waits on the previous one, so draft latency grows with \(\gamma\) and forces short blocks and shallow networks. <strong>Parallel drafters</strong> (<a href="https://arxiv.org/abs/2401.10774">Medusa</a>'s independent heads, and the diffusion-inspired PARD, DART, and DeepSeek's <a href="https://arxiv.org/abs/2602.06036"><strong>DFlash</strong></a>) instead emit the entire block in a <em>single</em> forward pass, making draft cost nearly independent of \(\gamma\) — like a prefill over the block. The price is <strong>suffix decay</strong>: because positions are predicted independently, each one marginalizes over all possible predecessors rather than conditioning on the token actually sampled, so the drafter proposes incoherent combinations ("of&nbsp;problem", "no&nbsp;course") and acceptance falls off at later positions. The modern recipe (DFlash → <a href="https://github.com/deepseek-ai/DeepSpec"><strong>DSpark</strong></a>) layers four techniques to keep single-pass speed while clawing back acceptance:</p>
 
-<p>The catch is <strong>suffix decay</strong>: because each position is predicted independently, it marginalizes over all possible predecessors instead of conditioning on the token actually sampled. The drafter proposes incoherent combinations ("of problem", "no course"), and acceptance falls off sharply at later positions. <strong>DSpark</strong> fixes this with a <em>semi-autoregressive</em> design: keep the heavy parallel backbone for the high-leverage first token (a rejection there kills the whole block), then add a lightweight sequential head — a low-rank Markov transition \(B = W_1 W_2\), or a gated RNN carrying block state — that lets each position condition on earlier sampled tokens at negligible added latency.</p>
+<div class="step">
+  <div class="step-label">1 · Feature injection — condition the draft on the target's hidden states</div>
+  <p>Rather than run an independent small model, the drafter reuses the target's own representations. DFlash takes hidden states from several target layers \(\{l_1,\dots,l_m\}\), concatenates and projects them into the draft's hidden space, then injects the result into <em>every</em> draft layer by appending it to the keys and values:</p>
+  \[ H_{\text{ctx}} = \text{RMSNorm}\!\big(W_c\,[\,H^{(l_1)};\dots;H^{(l_m)}\,]\big), \qquad K_i = [\,W^K_i H_{\text{ctx}};\ W^K_i H_d\,],\ \ V_i = [\,W^V_i H_{\text{ctx}};\ W^V_i H_d\,] \]
+  <p>The draft shares the target's <em>frozen</em> embedding and LM head, so training updates only a thin backbone. This generalizes <a href="https://arxiv.org/abs/2503.01840">Eagle</a>'s hidden-state passthrough into a multi-layer KV injection.</p>
+</div>
 
-<div class="note">
-  <strong>A fixed \(\gamma\) is not optimal under load.</strong> The speedup formula above assumes one block length verified for every request. In high-concurrency serving, verifying a low-acceptance suffix token is <em>not</em> free — it consumes target-model batch capacity that could otherwise serve another request. DSpark adds a calibrated <em>confidence head</em> that predicts each position's survival probability, and a scheduler that sets each request's verification length to maximize batch throughput \(\Theta = \tau \cdot \text{SPS}(B)\) (expected accepts \(\tau\) times steps-per-second at batch \(B\), read from a profiled cost curve) — verifying long blocks under light load and short ones under heavy load.
+<div class="step">
+  <div class="step-label">2 · Single-pass block generation — mask tokens + bidirectional attention</div>
+  <p>The input is one anchor token (the target's last accepted token) followed by \(\gamma\!-\!1\) learnable <em>mask</em> embeddings. All \(\gamma\) positions attend bidirectionally to each other and to \(H_{\text{ctx}}\), and a single forward pass emits all base logits \(U_1,\dots,U_\gamma\). Since cost no longer scales with \(\gamma\), the backbone can be deeper and the block longer (e.g. \(\gamma=16\) vs the \(\gamma\le4\) typical of autoregressive drafters) under the same latency budget.</p>
+</div>
+
+<div class="step">
+  <div class="step-label">3 · Semi-autoregressive head — restore intra-block dependency</div>
+  <p>The parallel backbone's logits \(U_k\) are independent per position. A <em>lightweight</em> sequential head adds a learned, prefix-dependent bias \(B_k\), turning the block into a proper autoregressive factorization without a second heavy pass:</p>
+  \[ p_k(v \mid x_0, x_{&lt;k}) = \frac{\exp\!\big(U_k(v) + B_k(x_0, x_{&lt;k}, v)\big)}{\sum_{u}\exp\!\big(U_k(u) + B_k(x_0, x_{&lt;k}, u)\big)} \]
+  <ul style="margin:0.4em 0">
+    <li><strong>Markov head:</strong> \(B\) depends only on the previous token. The full \(V\!\times\!V\) transition is approximated by a low-rank factorization \(B(x_{k-1},\cdot) = W_1[x_{k-1}]\,W_2\) (rank \(r=256\)) — cheap even for large vocabularies.</li>
+    <li><strong>RNN head:</strong> a gated recurrent state \(s_k\) carries the <em>full</em> in-block prefix, capturing dependencies beyond the immediately preceding token.</li>
+  </ul>
+  <p>Sampling here is sequential, so the head is kept tiny (\(T_{\text{seq}} \ll T_{\text{parallel}}\)) — it injects dependency modeling without bringing back the \(O(\gamma)\) autoregressive latency wall.</p>
+</div>
+
+<div class="step">
+  <div class="step-label">4 · Confidence-scheduled verification — verify a load-aware number of tokens</div>
+  <p>A fixed \(\gamma\) is wasteful under load: verifying a low-acceptance suffix token is <em>not</em> free — it occupies target-model batch capacity that could serve another request. A light confidence head predicts each position's survival probability \(c_k=\sigma\!\big(w^\top[h_k;\,W_1[x_{k-1}]]\big)\), trained against the analytic per-step acceptance \(1-\tfrac12\lVert p^d_k - p^t_k\rVert_1\) and post-hoc calibrated. The prefix survival probability is the cumulative product \(a_j=\prod_{i\le j} c_i\), and a scheduler chooses each request's verify length \(\ell_r\) to maximize aggregate throughput:</p>
+  \[ \Theta = \tau \cdot \text{SPS}(B), \qquad \tau = \sum_r \Big(1 + \!\!\sum_{j\le \ell_r}\! a_{r,j}\Big), \qquad B = \sum_r (1+\ell_r) \]
+  <p>where \(\text{SPS}(B)\) is the engine's steps-per-second at batch \(B\), read from a once-profiled cost curve. Tokens are admitted greedily in descending survival order; an early-stop rule keeps the procedure lossless (non-anticipating). Net effect: long verification under light load, short under heavy load.</p>
+</div>
+
+<div class="xref">
+  <strong>Sources:</strong> the equations and mechanisms above follow
+  <a href="https://github.com/deepseek-ai/DeepSpec">DSpark / DeepSpec</a> (semi-autoregressive head, confidence-scheduled verification) and
+  <a href="https://arxiv.org/abs/2602.06036">DFlash</a> (block-diffusion parallel drafting, feature injection); the autoregressive and multi-head baselines are
+  <a href="https://arxiv.org/abs/2503.01840">EAGLE-3</a> and
+  <a href="https://arxiv.org/abs/2401.10774">Medusa</a>.
 </div>
 
 <!-- ═══════════════════════════════════════════ WHEN IT WINS -->
