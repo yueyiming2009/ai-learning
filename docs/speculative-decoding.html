@@ -298,6 +298,12 @@
         <td>~0.1–0.2</td>
       </tr>
       <tr>
+        <td><strong>Parallel / semi-autoregressive (DFlash, DSpark)</strong></td>
+        <td>Emit the whole \(\gamma\)-token block in <em>one</em> draft forward pass (anchor + \(\gamma\) mask positions, conditioned on injected target hidden states). DSpark adds a lightweight sequential head so later positions condition on earlier sampled tokens.</td>
+        <td>High at position 1, decays along the block (pure-parallel); semi-AR head restores later positions</td>
+        <td class="good">~0.1–0.2, but nearly <em>independent of \(\gamma\)</em></td>
+      </tr>
+      <tr>
         <td><strong>N-gram / retrieval draft</strong></td>
         <td>Propose tokens from a static lookup (prompt n-gram completion or retrieval from a corpus). Zero model cost.</td>
         <td>Variable (0.3–0.7 for repetitive text)</td>
@@ -311,6 +317,16 @@
       </tr>
     </tbody>
   </table>
+</div>
+
+<h3>Parallel and semi-autoregressive drafters</h3>
+
+<p>The variants above draft <em>autoregressively</em> — each of the \(\gamma\) draft steps waits on the previous one, so draft latency grows with \(\gamma\) and forces short blocks and shallow networks. <strong>Parallel drafters</strong> (PARD, DART, and DeepSeek's <strong>DFlash</strong>) instead produce the entire block in a single forward pass: the drafter takes an anchor token plus \(\gamma\) mask positions, attends to hidden states injected from the target model, and emits all \(\gamma\) logits at once. Draft cost becomes nearly <em>independent of \(\gamma\)</em> — like a prefill over the block — which frees the drafter to use larger blocks and deeper networks under the same latency budget.</p>
+
+<p>The catch is <strong>suffix decay</strong>: because each position is predicted independently, it marginalizes over all possible predecessors instead of conditioning on the token actually sampled. The drafter proposes incoherent combinations ("of problem", "no course"), and acceptance falls off sharply at later positions. <strong>DSpark</strong> fixes this with a <em>semi-autoregressive</em> design: keep the heavy parallel backbone for the high-leverage first token (a rejection there kills the whole block), then add a lightweight sequential head — a low-rank Markov transition \(B = W_1 W_2\), or a gated RNN carrying block state — that lets each position condition on earlier sampled tokens at negligible added latency.</p>
+
+<div class="note">
+  <strong>A fixed \(\gamma\) is not optimal under load.</strong> The speedup formula above assumes one block length verified for every request. In high-concurrency serving, verifying a low-acceptance suffix token is <em>not</em> free — it consumes target-model batch capacity that could otherwise serve another request. DSpark adds a calibrated <em>confidence head</em> that predicts each position's survival probability, and a scheduler that sets each request's verification length to maximize batch throughput \(\Theta = \tau \cdot \text{SPS}(B)\) (expected accepts \(\tau\) times steps-per-second at batch \(B\), read from a profiled cost curve) — verifying long blocks under light load and short ones under heavy load.
 </div>
 
 <!-- ═══════════════════════════════════════════ WHEN IT WINS -->
@@ -364,7 +380,7 @@
   </div>
   <div class="summary-card">
     <div class="summary-card-label">Draft variants</div>
-    <p>Separate small model (best \(\alpha\)), Medusa heads (nearly free), Eagle tree drafts (highest \(\alpha\) via tree verification), n-gram lookup (zero cost).</p>
+    <p>Separate small model (best \(\alpha\)), Medusa heads (nearly free), Eagle tree drafts (highest \(\alpha\) via tree verification), n-gram lookup (zero cost), parallel/semi-AR drafters (DFlash, DSpark) — whole block in one pass with \(\gamma\)-independent cost.</p>
   </div>
 </div>
 
