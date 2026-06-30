@@ -327,6 +327,7 @@
     <a href="#vs">vs. PPO</a>
     <a href="#summary">Summary</a>
     <a href="#drgrpo">Dr.GRPO</a>
+    <a href="#gspo">GSPO</a>
   </div>
 </nav>
 
@@ -596,6 +597,88 @@ def grpo_loss(logprobs, old_logprobs, ref_logprobs, rewards, eps=0.2, beta=0.04)
         <td>default (std-norm on)</td>
         <td><code>--disable-grpo-std-normalization</code><br>+ <code>--custom-pg-loss-reducer-function-path examples.DrGRPO.custom_reducer:get_pg_loss_reducer</code></td>
       </tr>
+    </table>
+  </div>
+
+  <h2 id="gspo">11. GSPO — Sequence-Level Importance Weighting</h2>
+  <p>Dr.GRPO fixes <em>how the loss is aggregated</em>; GSPO (Group Sequence Policy Optimization, <a href="https://arxiv.org/abs/2507.18071" style="color:var(--accent);">Qwen, 2025</a>) fixes a deeper inconsistency in <em>where the importance ratio lives</em>. GRPO rewards a whole sequence (one scalar \(\hat A_i\) per output) but reweights it with <strong>per-token</strong> ratios \(\rho_{i,t}\) — the unit of the reward and the unit of the correction don't match.</p>
+
+  <p>Each per-token ratio is an independent random variable; multiplying the implied corrections across hundreds of tokens compounds variance, and per-token clipping is applied to quantities whose product is what actually matters. The damage is worst in <a href="moe-routing.html" style="color:var(--accent);">MoE</a> models: a tiny weight update can flip a token's expert routing, making its ratio swing wildly even when the sequence as a whole barely moved. GRPO needs hacks like <em>Routing Replay</em> (force training to reuse the rollout's expert assignments) to stay stable.</p>
+
+  <h3>The fix: ratio at the sequence level</h3>
+  <p>GSPO defines a single <strong>sequence-level</strong> importance ratio — the geometric mean of the per-token ratios, i.e. length-normalized so sequences of any length land on the same scale:</p>
+
+  <div class="result">
+    <div class="result-label">Sequence-level importance ratio</div>
+    \[
+      s_i(\theta) = \left( \frac{\pi_\theta(o_i \mid q)}{\pi_{\theta_{\text{old}}}(o_i \mid q)} \right)^{1/|o_i|}
+        = \exp\!\left( \frac{1}{|o_i|} \sum_{t=1}^{|o_i|} \log \frac{\pi_\theta(o_{i,t}\mid q, o_{i,&lt;t})}{\pi_{\theta_{\text{old}}}(o_{i,t}\mid q, o_{i,&lt;t})} \right)
+    \]
+  </div>
+
+  <p>The length normalization (the \(1/|o_i|\) exponent) is essential: it keeps \(s_i\) concentrated near 1 regardless of \(|o_i|\), so one clip range works for short and long outputs alike. The objective then mirrors GRPO's clipped surrogate, but the ratio, the clip, and the advantage all act on the <strong>whole sequence</strong>:</p>
+
+  <div class="result">
+    <div class="result-label">GSPO objective</div>
+    \[
+      \mathcal{J}_{\text{GSPO}}(\theta) = \mathbb{E}_{\,q,\,\{o_i\}_{i=1}^{G}}
+      \left[ \frac{1}{G}\sum_{i=1}^{G} \min\!\Big( s_i(\theta)\,\hat A_i,\;\;
+        \mathrm{clip}\big(s_i(\theta),\, 1-\epsilon,\, 1+\epsilon\big)\,\hat A_i \Big) \right]
+    \]
+    \[
+      \hat A_i = \frac{r_i - \operatorname{mean}(\{r_1,\ldots,r_G\})}{\operatorname{std}(\{r_1,\ldots,r_G\})}
+    \]
+  </div>
+
+  <p>The advantage is the same group z-score as GRPO, but now a single scalar \(\hat A_i\) per output rather than broadcast over tokens. Because \(s_i\) sits so tightly around 1, the clip range \(\epsilon\) is far tighter than GRPO's \(\approx 0.2\) — the paper uses values on the order of \(10^{-3}\text{–}10^{-4}\). As written there is no explicit KL term; a reference-KL penalty can be appended exactly as in <a href="#kl" style="color:var(--accent);">§5</a> if desired.</p>
+
+<pre><code>import torch
+
+def gspo_loss(logprobs, old_logprobs, rewards, lengths, eps=3e-4):
+    """
+    logprobs:     [G, T] — log π_θ(o_t | ...)     current policy (being trained)
+    old_logprobs: [G, T] — log π_θ_old(o_t | ...) snapshot that generated outputs
+    rewards:      [G]    — one scalar reward per output in the group
+    lengths:      [G]    — token length |o_i| of each output
+    (padding positions assumed 0 in both logprob tensors)
+    """
+    # group-relative advantage: ONE scalar per sequence (same z-score as GRPO)
+    adv = (rewards - rewards.mean()) / (rewards.std() + 1e-8)        # [G]
+
+    # sequence-level ratio s_i = geometric mean of per-token ratios
+    #   = exp( (1/|o_i|) Σ_t [log π_θ − log π_θ_old] )
+    seq_logratio = (logprobs - old_logprobs).sum(dim=1) / lengths    # [G]
+    s = torch.exp(seq_logratio)                                      # [G]
+
+    # clipped surrogate — clipping now acts on the whole sequence
+    clipped = torch.clamp(s, 1 - eps, 1 + eps)
+    pg = torch.min(s * adv, clipped * adv)                           # [G]
+
+    return -pg.mean()
+</code></pre>
+
+  <div class="note">
+    This is the <em>training</em> view of the same sequence-level importance correction the <a href="async-rl.html#is" style="color:#1e40af;">off-policy correction page</a> derives from the lag angle (\(w_{seq}\), the same geometric-mean weight): unbiased under policy lag and — crucially — immune to MoE expert-activation volatility, so GSPO trains MoE stably <em>without</em> Routing Replay.
+  </div>
+
+  <h3>GSPO-token: per-token advantages, sequence-level weight</h3>
+  <p>Multi-turn or fine-grained-credit settings sometimes want a different advantage per token. GSPO-token keeps the sequence-level importance weight but restores a per-token gradient with a stop-gradient trick (\(\mathrm{sg}[\cdot]\) detaches its argument from the backward pass):</p>
+  \[
+    s_{i,t}(\theta) = \mathrm{sg}\!\big[s_i(\theta)\big]\cdot
+      \frac{\pi_\theta(o_{i,t}\mid q, o_{i,&lt;t})}{\mathrm{sg}\big[\pi_\theta(o_{i,t}\mid q, o_{i,&lt;t})\big]}
+  \]
+  <p>Numerically \(s_{i,t}=s_i\) on the forward pass (the fraction is 1), so the loss value is unchanged — but the gradient now flows token-by-token, letting you weight each token by its own \(\hat A_{i,t}\). When every token shares the sequence advantage (\(\hat A_{i,t}=\hat A_i\)), GSPO-token reduces exactly to GSPO.</p>
+
+  <h3>GRPO vs. GSPO</h3>
+  <div class="table-wrap">
+    <table>
+      <tr><th></th><th>GRPO</th><th>GSPO</th></tr>
+      <tr><td>Importance ratio</td><td>Per-token \(\rho_{i,t}\)</td><td>Per-sequence \(s_i\) (length-normalized)</td></tr>
+      <tr><td>Clipping</td><td>Per-token, \(\epsilon\approx0.2\)</td><td>Per-sequence, \(\epsilon\sim10^{-3}\text{–}10^{-4}\)</td></tr>
+      <tr><td>Advantage applied</td><td>Broadcast to every token</td><td>One scalar over the sequence</td></tr>
+      <tr><td>Reward vs. ratio unit</td><td>Mismatched (seq reward, token ratio)</td><td>Matched (both at sequence)</td></tr>
+      <tr><td>MoE stability</td><td>Needs Routing Replay</td><td>Robust without it</td></tr>
+      <tr><td>Notable use</td><td>DeepSeekMath, DeepSeek-R1</td><td>Qwen3</td></tr>
     </table>
   </div>
 
