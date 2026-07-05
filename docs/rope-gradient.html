@@ -300,6 +300,7 @@
   <a class="nav-brand" href="index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>RoPE Gradient</a>
   <div class="nav-links">
     <a href="index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#idea">Idea</a>
     <a href="#notation">Notation</a>
     <a href="#angles">Angles</a>
     <a href="#forward">Forward</a>
@@ -316,6 +317,22 @@
 </div>
 
 <div class="page-wrap">
+
+  <h2 id="idea">The Basic Idea</h2>
+  <p>Self-attention is <em>permutation-invariant</em>: on its own it sees an unordered bag of tokens. Something has to inject <em>position</em>. The classic fix — sinusoidal or learned position embeddings — <strong>adds</strong> a position vector to each token. RoPE takes a different route: it <strong>rotates</strong> each token's query and key vector by an angle proportional to its position.</p>
+
+  <p>Chop the \(d\)-dimensional vector into \(d/2\) consecutive coordinate pairs and treat each pair as a point in a 2D plane. To encode position \(m\), spin pair \(k\) by the angle \(\varphi_{m,k} = m\,\theta_k\) — a token twice as far along gets twice the rotation. Each pair turns at its own rate \(\theta_k\) (the geometric schedule in §1), so the pairs behave like the hands of a bank of clocks ticking at different speeds: fast hands resolve nearby offsets, slow hands carry position over long ranges.</p>
+
+  <p>The payoff appears in the attention dot product. A rotation by \(m\) followed by the transpose of a rotation by \(n\) is a single rotation by \(n-m\), so the score between a query at position \(m\) and a key at position \(n\) depends only on their <strong>relative distance</strong> \(n-m\) — never on the absolute positions themselves:</p>
+  \[
+    (R_m\mathbf{q})^\top (R_n\mathbf{k}) \;=\; \mathbf{q}^\top R_m^\top R_n\, \mathbf{k} \;=\; \mathbf{q}^\top R_{n-m}\, \mathbf{k}
+  \]
+
+  <div class="note">
+    That one identity is the whole point: relative position falls out of the geometry for free — no relative-bias tables, no learned position parameters. Rotations also preserve norms, so RoPE encodes order without disturbing the magnitude of any query or key.
+  </div>
+
+  <p>The rest of this page makes that precise: the frequency schedule \(\theta_k\) (§1), the forward rotation (§2), the relative-distance property (§3), and the pleasingly symmetric backward pass (§4).</p>
 
   <h2 id="notation">Notation</h2>
   <div class="table-wrap">
