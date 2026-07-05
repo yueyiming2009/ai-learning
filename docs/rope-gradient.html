@@ -245,6 +245,39 @@
     }
     .summary-card p { margin: 0; font-size: 0.9rem; }
 
+    /* ── Figure ──────────────────────────────── */
+    .figure {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 16px 14px;
+      margin: 1.6em 0;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .figure canvas {
+      width: 100%;
+      height: 300px;
+      display: block;
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      justify-content: center;
+      margin-top: 12px;
+      font-size: 0.82rem;
+      color: var(--text);
+    }
+    .legend-item { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, #9ca3af 0 5px, transparent 5px 9px); }
+    .figure-caption {
+      font-size: 0.85rem;
+      color: var(--muted);
+      line-height: 1.6;
+      margin: 14px 4px 2px;
+    }
+
     /* ── Footer ──────────────────────────────── */
     footer {
       border-top: 1px solid var(--border);
@@ -309,6 +342,23 @@
   \[
     \varphi_{m,k} = m\,\theta_k
   \]
+  <div class="figure">
+    <canvas id="plot-rope-freq" aria-label="Per-pair RoPE frequencies theta_k on a log axis: geometric spacing forms a straight line spanning four decades, while an arithmetic schedule clusters at high frequency"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:#b45309"></span> geometric \(\theta_k=\mathrm{base}^{-2k/d}\)</span>
+      <span class="legend-item"><span class="lg dash"></span> arithmetic (evenly-spaced \(\theta\))</span>
+    </div>
+    <p class="figure-caption">
+      <strong>The frequencies form a geometric sequence — a straight line on a log axis.</strong>
+      With \(d=128,\ \mathrm{base}=10{,}000\), the \(d/2=64\) pairs each step down by a constant
+      ratio, spreading evenly across every scale from \(\theta_0=1\) (wavelength \(2\pi\), rotates
+      fast → resolves local offsets) down to \(\theta_{63}\approx10^{-4}\) (wavelength
+      \(2\pi\cdot\mathrm{base}\), barely rotates → carries global position). An arithmetic schedule
+      (dashed) would jam nearly every pair at high frequency and only reach long wavelengths in the
+      last handful of dimensions.
+    </p>
+  </div>
+
   <p>The two broadcast vectors used throughout are:</p>
   \[
     \mathbf{c}_m = \bigl[\cos\varphi_{m,0},\;\cos\varphi_{m,0},\;\cos\varphi_{m,1},\;\cos\varphi_{m,1},\;\ldots\bigr]
@@ -481,6 +531,110 @@
 <footer>
   Personal ML notes &nbsp;·&nbsp; Rotary Position Embedding gradient derivation
 </footer>
+
+<script>
+(function () {
+  const d = 128, base = 10000, nPairs = d / 2;                // 64 frequency pairs
+  const log10 = Math.log10 || (x => Math.log(x) / Math.LN10);
+  const kMax = nPairs - 1;                                    // last pair index = 63
+  const thetaMin = Math.pow(base, -2 * kMax / d);             // frequency of the last pair
+
+  // log10 of the frequency for each schedule, as a function of pair index k
+  const geoLog = k => (-2 * k / d) * log10(base);             // geometric: a straight line
+  const ariLog = k => log10(1 + (k / kMax) * (thetaMin - 1)); // arithmetic: evenly-spaced θ
+
+  function powTen(t) {                                        // -2  ->  "10⁻²"
+    if (t === 0) return '1';
+    const sup = String(Math.round(t))
+      .replace('-', '⁻')
+      .replace(/[0-9]/g, c => '⁰¹²³⁴⁵⁶⁷⁸⁹'[+c]);
+    return '10' + sup;
+  }
+
+  function drawPlot(canvas, cfg) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const mL = 48, mR = 14, mT = 14, mB = 30;
+    const pw = cssW - mL - mR, ph = cssH - mT - mB;
+    const { xMin, xMax, yMin, yMax } = cfg;
+    const xf = cfg.xFmt || String, yf = cfg.yFmt || String;
+    const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
+    const Y = y => mT + (yMax - y) / (yMax - yMin) * ph;
+
+    // gridlines + tick labels
+    ctx.font = '11px Inter, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = '#eceef1';
+    ctx.fillStyle = '#9ca3af';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(t => {
+      const px = X(t);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.fillText(xf(t), px, mT + ph + 6);
+    });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(t => {
+      const py = Y(t);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+      ctx.fillText(yf(t), mL - 8, py);
+    });
+
+    // curves (clipped to plot area)
+    ctx.save();
+    ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    ctx.lineJoin = 'round';
+    cfg.series.forEach(s => {
+      ctx.beginPath();
+      ctx.lineWidth = s.width || 2;
+      ctx.strokeStyle = s.color;
+      ctx.setLineDash(s.dash || []);
+      const N = 260;
+      for (let i = 0; i <= N; i++) {
+        const x = xMin + (xMax - xMin) * i / N;
+        const px = X(x), py = Y(s.fn(x));
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    ctx.restore();
+
+    // axis labels
+    ctx.fillStyle = '#6b7280';
+    ctx.font = '11px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText('pair index  k', mL + pw / 2, cssH - 2);
+  }
+
+  const plots = [];
+  const c = document.getElementById('plot-rope-freq');
+  if (c) plots.push([c, {
+    xMin: 0, xMax: kMax, yMin: -4.1, yMax: 0.15,
+    xTicks: [0, 16, 32, 48, 63],
+    yTicks: [0, -1, -2, -3, -4],
+    yFmt: powTen,
+    series: [
+      { fn: ariLog, color: '#9ca3af', width: 1.75, dash: [5, 4] },
+      { fn: geoLog, color: '#b45309', width: 2.75 }
+    ]
+  }]);
+
+  function renderAll() { plots.forEach(([cv, cfg]) => drawPlot(cv, cfg)); }
+  renderAll();
+  let raf;
+  window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(renderAll); });
+})();
+</script>
 
 </body>
 </html>
