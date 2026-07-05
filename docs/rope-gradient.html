@@ -204,6 +204,11 @@
     }
     .note::before { content: '💡 '; }
 
+    /* ── Code ────────────────────────────────── */
+    code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-size: 0.88em; }
+    pre { background: var(--step-bg); border: 1px solid var(--step-border); border-radius: 8px; padding: 14px 18px; overflow-x: auto; font-size: 0.85rem; line-height: 1.55; margin: 1.2em 0; }
+    pre code { background: none; border: none; padding: 0; color: var(--text); }
+
     /* ── Result / boxed equation ─────────────── */
     .result {
       background: var(--boxed-bg);
@@ -306,6 +311,7 @@
     <a href="#forward">Forward</a>
     <a href="#property">Property</a>
     <a href="#backward">Gradient</a>
+    <a href="#code">Code</a>
     <a href="#summary">Summary</a>
   </div>
 </nav>
@@ -497,6 +503,37 @@
 
   <div class="note">
     Implementation shortcut: because \(J\) is linear and skew-symmetric, \(J^\top = -J\), so \(J^\top(\mathbf{v}) = -J(\mathbf{v})\). In code, if <code>rotate_half</code> computes \(J(\cdot)\), the backward component is <code>-rotate_half(dy)</code> (equivalently <code>rotate_half(-dy)</code>). Many frameworks implement this by negating \(\mathbf{s}_m\) instead of the rotated vector — both produce the same result.
+  </div>
+
+  <h2 id="code">Reference Implementation</h2>
+  <p>The whole thing is a few lines of PyTorch. Precompute the cosine/sine tables once, then <code>apply_rope</code> is an element-wise multiply plus the pair-rotation <code>rotate_half</code>\(\,=J(\cdot)\). Forward and backward differ only in the sign of the sine term — exactly the \(R_m^\top = R_{-m}\) symmetry from §4.</p>
+  <pre><code>import torch
+
+def rope_tables(seq_len, d, base=10000.0, device=None):
+    # θ_k = base^(-2k/d): one frequency per dimension pair
+    k     = torch.arange(0, d, 2, device=device).float()   # 0, 2, …, d-2
+    theta = base ** (-k / d)                                # (d/2,)
+    m     = torch.arange(seq_len, device=device).float()   # positions 0 … L-1
+    ang   = torch.outer(m, theta)                          # φ = m·θ_k, shape (L, d/2)
+    cos   = ang.cos().repeat_interleave(2, dim=-1)         # c_m: cosφ₀,cosφ₀,cosφ₁,… (L, d)
+    sin   = ang.sin().repeat_interleave(2, dim=-1)         # s_m, same layout
+    return cos, sin
+
+def rotate_half(x):
+    # J(·): each adjacent pair (x_2k, x_2k+1) → (-x_2k+1, x_2k)
+    x = x.unflatten(-1, (-1, 2))                           # (..., d/2, 2)
+    x1, x2 = x[..., 0], x[..., 1]
+    return torch.stack((-x2, x1), dim=-1).flatten(-2)      # (..., d)
+
+def apply_rope(x, cos, sin):
+    # forward:  y = R_m x = x ⊙ c_m + J(x) ⊙ s_m
+    return x * cos + rotate_half(x) * sin
+
+def apply_rope_backward(dy, cos, sin):
+    # backward: dx = R_mᵀ dy = R_{-m} dy — the same map with sin negated
+    return dy * cos - rotate_half(dy) * sin</code></pre>
+  <div class="note">
+    Convention: this matches the page's math, where pair \(k\) is the <em>adjacent</em> pair \((x_{2k}, x_{2k+1})\) and \(\mathbf{c}_m, \mathbf{s}_m\) repeat each frequency twice. LLaMA / HF instead pair dimension \(i\) with \(i + d/2\): their <code>rotate_half</code> is <code>cat([-x2, x1])</code> over the two <em>halves</em> and the tables use <code>cat([f, f])</code>. The two layouts differ only by a fixed permutation of channels, so the attention scores come out identical.
   </div>
 
   <h2 id="summary">5. Summary</h2>
