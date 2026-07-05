@@ -502,11 +502,11 @@
   </ul>
 
   <div class="note">
-    Implementation shortcut: because \(J\) is linear and skew-symmetric, \(J^\top = -J\), so \(J^\top(\mathbf{v}) = -J(\mathbf{v})\). In code, if <code>rotate_half</code> computes \(J(\cdot)\), the backward component is <code>-rotate_half(dy)</code> (equivalently <code>rotate_half(-dy)</code>). Many frameworks implement this by negating \(\mathbf{s}_m\) instead of the rotated vector — both produce the same result.
+    Implementation shortcut: because \(J\) is linear and skew-symmetric, \(J^\top = -J\), so \(J^\top(\mathbf{v}) = -J(\mathbf{v})\). In code, if <code>rotate_every_two</code> computes \(J(\cdot)\), the backward component is <code>-rotate_every_two(dy)</code> (equivalently <code>rotate_every_two(-dy)</code>). Many frameworks implement this by negating \(\mathbf{s}_m\) instead of the rotated vector — both produce the same result.
   </div>
 
   <h2 id="code">Reference Implementation</h2>
-  <p>The whole thing is a few lines of PyTorch. Precompute the cosine/sine tables once, then <code>apply_rope</code> is an element-wise multiply plus the pair-rotation <code>rotate_half</code>\(\,=J(\cdot)\). Forward and backward differ only in the sign of the sine term — exactly the \(R_m^\top = R_{-m}\) symmetry from §4.</p>
+  <p>The whole thing is a few lines of PyTorch. Precompute the cosine/sine tables once, then <code>apply_rope</code> is an element-wise multiply plus the pair-rotation <code>rotate_every_two</code>\(\,=J(\cdot)\). Forward and backward differ only in the sign of the sine term — exactly the \(R_m^\top = R_{-m}\) symmetry from §4.</p>
   <pre><code>import torch
 
 def rope_tables(seq_len, d, base=10000.0, device=None):
@@ -519,7 +519,7 @@ def rope_tables(seq_len, d, base=10000.0, device=None):
     sin   = ang.sin().repeat_interleave(2, dim=-1)         # s_m, same layout
     return cos, sin
 
-def rotate_half(x):
+def rotate_every_two(x):
     # J(·): each adjacent pair (x_2k, x_2k+1) → (-x_2k+1, x_2k)
     x = x.unflatten(-1, (-1, 2))                           # (..., d/2, 2)
     x1, x2 = x[..., 0], x[..., 1]
@@ -527,13 +527,20 @@ def rotate_half(x):
 
 def apply_rope(x, cos, sin):
     # forward:  y = R_m x = x ⊙ c_m + J(x) ⊙ s_m
-    return x * cos + rotate_half(x) * sin
+    return x * cos + rotate_every_two(x) * sin
 
 def apply_rope_backward(dy, cos, sin):
     # backward: dx = R_mᵀ dy = R_{-m} dy — the same map with sin negated
-    return dy * cos - rotate_half(dy) * sin</code></pre>
+    return dy * cos - rotate_every_two(dy) * sin</code></pre>
+  <h3>Two channel-pairing conventions</h3>
+  <p>Which two channels get grouped into a rotated pair is a free choice. Two conventions dominate real code; they look different but are mathematically equivalent:</p>
+  <ul>
+    <li><strong>Interleaved (GPT-J style)</strong> — what this page derives. Pair \(k\) is the <em>adjacent</em> pair \((x_{2k}, x_{2k+1})\); the rotation helper is <code>rotate_every_two</code> and the tables repeat each frequency in place (<code>repeat_interleave(2)</code>), giving \(\mathbf{c}_m = [\cos\varphi_0, \cos\varphi_0, \cos\varphi_1, \ldots]\). This is the original RoPE paper's form.</li>
+    <li><strong>Half-split (HF-LLaMA style)</strong> — pair channel \(i\) with channel \(i + d/2\). The helper is <code>rotate_half(x) = cat([-x[d/2:], x[:d/2]])</code> and the tables are built with <code>cat([freqs, freqs])</code>. Slicing two contiguous halves avoids the interleave, so it is a touch simpler and faster on GPU.</li>
+  </ul>
+  <p>The two are related by a fixed permutation of the channel axis, so with correspondingly permuted \(q\)/\(k\) weights they yield <em>identical</em> attention scores. That permutation is the catch: a checkpoint trained under one convention must have its query/key projections reshuffled to run under the other.</p>
   <div class="note">
-    Convention: this matches the page's math, where pair \(k\) is the <em>adjacent</em> pair \((x_{2k}, x_{2k+1})\) and \(\mathbf{c}_m, \mathbf{s}_m\) repeat each frequency twice. LLaMA / HF instead pair dimension \(i\) with \(i + d/2\): their <code>rotate_half</code> is <code>cat([-x2, x1])</code> over the two <em>halves</em> and the tables use <code>cat([f, f])</code>. The two layouts differ only by a fixed permutation of channels, so the attention scores come out identical.
+    Naming trap: the <em>original Meta LLaMA</em> code is actually interleaved — it rotates adjacent pairs via <code>torch.view_as_complex</code>. HuggingFace's port switched to the half-split <code>rotate_half</code> and permutes <code>q_proj</code>/<code>k_proj</code> at conversion time so the results still match. So "the LLaMA convention" is interleaved or half-split depending on <em>which</em> implementation you mean — always check the <code>rotate_*</code> helper and how the cos/sin table is tiled before trusting a snippet.
   </div>
 
   <h2 id="summary">5. Summary</h2>
