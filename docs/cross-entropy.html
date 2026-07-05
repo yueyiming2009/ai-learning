@@ -275,6 +275,7 @@
     <a href="#stability">Stability</a>
     <a href="#backward">Backward</a>
     <a href="#batch">Batch</a>
+    <a href="#code">Code</a>
     <a href="#summary">Summary</a>
   </div>
 </nav>
@@ -456,7 +457,35 @@ grad /= N                                 # average, matching the loss
     In language modelling the sequence dimension is typically folded into the batch, so the effective \(N\) is \(\text{batch} \times \text{sequence length}\). The same formula applies without modification.
   </div>
 
-  <h2 id="summary">5. Summary</h2>
+  <h2 id="code">5. Reference Implementation</h2>
+  <p>Everything above collapses into a few lines of NumPy — no framework, so each step maps directly onto the math. The forward uses the stable \(-z_k + \log\sum_j e^{z_j}\) form from §1–§2, and the backward is the \((P - Y)/N\) residual from §3–§4. Shapes: <code>Z</code> is \((N, V)\) logits and <code>k</code> is the length-\(N\) vector of true-class indices.</p>
+  <pre><code>import numpy as np
+
+def softmax(Z):
+    # subtract row-max before exp — §2: identical result, no overflow
+    Z = Z - Z.max(axis=1, keepdims=True)
+    E = np.exp(Z)
+    return E / E.sum(axis=1, keepdims=True)          # P, shape (N, V)
+
+def cross_entropy(Z, k):
+    # forward — §1: L = mean(-z_k + logSumExp(z)), computed the stable way
+    N = Z.shape[0]
+    m = Z.max(axis=1, keepdims=True)                 # stability shift
+    logsumexp = m[:, 0] + np.log(np.exp(Z - m).sum(axis=1))
+    z_k = Z[np.arange(N), k]                         # true-class logits
+    return np.mean(logsumexp - z_k)                  # scalar loss
+
+def cross_entropy_grad(Z, k):
+    # backward — §3–§4: dZ = (P - Y) / N
+    N = Z.shape[0]
+    P = softmax(Z)
+    P[np.arange(N), k] -= 1                          # subtract one-hot Y at true class
+    return P / N                                     # shape (N, V)</code></pre>
+  <div class="note">
+    The gradient needs no autograd and no Jacobian: run <code>softmax</code>, subtract 1 at each true class, divide by \(N\). A finite-difference check against <code>cross_entropy</code> agrees to ~1e-10 — the analytic \(\mathbf{p} - \mathbf{y}\) is exact, not an approximation. (PyTorch's one-line equivalent, <code>F.cross_entropy</code>, is in §3.)
+  </div>
+
+  <h2 id="summary">6. Summary</h2>
   <div class="summary-grid">
     <div class="summary-card">
       <div class="summary-card-label">Softmax</div>
