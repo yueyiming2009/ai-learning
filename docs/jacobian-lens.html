@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Jacobian Lens — Reading Concepts Out of the Residual Stream</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #a21caf;
+      --accent-light: #fdf4ff;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #4a044e 0%, #86198f 60%, #d946ef 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.85;
+      font-size: 0.97rem;
+      max-width: 620px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: #374151;
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: #374151; }
+    code {
+      font-family: 'SF Mono', SFMono-Regular, ui-monospace, Menlo, monospace;
+      font-size: 0.88em;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+    }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: #fafafa; }
+
+    /* ── Step boxes ──────────────────────────── */
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    /* ── Callout / note ──────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: #1e40af;
+    }
+    .note::before { content: '💡 '; }
+
+    /* ── Result / boxed equation ─────────────── */
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #16a34a;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Summary card ────────────────────────── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .summary-card {
+      background: var(--accent-light);
+      border: 1px solid #f0abfc;
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .summary-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    /* ── Figure / plot ───────────────────────── */
+    .figure {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 16px 14px;
+      margin: 1.6em 0;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .figure canvas {
+      width: 100%;
+      height: 300px;
+      display: block;
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      justify-content: center;
+      margin-top: 12px;
+      font-size: 0.82rem;
+      color: var(--text);
+    }
+    .legend-item { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, #9ca3af 0 5px, transparent 5px 9px); }
+    .figure-caption {
+      font-size: 0.85rem;
+      color: var(--muted);
+      line-height: 1.6;
+      margin: 14px 4px 2px;
+    }
+
+    /* ── Footer ──────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    /* ── Responsive ──────────────────────────── */
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>The Jacobian Lens</a>
+  <div class="nav-links">
+    <a href="index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#notation">Notation</a>
+    <a href="#lens-jacobian">Lens Jacobian</a>
+    <a href="#conflation">Conflation</a>
+    <a href="#averaging">Averaging</a>
+    <a href="#readout">Readout</a>
+    <a href="#lenses">Logit &amp; tuned lens</a>
+    <a href="#sparse">Sparse decomposition</a>
+    <a href="#steering">Steering</a>
+    <a href="#summary">Summary</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Interpretability</span>
+  <h1>The Jacobian Lens</h1>
+  <p>An interpretability method that reuses exactly the Jacobian machinery from <a href="backprop.html" style="color:#fff;text-decoration:underline;">backprop</a> — but points it at the model's own residual stream instead of a scalar loss, and averages it over ~1,000 prompts to separate a concept's general "disposition to be verbalized" from one prompt's incidental use of it.</p>
+</div>
+
+<div class="page-wrap">
+
+  <p>This page works out the math behind the Jacobian-lens method from Anthropic's <em>workspace</em> interpretability write-up. It is not a training derivation — nothing here computes a gradient for an optimizer step. It is the same linear-algebra object, <a href="backprop.html#jacobian" style="color:var(--accent);">the Jacobian</a>, turned around and used to <em>read</em> a trained model instead of to <em>train</em> it: given an intermediate activation on the <a href="transformer-block.html#stream" style="color:var(--accent);">residual stream</a>, what does the model tend to do with it by the end of the forward pass?</p>
+
+  <h2 id="notation">Notation</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symbol</th><th>Description</th></tr>
+      <tr><td>\(\ell,\ L\)</td><td>A source layer index, and the final layer</td></tr>
+      <tr><td>\(t,\ t'\)</td><td>A source token position, and a later position \(t'\ge t\) whose final-layer representation we read out</td></tr>
+      <tr><td>\(\mathbf{h}_{\ell,t}\in\mathbb{R}^d\)</td><td>The <a href="transformer-block.html#stream" style="color:var(--accent);">residual stream</a> vector at layer \(\ell\), position \(t\)</td></tr>
+      <tr><td>\(\mathbf{h}_{\text{final},t'}\in\mathbb{R}^d\)</td><td>The residual stream at the final layer, position \(t'\), just before the last norm</td></tr>
+      <tr><td>\(J_\ell = \partial\mathbf{h}_{\text{final},t'}/\partial\mathbf{h}_{\ell,t}\in\mathbb{R}^{d\times d}\)</td><td>The <strong>single-context</strong> lens Jacobian — one prompt, one \((t,t')\) pair</td></tr>
+      <tr><td>\(\bar J_\ell = \mathbb{E}_{t,\,t'\ge t,\,\text{prompt}}[J_\ell]\)</td><td>The <strong>averaged</strong> lens Jacobian actually used — the subject of this page</td></tr>
+      <tr><td>\(W_U\in\mathbb{R}^{V\times d}\)</td><td>The unembedding matrix (weight-tied per <a href="transformer-block.html" style="color:var(--accent);">the transformer block</a>); logits \(=W_U\mathbf{h}\)</td></tr>
+      <tr><td>\(\mathrm{norm}(\cdot)\)</td><td>The model's final normalization, applied before unembedding</td></tr>
+      <tr><td>\(v_k\in\mathbb{R}^d\)</td><td>A <strong>J-lens vector</strong>: row \(k\) of \(W_U\bar J_\ell\), one per vocabulary token</td></tr>
+      <tr><td>\(k\)</td><td>Sparsity budget for the concept decomposition (in practice \(\le 25\))</td></tr>
+      <tr><td>\(\alpha\)</td><td>Steering coefficient</td></tr>
+    </table>
+  </div>
+
+  <h2 id="lens-jacobian">1. The lens Jacobian</h2>
+  <p>Fix one prompt and one pair of positions \(t\le t'\). The single-context lens Jacobian is</p>
+  \[
+    J_\ell \;=\; \frac{\partial \mathbf{h}_{\text{final},t'}}{\partial \mathbf{h}_{\ell,t}} \;\in\; \mathbb{R}^{d\times d}
+  \]
+  <p>This is <em>exactly</em> the object <a href="backprop.html#jacobian" style="color:var(--accent);">backprop.html §1</a> defines, \(J=\partial\mathbf{y}/\partial\mathbf{x}\), numerator layout, output rows by input columns. The only thing that changed is the choice of \(\mathbf{y}\) and \(\mathbf{x}\): training backprop fixes \(\mathbf{y}=L\), a scalar loss, and asks for \(\partial L/\partial\theta\) over every parameter. Here \(\mathbf{y}=\mathbf{h}_{\text{final},t'}\), an intermediate <em>activation</em>, and \(\mathbf{x}=\mathbf{h}_{\ell,t}\), a residual-stream vector partway through the network — both are vectors, so the result is a genuine \(d\times d\) matrix, not a gradient vector.</p>
+  <p>Because layers compose, \(J_\ell\) is also literally a slice of <a href="backprop.html#chain" style="color:var(--accent);">the chain-rule product from backprop.html §2</a> — the product of every per-layer Jacobian from \(\ell+1\) up to the final layer:</p>
+  \[
+    J_\ell = J_L\,J_{L-1}\cdots J_{\ell+1}
+  \]
+  <div class="note">
+    Backprop never materializes this product — it collapses it into a single vector–Jacobian product against the scalar loss (backprop.html §3), because that's all training needs. Interpretability needs the actual <em>directions</em>, not a gradient, so the Jacobian lens keeps the matrix — but still never forms a dense \(d\times d\) matrix per layer per prompt (that would be backprop.html §1's "materializing is a non-starter" argument, and \(d\) here is a few thousand). In practice it's built from Jacobian–vector products (JVPs, the forward-mode object from backprop.html §4) probed along the handful of directions the method actually needs — chiefly the rows of \(W_U\bar J_\ell\) defined in §4 below.
+  </div>
+
+  <h2 id="conflation">2. What a single prompt conflates</h2>
+  <p>\(J_\ell\) is a <em>local</em> derivative: its value depends on the exact activations that one prompt produced, because the network is nonlinear. Two prompts that both eventually produce the token "Paris" can have different \(J_\ell\) at the same layer, because the surrounding computation — what else is active, what the model is doing with the concept — differs. A single-prompt Jacobian mixes two things that are conceptually distinct:</p>
+  <ol>
+    <li>the model's <strong>general disposition</strong> to verbalize a given concept — a stable channel that exists whenever the model is in a position to say it, independent of context;</li>
+    <li>the <strong>particular use</strong> the concept is being put to right now — this prompt's local curvature, an artifact of this one context.</li>
+  </ol>
+  <p>Concretely: if a concept has some "true" direction \(\mathbf{w}\) that generically routes toward its token at the final layer, a single prompt's estimate looks like \(\mathbf{w}+\boldsymbol{\eta}\), where \(\boldsymbol{\eta}\) is contextual noise specific to that prompt. There is no way to tell, from one such estimate, how much of it is \(\mathbf{w}\) and how much is \(\boldsymbol{\eta}\).</p>
+
+  <h2 id="averaging">3. Averaging over prompts and positions</h2>
+  <p>The fix is to average \(J_\ell\) over many contexts, so the shared component survives and the idiosyncratic one cancels:</p>
+  \[
+    \bar J_\ell \;=\; \mathbb{E}_{t,\,t'\ge t,\,\text{prompt}}\!\left[\frac{\partial \mathbf{h}_{\text{final},t'}}{\partial \mathbf{h}_{\ell,t}}\right]
+  \]
+  <p>The expectation runs over the source position \(t\), every later position \(t'\ge t\) within the same context, and a corpus of about one thousand prompts sampled from a pretraining-like distribution — so \(\bar J_\ell\) is not one context's slope but the network's typical local behavior around layer \(\ell\).</p>
+  <div class="note">
+    This is the same fact <a href="optimizers.html#noise" style="color:var(--accent);">optimizers.html §2</a> writes as \(\hat g_t = \nabla_w L(w_t) + \xi_t\), \(\mathrm{Var}(\xi_t)\propto 1/B\) — a noisy per-example estimate splits into a true shared component plus mean-zero noise whose variance shrinks with the number of samples averaged in. Optimizers.html runs that fact <em>forward</em>: small \(B\) means more noise, and that noise is the point — it's what lets SGD escape saddles and shallow minima. The Jacobian lens runs it in <strong>reverse</strong>: it wants that noise gone, so it enlarges \(N\) (prompts × positions playing the role of the batch) until only the shared, context-independent direction is left standing.
+  </div>
+
+  <div class="figure">
+    <canvas id="plot-averaging" aria-label="Plot of 1 over square root of N versus number of prompts averaged, showing noise decay"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:#a21caf"></span> residual noise, \(1/\sqrt{N}\)</span>
+      <span class="legend-item"><span class="lg dash"></span> \(N\approx 1{,}000\) (paper's corpus)</span>
+    </div>
+    <p class="figure-caption">
+      <strong>Averaging is a Monte Carlo estimate, and it converges like one.</strong> If each single-prompt \(J_\ell\) is \(\mathbf{w}+\boldsymbol{\eta}\) with \(\mathrm{Var}(\boldsymbol{\eta})=\sigma^2\), the \(N\)-prompt average has noise standard deviation \(\propto 1/\sqrt N\) (purple curve, shown out to \(N=200\) for readability). The paper's actual corpus of \(N\approx 1{,}000\) prompts (dashed reference) pushes that residual down to roughly 3% of a single prompt's — which is exactly why one prompt conflates "general disposition" with "this context's noise," and a thousand prompts mostly resolve them.
+    </p>
+  </div>
+
+  <h2 id="readout">4. Reading out tokens: composing with the unembedding</h2>
+  <p>\(\bar J_\ell\mathbf{h}_\ell\) is a first-order simulation of the remaining \(L-\ell\) layers: instead of actually running them, it applies their averaged linear effect to whatever the residual stream currently holds — the "best linear approximation" framing from <a href="backprop.html#jacobian" style="color:var(--accent);">backprop.html §1</a>, evaluated at a population average rather than one point. Feeding that estimate through the same norm → unembed → softmax pipeline every real forward pass ends with gives a full vocabulary readout of an intermediate activation:</p>
+  \[
+    \mathrm{lens}(\mathbf{h}_\ell) \;=\; \mathrm{softmax}\bigl(W_U\,\mathrm{norm}(\bar J_\ell\,\mathbf{h}_\ell)\bigr)
+  \]
+  <p>Composing \(W_U\) with \(\bar J_\ell\) up front produces one direction per vocabulary token — the <strong>J-lens vectors</strong>, the rows of \(W_U\bar J_\ell\):</p>
+  \[
+    v_k = \bigl(W_U\bar J_\ell\bigr)_{k,:} \;\in\; \mathbb{R}^d
+  \]
+  <p>\(v_k\) answers a causal question: nudging the residual stream at layer \(\ell\) in direction \(v_k\), how much does that move token \(k\)'s eventual logit, in a typical context? It is the interpretability-side analogue of a linear probe — except its weights come from the model's own averaged derivative, not from fitting a classifier to activations after the fact.</p>
+
+  <h2 id="lenses">5. Two simpler lenses, for comparison</h2>
+  <p>The J-lens generalizes two earlier, cheaper readouts:</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Lens</th><th>What it uses for \(\bar J_\ell\)</th><th>Fit type</th><th>Where it breaks</th></tr>
+      <tr><td>Logit lens</td><td>\(\bar J_\ell = I\)</td><td>No fit — a free simplification</td><td>Degrades in early layers, where little has been rotated into anything close to the final vocabulary basis yet</td></tr>
+      <tr><td>Tuned lens</td><td>A per-layer affine map fit by regression against real final-layer activations</td><td>Correlational</td><td>"Skips ahead" — it can predict a token before the model's own remaining layers have actually computed it, since it's fit to correlate with the output, not to reflect a causal derivative</td></tr>
+      <tr><td>J-lens</td><td>\(\bar J_\ell = \mathbb{E}[\partial\mathbf{h}_{\text{final}}/\partial\mathbf{h}_\ell]\)</td><td>Causal, first-order, averaged over ~1,000 prompts</td><td>Still only linear — misses whatever the remaining layers compute nonlinearly</td></tr>
+    </table>
+  </div>
+  <p>The logit lens is the special case \(\bar J_\ell=I\) of the formula in §4 — assume the residual stream is already in its final form and just unembed it directly. That is a good approximation late, where pre-norm keeps per-layer updates small (the "clean highway" argument from <a href="transformer-block.html" style="color:var(--accent);">transformer-block.html</a>), and a bad one early, where it isn't. The tuned lens fixes the early-layer failure by fitting a map instead of assuming identity, but loses the causal reading in the process — its map is trained to match the output, not to be the network's actual derivative, which is exactly the trade the J-lens is designed to avoid: it stays causal by construction, and stays stable by averaging rather than by fitting.</p>
+
+  <h2 id="sparse">6. Sparse decomposition: which concepts are active</h2>
+  <p>Under the standard superposition hypothesis — more features than dimensions, packed into a roughly-sparse code — an activation is modeled as a small nonnegative combination of J-lens vectors:</p>
+  \[
+    \mathbf{h}_\ell \;\approx\; \sum_{i=1}^{k} c_i\, v_{k_i}, \qquad c_i \ge 0
+  \]
+  <p>Finding that combination is a sparse-coding search over an enormous, overcomplete dictionary — one candidate direction \(v_k\) per vocabulary token, so \(V\) in the hundreds of thousands against \(d\) in the low thousands. The paper's algorithm, <strong>gradient pursuit</strong>, is a matching-pursuit variant: at each step it adds the not-yet-used \(v_k\) most aligned with the current residual to the active set, then re-fits <em>all</em> active coefficients with a gradient step rather than freezing earlier picks the way plain matching pursuit would. \(k\) is deliberately loose — the paper calls it "somewhat arbitrary" — but caps it at 25, matching what's empirically seen as the number of meaningful concepts active at a single token position.</p>
+  <div class="note">
+    With sparsity budget \(k\) fixed, the set of representable activations — the paper's "J-space" — is a union of \(k\)-dimensional cones, one per possible \(k\)-subset \(S\) of the \(V\) J-lens vectors: \(\bigcup_{|S|=k} \mathrm{cone}\{v_i : i\in S\}\). It's the interpretability-side analogue of a dictionary-learning code space, except the dictionary is read directly off \(W_U\bar J_\ell\) rather than learned separately.
+  </div>
+
+  <h2 id="steering">7. Steering: turning a direction into an intervention</h2>
+  <p>A J-lens vector is only as trustworthy as its causal effect — the whole point of deriving it from an actual Jacobian rather than a correlational fit is that it should <em>do</em> something when you push on it. Two ways the paper tests that:</p>
+
+  <div class="step">
+    <div class="step-label">Simple steering</div>
+    <p>Add or subtract a multiple of a J-lens vector directly on the residual stream:</p>
+    \[
+      \mathbf{h} \;\leftarrow\; \mathbf{h} + \alpha\, v_k
+    \]
+    <p>\(\alpha>0\) injects the concept — makes the model more disposed to eventually verbalize token \(k\) downstream; \(\alpha<0\) ablates it. If nudging along \(v_k\) reliably shifts behavior in the predicted direction, that validates \(v_k\) as a real causal handle, not just a readout artifact.</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Coordinate swapping</div>
+    <p>To exchange two concepts \(s\) and \(t\) — e.g. swap "Paris" for "Rome" — rather than blindly adding one direction and subtracting another, project \(\mathbf{h}\) onto the 2-D subspace they span and swap only its coordinates there. Stack \(V=[v_s\ \ v_t]\in\mathbb{R}^{d\times 2}\), let \(V^\dagger\) be its Moore–Penrose pseudoinverse (needed because \(v_s,v_t\) aren't generally orthogonal), and let \(\sigma\) swap a 2-vector's entries:</p>
+    \[
+      \mathbf{c} = V^\dagger\mathbf{h} \in \mathbb{R}^2,
+      \qquad
+      \mathbf{h}_{\text{patched}} = \mathbf{h} + V\bigl(\sigma(\mathbf{c}) - \mathbf{c}\bigr)
+    \]
+    <p>\(\mathbf{c}=[c_s,c_t]\) are \(\mathbf{h}\)'s coordinates along \(v_s\) and \(v_t\); \(Vc = c_s v_s + c_t v_t\) is the part of \(\mathbf{h}\) those two directions already explain, and \(V\sigma(c) = c_t v_s + c_s v_t\) is that same reconstruction with the coefficients exchanged. Adding the difference replaces "how much \(s\)" with "how much \(t\)" and vice versa, while everything orthogonal to \(\mathrm{span}\{v_s,v_t\}\) — the rest of what \(\mathbf{h}\) represents — passes through untouched. It's the same delta-patching idea as simple steering, just confined to a subspace instead of one line.</p>
+  </div>
+
+  <div class="note">
+    Implementation, for grounding: 25 evenly spaced layers (reindexed to a 0–100% depth axis), a corpus of ~1,000 pretraining-like prompts, primary model Claude Sonnet 4.5 with key results cross-checked on Haiku 4.5 and Opus 4.5, and the model's own final normalization applied before the unembedding in every readout.
+  </div>
+
+  <h2 id="summary">8. Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">Single-context Jacobian</div>
+      <p>\(J_\ell=\partial\mathbf{h}_{\text{final},t'}/\partial\mathbf{h}_{\ell,t}\) — same object as backprop's \(J\), pointed at an activation instead of a loss</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">The conflation</div>
+      <p>one prompt mixes general disposition with this context's noise</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">The fix</div>
+      <p>\(\bar J_\ell=\mathbb{E}_{t,t',\text{prompt}}[J_\ell]\) — noise \(\propto 1/\sqrt N\), same identity as optimizers.html §2, run in reverse</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Token readout</div>
+      <p>\(\mathrm{lens}(\mathbf{h}_\ell)=\mathrm{softmax}(W_U\,\mathrm{norm}(\bar J_\ell\mathbf{h}_\ell))\); J-lens vectors \(=\) rows of \(W_U\bar J_\ell\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">vs. logit / tuned lens</div>
+      <p>logit lens \(=\) the special case \(\bar J_\ell{=}I\); tuned lens fits correlationally and skips ahead</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Sparse decomposition</div>
+      <p>\(\mathbf{h}_\ell\approx\sum_{i\le k} c_i v_{k_i}\), \(c_i\ge0\), via gradient pursuit, \(k\le25\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Steering</div>
+      <p>\(\mathbf{h}\leftarrow\mathbf{h}+\alpha v_k\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Coordinate swap</div>
+      <p>\(\mathbf{h}+V(\sigma(V^\dagger\mathbf{h})-V^\dagger\mathbf{h})\)</p>
+    </div>
+  </div>
+
+  <p style="margin-top:2em;color:var(--muted);font-size:0.9rem;"><strong>Built from:</strong> the Jacobian and chain-rule machinery of <a href="backprop.html" style="color:var(--accent);">backprop</a>, applied to the <a href="transformer-block.html#stream" style="color:var(--accent);">residual stream</a> and unembedding of <a href="transformer-block.html" style="color:var(--accent);">the transformer block</a>, using the same noise-averaging identity as mini-batch gradients in <a href="optimizers.html#noise" style="color:var(--accent);">optimizers</a> — pointed at reading a trained model instead of training one.</p>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; The Jacobian lens as an application of backprop's Jacobian to interpretability
+</footer>
+
+<script>
+(function () {
+  function drawPlot(canvas, cfg) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const mL = 44, mR = 14, mT = 14, mB = 30;
+    const pw = cssW - mL - mR, ph = cssH - mT - mB;
+    const { xMin, xMax, yMin, yMax } = cfg;
+    const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
+    const Y = y => mT + (yMax - y) / (yMax - yMin) * ph;
+
+    // gridlines + tick labels
+    ctx.font = '11px Inter, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = '#eceef1';
+    ctx.fillStyle = '#9ca3af';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(t => {
+      const px = X(t);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.fillText(String(t), px, mT + ph + 6);
+    });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(t => {
+      const py = Y(t);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+      ctx.fillText(String(t), mL - 8, py);
+    });
+
+    // emphasized zero axes
+    ctx.strokeStyle = '#c7cbd1';
+    ctx.lineWidth = 1.25;
+    if (yMin < 0 && yMax > 0) { const py = Y(0); ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke(); }
+    if (xMin < 0 && xMax > 0) { const px = X(0); ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke(); }
+
+    // curves (clipped to plot area)
+    ctx.save();
+    ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    ctx.lineJoin = 'round';
+    cfg.series.forEach(s => {
+      ctx.beginPath();
+      ctx.lineWidth = s.width || 2;
+      ctx.strokeStyle = s.color;
+      ctx.setLineDash(s.dash || []);
+      const N = 260;
+      for (let i = 0; i <= N; i++) {
+        const x = xMin + (xMax - xMin) * i / N;
+        const px = X(x), py = Y(s.fn(x));
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  const plots = [];
+  const avgCanvas = document.getElementById('plot-averaging');
+  if (avgCanvas) plots.push([avgCanvas, {
+    xMin: 1, xMax: 200, yMin: 0, yMax: 1,
+    xTicks: [1, 50, 100, 150, 200],
+    yTicks: [0, 0.25, 0.5, 0.75, 1],
+    series: [
+      { fn: N => 1 / Math.sqrt(N), color: '#a21caf', width: 2.75 },
+      { fn: () => 1 / Math.sqrt(1000), color: '#9ca3af', width: 1.5, dash: [5, 4] }
+    ]
+  }]);
+
+  function renderAll() { plots.forEach(([c, cfg]) => drawPlot(c, cfg)); }
+  renderAll();
+  let raf;
+  window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(renderAll); });
+})();
+</script>
+
+</body>
+</html>
