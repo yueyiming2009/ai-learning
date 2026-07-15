@@ -29,7 +29,8 @@ backward), MoE routing.
 ### 02 · Systems & Hardware — [docs/](docs/), [triton/](triton/)
 The engineering substrate, built bottom-up — GPU/TPU hardware and MFU, the PyTorch execution
 model (operators, dispatch, eager vs. graph) and Triton kernels, sharding & collectives (NCCL),
-tensor/pipeline/sequence/MoE parallelism, and the ZeRO/FSDP distributed-training ladder.
+tensor/pipeline/sequence/MoE parallelism, the ZeRO/FSDP distributed-training ladder, and the
+training-framework landscape (Megatron-LM vs. DeepSpeed vs. FSDP/TorchTitan).
 
 ### 03 · Reinforcement Learning — [docs/](docs/), [rl/](rl/)
 From first-principles RL theory to LLM post-training and the systems that run it.
