@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
   <title>GRPO — Group Relative Policy Optimization</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -18,6 +19,7 @@
     *, *::before, *::after { box-sizing: border-box; }
 
     :root {
+      color-scheme: light;
       --bg: #ffffff;
       --surface: #f8f9fa;
       --border: #e8eaed;
@@ -31,6 +33,37 @@
       --step-border: #d1d5db;
       --boxed-bg: #f0fdf4;
       --boxed-border: #16a34a;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --nav-bg: rgba(255,255,255,0.92);
+      --note-fg: #1e40af;
+      --result-fg: #16a34a;
+      --cyan-border: #a5f3fc;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #22d3ee;
+        --accent-light: #0c2226;
+        --warning-bg: #101a2b;
+        --warning-border: #1e40af;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --nav-bg: rgba(15,17,21,0.9);
+        --note-fg: #93c5fd;
+        --result-fg: #4ade80;
+        --cyan-border: #155e75;
+      }
     }
 
     body {
@@ -48,7 +81,7 @@
       position: sticky;
       top: 0;
       z-index: 100;
-      background: rgba(255,255,255,0.92);
+      background: var(--nav-bg);
       backdrop-filter: blur(8px);
       border-bottom: 1px solid var(--border);
       padding: 0 24px;
@@ -133,12 +166,12 @@
       font-size: 0.97rem;
       font-weight: 600;
       margin: 1.6em 0 0.4em;
-      color: #374151;
+      color: var(--ink);
     }
     p { margin: 0.6em 0; }
     ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
     li { margin-bottom: 0.4em; }
-    em { color: #374151; }
+    em { color: var(--ink); }
     code {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -169,7 +202,7 @@
       letter-spacing: 0.04em;
       color: var(--muted);
     }
-    tr:hover td { background: #fafafa; }
+    tr:hover td { background: var(--row-hover); }
 
     /* ── Step boxes ──────────────────────────── */
     .step {
@@ -209,7 +242,7 @@
       padding: 10px 16px;
       margin: 1em 0;
       font-size: 0.92em;
-      color: #1e40af;
+      color: var(--note-fg);
     }
     .note::before { content: '💡 '; }
 
@@ -225,7 +258,7 @@
     .result-label {
       font-size: 0.8rem;
       font-weight: 600;
-      color: #16a34a;
+      color: var(--result-fg);
       text-transform: uppercase;
       letter-spacing: 0.05em;
       margin-bottom: 6px;
@@ -242,7 +275,7 @@
     .group-prompt {
       flex: 1 1 130px;
       background: var(--accent-light);
-      border: 1px solid #a5f3fc;
+      border: 1px solid var(--cyan-border);
       border-radius: 8px;
       padding: 14px 16px;
       display: flex;
@@ -280,7 +313,7 @@
     }
     .summary-card {
       background: var(--accent-light);
-      border: 1px solid #a5f3fc;
+      border: 1px solid var(--cyan-border);
       border-radius: 8px;
       padding: 14px 16px;
     }
@@ -355,7 +388,7 @@
     </table>
   </div>
   <div class="note">
-    New to \(\mathbb{E}\), \(\sim\), \(\mathrm{KL}\), or \(\nabla\)? See the <a href="math-notation.html" style="color:#1e40af;">math notation reference</a>. GRPO assumes the <a href="rlhf.html" style="color:#1e40af;">RLHF</a> setup — read that first for PPO, advantages, and the clipped surrogate.
+    New to \(\mathbb{E}\), \(\sim\), \(\mathrm{KL}\), or \(\nabla\)? See the <a href="math-notation.html" style="color:var(--note-fg);">math notation reference</a>. GRPO assumes the <a href="rlhf.html" style="color:var(--note-fg);">RLHF</a> setup — read that first for PPO, advantages, and the clipped surrogate.
   </div>
 
   <h2 id="motivation">1. Why GRPO? Killing the critic</h2>
@@ -461,7 +494,7 @@ def grpo_loss(logprobs, old_logprobs, ref_logprobs, rewards, eps=0.2, beta=0.04)
   <p>Reading it: average over the group \((\tfrac1G\sum_i)\), average over tokens \((\tfrac{1}{|o_i|}\sum_t)\), and at each token take the PPO clipped term \(\mathcal{C}_{i,t}\) minus a per-token KL penalty toward the reference. Maximizing \(\mathcal{J}_{\text{GRPO}}\) raises the probability of tokens in better-than-average answers while clipping bounds the step size and the KL term keeps the policy near \(\pi_{\text{ref}}\).</p>
 
   <div class="note">
-    Notice there is no entropy-bonus term: GRPO inherits PPO's clipped surrogate but typically leans on the reference KL — and, in verifiable-reward setups with a weak or zero KL, on nothing — to hold up entropy. That makes <em>entropy collapse</em> the characteristic GRPO failure mode (the policy converges onto one template that games the reward). See <a href="ppo.html#entropy" style="color:#1e40af;">PPO §6</a> for the entropy coefficient \(c_2\) and why it is often \(0\) here, and <a href="async-rl-monitoring.html#entropy" style="color:#1e40af;">async-RL monitoring</a> for the collapse diagnostics.
+    Notice there is no entropy-bonus term: GRPO inherits PPO's clipped surrogate but typically leans on the reference KL — and, in verifiable-reward setups with a weak or zero KL, on nothing — to hold up entropy. That makes <em>entropy collapse</em> the characteristic GRPO failure mode (the policy converges onto one template that games the reward). See <a href="ppo.html#entropy" style="color:var(--note-fg);">PPO §6</a> for the entropy coefficient \(c_2\) and why it is often \(0\) here, and <a href="async-rl-monitoring.html#entropy" style="color:var(--note-fg);">async-RL monitoring</a> for the collapse diagnostics.
   </div>
 
   <h2 id="kl">5. The Unbiased KL Estimator</h2>
@@ -658,7 +691,7 @@ def gspo_loss(logprobs, old_logprobs, rewards, lengths, eps=3e-4):
 </code></pre>
 
   <div class="note">
-    This is the <em>training</em> view of the same sequence-level importance correction the <a href="async-rl.html#is" style="color:#1e40af;">off-policy correction page</a> derives from the lag angle (\(w_{seq}\), the same geometric-mean weight): unbiased under policy lag and — crucially — immune to MoE expert-activation volatility, so GSPO trains MoE stably <em>without</em> Routing Replay.
+    This is the <em>training</em> view of the same sequence-level importance correction the <a href="async-rl.html#is" style="color:var(--note-fg);">off-policy correction page</a> derives from the lag angle (\(w_{seq}\), the same geometric-mean weight): unbiased under policy lag and — crucially — immune to MoE expert-activation volatility, so GSPO trains MoE stably <em>without</em> Routing Replay.
   </div>
 
   <h3>GSPO-token: per-token advantages, sequence-level weight</h3>
@@ -687,32 +720,32 @@ def gspo_loss(logprobs, old_logprobs, rewards, lengths, eps=3e-4):
     <a href="rlhf.html" style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;text-decoration:none;color:inherit;display:block;">
       <div style="font-size:0.78rem;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Prerequisite</div>
       <div style="font-weight:600;font-size:0.95rem;margin-bottom:4px;">RLHF &amp; PPO</div>
-      <p style="margin:0;font-size:0.88rem;color:#6b7280;">The full three-stage pipeline, reward model, and PPO derivation that GRPO simplifies.</p>
+      <p style="margin:0;font-size:0.88rem;color:var(--muted);">The full three-stage pipeline, reward model, and PPO derivation that GRPO simplifies.</p>
     </a>
     <a href="deepseek-r1.html" style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;text-decoration:none;color:inherit;display:block;">
       <div style="font-size:0.78rem;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Next</div>
       <div style="font-weight:600;font-size:0.95rem;margin-bottom:4px;">DeepSeek-R1</div>
-      <p style="margin:0;font-size:0.88rem;color:#6b7280;">GRPO in production: the full 4-stage recipe that produced R1 — binary verifiers, cold start, rejection sampling, distillation.</p>
+      <p style="margin:0;font-size:0.88rem;color:var(--muted);">GRPO in production: the full 4-stage recipe that produced R1 — binary verifiers, cold start, rejection sampling, distillation.</p>
     </a>
     <a href="mc-rollouts.html" style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;text-decoration:none;color:inherit;display:block;">
       <div style="font-size:0.78rem;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Theory</div>
       <div style="font-weight:600;font-size:0.95rem;margin-bottom:4px;">Monte Carlo Rollouts</div>
-      <p style="margin:0;font-size:0.88rem;color:#6b7280;">Why the group average is a valid unbiased baseline — baseline subtraction and why it leaves the gradient unchanged.</p>
+      <p style="margin:0;font-size:0.88rem;color:var(--muted);">Why the group average is a valid unbiased baseline — baseline subtraction and why it leaves the gradient unchanged.</p>
     </a>
     <a href="dpo-loss.html" style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;text-decoration:none;color:inherit;display:block;">
       <div style="font-size:0.78rem;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Related</div>
       <div style="font-weight:600;font-size:0.95rem;margin-bottom:4px;">DPO</div>
-      <p style="margin:0;font-size:0.88rem;color:#6b7280;">The fully offline alternative: preference pairs, no rollouts, no reward model required.</p>
+      <p style="margin:0;font-size:0.88rem;color:var(--muted);">The fully offline alternative: preference pairs, no rollouts, no reward model required.</p>
     </a>
     <a href="async-rl-monitoring.html" style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;text-decoration:none;color:inherit;display:block;">
       <div style="font-size:0.78rem;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Diagnostics</div>
       <div style="font-weight:600;font-size:0.95rem;margin-bottom:4px;">Monitoring &amp; Diagnosis</div>
-      <p style="margin:0;font-size:0.88rem;color:#6b7280;">What to log and how to read it: pg_clipfrac, Pearson correlation, entropy collapse, IS ratios — plus GRPO-specific dead-batch detection via within-group reward diversity.</p>
+      <p style="margin:0;font-size:0.88rem;color:var(--muted);">What to log and how to read it: pg_clipfrac, Pearson correlation, entropy collapse, IS ratios — plus GRPO-specific dead-batch detection via within-group reward diversity.</p>
     </a>
     <a href="grpo-training-walkthrough.html" style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;text-decoration:none;color:inherit;display:block;">
       <div style="font-size:0.78rem;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Systems</div>
       <div style="font-weight:600;font-size:0.95rem;margin-bottom:4px;">GRPO Training Walkthrough</div>
-      <p style="margin:0;font-size:0.88rem;color:#6b7280;">Concrete step-by-step trace in VeRL: tensor shapes, group rollout batching, the z-score reshape, actor loss with k3 KL, and what disappears versus PPO.</p>
+      <p style="margin:0;font-size:0.88rem;color:var(--muted);">Concrete step-by-step trace in VeRL: tensor shapes, group rollout batching, the z-score reshape, actor loss with k3 KL, and what disappears versus PPO.</p>
     </a>
   </div>
 

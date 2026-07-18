@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
   <title>Sequence Parallelism — Megatron-SP, Ring Attention, and Ulysses</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -18,6 +19,7 @@
     *, *::before, *::after { box-sizing: border-box; }
 
     :root {
+      color-scheme: light;
       --bg: #ffffff;
       --surface: #f8f9fa;
       --border: #e8eaed;
@@ -33,6 +35,67 @@
       --boxed-border: #16a34a;
       --compare-bg: #eff6ff;
       --compare-border: #3b82f6;
+      --ink: #374151;
+      --code-bg: #f1f5f9;
+      --code-fg: #0f766e;
+      --row-hover: #fafafa;
+      --note-fg: #78350f;
+      --result-fg: #16a34a;
+      --compare-fg: #2563eb;
+      --teal-border: #99f6e4;
+      --fig-bg: #ffffff;
+      --nav-bg: rgba(255,255,255,0.92);
+      --anim-bg-from: #f9fafb;
+      --anim-bg-to: #f0fdfa;
+      --btn-fg: #ffffff;
+      --btn-hover: #0f766e;
+      --btn-disabled: #d1d5db;
+      --svg-arrow: #b91c1c;
+      --svg-node-active-bg: #dbeafe;
+      --svg-blue: #3b82f6;
+      --svg-q: #1e40af;
+      --svg-kv-moved: #9d174d;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #2dd4bf;
+        --accent-light: #10201e;
+        --warning-bg: #251c0b;
+        --warning-border: #b45309;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --compare-bg: #101a2b;
+        --compare-border: #1e40af;
+        --ink: #cbd5e1;
+        --code-bg: #1c2531;
+        --code-fg: #5eead4;
+        --row-hover: #191e25;
+        --note-fg: #fcd34d;
+        --result-fg: #4ade80;
+        --compare-fg: #60a5fa;
+        --teal-border: #134e4a;
+        --fig-bg: #14181e;
+        --nav-bg: rgba(15,17,21,0.9);
+        --anim-bg-from: #14181e;
+        --anim-bg-to: #10201e;
+        --btn-fg: #0f1115;
+        --btn-hover: #5eead4;
+        --btn-disabled: #333a44;
+        --svg-arrow: #f87171;
+        --svg-node-active-bg: #101a2b;
+        --svg-blue: #60a5fa;
+        --svg-q: #93c5fd;
+        --svg-kv-moved: #f9a8d4;
+      }
     }
 
     body {
@@ -49,7 +112,7 @@
       position: sticky;
       top: 0;
       z-index: 100;
-      background: rgba(255,255,255,0.92);
+      background: var(--nav-bg);
       backdrop-filter: blur(8px);
       border-bottom: 1px solid var(--border);
       padding: 0 24px;
@@ -79,61 +142,61 @@
     .page-wrap { max-width: 820px; margin: 0 auto; padding: 48px 24px 80px; }
 
     h2 { font-size: 1.15rem; font-weight: 600; margin: 2.8em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); color: var(--text); }
-    h3 { font-size: 0.97rem; font-weight: 600; margin: 1.6em 0 0.4em; color: #374151; }
+    h3 { font-size: 0.97rem; font-weight: 600; margin: 1.6em 0 0.4em; color: var(--ink); }
     p { margin: 0.6em 0; }
     ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
     li { margin-bottom: 0.4em; }
-    em { color: #374151; }
+    em { color: var(--ink); }
 
     pre { background: var(--step-bg); border: 1px solid var(--step-border); border-radius: 8px; padding: 14px 18px; overflow-x: auto; font-size: 0.85rem; line-height: 1.55; margin: 1.2em 0; }
     code { font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace; }
-    p code, li code, td code { background: #f1f5f9; padding: 1px 6px; border-radius: 4px; font-size: 0.88em; color: #0f766e; }
+    p code, li code, td code { background: var(--code-bg); padding: 1px 6px; border-radius: 4px; font-size: 0.88em; color: var(--code-fg); }
     pre code { background: none; padding: 0; color: var(--text); }
 
     .table-wrap { overflow-x: auto; margin: 1.2em 0; }
     table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
     th, td { border: 1px solid var(--border); padding: 9px 16px; text-align: left; vertical-align: top; }
     th { background: var(--surface); font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
-    tr:hover td { background: #fafafa; }
+    tr:hover td { background: var(--row-hover); }
     td.ctr, th.ctr { text-align: center; }
 
     .step { background: var(--step-bg); border: 1px solid var(--step-border); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 1.2em 0; }
     .step-label { font-weight: 600; font-size: 0.88rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
     .step-label::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
 
-    .note { background: var(--warning-bg); border-left: 3px solid var(--warning-border); border-radius: 0 8px 8px 0; padding: 10px 16px; margin: 1em 0; font-size: 0.92em; color: #78350f; }
+    .note { background: var(--warning-bg); border-left: 3px solid var(--warning-border); border-radius: 0 8px 8px 0; padding: 10px 16px; margin: 1em 0; font-size: 0.92em; color: var(--note-fg); }
     .note::before { content: '⚠ '; }
 
     .result { background: var(--boxed-bg); border: 1.5px solid var(--boxed-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; text-align: center; }
-    .result-label { font-size: 0.8rem; font-weight: 600; color: #16a34a; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+    .result-label { font-size: 0.8rem; font-weight: 600; color: var(--result-fg); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
 
     .compare { background: var(--compare-bg); border: 1.5px solid var(--compare-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; }
-    .compare-label { font-size: 0.8rem; font-weight: 600; color: #2563eb; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
+    .compare-label { font-size: 0.8rem; font-weight: 600; color: var(--compare-fg); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
     .compare-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
     .compare-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     @media (max-width: 640px) { .compare-grid { grid-template-columns: 1fr; } .compare-grid-2 { grid-template-columns: 1fr; } }
-    .compare-col-label { font-size: 0.82rem; font-weight: 600; color: #374151; margin-bottom: 4px; }
+    .compare-col-label { font-size: 0.82rem; font-weight: 600; color: var(--ink); margin-bottom: 4px; }
 
     .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 1.2em 0; }
-    .summary-card { background: var(--accent-light); border: 1px solid #99f6e4; border-radius: 8px; padding: 14px 16px; }
+    .summary-card { background: var(--accent-light); border: 1px solid var(--teal-border); border-radius: 8px; padding: 14px 16px; }
     .summary-card-label { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
     .summary-card p { margin: 0; font-size: 0.9rem; }
 
-    .xref { background: var(--accent-light); border: 1px solid #99f6e4; border-radius: 8px; padding: 12px 18px; margin: 1.4em 0; font-size: 0.92rem; }
+    .xref { background: var(--accent-light); border: 1px solid var(--teal-border); border-radius: 8px; padding: 12px 18px; margin: 1.4em 0; font-size: 0.92rem; }
     .xref a { color: var(--accent); font-weight: 600; text-decoration: none; }
     .xref a:hover { text-decoration: underline; }
 
     /* ── ring animation ──────────────────── */
-    .anim-widget { background: linear-gradient(180deg, #f9fafb 0%, #f0fdfa 100%); border: 1px solid #99f6e4; border-radius: 12px; padding: 20px 22px 18px; margin: 1.6em 0; }
+    .anim-widget { background: linear-gradient(180deg, var(--anim-bg-from) 0%, var(--anim-bg-to) 100%); border: 1px solid var(--teal-border); border-radius: 12px; padding: 20px 22px 18px; margin: 1.6em 0; }
     .anim-header { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
     .anim-title { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.06em; }
     .anim-hint { font-size: 0.8rem; color: var(--muted); }
-    .anim-stage { background: white; border-radius: 8px; padding: 16px; margin-bottom: 14px; overflow-x: auto; display: flex; justify-content: center; }
+    .anim-stage { background: var(--fig-bg); border-radius: 8px; padding: 16px; margin-bottom: 14px; overflow-x: auto; display: flex; justify-content: center; }
     .anim-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-    .anim-btn { background: var(--accent); color: white; border: none; border-radius: 6px; padding: 7px 16px; font-family: inherit; font-size: 0.85rem; font-weight: 500; cursor: pointer; transition: background 0.15s, transform 0.1s; }
-    .anim-btn:hover:not(:disabled) { background: #0f766e; }
+    .anim-btn { background: var(--accent); color: var(--btn-fg); border: none; border-radius: 6px; padding: 7px 16px; font-family: inherit; font-size: 0.85rem; font-weight: 500; cursor: pointer; transition: background 0.15s, transform 0.1s; }
+    .anim-btn:hover:not(:disabled) { background: var(--btn-hover); }
     .anim-btn:active:not(:disabled) { transform: scale(0.97); }
-    .anim-btn:disabled { background: #d1d5db; cursor: not-allowed; opacity: 0.7; }
+    .anim-btn:disabled { background: var(--btn-disabled); cursor: not-allowed; opacity: 0.7; }
     .anim-btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
     .anim-btn-ghost:hover:not(:disabled) { background: var(--surface); color: var(--text); }
     .anim-step-label { font-size: 0.83rem; color: var(--muted); margin-left: auto; font-style: italic; text-align: right; flex: 1; min-width: 0; }
@@ -542,6 +605,7 @@ tp_group = mesh["tp"].get_group()    # Megatron TP AllReduce (+ Megatron-SP Redu
   const status = document.getElementById('ring-status');
   if (!svg) return;
   const SVGNS = 'http://www.w3.org/2000/svg';
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const CP = 4;
   let step = 0;
 
@@ -561,7 +625,7 @@ tp_group = mesh["tp"].get_group()    # Megatron TP AllReduce (+ Megatron-SP Redu
     t.setAttribute('text-anchor', opts.anchor || 'middle');
     t.setAttribute('dominant-baseline', 'central');
     t.style.font = opts.font || '600 11px Inter, sans-serif';
-    t.style.fill = opts.fill || '#374151';
+    t.style.fill = opts.fill || cssVar('--ink');
     t.textContent = s;
     svg.appendChild(t);
   }
@@ -601,25 +665,25 @@ tp_group = mesh["tp"].get_group()    # Megatron TP AllReduce (+ Megatron-SP Redu
     marker.setAttribute('orient', 'auto');
     const poly = document.createElementNS(SVGNS, 'polygon');
     poly.setAttribute('points', '0 0, 8 3, 0 6');
-    poly.setAttribute('fill', '#b91c1c');
+    poly.setAttribute('fill', cssVar('--svg-arrow'));
     marker.appendChild(poly);
     defs.appendChild(marker);
     svg.appendChild(defs);
 
     // title
-    txt(280, 14, `Step ${step} of ${CP}: computing attention against K,V chunk ${step > 0 ? kvOwner(0, step-1) : 0}`, {font: '500 11px Inter', fill: '#6b7280'});
+    txt(280, 14, `Step ${step} of ${CP}: computing attention against K,V chunk ${step > 0 ? kvOwner(0, step-1) : 0}`, {font: '500 11px Inter', fill: cssVar('--muted')});
 
     // draw ranks
     for (let r = 0; r < CP; r++) {
       const p = positions[r];
       const kv = kvOwner(r, step);
       const isProcessing = step > 0;
-      const fill = isProcessing ? '#dbeafe' : '#f0fdfa';
-      const stroke = isProcessing ? '#3b82f6' : '#0d9488';
+      const fill = isProcessing ? cssVar('--svg-node-active-bg') : cssVar('--accent-light');
+      const stroke = isProcessing ? cssVar('--svg-blue') : cssVar('--accent');
       circle(p.x, p.y, 24, fill, stroke);
-      txt(p.x, p.y - 8, `GPU ${r}`, {font: '600 10px Inter', fill: '#374151'});
-      txt(p.x, p.y + 5, `Q${r}`, {font: '600 10px Inter', fill: '#1e40af'});
-      txt(p.x, p.y + 17, `KV${kv}`, {font: '600 9px Inter', fill: step > 0 ? '#9d174d' : '#0f766e'});
+      txt(p.x, p.y - 8, `GPU ${r}`, {font: '600 10px Inter', fill: cssVar('--ink')});
+      txt(p.x, p.y + 5, `Q${r}`, {font: '600 10px Inter', fill: cssVar('--svg-q')});
+      txt(p.x, p.y + 17, `KV${kv}`, {font: '600 9px Inter', fill: step > 0 ? cssVar('--svg-kv-moved') : cssVar('--code-fg')});
     }
 
     // draw ring arrows (send direction: clockwise, rank r → r+1)
@@ -627,11 +691,11 @@ tp_group = mesh["tp"].get_group()    # Megatron TP AllReduce (+ Megatron-SP Redu
       for (let r = 0; r < CP; r++) {
         const from = positions[r];
         const to = positions[(r + 1) % CP];
-        arrow(from.x, from.y, to.x, to.y, '#b91c1c');
+        arrow(from.x, from.y, to.x, to.y, cssVar('--svg-arrow'));
       }
-      txt(280, 200, 'KV chunks passing clockwise while attention computes locally', {font: '500 10px Inter', fill: '#6b7280'});
+      txt(280, 200, 'KV chunks passing clockwise while attention computes locally', {font: '500 10px Inter', fill: cssVar('--muted')});
     } else {
-      txt(280, 200, 'All steps complete — each GPU has accumulated the full attention output for its Q chunk.', {font: '500 10px Inter', fill: '#16a34a'});
+      txt(280, 200, 'All steps complete — each GPU has accumulated the full attention output for its Q chunk.', {font: '500 10px Inter', fill: cssVar('--result-fg')});
     }
   }
 
@@ -654,6 +718,8 @@ tp_group = mesh["tp"].get_group()    # Megatron TP AllReduce (+ Megatron-SP Redu
     draw();
   });
   draw();
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq.addEventListener) mq.addEventListener('change', draw);
 })();
 </script>
 

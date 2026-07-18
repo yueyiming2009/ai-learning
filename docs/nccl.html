@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
   <title>NCCL — How Collectives Actually Run on GPUs</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -18,6 +19,7 @@
     *, *::before, *::after { box-sizing: border-box; }
 
     :root {
+      color-scheme: light;
       --bg: #ffffff;
       --surface: #f8f9fa;
       --border: #e8eaed;
@@ -31,11 +33,90 @@
       --step-border: #d1d5db;
       --boxed-bg: #eef2ff;
       --boxed-border: #6366f1;
+      --ink: #374151;
+      --code-bg: #f1f5f9;
+      --code-fg: #4338ca;
+      --row-hover: #fafafa;
+      --note-fg: #78350f;
+      --result-fg: #4338ca;
+      --indigo-border: #c7d2fe;
+      --fig-bg: #ffffff;
+      --nav-bg: rgba(255,255,255,0.92);
+      --on-accent: #ffffff;
+      --accent-hover: #4338ca;
+      --btn-disabled: #d1d5db;
+      --pre-bg: #0f172a;
+      --pre-fg: #e2e8f0;
+      --diagram-top: #f9fafb;
+      --diagram-bot: #eef2ff;
+      --green: #16a34a;
+      --red: #dc2626;
+      --amber: #f59e0b;
+      --cyan: #0891b2;
+      --svg-dim: #9ca3af;
+      --svg-sep: #e5e7eb;
+      --ring-line: #e2e8f0;
+      --chunk-stroke: #cbd5e1;
+      --tree-edge: #a5b4fc;
+      --diagram-ink: #4338ca;
+      --node-fill: #4338ca;
+      --node-stroke: #312e81;
+      --node-fg: #ffffff;
+      --leaf-stroke: #818cf8;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #818cf8;
+        --accent-light: #161a2e;
+        --warning-bg: #251c0b;
+        --warning-border: #b45309;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #161a2e;
+        --boxed-border: #4338ca;
+        --ink: #cbd5e1;
+        --code-bg: #1c2531;
+        --code-fg: #818cf8;
+        --row-hover: #191e25;
+        --note-fg: #fcd34d;
+        --result-fg: #818cf8;
+        --indigo-border: #312e81;
+        --fig-bg: #14181e;
+        --nav-bg: rgba(15,17,21,0.9);
+        --on-accent: #0f1115;
+        --accent-hover: #a5b4fc;
+        --btn-disabled: #374151;
+        --pre-bg: #1c2531;
+        --pre-fg: #e2e8f0;
+        --diagram-top: #14181e;
+        --diagram-bot: #161a2e;
+        --green: #4ade80;
+        --red: #f87171;
+        --amber: #fbbf24;
+        --cyan: #22d3ee;
+        --svg-dim: #77808c;
+        --svg-sep: #333a44;
+        --ring-line: #333a44;
+        --chunk-stroke: #3b4453;
+        --tree-edge: #4338ca;
+        --diagram-ink: #818cf8;
+        --node-fill: #4338ca;
+        --node-stroke: #312e81;
+        --node-fg: #ffffff;
+        --leaf-stroke: #818cf8;
+      }
     }
 
     body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 0; line-height: 1.75; font-size: 16px; }
 
-    nav { position: sticky; top: 0; z-index: 100; background: rgba(255,255,255,0.92); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 52px; }
+    nav { position: sticky; top: 0; z-index: 100; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 52px; }
     .nav-brand {
       display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 0.9rem; color: var(--accent); text-decoration: none; white-space: nowrap; }
     .nav-links { display: flex; gap: 4px; overflow-x: auto; flex: 1; }
@@ -52,59 +133,59 @@
     .page-wrap { max-width: 820px; margin: 0 auto; padding: 48px 24px 80px; }
 
     h2 { font-size: 1.15rem; font-weight: 600; margin: 2.8em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); color: var(--text); }
-    h3 { font-size: 0.97rem; font-weight: 600; margin: 1.6em 0 0.4em; color: #374151; }
+    h3 { font-size: 0.97rem; font-weight: 600; margin: 1.6em 0 0.4em; color: var(--ink); }
     p { margin: 0.6em 0; }
     ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
     li { margin-bottom: 0.4em; }
-    em { color: #374151; }
+    em { color: var(--ink); }
 
     code { font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace; }
-    p code, li code, td code { background: #f1f5f9; padding: 1px 6px; border-radius: 4px; font-size: 0.88em; color: #4338ca; }
-    pre { background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: 14px 18px; overflow-x: auto; font-size: 0.82rem; line-height: 1.5; margin: 1.2em 0; }
+    p code, li code, td code { background: var(--code-bg); padding: 1px 6px; border-radius: 4px; font-size: 0.88em; color: var(--code-fg); }
+    pre { background: var(--pre-bg); color: var(--pre-fg); border-radius: 8px; padding: 14px 18px; overflow-x: auto; font-size: 0.82rem; line-height: 1.5; margin: 1.2em 0; }
     pre code { color: inherit; }
 
     .table-wrap { overflow-x: auto; margin: 1.2em 0; }
     table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
     th, td { border: 1px solid var(--border); padding: 9px 16px; text-align: left; vertical-align: top; }
     th { background: var(--surface); font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
-    tr:hover td { background: #fafafa; }
+    tr:hover td { background: var(--row-hover); }
     td.ctr, th.ctr { text-align: center; }
 
     .step { background: var(--step-bg); border: 1px solid var(--step-border); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 1.2em 0; }
     .step-label { font-weight: 600; font-size: 0.88rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
     .step-label::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
 
-    .note { background: var(--warning-bg); border-left: 3px solid var(--warning-border); border-radius: 0 8px 8px 0; padding: 10px 16px; margin: 1em 0; font-size: 0.92em; color: #78350f; }
+    .note { background: var(--warning-bg); border-left: 3px solid var(--warning-border); border-radius: 0 8px 8px 0; padding: 10px 16px; margin: 1em 0; font-size: 0.92em; color: var(--note-fg); }
     .note::before { content: '⚠ '; }
 
     .result { background: var(--boxed-bg); border: 1.5px solid var(--boxed-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; text-align: center; }
-    .result-label { font-size: 0.8rem; font-weight: 600; color: #4338ca; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+    .result-label { font-size: 0.8rem; font-weight: 600; color: var(--result-fg); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
 
     .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 1.2em 0; }
-    .summary-card { background: var(--accent-light); border: 1px solid #c7d2fe; border-radius: 8px; padding: 14px 16px; }
+    .summary-card { background: var(--accent-light); border: 1px solid var(--indigo-border); border-radius: 8px; padding: 14px 16px; }
     .summary-card-label { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
     .summary-card p { margin: 0; font-size: 0.9rem; }
 
-    .xref { background: var(--accent-light); border: 1px solid #c7d2fe; border-radius: 8px; padding: 12px 18px; margin: 1.4em 0; font-size: 0.92rem; }
+    .xref { background: var(--accent-light); border: 1px solid var(--indigo-border); border-radius: 8px; padding: 12px 18px; margin: 1.4em 0; font-size: 0.92rem; }
     .xref a { color: var(--accent); font-weight: 600; text-decoration: none; }
     .xref a:hover { text-decoration: underline; }
 
     /* layer stack */
     .stack { display: flex; flex-direction: column; gap: 6px; margin: 1.4em 0; }
-    .layer { display: flex; align-items: center; gap: 14px; background: var(--accent-light); border: 1px solid #c7d2fe; border-radius: 8px; padding: 10px 16px; }
-    .layer-n { flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 600; font-size: 0.82rem; display: flex; align-items: center; justify-content: center; }
+    .layer { display: flex; align-items: center; gap: 14px; background: var(--accent-light); border: 1px solid var(--indigo-border); border-radius: 8px; padding: 10px 16px; }
+    .layer-n { flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--on-accent); font-weight: 600; font-size: 0.82rem; display: flex; align-items: center; justify-content: center; }
     .layer-t { font-weight: 600; font-size: 0.92rem; }
     .layer-d { color: var(--muted); font-size: 0.86rem; }
 
-    .diagram { background: linear-gradient(180deg, #f9fafb 0%, #eef2ff 100%); border: 1px solid #c7d2fe; border-radius: 12px; padding: 18px 20px; margin: 1.6em 0; }
+    .diagram { background: linear-gradient(180deg, var(--diagram-top) 0%, var(--diagram-bot) 100%); border: 1px solid var(--indigo-border); border-radius: 12px; padding: 18px 20px; margin: 1.6em 0; }
     .diagram-title { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
     .diagram-hint { font-size: 0.8rem; color: var(--muted); margin-bottom: 14px; }
-    .diagram-stage { background: white; border-radius: 8px; padding: 16px; overflow-x: auto; display: flex; justify-content: center; }
+    .diagram-stage { background: var(--fig-bg); border-radius: 8px; padding: 16px; overflow-x: auto; display: flex; justify-content: center; }
     .anim-controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
-    .anim-btn { background: var(--accent); color: white; border: none; border-radius: 6px; padding: 7px 16px; font-family: inherit; font-size: 0.85rem; font-weight: 500; cursor: pointer; transition: background 0.15s, transform 0.1s; }
-    .anim-btn:hover:not(:disabled) { background: #4338ca; }
+    .anim-btn { background: var(--accent); color: var(--on-accent); border: none; border-radius: 6px; padding: 7px 16px; font-family: inherit; font-size: 0.85rem; font-weight: 500; cursor: pointer; transition: background 0.15s, transform 0.1s; }
+    .anim-btn:hover:not(:disabled) { background: var(--accent-hover); }
     .anim-btn:active:not(:disabled) { transform: scale(0.97); }
-    .anim-btn:disabled { background: #d1d5db; cursor: not-allowed; opacity: 0.7; }
+    .anim-btn:disabled { background: var(--btn-disabled); cursor: not-allowed; opacity: 0.7; }
     .anim-btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
     .anim-step-label { font-size: 0.83rem; color: var(--muted); font-style: italic; margin-left: auto; text-align: right; flex: 1; min-width: 0; }
     input[type=range] { accent-color: var(--accent); width: 240px; max-width: 60vw; }
@@ -250,7 +331,7 @@
 
   <div class="diagram">
     <div class="diagram-title">▸ Double binary tree — two complementary trees over 7 nodes (each node a chain of GPUs)</div>
-    <div class="diagram-hint">Each circle is a <em>node</em>. Solid = interior (relays two children, heavy traffic); outline = leaf (one link). A node that's interior in one tree is a leaf in the other, so its links stay busy in <em>both</em> — full bandwidth at ~2·log₂N latency. The loop runs both phases: <span style="color:#16a34a;font-weight:600">reduce ↑</span> to the roots, then <span style="color:#dc2626;font-weight:600">broadcast ↓</span> to every leaf — both trees at once. Inside one node, the GPU chain is expanded below.</div>
+    <div class="diagram-hint">Each circle is a <em>node</em>. Solid = interior (relays two children, heavy traffic); outline = leaf (one link). A node that's interior in one tree is a leaf in the other, so its links stay busy in <em>both</em> — full bandwidth at ~2·log₂N latency. The loop runs both phases: <span style="color:var(--green);font-weight:600">reduce ↑</span> to the roots, then <span style="color:var(--red);font-weight:600">broadcast ↓</span> to every leaf — both trees at once. Inside one node, the GPU chain is expanded below.</div>
     <div class="diagram-stage">
       <svg id="tree-svg" viewBox="0 0 720 384" width="720" height="384" role="img" aria-label="Two complementary binary trees over 7 nodes, with one node's 8-GPU NVLink chain expanded below"></svg>
     </div>
@@ -324,32 +405,32 @@
 
   <div class="diagram">
     <div class="diagram-title">▸ Line layout — where the bandwidth goes</div>
-    <div class="diagram-hint">Each bar is one transfer window. <span style="color:#4f46e5;font-weight:600">Indigo</span> = payload, <span style="color:#f59e0b;font-weight:600">amber</span> = flag/sync overhead. The amber fraction is the bandwidth tax — Simple pays in latency instead, not bytes.</div>
+    <div class="diagram-hint">Each bar is one transfer window. <span style="color:var(--accent);font-weight:600">Indigo</span> = payload, <span style="color:var(--amber);font-weight:600">amber</span> = flag/sync overhead. The amber fraction is the bandwidth tax — Simple pays in latency instead, not bytes.</div>
     <div class="diagram-stage">
       <svg viewBox="0 0 560 222" width="560" height="222" role="img" aria-label="Byte layout of the Simple, LL128 and LL protocols">
         <!-- Simple -->
-        <text x="128" y="57" text-anchor="end" font-family="Inter" font-size="12" font-weight="600" fill="#4338ca">Simple</text>
-        <rect x="140" y="40" width="330" height="24" rx="3" fill="#4f46e5"/>
-        <text x="478" y="57" font-family="ui-monospace" font-size="11" fill="#16a34a" font-weight="600">~100%</text>
-        <text x="140" y="80" font-family="Inter" font-size="9.5" fill="#9ca3af">full payload — sync is a separate memory fence (costs latency, not bytes)</text>
+        <text x="128" y="57" text-anchor="end" font-family="Inter" font-size="12" font-weight="600" style="fill:var(--diagram-ink)">Simple</text>
+        <rect x="140" y="40" width="330" height="24" rx="3" style="fill:var(--accent)"/>
+        <text x="478" y="57" font-family="ui-monospace" font-size="11" style="fill:var(--green)" font-weight="600">~100%</text>
+        <text x="140" y="80" font-family="Inter" font-size="9.5" style="fill:var(--svg-dim)">full payload — sync is a separate memory fence (costs latency, not bytes)</text>
         <!-- LL128 -->
-        <text x="128" y="121" text-anchor="end" font-family="Inter" font-size="12" font-weight="600" fill="#4338ca">LL128</text>
-        <rect x="140" y="104" width="310" height="24" rx="3" fill="#4f46e5"/>
-        <rect x="450" y="104" width="20" height="24" rx="3" fill="#f59e0b"/>
-        <text x="478" y="121" font-family="ui-monospace" font-size="11" fill="#0891b2" font-weight="600">~95%</text>
-        <text x="140" y="144" font-family="Inter" font-size="9.5" fill="#9ca3af">120 B data + 8 B flag per 128-byte line — fence-free, but NVLink only</text>
+        <text x="128" y="121" text-anchor="end" font-family="Inter" font-size="12" font-weight="600" style="fill:var(--diagram-ink)">LL128</text>
+        <rect x="140" y="104" width="310" height="24" rx="3" style="fill:var(--accent)"/>
+        <rect x="450" y="104" width="20" height="24" rx="3" style="fill:var(--amber)"/>
+        <text x="478" y="121" font-family="ui-monospace" font-size="11" style="fill:var(--cyan)" font-weight="600">~95%</text>
+        <text x="140" y="144" font-family="Inter" font-size="9.5" style="fill:var(--svg-dim)">120 B data + 8 B flag per 128-byte line — fence-free, but NVLink only</text>
         <!-- LL -->
-        <text x="128" y="185" text-anchor="end" font-family="Inter" font-size="12" font-weight="600" fill="#4338ca">LL</text>
-        <rect x="140"    y="168" width="41.25" height="24" rx="3" fill="#4f46e5"/>
-        <rect x="181.25" y="168" width="41.25" height="24" rx="3" fill="#f59e0b"/>
-        <rect x="222.5"  y="168" width="41.25" height="24" rx="3" fill="#4f46e5"/>
-        <rect x="263.75" y="168" width="41.25" height="24" rx="3" fill="#f59e0b"/>
-        <rect x="305"    y="168" width="41.25" height="24" rx="3" fill="#4f46e5"/>
-        <rect x="346.25" y="168" width="41.25" height="24" rx="3" fill="#f59e0b"/>
-        <rect x="387.5"  y="168" width="41.25" height="24" rx="3" fill="#4f46e5"/>
-        <rect x="428.75" y="168" width="41.25" height="24" rx="3" fill="#f59e0b"/>
-        <text x="478" y="185" font-family="ui-monospace" font-size="11" fill="#dc2626" font-weight="600">~50%</text>
-        <text x="140" y="208" font-family="Inter" font-size="9.5" fill="#9ca3af">4 B data + 4 B flag per 8-byte word — fence-free, but half the bytes are flag</text>
+        <text x="128" y="185" text-anchor="end" font-family="Inter" font-size="12" font-weight="600" style="fill:var(--diagram-ink)">LL</text>
+        <rect x="140"    y="168" width="41.25" height="24" rx="3" style="fill:var(--accent)"/>
+        <rect x="181.25" y="168" width="41.25" height="24" rx="3" style="fill:var(--amber)"/>
+        <rect x="222.5"  y="168" width="41.25" height="24" rx="3" style="fill:var(--accent)"/>
+        <rect x="263.75" y="168" width="41.25" height="24" rx="3" style="fill:var(--amber)"/>
+        <rect x="305"    y="168" width="41.25" height="24" rx="3" style="fill:var(--accent)"/>
+        <rect x="346.25" y="168" width="41.25" height="24" rx="3" style="fill:var(--amber)"/>
+        <rect x="387.5"  y="168" width="41.25" height="24" rx="3" style="fill:var(--accent)"/>
+        <rect x="428.75" y="168" width="41.25" height="24" rx="3" style="fill:var(--amber)"/>
+        <text x="478" y="185" font-family="ui-monospace" font-size="11" style="fill:var(--red)" font-weight="600">~50%</text>
+        <text x="140" y="208" font-family="Inter" font-size="9.5" style="fill:var(--svg-dim)">4 B data + 4 B flag per 8-byte word — fence-free, but half the bytes are flag</text>
       </svg>
     </div>
   </div>
@@ -537,28 +618,28 @@
       // ring arrows
       for (let g = 0; g < N; g++) {
         const a = pos[g], b = pos[(g + 1) % N];
-        mk('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, stroke: '#e2e8f0', 'stroke-width': 2, 'stroke-dasharray': '5 4' });
+        mk('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, style: 'stroke: var(--ring-line)', 'stroke-width': 2, 'stroke-dasharray': '5 4' });
       }
       const slot = 20;
       for (let g = 0; g < N; g++) {
         const p = pos[g];
-        mk('text', { x: p.x, y: p.y - 30, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 12, 'font-weight': 600, fill: '#374151' }, 'GPU ' + g);
+        mk('text', { x: p.x, y: p.y - 30, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 12, 'font-weight': 600, style: 'fill: var(--ink)' }, 'GPU ' + g);
         const x0 = p.x - 2 * slot;
         for (let c = 0; c < N; c++) {
           const cnt = C[g][c].size, full = cnt === N;
           const x = x0 + c * slot;
           mk('rect', { x: x, y: p.y - 12, width: slot - 3, height: 24, rx: 3,
-            fill: full ? '#16a34a' : '#4f46e5', opacity: full ? 1 : 0.18 + 0.24 * (cnt - 1),
-            stroke: (activeStep != null && sendIndex(g, activeStep) === c) ? '#dc2626' : '#cbd5e1',
+            style: 'fill: ' + (full ? 'var(--green)' : 'var(--accent)') + '; stroke: ' + ((activeStep != null && sendIndex(g, activeStep) === c) ? 'var(--red)' : 'var(--chunk-stroke)'),
+            opacity: full ? 1 : 0.18 + 0.24 * (cnt - 1),
             'stroke-width': (activeStep != null && sendIndex(g, activeStep) === c) ? 2.5 : 1 });
         }
         // chunk-complete tally
         const done = C[g].filter(s => s.size === N).length;
-        mk('text', { x: p.x, y: p.y + 30, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 10.5, fill: '#6b7280' }, done + '/' + N + ' chunks summed');
+        mk('text', { x: p.x, y: p.y + 30, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 10.5, style: 'fill: var(--muted)' }, done + '/' + N + ' chunks summed');
       }
       // center phase label
       const phase = activeStep == null ? '' : (activeStep < N - 1 ? 'ReduceScatter' : 'AllGather');
-      mk('text', { x: 240, y: 150, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 12.5, 'font-weight': 600, fill: '#4f46e5' }, phase);
+      mk('text', { x: 240, y: 150, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 12.5, 'font-weight': 600, style: 'fill: var(--accent)' }, phase);
     }
 
     function step() {
@@ -586,23 +667,24 @@
     const SVGNS = 'http://www.w3.org/2000/svg';
     function mk(tag, a, txt) { const e = document.createElementNS(SVGNS, tag); for (const k in a) e.setAttribute(k, a[k]); if (txt != null) e.textContent = txt; svg.appendChild(e); return e; }
 
-    const GREEN = '#16a34a', RED = '#dc2626', BASE = '#a5b4fc';
+    const GREEN = 'var(--green)', RED = 'var(--red)', BASE = 'var(--tree-edge)';
 
     function drawTree(nodes, edges, interior, title, tx) {
-      mk('text', { x: tx, y: 20, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 12, 'font-weight': 600, fill: '#4338ca' }, title);
+      mk('text', { x: tx, y: 20, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 12, 'font-weight': 600, style: 'fill: var(--diagram-ink)' }, title);
       const lines = {};
       edges.forEach(([a, b]) => {
-        const ln = mk('line', { x1: nodes[a].x, y1: nodes[a].y, x2: nodes[b].x, y2: nodes[b].y, stroke: BASE, 'stroke-width': 2 });
+        const ln = mk('line', { x1: nodes[a].x, y1: nodes[a].y, x2: nodes[b].x, y2: nodes[b].y, style: 'stroke:' + BASE, 'stroke-width': 2 });
         lines[a + '-' + b] = ln; lines[b + '-' + a] = ln;
       });
       const ns = {};
       Object.keys(nodes).forEach(k => {
         const n = nodes[k], isInt = interior.has(+k);
         mk('circle', { cx: n.x, cy: n.y, r: 15,
-          fill: isInt ? '#4338ca' : '#eef2ff',
-          stroke: isInt ? '#312e81' : '#818cf8', 'stroke-width': isInt ? 0 : 1.5 });
+          style: 'fill:' + (isInt ? 'var(--node-fill)' : 'var(--accent-light)') +
+            ';stroke:' + (isInt ? 'var(--node-stroke)' : 'var(--leaf-stroke)'),
+          'stroke-width': isInt ? 0 : 1.5 });
         mk('text', { x: n.x, y: n.y + 4, 'text-anchor': 'middle', 'font-family': 'ui-monospace', 'font-size': 12,
-          'font-weight': 600, fill: isInt ? '#fff' : '#4338ca' }, k);
+          'font-weight': 600, style: 'fill:' + (isInt ? 'var(--node-fg)' : 'var(--diagram-ink)') }, k);
         ns[k] = { x: n.x, y: n.y };
       });
       return { nodes: ns, lines };
@@ -625,22 +707,22 @@
     const TB = drawTree(B, [[4,2],[4,6],[2,1],[2,3],[6,5],[6,0]], new Set([4,2,6]), 'Tree B · the other half', 540);
 
     // the key insight (about nodes — the tree is built over nodes)
-    mk('text', { x: 360, y: 232, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11.5, 'font-weight': 600, fill: '#374151' }, 'Nodes 1·3·5 are interior in A but leaves in B — and 2·4·6 the reverse.');
-    mk('text', { x: 360, y: 250, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11, fill: '#6b7280' }, 'Each node does heavy interior relaying in exactly one tree → every link stays busy.');
+    mk('text', { x: 360, y: 232, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11.5, 'font-weight': 600, style: 'fill: var(--ink)' }, 'Nodes 1·3·5 are interior in A but leaves in B — and 2·4·6 the reverse.');
+    mk('text', { x: 360, y: 250, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11, style: 'fill: var(--muted)' }, 'Each node does heavy interior relaying in exactly one tree → every link stays busy.');
 
     // ── Inset: one node = a chain of 8 GPUs over NVLink (intra-node) ──
-    mk('line', { x1: 40, y1: 272, x2: 680, y2: 272, stroke: '#e5e7eb', 'stroke-width': 1 });
-    mk('text', { x: 360, y: 290, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11.5, 'font-weight': 600, fill: '#4338ca' }, 'Zoom into one node — the tree is over nodes; inside a node, GPUs form an NVLink chain');
-    mk('text', { x: 360, y: 306, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 10.5, fill: '#6b7280' }, 'the head GPU (0) also carries this node’s link in the inter-node tree');
+    mk('line', { x1: 40, y1: 272, x2: 680, y2: 272, style: 'stroke: var(--svg-sep)', 'stroke-width': 1 });
+    mk('text', { x: 360, y: 290, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11.5, 'font-weight': 600, style: 'fill: var(--diagram-ink)' }, 'Zoom into one node — the tree is over nodes; inside a node, GPUs form an NVLink chain');
+    mk('text', { x: 360, y: 306, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 10.5, style: 'fill: var(--muted)' }, 'the head GPU (0) also carries this node’s link in the inter-node tree');
     const gx = [220, 260, 300, 340, 380, 420, 460, 500], gy = 340;
-    mk('text', { x: 220, y: 324, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 13, 'font-weight': 700, fill: '#4338ca' }, '↑');
-    for (let i = 0; i < gx.length - 1; i++) mk('line', { x1: gx[i], y1: gy, x2: gx[i + 1], y2: gy, stroke: '#a5b4fc', 'stroke-width': 2 });
+    mk('text', { x: 220, y: 324, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 13, 'font-weight': 700, style: 'fill: var(--diagram-ink)' }, '↑');
+    for (let i = 0; i < gx.length - 1; i++) mk('line', { x1: gx[i], y1: gy, x2: gx[i + 1], y2: gy, style: 'stroke: var(--tree-edge)', 'stroke-width': 2 });
     gx.forEach((x, i) => {
       const head = i === 0;
-      mk('circle', { cx: x, cy: gy, r: 12, fill: head ? '#4338ca' : '#eef2ff', stroke: head ? '#312e81' : '#818cf8', 'stroke-width': head ? 0 : 1.5 });
-      mk('text', { x: x, y: gy + 4, 'text-anchor': 'middle', 'font-family': 'ui-monospace', 'font-size': 11, 'font-weight': 600, fill: head ? '#fff' : '#4338ca' }, i);
+      mk('circle', { cx: x, cy: gy, r: 12, style: 'fill:' + (head ? 'var(--node-fill)' : 'var(--accent-light)') + ';stroke:' + (head ? 'var(--node-stroke)' : 'var(--leaf-stroke)'), 'stroke-width': head ? 0 : 1.5 });
+      mk('text', { x: x, y: gy + 4, 'text-anchor': 'middle', 'font-family': 'ui-monospace', 'font-size': 11, 'font-weight': 600, style: 'fill:' + (head ? 'var(--node-fg)' : 'var(--diagram-ink)') }, i);
     });
-    mk('text', { x: 360, y: 372, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 10.5, fill: '#9ca3af' }, 'GPUs 0–7 · intra-node chain (cost 2(G−1)·α)   —   between nodes: binary tree (cost 2·log₂N·α)');
+    mk('text', { x: 360, y: 372, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 10.5, style: 'fill: var(--svg-dim)' }, 'GPUs 0–7 · intra-node chain (cost 2(G−1)·α)   —   between nodes: binary tree (cost 2·log₂N·α)');
 
     // ── Animate the two phases: reduce up to roots, broadcast back down ──
     // Each entry is [tree, from, to]; a hop moves a packet from→to and lights that link.
@@ -668,13 +750,13 @@
     function resetLines() {
       [TA, TB].forEach(T => { const seen = new Set();
         Object.values(T.lines).forEach(ln => { if (seen.has(ln)) return; seen.add(ln);
-          ln.setAttribute('stroke', BASE); ln.setAttribute('stroke-width', 2); }); });
+          ln.setAttribute('style', 'stroke:' + BASE); ln.setAttribute('stroke-width', 2); }); });
     }
     const ease = t => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
 
     const prefersReduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (prefersReduced) {
-      phaseEl.setAttribute('fill', '#6b7280');
+      phaseEl.setAttribute('style', 'fill: var(--muted)');
       phaseEl.textContent = 'reduce ↑ to roots, then broadcast ↓ to leaves';
     } else {
       let t0 = null;
@@ -682,19 +764,19 @@
         if (t0 == null) t0 = ts;
         let e = (ts - t0) % total, mv, local = 0;
         for (const m of moves) { if (e < m.dur) { mv = m; local = e / m.dur; break; } e -= m.dur; }
-        phaseEl.setAttribute('fill', mv.color); phaseEl.textContent = mv.label;
-        arrowEl.setAttribute('fill', mv.color); arrowEl.textContent = mv.arrow;
+        phaseEl.setAttribute('style', 'fill:' + mv.color); phaseEl.textContent = mv.label;
+        arrowEl.setAttribute('style', 'fill:' + mv.color); arrowEl.textContent = mv.arrow;
         while (gAnim.firstChild) gAnim.removeChild(gAnim.firstChild);
         resetLines();
         const p = ease(local);
         mv.edges.forEach(([tree, a, b]) => {
           const from = pt(tree, a), to = pt(tree, b);
           const ln = lineOf(tree, a, b);
-          if (ln) { ln.setAttribute('stroke', mv.color); ln.setAttribute('stroke-width', 4); }
+          if (ln) { ln.setAttribute('style', 'stroke:' + mv.color); ln.setAttribute('stroke-width', 4); }
           const c = document.createElementNS(SVGNS, 'circle');
           c.setAttribute('cx', from.x + (to.x - from.x) * p);
           c.setAttribute('cy', from.y + (to.y - from.y) * p);
-          c.setAttribute('r', 5.5); c.setAttribute('fill', mv.color);
+          c.setAttribute('r', 5.5); c.setAttribute('style', 'fill:' + mv.color);
           gAnim.appendChild(c);
         });
         requestAnimationFrame(frame);
@@ -719,14 +801,14 @@
       const maxV = 2 * (256 - 1);
       const X0 = 150, W = 300, scale = v => W * Math.log10(1 + v) / Math.log10(1 + maxV);
       while (svg.firstChild) svg.removeChild(svg.firstChild);
-      const bars = [['Ring  2(N−1)', ring, '#4f46e5', 50], ['Tree  2·⌈log₂N⌉', tree, '#16a34a', 120]];
+      const bars = [['Ring  2(N−1)', ring, 'var(--accent)', 50], ['Tree  2·⌈log₂N⌉', tree, 'var(--green)', 120]];
       bars.forEach(([label, v, col, y]) => {
-        mk('text', { x: X0 - 12, y: y + 22, 'text-anchor': 'end', 'font-family': 'Inter', 'font-size': 12, fill: '#374151', 'font-weight': 600 }, label);
-        mk('rect', { x: X0, y: y, width: Math.max(2, scale(v)), height: 34, rx: 5, fill: col });
-        mk('text', { x: X0 + Math.max(2, scale(v)) + 8, y: y + 23, 'font-family': 'ui-monospace', 'font-size': 13, fill: col, 'font-weight': 600 }, v + ' steps');
+        mk('text', { x: X0 - 12, y: y + 22, 'text-anchor': 'end', 'font-family': 'Inter', 'font-size': 12, style: 'fill: var(--ink)', 'font-weight': 600 }, label);
+        mk('rect', { x: X0, y: y, width: Math.max(2, scale(v)), height: 34, rx: 5, style: 'fill:' + col });
+        mk('text', { x: X0 + Math.max(2, scale(v)) + 8, y: y + 23, 'font-family': 'ui-monospace', 'font-size': 13, style: 'fill:' + col, 'font-weight': 600 }, v + ' steps');
       });
       const factor = (ring / tree).toFixed(1);
-      mk('text', { x: X0, y: 195, 'font-family': 'Inter', 'font-size': 12, fill: '#6b7280' }, `At N=${N}, the ring takes ${factor}× as many serial steps — each step's latency is why small messages pick the tree.`);
+      mk('text', { x: X0, y: 195, 'font-family': 'Inter', 'font-size': 12, style: 'fill: var(--muted)' }, `At N=${N}, the ring takes ${factor}× as many serial steps — each step's latency is why small messages pick the tree.`);
     }
     slider.addEventListener('input', draw);
     draw();

@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
   <title>Pretraining — The Next-Token Objective and the Training Loop</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -18,6 +19,7 @@
     *, *::before, *::after { box-sizing: border-box; }
 
     :root {
+      color-scheme: light;
       --bg: #ffffff;
       --surface: #f8f9fa;
       --border: #e8eaed;
@@ -31,6 +33,73 @@
       --step-border: #d1d5db;
       --boxed-bg: #f0fdf4;
       --boxed-border: #16a34a;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --note-fg: #1e40af;
+      --result-fg: #16a34a;
+      --violet-border: #ddd6fe;
+      --nav-bg: rgba(255,255,255,0.92);
+      --pre-bg: #1e1b2e;
+      --pre-fg: #e9e6f5;
+      --code-cm: #9b8fb8;
+      --code-kw: #c4b5fd;
+      --code-fn: #93c5fd;
+      --tok-in-bg: #eef2ff;
+      --tok-in-border: #c7d2fe;
+      --tok-in-fg: #4338ca;
+      --tok-out-bg: #f0fdf4;
+      --tok-out-border: #bbf7d0;
+      --tok-out-fg: #15803d;
+      --tok-x-bg: #fef2f2;
+      --tok-x-border: #fecaca;
+      --tok-x-fg: #b91c1c;
+      --seg-p: #6366f1;
+      --seg-g: #0d9488;
+      --seg-o: #c2410c;
+      --seg-a: #db2777;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #a78bfa;
+        --accent-light: #1a1626;
+        --warning-bg: #101a2b;
+        --warning-border: #1e40af;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --note-fg: #93c5fd;
+        --result-fg: #4ade80;
+        --violet-border: #4c1d95;
+        --nav-bg: rgba(15,17,21,0.9);
+        --pre-bg: #1e1b2e;
+        --pre-fg: #e9e6f5;
+        --code-cm: #9b8fb8;
+        --code-kw: #c4b5fd;
+        --code-fn: #93c5fd;
+        --tok-in-bg: #141a33;
+        --tok-in-border: #3730a3;
+        --tok-in-fg: #818cf8;
+        --tok-out-bg: #0e2016;
+        --tok-out-border: #166534;
+        --tok-out-fg: #4ade80;
+        --tok-x-bg: #2a1214;
+        --tok-x-border: #7f1d1d;
+        --tok-x-fg: #f87171;
+        --seg-p: #6366f1;
+        --seg-g: #0d9488;
+        --seg-o: #c2410c;
+        --seg-a: #db2777;
+      }
     }
 
     body {
@@ -48,7 +117,7 @@
       position: sticky;
       top: 0;
       z-index: 100;
-      background: rgba(255,255,255,0.92);
+      background: var(--nav-bg);
       backdrop-filter: blur(8px);
       border-bottom: 1px solid var(--border);
       padding: 0 24px;
@@ -133,12 +202,12 @@
       font-size: 0.97rem;
       font-weight: 600;
       margin: 1.6em 0 0.4em;
-      color: #374151;
+      color: var(--ink);
     }
     p { margin: 0.6em 0; }
     ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
     li { margin-bottom: 0.4em; }
-    em { color: #374151; }
+    em { color: var(--ink); }
     code {
       font-family: ui-monospace, 'SF Mono', Menlo, monospace;
       font-size: 0.88em;
@@ -148,8 +217,8 @@
       border: 1px solid var(--border);
     }
     pre {
-      background: #1e1b2e;
-      color: #e9e6f5;
+      background: var(--pre-bg);
+      color: var(--pre-fg);
       border-radius: 8px;
       padding: 16px 18px;
       overflow-x: auto;
@@ -158,9 +227,9 @@
       margin: 1.2em 0;
     }
     pre code { background: none; border: none; padding: 0; color: inherit; font-size: inherit; }
-    .cm { color: #9b8fb8; }
-    .kw { color: #c4b5fd; }
-    .fn { color: #93c5fd; }
+    .cm { color: var(--code-cm); }
+    .kw { color: var(--code-kw); }
+    .fn { color: var(--code-fn); }
 
     /* ── Table ───────────────────────────────── */
     .table-wrap { overflow-x: auto; margin: 1.2em 0; }
@@ -182,7 +251,7 @@
       letter-spacing: 0.04em;
       color: var(--muted);
     }
-    tr:hover td { background: #fafafa; }
+    tr:hover td { background: var(--row-hover); }
 
     /* ── Step boxes ──────────────────────────── */
     .step {
@@ -222,7 +291,7 @@
       padding: 10px 16px;
       margin: 1em 0;
       font-size: 0.92em;
-      color: #1e40af;
+      color: var(--note-fg);
     }
     .note::before { content: '💡 '; }
 
@@ -238,7 +307,7 @@
     .result-label {
       font-size: 0.8rem;
       font-weight: 600;
-      color: #16a34a;
+      color: var(--result-fg);
       text-transform: uppercase;
       letter-spacing: 0.05em;
       margin-bottom: 6px;
@@ -258,9 +327,9 @@
       font-size: 0.82rem;
       border: 1px solid;
     }
-    .tok-in  { background: #eef2ff; border-color: #c7d2fe; color: #4338ca; }
-    .tok-out { background: #f0fdf4; border-color: #bbf7d0; color: #15803d; }
-    .tok-x   { background: #fef2f2; border-color: #fecaca; color: #b91c1c; }
+    .tok-in  { background: var(--tok-in-bg); border-color: var(--tok-in-border); color: var(--tok-in-fg); }
+    .tok-out { background: var(--tok-out-bg); border-color: var(--tok-out-border); color: var(--tok-out-fg); }
+    .tok-x   { background: var(--tok-x-bg); border-color: var(--tok-x-border); color: var(--tok-x-fg); }
 
     /* ── Summary card ────────────────────────── */
     .summary-grid {
@@ -271,7 +340,7 @@
     }
     .summary-card {
       background: var(--accent-light);
-      border: 1px solid #ddd6fe;
+      border: 1px solid var(--violet-border);
       border-radius: 8px;
       padding: 14px 16px;
     }
@@ -303,10 +372,10 @@
     .viz-toggle input { accent-color: var(--accent); width: 16px; height: 16px; }
     .membar { display: flex; height: 46px; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); margin-bottom: 10px; }
     .membar div { display: flex; align-items: center; justify-content: center; color: white; font-size: 0.72rem; font-weight: 600; min-width: 0; transition: width 0.2s; white-space: nowrap; overflow: hidden; }
-    .seg-p { background: #6366f1; }
-    .seg-g { background: #0d9488; }
-    .seg-o { background: #c2410c; }
-    .seg-a { background: #db2777; }
+    .seg-p { background: var(--seg-p); }
+    .seg-g { background: var(--seg-g); }
+    .seg-o { background: var(--seg-o); }
+    .seg-a { background: var(--seg-a); }
     .memleg { display: flex; gap: 16px; flex-wrap: wrap; font-size: 0.82rem; }
     .memleg span { display: inline-flex; align-items: center; gap: 6px; }
     .memleg i { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
@@ -395,7 +464,7 @@ logits  = model(inputs)     <span class="cm"># (B, T, V) — one distribution pe
 loss    = cross_entropy(logits.reshape(-<span class="kw">1</span>, V), targets.reshape(-<span class="kw">1</span>))</code></pre>
 
   <div class="note">
-    The <a href="attention.html" style="color:#1e40af;">causal mask</a> is what makes teacher forcing valid: even though the full sequence is fed in at once, position \(t\) physically cannot attend to positions \(>t\). Without the mask, predicting the next token would be trivial — the answer is right there in the input. The mask is what keeps each position honest.
+    The <a href="attention.html" style="color:var(--note-fg);">causal mask</a> is what makes teacher forcing valid: even though the full sequence is fed in at once, position \(t\) physically cannot attend to positions \(>t\). Without the mask, predicting the next token would be trivial — the answer is right there in the input. The mask is what keeps each position honest.
   </div>
 
   <h2 id="loss">3. The Loss in Practice</h2>
@@ -460,7 +529,7 @@ clip_grad_norm_(model.parameters(), <span class="kw">1.0</span>)
 optimizer.<span class="fn">step</span>()</code></pre>
 
   <div class="note">
-    Gradient accumulation is the single-device cousin of <a href="torch-distributed.html" style="color:#1e40af;">data parallelism</a>: accumulating \(M\) micro-batches in time is what DP does across \(M\) GPUs in space. Same effective batch, same math — one trades memory for time, the other for hardware.
+    Gradient accumulation is the single-device cousin of <a href="torch-distributed.html" style="color:var(--note-fg);">data parallelism</a>: accumulating \(M\) micro-batches in time is what DP does across \(M\) GPUs in space. Same effective batch, same math — one trades memory for time, the other for hardware.
   </div>
 
   <h2 id="amp">6. Mixed Precision &amp; Loss Scaling</h2>
@@ -483,7 +552,7 @@ optimizer.<span class="fn">step</span>()</code></pre>
   </div>
 
   <div class="note">
-    Rule of thumb: on modern hardware reach for <strong>BF16</strong> and skip loss scaling entirely. FP16 + dynamic loss scaling is the legacy path for hardware without BF16, or where the extra mantissa precision matters. The FP8/FP4 frontier is covered on the <a href="gpu-hardware.html" style="color:#1e40af;">hardware</a> page.
+    Rule of thumb: on modern hardware reach for <strong>BF16</strong> and skip loss scaling entirely. FP16 + dynamic loss scaling is the legacy path for hardware without BF16, or where the extra mantissa precision matters. The FP8/FP4 frontier is covered on the <a href="gpu-hardware.html" style="color:var(--note-fg);">hardware</a> page.
   </div>
 
   <h2 id="ckpt">7. Activation Checkpointing — Trading Compute for Memory</h2>

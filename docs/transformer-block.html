@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
   <title>The Transformer Block — Assembling a Decoder-Only Model</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -18,6 +19,7 @@
     *, *::before, *::after { box-sizing: border-box; }
 
     :root {
+      color-scheme: light;
       --bg: #ffffff;
       --surface: #f8f9fa;
       --border: #e8eaed;
@@ -31,6 +33,63 @@
       --step-border: #d1d5db;
       --boxed-bg: #f0fdf4;
       --boxed-border: #16a34a;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --note-fg: #1e40af;
+      --result-fg: #16a34a;
+      --violet-border: #ddd6fe;
+      --nav-bg: rgba(255,255,255,0.92);
+      --dgm-norm-bg: #f0fdfa;
+      --dgm-norm-border: #99f6e4;
+      --dgm-norm-fg: #0f766e;
+      --dgm-attn-bg: #f5f3ff;
+      --dgm-attn-border: #ddd6fe;
+      --dgm-attn-fg: #6d28d9;
+      --dgm-mlp-bg: #fff7ed;
+      --dgm-mlp-border: #fed7aa;
+      --dgm-mlp-fg: #c2410c;
+      --dgm-add-bg: #eef2ff;
+      --dgm-add-border: #c7d2fe;
+      --dgm-add-fg: #4338ca;
+      --dgm-arrow: #9ca3af;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #a78bfa;
+        --accent-light: #1a1626;
+        --warning-bg: #101a2b;
+        --warning-border: #1e40af;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --note-fg: #93c5fd;
+        --result-fg: #4ade80;
+        --violet-border: #4c1d95;
+        --nav-bg: rgba(15,17,21,0.9);
+        --dgm-norm-bg: #10201e;
+        --dgm-norm-border: #134e4a;
+        --dgm-norm-fg: #2dd4bf;
+        --dgm-attn-bg: #1a1626;
+        --dgm-attn-border: #4c1d95;
+        --dgm-attn-fg: #a78bfa;
+        --dgm-mlp-bg: #261607;
+        --dgm-mlp-border: #9a3412;
+        --dgm-mlp-fg: #fb923c;
+        --dgm-add-bg: #161533;
+        --dgm-add-border: #3730a3;
+        --dgm-add-fg: #818cf8;
+        --dgm-arrow: #6b7280;
+      }
     }
 
     body {
@@ -48,7 +107,7 @@
       position: sticky;
       top: 0;
       z-index: 100;
-      background: rgba(255,255,255,0.92);
+      background: var(--nav-bg);
       backdrop-filter: blur(8px);
       border-bottom: 1px solid var(--border);
       padding: 0 24px;
@@ -133,12 +192,12 @@
       font-size: 0.97rem;
       font-weight: 600;
       margin: 1.6em 0 0.4em;
-      color: #374151;
+      color: var(--ink);
     }
     p { margin: 0.6em 0; }
     ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
     li { margin-bottom: 0.4em; }
-    em { color: #374151; }
+    em { color: var(--ink); }
     code {
       font-family: ui-monospace, 'SF Mono', Menlo, monospace;
       font-size: 0.88em;
@@ -168,7 +227,7 @@
       letter-spacing: 0.04em;
       color: var(--muted);
     }
-    tr:hover td { background: #fafafa; }
+    tr:hover td { background: var(--row-hover); }
 
     /* ── Step boxes ──────────────────────────── */
     .step {
@@ -208,7 +267,7 @@
       padding: 10px 16px;
       margin: 1em 0;
       font-size: 0.92em;
-      color: #1e40af;
+      color: var(--note-fg);
     }
     .note::before { content: '💡 '; }
 
@@ -224,7 +283,7 @@
     .result-label {
       font-size: 0.8rem;
       font-weight: 600;
-      color: #16a34a;
+      color: var(--result-fg);
       text-transform: uppercase;
       letter-spacing: 0.05em;
       margin-bottom: 6px;
@@ -239,7 +298,7 @@
     }
     .summary-card {
       background: var(--accent-light);
-      border: 1px solid #ddd6fe;
+      border: 1px solid var(--violet-border);
       border-radius: 8px;
       padding: 14px 16px;
     }
@@ -282,11 +341,11 @@
       flex: 1;
       border: 1px solid;
     }
-    .dgm-norm { background: #f0fdfa; border-color: #99f6e4; color: #0f766e; }
-    .dgm-attn { background: #f5f3ff; border-color: #ddd6fe; color: #6d28d9; }
-    .dgm-mlp  { background: #fff7ed; border-color: #fed7aa; color: #c2410c; }
-    .dgm-add  { background: #eef2ff; border-color: #c7d2fe; color: #4338ca; font-weight: 600; }
-    .dgm-arrow { color: #9ca3af; font-size: 1.1rem; line-height: 1; }
+    .dgm-norm { background: var(--dgm-norm-bg); border-color: var(--dgm-norm-border); color: var(--dgm-norm-fg); }
+    .dgm-attn { background: var(--dgm-attn-bg); border-color: var(--dgm-attn-border); color: var(--dgm-attn-fg); }
+    .dgm-mlp  { background: var(--dgm-mlp-bg); border-color: var(--dgm-mlp-border); color: var(--dgm-mlp-fg); }
+    .dgm-add  { background: var(--dgm-add-bg); border-color: var(--dgm-add-border); color: var(--dgm-add-fg); font-weight: 600; }
+    .dgm-arrow { color: var(--dgm-arrow); font-size: 1.1rem; line-height: 1; }
     .dgm-resid {
       font-size: 0.74rem;
       color: var(--muted);
@@ -495,7 +554,7 @@
   <p>So total non-embedding parameters \(N \approx 12 L d^2\). This is exactly the \(N\) that the <a href="mfu.html" style="color:var(--accent);">\(6N\) FLOPs-per-token rule</a> and the <a href="scaling-laws.html" style="color:var(--accent);">scaling laws</a> are written in terms of — the transformer block is where that \(N\) physically comes from.</p>
 
   <div class="note">
-    The backward pass is just the residual motif run in reverse: gradient flows back through the unembedding, down the stack, and at every \(\oplus\) it <em>splits</em> — one copy continues along the clean skip, one enters the sublayer's VJP. Each sublayer's internal gradients are exactly the <a href="attention.html" style="color:#1e40af;">attention</a>, <a href="swiglu.html" style="color:#1e40af;">SwiGLU</a>, and <a href="rmsnorm-gradient.html" style="color:#1e40af;">RMSNorm</a> derivations on their own pages. Nothing new to derive — that is the payoff of building the pieces first.
+    The backward pass is just the residual motif run in reverse: gradient flows back through the unembedding, down the stack, and at every \(\oplus\) it <em>splits</em> — one copy continues along the clean skip, one enters the sublayer's VJP. Each sublayer's internal gradients are exactly the <a href="attention.html" style="color:var(--note-fg);">attention</a>, <a href="swiglu.html" style="color:var(--note-fg);">SwiGLU</a>, and <a href="rmsnorm-gradient.html" style="color:var(--note-fg);">RMSNorm</a> derivations on their own pages. Nothing new to derive — that is the payoff of building the pieces first.
   </div>
 
   <h2 id="summary">7. Summary</h2>

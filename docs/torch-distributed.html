@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
   <title>Data Parallelism — Replicate, Shard, and the ZeRO Ladder</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -18,6 +19,7 @@
     *, *::before, *::after { box-sizing: border-box; }
 
     :root {
+      color-scheme: light;
       --bg: #ffffff;
       --surface: #f8f9fa;
       --border: #e8eaed;
@@ -33,6 +35,77 @@
       --boxed-border: #16a34a;
       --compare-bg: #eff6ff;
       --compare-border: #3b82f6;
+      --ink: #374151;
+      --code-bg: #f1f5f9;
+      --code-fg: #0f766e;
+      --row-hover: #fafafa;
+      --note-fg: #78350f;
+      --result-fg: #16a34a;
+      --compare-fg: #2563eb;
+      --teal-border: #99f6e4;
+      --fig-bg: #ffffff;
+      --nav-bg: rgba(255,255,255,0.92);
+      --un-red: #b91c1c;
+      --row-orange: #c2410c;
+      --anim-bg-top: #f9fafb;
+      --anim-bg-bot: #f0fdfa;
+      --btn-fg: #ffffff;
+      --btn-hover: #0f766e;
+      --btn-disabled: #d1d5db;
+      --btn-disabled-fg: #ffffff;
+      --svg-axis: #9ca3af;
+      --ddp-red: #dc2626;
+      --bar-fill: #14b8a6;
+      --bar-stroke: #0f766e;
+      --bar-label: #ffffff;
+      --block-fill: #99f6e4;
+      --block-stroke: #5eead4;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #2dd4bf;
+        --accent-light: #10201e;
+        --warning-bg: #251c0b;
+        --warning-border: #b45309;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --compare-bg: #101a2b;
+        --compare-border: #1e40af;
+        --ink: #cbd5e1;
+        --code-bg: #1c2531;
+        --code-fg: #5eead4;
+        --row-hover: #191e25;
+        --note-fg: #fcd34d;
+        --result-fg: #4ade80;
+        --compare-fg: #60a5fa;
+        --teal-border: #134e4a;
+        --fig-bg: #14181e;
+        --nav-bg: rgba(15,17,21,0.9);
+        --un-red: #f87171;
+        --row-orange: #fb923c;
+        --anim-bg-top: #14181e;
+        --anim-bg-bot: #10201e;
+        --btn-fg: #0f1115;
+        --btn-hover: #5eead4;
+        --btn-disabled: #333a44;
+        --btn-disabled-fg: #9aa1ab;
+        --svg-axis: #6b7280;
+        --ddp-red: #f87171;
+        --bar-fill: #14b8a6;
+        --bar-stroke: #0f766e;
+        --bar-label: #ffffff;
+        --block-fill: #134e4a;
+        --block-stroke: #0f766e;
+      }
     }
 
     body {
@@ -50,7 +123,7 @@
       position: sticky;
       top: 0;
       z-index: 100;
-      background: rgba(255,255,255,0.92);
+      background: var(--nav-bg);
       backdrop-filter: blur(8px);
       border-bottom: 1px solid var(--border);
       padding: 0 24px;
@@ -148,12 +221,12 @@
       font-size: 0.97rem;
       font-weight: 600;
       margin: 1.6em 0 0.4em;
-      color: #374151;
+      color: var(--ink);
     }
     p { margin: 0.6em 0; }
     ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
     li { margin-bottom: 0.4em; }
-    em { color: #374151; }
+    em { color: var(--ink); }
 
     /* ── Code ────────────────────────────────── */
     pre {
@@ -170,11 +243,11 @@
       font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
     }
     p code, li code, td code {
-      background: #f1f5f9;
+      background: var(--code-bg);
       padding: 1px 6px;
       border-radius: 4px;
       font-size: 0.88em;
-      color: #0f766e;
+      color: var(--code-fg);
     }
     pre code { background: none; padding: 0; color: var(--text); }
 
@@ -199,7 +272,7 @@
       letter-spacing: 0.04em;
       color: var(--muted);
     }
-    tr:hover td { background: #fafafa; }
+    tr:hover td { background: var(--row-hover); }
     td.ctr, th.ctr { text-align: center; }
 
     /* ── Step boxes ──────────────────────────── */
@@ -240,7 +313,7 @@
       padding: 10px 16px;
       margin: 1em 0;
       font-size: 0.92em;
-      color: #78350f;
+      color: var(--note-fg);
     }
     .note::before { content: '⚠ '; }
 
@@ -256,7 +329,7 @@
     .result-label {
       font-size: 0.8rem;
       font-weight: 600;
-      color: #16a34a;
+      color: var(--result-fg);
       text-transform: uppercase;
       letter-spacing: 0.05em;
       margin-bottom: 6px;
@@ -273,7 +346,7 @@
     .compare-label {
       font-size: 0.8rem;
       font-weight: 600;
-      color: #2563eb;
+      color: var(--compare-fg);
       text-transform: uppercase;
       letter-spacing: 0.05em;
       margin-bottom: 10px;
@@ -287,7 +360,7 @@
     .compare-col-label {
       font-size: 0.82rem;
       font-weight: 600;
-      color: #374151;
+      color: var(--ink);
       margin-bottom: 4px;
     }
 
@@ -300,7 +373,7 @@
     }
     .summary-card {
       background: var(--accent-light);
-      border: 1px solid #99f6e4;
+      border: 1px solid var(--teal-border);
       border-radius: 8px;
       padding: 14px 16px;
     }
@@ -317,7 +390,7 @@
     /* ── Cross-link banner ───────────────────── */
     .xref {
       background: var(--accent-light);
-      border: 1px solid #99f6e4;
+      border: 1px solid var(--teal-border);
       border-radius: 8px;
       padding: 12px 18px;
       margin: 1.4em 0;
@@ -327,14 +400,14 @@
     .xref a:hover { text-decoration: underline; }
 
     .shard { font-family: ui-monospace, monospace; white-space: nowrap; }
-    .un { color: #b91c1c; font-weight: 600; }
-    .col { color: #2563eb; font-weight: 600; }
-    .row { color: #c2410c; font-weight: 600; }
+    .un { color: var(--un-red); font-weight: 600; }
+    .col { color: var(--compare-fg); font-weight: 600; }
+    .row { color: var(--row-orange); font-weight: 600; }
 
     /* ── Interactive block widget ────────────── */
     .anim-widget {
-      background: linear-gradient(180deg, #f9fafb 0%, #f0fdfa 100%);
-      border: 1px solid #99f6e4;
+      background: linear-gradient(180deg, var(--anim-bg-top) 0%, var(--anim-bg-bot) 100%);
+      border: 1px solid var(--teal-border);
       border-radius: 12px;
       padding: 20px 22px 18px;
       margin: 1.6em 0;
@@ -356,7 +429,7 @@
     }
     .anim-hint { font-size: 0.8rem; color: var(--muted); }
     .anim-stage {
-      background: white;
+      background: var(--fig-bg);
       border-radius: 8px;
       padding: 16px;
       margin-bottom: 14px;
@@ -372,7 +445,7 @@
     }
     .anim-btn {
       background: var(--accent);
-      color: white;
+      color: var(--btn-fg);
       border: none;
       border-radius: 6px;
       padding: 7px 16px;
@@ -382,9 +455,9 @@
       cursor: pointer;
       transition: background 0.15s, transform 0.1s;
     }
-    .anim-btn:hover:not(:disabled) { background: #0f766e; }
+    .anim-btn:hover:not(:disabled) { background: var(--btn-hover); }
     .anim-btn:active:not(:disabled) { transform: scale(0.97); }
-    .anim-btn:disabled { background: #d1d5db; cursor: not-allowed; opacity: 0.7; }
+    .anim-btn:disabled { background: var(--btn-disabled); color: var(--btn-disabled-fg); cursor: not-allowed; opacity: 0.7; }
     .anim-btn-ghost {
       background: transparent;
       color: var(--muted);
@@ -400,9 +473,14 @@
       flex: 1;
       min-width: 0;
     }
-    .tp-cap { font: 600 12px ui-monospace, monospace; fill: #374151; }
+    .tp-cap { font: 600 12px ui-monospace, monospace; fill: var(--ink); }
     .tp-sub { font: 10.5px 'Inter', sans-serif; fill: var(--muted); }
-    .tp-comm { font: 600 11px 'Inter', sans-serif; fill: #b91c1c; }
+    .tp-comm { font: 600 11px 'Inter', sans-serif; fill: var(--un-red); }
+    .tp-onbar { font: 10.5px 'Inter', sans-serif; fill: var(--bar-label); }
+    .tp-axis { stroke: var(--svg-axis); }
+    .tp-ddp { stroke: var(--ddp-red); }
+    .tp-bar { fill: var(--bar-fill); stroke: var(--bar-stroke); }
+    .tp-block { fill: var(--block-fill); stroke: var(--block-stroke); }
 
     /* ── Footer ──────────────────────────────── */
     footer {
@@ -476,11 +554,11 @@
     <div style="background:var(--accent-light); border:1.5px solid var(--accent); border-radius:8px; padding:14px 16px; text-align:center;">
       <strong style="color:var(--accent);">torch.distributed (c10d)</strong> — <span style="font-size:.9rem;">ProcessGroup + collectives: <code>all_reduce</code>, <code>all_gather</code>, <code>reduce_scatter</code>, <code>broadcast</code>, <code>send</code>/<code>recv</code></span>
       <div style="margin-top:10px; display:flex; flex-wrap:wrap; gap:6px; justify-content:center; font-size:.82rem;">
-        <span style="background:#fff; border:1px solid #99f6e4; border-radius:5px; padding:3px 9px;">DDP</span>
-        <span style="background:#fff; border:1px solid #99f6e4; border-radius:5px; padding:3px 9px;">FSDP</span>
-        <span style="background:#fff; border:1px solid #99f6e4; border-radius:5px; padding:3px 9px;">Tensor Parallel</span>
-        <span style="background:#fff; border:1px solid #99f6e4; border-radius:5px; padding:3px 9px;">Pipeline Parallel</span>
-        <span style="background:#fff; border:1px solid #99f6e4; border-radius:5px; padding:3px 9px;">Expert Parallel</span>
+        <span style="background:var(--fig-bg); border:1px solid var(--teal-border); border-radius:5px; padding:3px 9px;">DDP</span>
+        <span style="background:var(--fig-bg); border:1px solid var(--teal-border); border-radius:5px; padding:3px 9px;">FSDP</span>
+        <span style="background:var(--fig-bg); border:1px solid var(--teal-border); border-radius:5px; padding:3px 9px;">Tensor Parallel</span>
+        <span style="background:var(--fig-bg); border:1px solid var(--teal-border); border-radius:5px; padding:3px 9px;">Pipeline Parallel</span>
+        <span style="background:var(--fig-bg); border:1px solid var(--teal-border); border-radius:5px; padding:3px 9px;">Expert Parallel</span>
       </div>
     </div>
     <div style="text-align:center; color:var(--muted); font-size:.8rem;">▼ backend</div>
@@ -816,25 +894,25 @@ tp_group = mesh["tp"].get_group()   # Megatron AllReduce per layer here</code></
       while (svg.firstChild) svg.removeChild(svg.firstChild);
       const st = stages[i];
 
-      // axes
-      add('line', { x1: barX - 14, y1: yBot, x2: 520, y2: yBot, stroke: '#9ca3af', 'stroke-width': 1 });
-      add('line', { x1: barX - 14, y1: yTop - 6, x2: barX - 14, y2: yBot, stroke: '#9ca3af', 'stroke-width': 1 });
+      // axes (colors themed via CSS classes so they follow the OS scheme)
+      add('line', { x1: barX - 14, y1: yBot, x2: 520, y2: yBot, class: 'tp-axis', 'stroke-width': 1 });
+      add('line', { x1: barX - 14, y1: yTop - 6, x2: barX - 14, y2: yBot, class: 'tp-axis', 'stroke-width': 1 });
       txt(barX - 20, yTop + 2, 'mem', 'tp-sub', 'end');
 
       // DDP reference line at full-model height
       const yDDP = yBot - FULL * scale;
-      const dl = add('line', { x1: barX - 14, y1: yDDP, x2: 520, y2: yDDP, stroke: '#dc2626', 'stroke-width': 1.5 });
+      const dl = add('line', { x1: barX - 14, y1: yDDP, x2: 520, y2: yDDP, class: 'tp-ddp', 'stroke-width': 1.5 });
       dl.setAttribute('stroke-dasharray', '6 4');
       txt(520, yDDP - 7, 'DDP — full model resident (24), every step', 'tp-comm', 'end');
 
       // FSDP bar: baseline shard + optional gathered block
       const baseH = BASE * scale;
-      add('rect', { x: barX, y: yBot - baseH, width: barW, height: baseH, fill: '#14b8a6', stroke: '#0f766e', rx: 2 });
-      txt(barX + barW / 2, yBot - baseH / 2 + 4, '1/N shard', 'tp-sub', 'middle').setAttribute('fill', '#ffffff');
+      add('rect', { x: barX, y: yBot - baseH, width: barW, height: baseH, class: 'tp-bar', rx: 2 });
+      txt(barX + barW / 2, yBot - baseH / 2 + 4, '1/N shard', 'tp-onbar', 'middle');
 
       if (st.top > 0) {
         const topH = st.top * scale;
-        const r = add('rect', { x: barX, y: yBot - baseH - topH, width: barW, height: topH, fill: '#99f6e4', stroke: '#5eead4', rx: 2 });
+        const r = add('rect', { x: barX, y: yBot - baseH - topH, width: barW, height: topH, class: 'tp-block', rx: 2 });
         txt(barX + barW / 2, yBot - baseH - topH / 2 + 4, 'block k', 'tp-sub', 'middle');
       }
 
