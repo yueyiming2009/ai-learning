@@ -48,6 +48,7 @@
       --plot-tick: #9ca3af;
       --plot-violet: #7c3aed;
       --plot-teal: #0d9488;
+      --plot-amber: #d97706;
     }
 
     @media (prefers-color-scheme: dark) {
@@ -81,6 +82,7 @@
         --plot-tick: #6b7280;
         --plot-violet: #a78bfa;
         --plot-teal: #2dd4bf;
+        --plot-amber: #fbbf24;
       }
     }
 
@@ -487,13 +489,17 @@
       o_t = \frac{\sum_{j \le t} \bigl(\phi(q_t)^\top \phi(k_j)\bigr) v_j}{\sum_{j \le t} \phi(q_t)^\top \phi(k_j)}
     \]
     <p>
-      The original paper (Katharopoulos et al., 2020) used \(\phi(x) = 1 + \mathrm{elu}(x)\) to keep scores
-      positive; many modern variants simply use the identity and let normalization happen elsewhere.
+      This is the kernel trick run in reverse. \(\exp(q^\top k)\) is itself an inner product — just in an
+      <em>infinite</em>-dimensional feature space — so softmax attention is secretly kernel attention.
+      Step A swaps that kernel for one whose features are finite and explicit, which is what makes the
+      factoring in Step B possible. The original paper (Katharopoulos et al., 2020) used
+      \(\phi(x) = 1 + \mathrm{elu}(x)\) to keep scores positive; many modern variants simply use the
+      identity. How much fidelity to the softmax this choice costs is quantified below.
     </p>
   </div>
 
   <div class="step">
-    <div class="step-label">Step B — Pull \(q_t\) out of the sum (associativity)</div>
+    <div class="step-label">Step B — Pull the query out of the sum (associativity)</div>
     <p>\(\phi(q_t)\) does not depend on \(j\), so it factors out of both sums:</p>
     \[
       o_t = \frac{\phi(q_t)^\top \overbrace{\textstyle\sum_{j \le t} \phi(k_j)\, v_j^\top}^{S_t}}
@@ -502,7 +508,28 @@
     \]
     <p>
       Everything the history contributes is now compressed into \(S_t\) (a \(d_k \times d_v\) matrix) and
-      \(z_t\) (a \(d_k\) vector) — both independent of \(T\).
+      \(z_t\) (a \(d_k\) vector). The sum over \(j \le t\) is still right there — so in what sense is
+      anything "independent of \(T\)"? Look at what the sum no longer contains: <em>the query</em>. In
+      softmax attention the summary a query needs, \(\sum_j \exp(q_t^\top k_j)\, v_j\), has \(q_t\) inside
+      the sum — every query re-weights the whole history differently, so nothing can be summed once and
+      for all, and all \(t\) keys and values must be kept around. Here the sum is a pure function of the
+      history, the same object for every present and future query. Two consequences:
+    </p>
+    <ul style="margin-top:0.4em;">
+      <li>
+        <strong>Fixed size.</strong> Whether ten tokens or a million have been summed, \(S_t\) is still
+        \(d_k \times d_v\) numbers and \(z_t\) is \(d_k\). \(T\) controls how many terms went <em>in</em>,
+        not how much space comes <em>out</em>.
+      </li>
+      <li>
+        <strong>Incremental computation.</strong> \(S_t = S_{t-1} + \phi(k_t)\, v_t^\top\) — a prefix sum.
+        Each token folds its term in once, in \(O(d_k d_v)\), and the history never needs to be revisited.
+        No stored \(k_j, v_j\), no \(O(T)\) work per decoded token.
+      </li>
+    </ul>
+    <p>
+      So "independent of \(T\)" means the <em>size and per-token cost</em> are constant — not the value.
+      \(S_t\) certainly depends on the history; encoding it is its entire job.
     </p>
   </div>
 
@@ -513,6 +540,109 @@
     <a href="rmsnorm-gated.html" style="color:inherit;font-weight:600;">gated RMSNorm</a> Qwen3-Next applies
     to the readout — the norm plays the softmax denominator's role, after the fact.
   </div>
+
+  <h3>Can a feature map actually match the softmax?</h3>
+  <p>
+    Exactly — but only with infinitely many features. Expand the exponential as a Taylor series and each
+    term factorizes on its own:
+  </p>
+  \[
+    \exp(q^\top k) = \sum_{n=0}^{\infty} \frac{(q^\top k)^n}{n!},
+    \qquad
+    (q^\top k)^n = \bigl\langle\, q^{\otimes n},\, k^{\otimes n} \bigr\rangle ,
+  \]
+  <p>
+    so the exact feature map is \(\phi(x) = \bigl(1,\ x,\ x^{\otimes 2}/\sqrt{2!},\ x^{\otimes 3}/\sqrt{3!},\ \dots\bigr)\)
+    — every polynomial degree at once, with the degree-\(n\) block alone costing \(d^n\) dimensions. Any
+    finite \(\phi\) is therefore a compromise, and the design space is <em>which</em> compromise:
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Feature map</th><th>Idea</th><th>Fidelity to the exp kernel</th></tr>
+      <tr>
+        <td>Identity (RetNet, GLA, DeltaNet, …)</td>
+        <td>Don't approximate — accept a plain bilinear similarity</td>
+        <td>None intended; scores can go negative, no sharpening</td>
+      </tr>
+      <tr>
+        <td>\(1 + \mathrm{elu}(x)\) (Katharopoulos et al., 2020)</td>
+        <td>Keep scores positive so the denominator is safe</td>
+        <td>Shape-only; not an approximation of \(\exp\)</td>
+      </tr>
+      <tr>
+        <td>Taylor truncation (Based, 2024)</td>
+        <td>Keep the series through degree 2: \(1 + q^\top k + \tfrac{(q^\top k)^2}{2}\)</td>
+        <td>Exact for small logits; \(1 + d + d^2\) features</td>
+      </tr>
+      <tr>
+        <td>Random features (Performer, 2021)</td>
+        <td>Monte-Carlo estimate of the kernel with \(m\) sampled features</td>
+        <td>Unbiased; error \(\sim 1/\sqrt{m}\), worst where attention is sharp</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>
+    Performer's estimator is worth seeing once, because it makes "approximating softmax" precise. For
+    \(\omega \sim \mathcal{N}(0, I)\), the identity
+  </p>
+  \[
+    \exp(q^\top k) \;=\; \mathbb{E}_{\omega}\!\left[
+      e^{\omega^\top q - \lVert q \rVert^2/2}\; \cdot\; e^{\omega^\top k - \lVert k \rVert^2/2}
+    \right]
+  \]
+  <p>
+    holds exactly, and each factor inside the expectation depends on \(q\) or \(k\) alone — so sampling
+    \(m\) values of \(\omega\) gives an \(m\)-dimensional random \(\phi\) whose inner product is an
+    unbiased estimate of the softmax kernel. The catch is the variance: it shrinks as \(1/m\) but carries
+    a constant that grows <em>exponentially</em> with the logit magnitude. The approximation is accurate
+    exactly where attention is diffuse and unreliable exactly where attention is sharp — and sharp,
+    near-one-hot retrieval is where softmax attention earns its keep.
+  </p>
+  <p>
+    That points at the deeper issue: the accuracy question is less about approximating the number
+    \(\exp(q^\top k)\) than about two structural properties no finite \(\phi\) recovers:
+  </p>
+  <ul>
+    <li>
+      <strong>Rank.</strong> The linear attention matrix \(\phi(Q)\phi(K)^\top\) has rank at most \(m\)
+      (the feature dimension); a softmax attention matrix is generically full rank. A \(T \times T\)
+      pattern with \(T \gg m\) sharply-selected entries simply doesn't fit in rank \(m\).
+    </li>
+    <li>
+      <strong>Competition.</strong> Softmax makes keys <em>compete</em>: exponentiate, then renormalize,
+      and a modest score gap becomes a near-one-hot winner. A factorized similarity is additive — every
+      key contributes independently, and nothing suppresses the losers. The plot below makes this concrete.
+    </li>
+  </ul>
+
+  <div class="figure">
+    <canvas id="plot-winner" aria-label="Share of the readout going to the best-matching key versus its score margin, for softmax attention and normalized linear attention"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span> softmax: \(\sigma(\Delta)\), any base score</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-teal)"></span> linear, base score s = 1</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-amber)"></span> linear, base score s = 4</span>
+    </div>
+    <p class="figure-caption">
+      <strong>Softmax can do winner-take-all; a factorized similarity cannot.</strong> Two keys compete
+      for a query: the weaker scores \(s\), the stronger \(s + \Delta\). Softmax gives the winner a share
+      \(\sigma(\Delta)\) of the readout — it saturates toward 1 <em>exponentially</em> fast and depends
+      only on the margin \(\Delta\), not the base score. Normalized linear attention gives
+      \((s{+}\Delta)/(2s{+}\Delta)\): it approaches 1 only harmonically, and the larger the base score,
+      the flatter it gets. The losing key is never truly silenced — which, multiplied over thousands of
+      keys, is the interference problem of §4.
+    </p>
+  </div>
+
+  <p>
+    The field's eventual answer was to stop chasing \(\exp\) altogether. Modern linear attentions use the
+    identity map and spend their effort on the <em>mechanism</em> instead — decay gates, the delta rule,
+    output normalization — accepting a different similarity rather than a worse copy of the old one. The
+    accuracy question then stops being a kernel-approximation error and becomes a capability gap,
+    measured on recall-intensive tasks (exact retrieval over long context, in-context lookups) — which is
+    precisely the gap the hybrid stacks of §4 paper over with a few real softmax layers.
+  </p>
 
   <h2 id="recurrence">2. Attention as an RNN</h2>
   <p>Because \(S_t\) is a prefix sum, it updates incrementally — one rank-1 write per token:</p>
@@ -673,6 +803,9 @@
   function kvCacheKFloats(T) { return 2 * T * D / 1024; }
   function stateKFloats(T) { return D * D / 1024; }
 
+  function sigmoid(x) { return 1 / (1 + Math.exp(-x)); }
+  function linearShare(s) { return d => (s + d) / (2 * s + d); }
+
   function drawPlot(canvas, cfg) {
     const dpr = window.devicePixelRatio || 1;
     const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
@@ -747,6 +880,19 @@
   }
 
   const plots = [];
+  const winnerCanvas = document.getElementById('plot-winner');
+  if (winnerCanvas) plots.push([winnerCanvas, {
+    xMin: 0, xMax: 8, yMin: 0.4, yMax: 1.05,
+    xTicks: [0, 2, 4, 6, 8],
+    yTicks: [0.4, 0.6, 0.8, 1],
+    xLabel: 'score margin Δ of the best key',
+    yLabel: 'winner share of readout',
+    series: [
+      { fn: linearShare(4), color: '--plot-amber',  width: 2.25 },
+      { fn: linearShare(1), color: '--plot-teal',   width: 2.25 },
+      { fn: sigmoid,        color: '--plot-violet', width: 2.75 }
+    ]
+  }]);
   const memCanvas = document.getElementById('plot-memory');
   if (memCanvas) plots.push([memCanvas, {
     xMin: 0, xMax: 1024, yMin: 0, yMax: 280,
