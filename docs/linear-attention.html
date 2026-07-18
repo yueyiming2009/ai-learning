@@ -480,41 +480,14 @@
     o_t = \frac{\sum_{j \le t} \mathrm{sim}(q_t, k_j)\, v_j}{\sum_{j \le t} \mathrm{sim}(q_t, k_j)} .
   \]
   <p>
-    Causal softmax attention is the choice \(\mathrm{sim}(q,k) = \exp(q^\top k)\) (the \(1/\sqrt{d_k}\)
-    scale absorbed into the vectors): the dot product measures alignment, and the exponential makes every
-    score positive and stretches gaps so the best-matching keys dominate. Plugged into the template:
-  </p>
-  \[
-    o_t = \frac{\sum_{j \le t} \exp(q_t^\top k_j)\, v_j}{\sum_{j \le t} \exp(q_t^\top k_j)} .
-  \]
-  <p>
-    As a similarity, \(\exp\) is excellent — the sharpening it provides is quantified below. The problem
-    is its algebraic <em>shape</em>: \(\exp(q^\top k)\) is a <strong>joint</strong> function of the pair,
-    so no part of it can be evaluated until both vectors are known. Nothing about the history can be
-    preprocessed — each new query must revisit every stored key, compute every score from scratch, and
-    re-weight every value. That is the \(O(T)\)-per-token cost of softmax decoding, and it is forced by
-    the shape of \(\exp\), not a missed optimization:
-  </p>
-
-  <div class="step">
-    <div class="step-label">Why exp of a dot product can never be separated</div>
-    <p>Suppose it could: \(\exp(q^\top k) = g(q)\, h(k)\) for all \(q, k\). Taking logs,</p>
-    \[
-      q^\top k = \log g(q) + \log h(k) .
-    \]
-    <p>
-      The left side is an <em>interaction</em> — its value depends on how \(q\) and \(k\) relate to each
-      other — while the right side is a sum of two independent terms, which cannot represent any
-      interaction. Contradiction (the only escape is infinite-dimensional, via the Taylor expansion
-      further down). The computational stakes are the difference between
-      \(\sum_j x^\top y_j = x^\top \bigl(\sum_j y_j\bigr)\) — where the \(y_j\) can be summed once,
-      before \(x\) even arrives — and \(\sum_j \exp(x^\top y_j)\), which has no such shortcut because
-      \(x\) is trapped inside every term.
-    </p>
-  </div>
-
-  <p>
-    Linear attention therefore fills the \(\mathrm{sim}\) slot with a similarity that is separable
+    Softmax attention is the choice \(\mathrm{sim}(q,k) = \exp(q^\top k)\) (scale absorbed into the
+    vectors): the dot product measures alignment, and the exponential makes scores positive and
+    stretches gaps so the best-matching keys dominate. As a similarity, \(\exp\) is excellent — the
+    problem is its algebraic <em>shape</em>. \(\exp(q^\top k)\) is a <strong>joint</strong> function of
+    the pair: were it separable as \(g(q)\,h(k)\), taking logs would equate the interaction
+    \(q^\top k\) with a sum of two independent terms — impossible. So nothing about the history can be
+    pre-summed; every query must revisit every stored key, and that is the \(O(T)\)-per-token cost of
+    softmax decoding. Linear attention fills the slot with a similarity that is separable
     <em>by construction</em>:
   </p>
 
@@ -525,12 +498,11 @@
       o_t = \frac{\sum_{j \le t} \bigl(\phi(q_t)^\top \phi(k_j)\bigr) v_j}{\sum_{j \le t} \phi(q_t)^\top \phi(k_j)}
     \]
     <p>
-      This is the kernel trick run in reverse (unpacked just below). \(\exp(q^\top k)\) is itself an inner
-      product — just in an <em>infinite</em>-dimensional feature space — so softmax attention is secretly
-      kernel attention. Step A swaps that kernel for one whose features are finite and explicit, which is
-      what makes the factoring in Step B possible. The original paper (Katharopoulos et al., 2020) used
-      \(\phi(x) = 1 + \mathrm{elu}(x)\) to keep scores positive; many modern variants simply use the
-      identity. How much fidelity to the softmax this choice costs is quantified below.
+      This is the kernel trick run in reverse (unpacked below): \(\exp(q^\top k)\) is itself an inner
+      product in an <em>infinite</em>-dimensional feature space, and Step A trades it for one whose
+      features are finite and explicit — which is what makes the factoring in Step B possible.
+      Katharopoulos et al. (2020) used \(\phi(x) = 1 + \mathrm{elu}(x)\) to keep scores positive;
+      modern variants mostly use the identity.
     </p>
   </div>
 
@@ -544,28 +516,13 @@
     \]
     <p>
       Everything the history contributes is now compressed into \(S_t\) (a \(d_k \times d_v\) matrix) and
-      \(z_t\) (a \(d_k\) vector). The sum over \(j \le t\) is still right there — so in what sense is
-      anything "independent of \(T\)"? Look at what the sum no longer contains: <em>the query</em>. In
-      softmax attention the summary a query needs, \(\sum_j \exp(q_t^\top k_j)\, v_j\), has \(q_t\) inside
-      the sum — every query re-weights the whole history differently, so nothing can be summed once and
-      for all, and all \(t\) keys and values must be kept around. Here the sum is a pure function of the
-      history, the same object for every present and future query. Two consequences:
-    </p>
-    <ul style="margin-top:0.4em;">
-      <li>
-        <strong>Fixed size.</strong> Whether ten tokens or a million have been summed, \(S_t\) is still
-        \(d_k \times d_v\) numbers and \(z_t\) is \(d_k\). \(T\) controls how many terms went <em>in</em>,
-        not how much space comes <em>out</em>.
-      </li>
-      <li>
-        <strong>Incremental computation.</strong> \(S_t = S_{t-1} + \phi(k_t)\, v_t^\top\) — a prefix sum.
-        Each token folds its term in once, in \(O(d_k d_v)\), and the history never needs to be revisited.
-        No stored \(k_j, v_j\), no \(O(T)\) work per decoded token.
-      </li>
-    </ul>
-    <p>
-      So "independent of \(T\)" means the <em>size and per-token cost</em> are constant — not the value.
-      \(S_t\) certainly depends on the history; encoding it is its entire job.
+      \(z_t\) (a \(d_k\) vector). The sum over \(j \le t\) is still there — but it no longer contains the
+      query, so it is a pure function of the history, the same object for every present and future query.
+      That gives it a <strong>fixed size</strong> (\(d_k \times d_v\) numbers whether ten tokens or a
+      million went in) and an <strong>incremental update</strong>
+      (\(S_t = S_{t-1} + \phi(k_t)\,v_t^\top\), a prefix sum costing \(O(d_k d_v)\) per token — no stored
+      \(k_j, v_j\), no revisiting). "Independent of \(T\)" means size and per-token cost, not value:
+      encoding the history is \(S_t\)'s entire job.
     </p>
   </div>
 
@@ -579,10 +536,9 @@
 
   <h3>The kernel trick, forwards and in reverse</h3>
   <p>
-    The classic kernel trick (the SVM-era one) starts from the <em>feature</em> side: you want similarity
-    measured on a rich feature expansion — all products of coordinates, say — but the expansion is huge.
-    For certain feature maps, the inner product has a closed form that never materializes the features.
-    The smallest example, degree-2 monomials in \(d = 2\):
+    The classic (SVM-era) kernel trick: you want similarity measured on a rich feature expansion, but the
+    expansion is huge — so keep it implicit and evaluate a closed form instead. Smallest example,
+    degree-2 monomials in \(d = 2\):
   </p>
   \[
     \varphi(x) = \bigl(x_1^2,\ \sqrt{2}\,x_1 x_2,\ x_2^2\bigr)
@@ -590,12 +546,11 @@
     \varphi(x)^\top \varphi(y) = (x^\top y)^2 .
   \]
   <p>
-    Three features per side — or just square one dot product; for higher degrees the saving grows
-    exponential. That is the trick: <em>want the feature-space inner product, compute the kernel
-    \(K(x,y)\) instead</em>. And \(\exp(q^\top k)\) is exactly such a kernel taken to its limit — the
-    Taylor expansion below exhibits it as the inner product of <em>all</em> tensor-power features at once.
-    So softmax attention has been using the kernel trick all along: every score implicitly compares two
-    infinite-dimensional feature expansions while paying for one dot product and one exponential.
+    Three features per side, or one squared dot product. \(\exp(q^\top k)\) is such a kernel taken to its
+    limit — the Taylor expansion below exhibits it as the inner product of <em>all</em> tensor-power
+    features at once — so softmax attention has been using the kernel trick all along, comparing two
+    infinite feature expansions for the price of one exponential. Linear attention crosses the same
+    equivalence in the opposite direction, because the expensive resource moved:
   </p>
 
   <div class="compare">
@@ -621,12 +576,10 @@
   </div>
 
   <p>
-    There is a historical rhyme here: classical kernel machines hit this same wall — \(O(T^2)\) in the
-    number of samples — and the escape was Rahimi &amp; Recht's <em>random features</em> (2007):
-    approximate the kernel with an explicit finite feature map so everything becomes linear algebra over
-    samples. Performer (in the table below) is precisely that move applied to the softmax kernel, and the
-    broader linear-attention family is the same idea with the approximation requirement dropped. Which
-    side of the equivalence you compute on depends only on which resource you have run out of.
+    Classical kernel machines hit the same \(O(T^2)\)-in-samples wall and escaped it the same way —
+    Rahimi &amp; Recht's <em>random features</em> (2007), which Performer (below) re-runs on the softmax
+    kernel. Which side of the equivalence you compute on depends only on which resource you have run
+    out of.
   </p>
 
   <h3>Can a feature map actually match the softmax?</h3>
@@ -672,23 +625,9 @@
   </div>
 
   <p>
-    Performer's estimator is worth seeing once, because it makes "approximating softmax" precise. For
-    \(\omega \sim \mathcal{N}(0, I)\), the identity
-  </p>
-  \[
-    \exp(q^\top k) \;=\; \mathbb{E}_{\omega}\!\left[
-      e^{\omega^\top q - \lVert q \rVert^2/2}\; \cdot\; e^{\omega^\top k - \lVert k \rVert^2/2}
-    \right]
-  \]
-  <p>
-    holds exactly, and each factor inside the expectation depends on \(q\) or \(k\) alone — so sampling
-    \(m\) values of \(\omega\) gives an \(m\)-dimensional random \(\phi\) whose inner product is an
-    unbiased estimate of the softmax kernel. The catch is the variance: it shrinks as \(1/m\) but carries
-    a constant that grows <em>exponentially</em> with the logit magnitude. The approximation is accurate
-    exactly where attention is diffuse and unreliable exactly where attention is sharp — and sharp,
-    near-one-hot retrieval is where softmax attention earns its keep.
-  </p>
-  <p>
+    Performer's random features make "approximating softmax" precise: an unbiased Monte-Carlo estimate of
+    the kernel whose error shrinks as \(1/\sqrt{m}\) — but with a constant that grows exponentially in
+    the logit magnitude, so it is accurate where attention is diffuse and unreliable where it is sharp.
     That points at the deeper issue: the accuracy question is less about approximating the number
     \(\exp(q^\top k)\) than about two structural properties no finite \(\phi\) recovers:
   </p>
