@@ -525,10 +525,10 @@
       o_t = \frac{\sum_{j \le t} \bigl(\phi(q_t)^\top \phi(k_j)\bigr) v_j}{\sum_{j \le t} \phi(q_t)^\top \phi(k_j)}
     \]
     <p>
-      This is the kernel trick run in reverse. \(\exp(q^\top k)\) is itself an inner product — just in an
-      <em>infinite</em>-dimensional feature space — so softmax attention is secretly kernel attention.
-      Step A swaps that kernel for one whose features are finite and explicit, which is what makes the
-      factoring in Step B possible. The original paper (Katharopoulos et al., 2020) used
+      This is the kernel trick run in reverse (unpacked just below). \(\exp(q^\top k)\) is itself an inner
+      product — just in an <em>infinite</em>-dimensional feature space — so softmax attention is secretly
+      kernel attention. Step A swaps that kernel for one whose features are finite and explicit, which is
+      what makes the factoring in Step B possible. The original paper (Katharopoulos et al., 2020) used
       \(\phi(x) = 1 + \mathrm{elu}(x)\) to keep scores positive; many modern variants simply use the
       identity. How much fidelity to the softmax this choice costs is quantified below.
     </p>
@@ -576,6 +576,58 @@
     <a href="rmsnorm-gated.html" style="color:inherit;font-weight:600;">gated RMSNorm</a> Qwen3-Next applies
     to the readout — the norm plays the softmax denominator's role, after the fact.
   </div>
+
+  <h3>The kernel trick, forwards and in reverse</h3>
+  <p>
+    The classic kernel trick (the SVM-era one) starts from the <em>feature</em> side: you want similarity
+    measured on a rich feature expansion — all products of coordinates, say — but the expansion is huge.
+    For certain feature maps, the inner product has a closed form that never materializes the features.
+    The smallest example, degree-2 monomials in \(d = 2\):
+  </p>
+  \[
+    \varphi(x) = \bigl(x_1^2,\ \sqrt{2}\,x_1 x_2,\ x_2^2\bigr)
+    \quad\Longrightarrow\quad
+    \varphi(x)^\top \varphi(y) = (x^\top y)^2 .
+  \]
+  <p>
+    Three features per side — or just square one dot product; for higher degrees the saving grows
+    exponential. That is the trick: <em>want the feature-space inner product, compute the kernel
+    \(K(x,y)\) instead</em>. And \(\exp(q^\top k)\) is exactly such a kernel taken to its limit — the
+    Taylor expansion below exhibits it as the inner product of <em>all</em> tensor-power features at once.
+    So softmax attention has been using the kernel trick all along: every score implicitly compares two
+    infinite-dimensional feature expansions while paying for one dot product and one exponential.
+  </p>
+
+  <div class="compare">
+    <div class="compare-label">One equivalence, crossed in both directions</div>
+    <div class="compare-grid">
+      <div>
+        <div class="compare-col-label">Kernel trick (SVM era)</div>
+        <p style="font-size:0.9rem; margin:0;">
+          The <em>features</em> are the expensive part (huge or infinite); data points are few.
+          Escape: keep the features implicit, evaluate the closed-form kernel per pair.
+          <strong>Explicit features → implicit kernel.</strong>
+        </p>
+      </div>
+      <div>
+        <div class="compare-col-label">Reverse (attention era)</div>
+        <p style="font-size:0.9rem; margin:0;">
+          The kernel is cheap, but it couples every query–key <em>pair</em> — and \(T\) is the expensive
+          part. Escape: choose explicit finite features so the sum over keys factors and is computed once.
+          <strong>Implicit kernel → explicit features.</strong>
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <p>
+    There is a historical rhyme here: classical kernel machines hit this same wall — \(O(T^2)\) in the
+    number of samples — and the escape was Rahimi &amp; Recht's <em>random features</em> (2007):
+    approximate the kernel with an explicit finite feature map so everything becomes linear algebra over
+    samples. Performer (in the table below) is precisely that move applied to the softmax kernel, and the
+    broader linear-attention family is the same idea with the approximation requirement dropped. Which
+    side of the equivalence you compute on depends only on which resource you have run out of.
+  </p>
 
   <h3>Can a feature map actually match the softmax?</h3>
   <p>
