@@ -184,6 +184,7 @@
     <a href="#gradients">Gradient flow</a>
     <a href="#imbalance">Load imbalance</a>
     <a href="#aux-loss">Auxiliary loss</a>
+    <a href="#vs-heads">vs MHA heads</a>
     <a href="#routing-schemes">Routing schemes</a>
     <a href="#summary">Summary</a>
   </div>
@@ -500,8 +501,83 @@ def moe_forward(x, W_gate, experts, K=2):
     correction, then use the soft probabilities to perform the correction differentiably.
   </div>
 
+  <!-- ════════════════════════ VS ATTENTION HEADS ════════════════════════ -->
+  <h2 id="vs-heads">7 · Why attention heads need none of this</h2>
+  <p>
+    <a href="attention.html">Multi-head attention</a> is, on paper, the same situation this page has
+    been fixing: \(H\) parallel modules with independently initialized weights and no assigned roles.
+    Yet heads specialize on their own — previous-token heads, induction heads, positional heads —
+    with no balancing loss, no router jitter, no capacity buffers. The difference is one structural
+    bit: <strong>heads are assigned work by summation; experts are assigned work by selection.</strong>
+    Everything in Sections 4–6 follows from that bit being flipped.
+  </p>
+
+  <h3>Follow the gradient of a losing module</h3>
+  <p>
+    Every head processes every token, so every head appears in the forward pass and receives a
+    gradient on every step. A currently-useless head still feels the error the network is making —
+    through its own slice of \(W_O\) — as a pull toward whatever structure remains unexplained. Its
+    situation is <em>self-correcting</em>: being bad at everything is precisely what generates the
+    signal to become good at something.
+  </p>
+  <p>
+    An unselected expert does not execute, so it receives exactly zero gradient — Section 4's blind
+    spot. Being bad is what prevents it from ever improving: the situation is
+    <em>self-reinforcing</em>. Both systems have the same rich-get-richer dynamic on initial noise;
+    only MHA gives its losers a floor.
+  </p>
+
+  <h3>Why redundancy is penalized in one and invisible in the other</h3>
+  <p>
+    Head outputs co-occur on the same token inside one sum, \(\sum_h W_O^h\,\text{head}_h\). If two
+    heads compute the same thing, the second one's marginal contribution is ~zero while residual
+    error still flows through it — the gradient actively reallocates it to an unfilled niche. Two
+    experts, by contrast, almost never process the same token: they occupy different parts of the
+    input distribution, not the same sum, so no single token's loss can compare them or push them
+    apart. Expert specialization is shaped only by the router's partition — and the router is trained
+    myopically on "who is best right now."
+  </p>
+
+  <h3>The decisive asymmetry: which bad equilibrium is stable</h3>
+  <p>
+    MHA's failure state — all heads identical clones — is <em>unstable</em>: any perturbation off it
+    is amplified, because de-duplicating reduces the loss and every head receives the gradient saying
+    so. Training falls out of it for free. MoE's failure state — one expert takes all the traffic —
+    is <em>absorbing</em>: the router's choice is locally correct (that expert genuinely is best by
+    then), and the starved experts emit no gradient that could revise the verdict. One bad
+    equilibrium repels, the other traps — which is why heads need no intervention while expert
+    collapse must be prevented from ever being entered, not corrected afterward.
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th></th><th>Attention heads</th><th>MoE experts</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Work assignment</td><td>All modules run; outputs summed</td><td>Router selects top-\(K\)</td></tr>
+        <tr><td>Gradient to a losing module</td><td>Always flows; points to unfilled niche</td><td>Zero — the module didn't run</td></tr>
+        <tr><td>Redundancy between modules</td><td>Directly penalized (shared sum)</td><td>Invisible to the loss (disjoint tokens)</td></tr>
+        <tr><td>Bad equilibrium</td><td>Clones — unstable, training escapes it</td><td>Collapse — absorbing, must be prevented</td></tr>
+        <tr><td>Required machinery</td><td>None</td><td>Aux loss, jitter, capacity caps</td></tr>
+        <tr><td>Residual failure mode</td><td>Some redundant, prunable heads</td><td>Dead experts; hot EP ranks</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>The control experiment: make the MoE dense</h3>
+  <p>
+    Run all \(E\) experts on every token, weighted by the full softmax — a "soft MoE." Collapse
+    largely disappears, because every expert now always receives gradient, exactly like a head. But
+    the point of MoE was to <em>not</em> run \(E-1\) of the experts. Sparse compute is the product;
+    selection is the mechanism that buys it; starvation collapse is that mechanism's failure mode;
+    the auxiliary loss is the tax that keeps it in check. Top-\(K\) routing is a bandit problem the
+    network would otherwise solve greedily — the aux loss plays the role of forced exploration.
+    Attention heads never face the bandit, because they never have to choose.
+  </p>
+
   <!-- ════════════════════════ ROUTING SCHEMES ════════════════════════ -->
-  <h2 id="routing-schemes">7 · Token-choice vs expert-choice routing</h2>
+  <h2 id="routing-schemes">8 · Token-choice vs expert-choice routing</h2>
   <p>
     The description above is <em>token-choice</em> routing: each token independently picks its top-\(K\)
     experts. This is the most common scheme (GShard, Switch Transformer, Mixtral, DeepSeek-V2) but
@@ -551,7 +627,7 @@ def moe_forward(x, W_gate, experts, K=2):
   </p>
 
   <!-- ════════════════════════ SUMMARY ════════════════════════ -->
-  <h2 id="summary">8 · Summary</h2>
+  <h2 id="summary">9 · Summary</h2>
 
   <div class="summary-grid">
     <div class="summary-card">
@@ -577,6 +653,10 @@ def moe_forward(x, W_gate, experts, K=2):
     <div class="summary-card">
       <div class="summary-card-label">Rich-get-richer fix</div>
       <p>Without the aux loss, popular experts improve faster and attract more tokens. The aux loss adds opposing pressure: overloaded experts get penalized until routing spreads out.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Selection vs summation</div>
+      <p>Attention heads self-organize with no machinery: every head runs on every token, so losers keep getting gradient and redundancy is penalized in the shared sum. Top-\(K\) selection removes both properties — balance must be legislated.</p>
     </div>
   </div>
 
