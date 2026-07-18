@@ -472,14 +472,50 @@
   </div>
 
   <h2 id="derivation">1. Dropping the Softmax</h2>
-  <p>Causal softmax attention for token \(t\):</p>
+  <p>
+    Every attention mechanism is the same template with one slot to fill — a scoring function
+    \(\mathrm{sim}(q, k)\) that answers <em>"how much should this query attend to that key?"</em>:
+  </p>
+  \[
+    o_t = \frac{\sum_{j \le t} \mathrm{sim}(q_t, k_j)\, v_j}{\sum_{j \le t} \mathrm{sim}(q_t, k_j)} .
+  \]
+  <p>
+    Causal softmax attention is the choice \(\mathrm{sim}(q,k) = \exp(q^\top k)\) (the \(1/\sqrt{d_k}\)
+    scale absorbed into the vectors): the dot product measures alignment, and the exponential makes every
+    score positive and stretches gaps so the best-matching keys dominate. Plugged into the template:
+  </p>
   \[
     o_t = \frac{\sum_{j \le t} \exp(q_t^\top k_j)\, v_j}{\sum_{j \le t} \exp(q_t^\top k_j)} .
   \]
   <p>
-    The \(\exp\) of a dot product does not factor into a function of \(q\) times a function of \(k\), so
-    the sum over \(j\) must be recomputed for every \(t\). Linear attention replaces the similarity with
-    something that does factor:
+    As a similarity, \(\exp\) is excellent — the sharpening it provides is quantified below. The problem
+    is its algebraic <em>shape</em>: \(\exp(q^\top k)\) is a <strong>joint</strong> function of the pair,
+    so no part of it can be evaluated until both vectors are known. Nothing about the history can be
+    preprocessed — each new query must revisit every stored key, compute every score from scratch, and
+    re-weight every value. That is the \(O(T)\)-per-token cost of softmax decoding, and it is forced by
+    the shape of \(\exp\), not a missed optimization:
+  </p>
+
+  <div class="step">
+    <div class="step-label">Why exp of a dot product can never be separated</div>
+    <p>Suppose it could: \(\exp(q^\top k) = g(q)\, h(k)\) for all \(q, k\). Taking logs,</p>
+    \[
+      q^\top k = \log g(q) + \log h(k) .
+    \]
+    <p>
+      The left side is an <em>interaction</em> — its value depends on how \(q\) and \(k\) relate to each
+      other — while the right side is a sum of two independent terms, which cannot represent any
+      interaction. Contradiction (the only escape is infinite-dimensional, via the Taylor expansion
+      further down). The computational stakes are the difference between
+      \(\sum_j x^\top y_j = x^\top \bigl(\sum_j y_j\bigr)\) — where the \(y_j\) can be summed once,
+      before \(x\) even arrives — and \(\sum_j \exp(x^\top y_j)\), which has no such shortcut because
+      \(x\) is trapped inside every term.
+    </p>
+  </div>
+
+  <p>
+    Linear attention therefore fills the \(\mathrm{sim}\) slot with a similarity that is separable
+    <em>by construction</em>:
   </p>
 
   <div class="step">
