@@ -1,0 +1,907 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Test-Time Compute Scaling — Coverage, Verifiers, and the Log-n Ceiling</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #4f46e5;
+      --accent-light: #eef2ff;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --note-fg: #1e40af;
+      --result-fg: #16a34a;
+      --indigo-border: #c7d2fe;
+      --nav-bg: rgba(255,255,255,0.92);
+      --fig-bg: #ffffff;
+      --plot-grid: #eceef1;
+      --plot-axis: #c7cbd1;
+      --plot-tick: #9ca3af;
+      --plot-violet: #6d28d9;
+      --plot-teal: #0d9488;
+      --plot-amber: #d97706;
+      --plot-gray: #9ca3af;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #818cf8;
+        --accent-light: #14172a;
+        --warning-bg: #101a2b;
+        --warning-border: #1e40af;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --note-fg: #93c5fd;
+        --result-fg: #4ade80;
+        --indigo-border: #312e81;
+        --nav-bg: rgba(15,17,21,0.9);
+        --fig-bg: #14181e;
+        --plot-grid: #232830;
+        --plot-axis: #3a4149;
+        --plot-tick: #6b7280;
+        --plot-violet: #a78bfa;
+        --plot-teal: #2dd4bf;
+        --plot-amber: #fbbf24;
+        --plot-gray: #6b7280;
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #1e1b4b 0%, #4338ca 60%, #6366f1 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.85;
+      font-size: 0.97rem;
+      max-width: 620px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+    a { color: var(--accent); }
+    code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+
+    /* ── Step boxes ──────────────────────────── */
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    /* ── Callout / note ──────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+    .note::before { content: '💡 '; }
+
+    /* ── Result / boxed equation ─────────────── */
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Plain-English read box ──────────────── */
+    .read {
+      background: var(--accent-light);
+      border: 1px solid var(--indigo-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      margin: 1.2em 0;
+    }
+    .read-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+    .read p { margin: 0.3em 0; }
+
+    /* ── Summary / comparison cards ──────────── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .summary-card {
+      background: var(--accent-light);
+      border: 1px solid var(--indigo-border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .summary-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    /* ── Figure / plot ───────────────────────── */
+    .figure {
+      background: var(--fig-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 16px 14px;
+      margin: 1.6em 0;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .figure canvas {
+      width: 100%;
+      height: 300px;
+      display: block;
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      justify-content: center;
+      margin-top: 12px;
+      font-size: 0.82rem;
+      color: var(--text);
+    }
+    .legend-item { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, var(--plot-gray) 0 5px, transparent 5px 9px); }
+    .figure-caption {
+      font-size: 0.85rem;
+      color: var(--muted);
+      line-height: 1.6;
+      margin: 14px 4px 2px;
+    }
+
+    /* ── Footer ──────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    /* ── Responsive ──────────────────────────── */
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Test-Time Compute</a>
+  <div class="nav-links">
+    <a href="index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#notation">Notation</a>
+    <a href="#axes">Two axes</a>
+    <a href="#budget">Budget</a>
+    <a href="#coverage">Coverage law</a>
+    <a href="#verifier">Verifier gap</a>
+    <a href="#bon">Best-of-n KL</a>
+    <a href="#sequential">Sequential</a>
+    <a href="#exchange">Train vs test</a>
+    <a href="#longcot">Long CoT</a>
+    <a href="#serving">Serving</a>
+    <a href="#limits">Limits</a>
+    <a href="#summary">Summary</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Foundations</span>
+  <h1>Test-Time Compute Scaling</h1>
+  <p>Accuracy improves predictably when you spend more compute <em>per query</em> instead of more compute in pretraining. This page derives where that curve comes from — why coverage is a power law in the sample count, why the verifier decides whether that power law is reachable, why best-of-\(n\) buys only \(\log n\) nats of leverage for \(n\)× the cost, and when a small model plus search actually beats a bigger model.</p>
+</div>
+
+<div class="page-wrap">
+
+  <p><a href="scaling-laws.html">Neural scaling laws</a> describe compute spent <em>once</em>, before the model ships: bigger \(N\), more tokens \(D\), lower loss. Test-time compute is the other budget — the FLOPs spent every time a user asks a question. It obeys its own regularity, and the two are substitutes: a fixed FLOP can go into pretraining a better policy or into searching harder with the policy you have.</p>
+
+  <p>The empirical headline (o1, o3, DeepSeek-R1, and the search literature before them) is that accuracy climbs steadily as you scale inference compute over several orders of magnitude. The interesting part is <em>why</em>, and where it stops. This page builds that from the sampling distribution up, then connects it to the serving cost in <a href="inference-compute-model.html">the inference compute model</a> and to the search algorithms in <a href="tree-search-llm.html">tree search for LLMs</a>.</p>
+
+  <h2 id="notation">Notation</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symbol</th><th>Description</th></tr>
+      <tr><td>\(N\)</td><td>Model size — number of parameters</td></tr>
+      <tr><td>\(n,\,k\)</td><td>Number of independent samples drawn per question (search width)</td></tr>
+      <tr><td>\(T_\text{pre},\,T_\text{dec}\)</td><td>Prompt (prefill) length and decoded tokens per sample</td></tr>
+      <tr><td>\(C_\text{query}\)</td><td>Inference FLOPs spent on one question</td></tr>
+      <tr><td>\(Q\)</td><td>Number of queries served over the model's deployed lifetime</td></tr>
+      <tr><td>\(p_i\)</td><td>Per-sample success probability of the policy on question \(i\)</td></tr>
+      <tr><td>\(c(k)\)</td><td>Coverage — probability at least one of \(k\) samples is correct (i.e. pass@\(k\))</td></tr>
+      <tr><td>\(\alpha\)</td><td>Left-tail index of the difficulty distribution — the test-time scaling exponent</td></tr>
+      <tr><td>\(r(y)\)</td><td>Verifier / reward-model score of a candidate answer \(y\)</td></tr>
+      <tr><td>\(\pi_\text{ref},\,\pi_n\)</td><td>Base policy, and the policy implicitly induced by best-of-\(n\) selection</td></tr>
+      <tr><td>\(d=\sqrt{\mathrm{KL}}\)</td><td>Distance from the base policy, in Gao et al.'s overoptimization parameterization</td></tr>
+    </table>
+  </div>
+
+  <h2 id="axes">1. Two axes: parallel width and sequential depth</h2>
+  <p>"More test-time compute" is not one knob. There are two, and they are close to orthogonal:</p>
+
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">Parallel (width)</div>
+      <p>Draw \(n\) independent samples from the same prompt, then <em>pick</em> one: best-of-\(n\), majority vote, beam search over steps.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Sequential (depth)</div>
+      <p>Spend more tokens inside one chain: longer chain-of-thought, self-revision, backtracking, verify-then-retry.</p>
+    </div>
+  </div>
+
+  <p>The distinction is about <strong>conditioning</strong>. Parallel samples are i.i.d. draws from \(\pi_\text{ref}(\cdot\mid x)\) — sample 7 knows nothing about samples 1–6. Sequential tokens condition on everything generated so far, so attempt 7 can look at why attempt 6 failed. That single difference drives everything downstream: the parallel curve is governed by a clean order-statistics argument (§3), the sequential curve is not.</p>
+
+  <div class="note">
+    Every practical search algorithm is a mixture of the two. Beam search is \(n\) parallel branches carried \(T\) steps deep; MCTS is parallel rollouts whose <em>results</em> feed back into later selections; an o1-style thinking trace is almost pure depth. See <a href="tree-search-llm.html">tree search for LLMs</a> for the algorithms and <a href="mcts.html">MCTS</a> for the selection math.
+  </div>
+
+  <h2 id="budget">2. The budget — what a test-time FLOP buys</h2>
+  <p>Use the standard dense-transformer accounting: a forward pass costs \(\approx 2N\) FLOPs per token. Prefill is computed once and its KV cache is shared by every branch that forks from it, so for \(n\) parallel samples of \(T_\text{dec}\) tokens each:</p>
+
+  <div class="result">
+    <div class="result-label">Inference cost of one question</div>
+    \[
+      C_\text{query} \;\approx\; \underbrace{2N\,T_\text{pre}}_{\text{prefill, paid once}} \;+\; \underbrace{2N\,n\,T_\text{dec}}_{\text{decode, paid per sample}}
+    \]
+  </div>
+
+  <p>Now compare that against a single sequential chain of the same total length \(n\,T_\text{dec}\). To first order the two are <em>the same number of FLOPs</em> — the \(2N\) term does not care whether the tokens are laid out side by side or end to end. The three things that actually differ:</p>
+
+  <div class="step">
+    <div class="step-label">1 · Attention cost grows with depth, not width</div>
+    <p>\(n\) chains of length \(T\) each pay \(O(T^2)\) attention, total \(O(nT^2)\). One chain of length \(nT\) pays \(O((nT)^2) = O(n^2T^2)\) — a factor \(n\) more. Depth is quadratically expensive in a way width is not; this is why very long thinking traces eventually stop being free even though the \(2N\) term says otherwise.</p>
+  </div>
+  <div class="step">
+    <div class="step-label">2 · Latency is serial in depth, parallel in width</div>
+    <p>\(n\) samples finish in one sample's wall-clock time (given hardware to run them); a chain \(n\times\) longer takes \(n\times\) as long. Width trades hardware for latency, depth cannot.</p>
+  </div>
+  <div class="step">
+    <div class="step-label">3 · Depth conditions, width does not</div>
+    <p>The extra tokens in a long chain see the previous work. The extra samples in best-of-\(n\) re-derive from scratch — including re-making the same mistake, which is exactly what makes the coverage curve flatten.</p>
+  </div>
+
+  <div class="read">
+    <div class="read-label">In plain English</div>
+    <p>"FLOPs alone don't tell you which axis to spend on — they're nearly equal. Width buys you independent lottery tickets at low latency; depth buys you a chain that can learn from its own mistakes, at serial latency and quadratic attention cost."</p>
+  </div>
+
+  <h2 id="coverage">3. Coverage: why pass@\(k\) is a power law</h2>
+  <p>Start with one question whose per-sample success probability is \(p\). Draws are independent, so the probability that <em>none</em> of \(k\) samples is correct is \((1-p)^k\):</p>
+  \[
+    c(k) \;=\; 1 - (1-p)^k
+  \]
+  <p>This is exponential in \(k\). It saturates fast: at \(p=0.09\), coverage is already 95% by \(k=32\) and 99.8% by \(k=64\). If that were the whole story, test-time scaling would be a dead end — a couple of dozen samples and you're done.</p>
+
+  <p>But a benchmark is not one question. It is a <em>mixture</em> over questions of wildly different difficulty, and the dataset-average coverage is an expectation over that mixture:</p>
+  \[
+    \bar c(k) \;=\; \mathbb{E}_{p\sim\mathcal{D}}\bigl[\,1-(1-p)^k\,\bigr]
+    \;=\; 1 - \mathbb{E}_p\bigl[(1-p)^k\bigr]
+  \]
+  <p>The whole behaviour is in that residual \(\mathbb{E}_p[(1-p)^k]\) — the average failure rate. Model the difficulty distribution as \(p \sim \mathrm{Beta}(\alpha,\beta)\) and it has a closed form, because the integrand is an unnormalized Beta density:</p>
+
+  <div class="step">
+    <div class="step-label">Failure rate under a Beta difficulty mixture</div>
+    \[
+      \mathbb{E}_p\bigl[(1-p)^k\bigr]
+        = \frac{1}{B(\alpha,\beta)}\int_0^1 p^{\alpha-1}(1-p)^{\beta-1+k}\,dp
+        = \frac{B(\alpha,\beta+k)}{B(\alpha,\beta)}
+        = \frac{\Gamma(\alpha+\beta)}{\Gamma(\beta)}\cdot\frac{\Gamma(\beta+k)}{\Gamma(\alpha+\beta+k)}
+    \]
+    <p>and since \(\Gamma(z+a)/\Gamma(z+b)\sim z^{\,a-b}\) as \(z\to\infty\), the ratio \(\Gamma(\beta+k)/\Gamma(\alpha+\beta+k)\sim k^{-\alpha}\).</p>
+  </div>
+
+  <div class="result">
+    <div class="result-label">The test-time coverage law</div>
+    \[
+      1-\bar c(k) \;\sim\; \frac{\Gamma(\alpha+\beta)}{\Gamma(\beta)}\; k^{-\alpha}
+      \qquad\text{(power law in the sample budget)}
+    \]
+  </div>
+
+  <p>Nothing about the Beta family is essential. All that matters is how the difficulty density behaves near \(p=0\): if it goes like \(p^{\alpha-1}\), you get \(k^{-\alpha}\). The exponent is a <strong>left-tail index</strong>.</p>
+
+  <div class="read">
+    <div class="read-label">The mechanism, stated plainly</div>
+    <p>Each individual question saturates exponentially — but at any budget \(k\), the remaining failures are concentrated on the questions whose \(p\) is small enough that \(k\) samples still weren't enough. As \(k\) grows the frontier slides further into the hard tail, and it keeps finding more questions there. <strong>The test-time scaling exponent is a property of the difficulty distribution, not of any single problem.</strong> A benchmark with no near-impossible items has no test-time scaling to offer; one with a fat tail of nearly-zero-\(p\) items scales for decades of \(k\).</p>
+  </div>
+
+  <div class="figure">
+    <canvas id="plot-coverage" aria-label="Coverage versus number of samples on a log axis: a single problem saturates exponentially while a difficulty mixture follows a power law"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-teal)"></span> single question, \(p=0.091\)</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span> mixture, \(p\sim\mathrm{Beta}(0.3,\,3)\)</span>
+      <span class="legend-item"><span class="lg dash"></span> power-law tail \(1-1.34\,k^{-0.3}\)</span>
+    </div>
+    <p class="figure-caption">
+      <strong>The power law comes from the mixture, not the problem.</strong> Both curves start at the same
+      point — the mixture's mean success rate is exactly the single question's \(p\). But the single question
+      (teal) is done by \(k\approx 50\): every further sample is wasted compute. The mixture (violet) is still
+      climbing at \(k=1024\) and tracks the power-law asymptote (gray, dashed — valid only for large \(k\),
+      which is why it dives off-frame on the left). Halving the failure rate costs \(2^{1/\alpha}\!\approx\!10\times\)
+      the samples at \(\alpha=0.3\): steady, and brutally expensive.
+    </p>
+  </div>
+
+  <p>Brown et al. (2024) measured exactly this across models and benchmarks and fit an <em>exponentiated power law</em>, \(\log \bar c(k) \approx -a\,k^{-b}\). For large \(k\) that expands to \(1-\bar c(k)\approx a\,k^{-b}\) — the same asymptotic as the mixture derivation, with \(b\) playing the role of \(\alpha\). Their striking result: on coding benchmarks, coverage from a small open model with thousands of samples exceeds the single-sample accuracy of far larger frontier models.</p>
+
+  <h2 id="verifier">4. The verifier gap — coverage is not accuracy</h2>
+  <p>Coverage is an <em>oracle</em> metric. It asks whether a correct answer is somewhere in the \(k\) samples; it does not ask whether you can find it. Real systems have to pick one, and how well they pick determines how much of the coverage curve you actually get to keep. Three regimes:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Selection mechanism</th><th>Realized accuracy</th><th>Behaviour as \(k\to\infty\)</th></tr>
+      <tr><td><strong>Sound verifier</strong> — unit tests, a proof checker, an exact-match answer key</td><td>\(=\) coverage</td><td>Follows the power law all the way. Test-time compute is nearly a free lunch.</td></tr>
+      <tr><td><strong>Learned verifier</strong> — outcome or process reward model</td><td>\(<\) coverage</td><td>Rises, peaks, then <em>declines</em> — the search finds adversarial inputs to the reward model faster than it finds correct answers (§5).</td></tr>
+      <tr><td><strong>No verifier</strong> — majority vote / self-consistency</td><td>\(\ll\) coverage</td><td>Converges to "is the <em>modal</em> answer correct?" — a hard ceiling, reached by \(k\approx\) tens.</td></tr>
+    </table>
+  </div>
+
+  <p>The majority-vote ceiling is worth making precise, because it is the most common way test-time scaling silently stops working. Self-consistency returns \(\arg\max_y \hat P(y)\), the empirical mode of the sampled answer distribution. By the law of large numbers \(\hat P \to P\), so as \(k\to\infty\) the procedure converges to a <em>deterministic</em> answer: the true mode. If the mode is wrong, no sample budget fixes it. All the extra samples buy is a more confident estimate of the mode — which is why self-consistency curves flatten around \(k\sim 40\) and stay flat.</p>
+
+  <div class="note">
+    This is the concrete reason verifiable domains — math with checkable answers, code with tests, formal proofs — were where test-time scaling worked first. The domain supplies a sound verifier for free, so accuracy \(=\) coverage and the power law is fully redeemable. Everywhere else, <em>the verifier is the bottleneck, not the sampler.</em> See <a href="tree-search-llm.html">ORM vs PRM</a> for how process reward models narrow this gap.
+  </div>
+
+  <h2 id="bon">5. Best-of-\(n\) is a KL-constrained policy</h2>
+  <p>Best-of-\(n\) looks like a decoding trick, but it defines a policy: sample \(n\) times, keep the top-scoring one. That induced policy \(\pi_n\) sits some distance from the base policy \(\pi_\text{ref}\), and the distance has an exact closed form.</p>
+
+  <div class="step">
+    <div class="step-label">Deriving \(\mathrm{KL}(\pi_n \,\|\, \pi_\text{ref})\)</div>
+    <p>Assume the reward \(r(y)\) is continuous with no ties, and pass to the quantile \(u = F_r(r(y))\). Under \(\pi_\text{ref}\), \(u\sim\mathrm{Uniform}(0,1)\) by construction. Best-of-\(n\) keeps the maximum of \(n\) draws, whose CDF is \(u^n\) and density is therefore</p>
+    \[ q(u) = n\,u^{\,n-1}. \]
+    <p>Selection is a deterministic function of the quantile, so the KL between the induced and base policies equals the KL between these two densities:</p>
+    \[
+      \mathrm{KL} = \int_0^1 n u^{n-1}\log\!\bigl(n u^{n-1}\bigr)\,du
+              = \log n + (n-1)\underbrace{\int_0^1 n u^{n-1}\log u\,du}_{=\,-1/n}
+    \]
+    <p>using \(\int_0^1 u^{n-1}\log u\,du = -1/n^2\).</p>
+  </div>
+
+  <div class="result">
+    <div class="result-label">Best-of-\(n\) KL</div>
+    \[
+      \mathrm{KL}\bigl(\pi_n \,\|\, \pi_\text{ref}\bigr) \;=\; \log n - \frac{n-1}{n}
+    \]
+  </div>
+
+  <p>Read the exchange rate off that formula. Cost is <strong>linear</strong> in \(n\); distributional leverage is <strong>logarithmic</strong> in \(n\). At \(n=8\) you have moved 1.2 nats; at \(n=1000\), 5.9 nats; at \(n=10^6\), 12.8 nats. A thousandfold increase in spend roughly doubles how far you have moved off the base policy.</p>
+
+  <p>Gao, Schulman &amp; Hilton (2023) measured what that displacement buys when the score being maximized is a <em>learned</em> reward model. Parameterizing by \(d=\sqrt{\mathrm{KL}}\), they fit the true ("gold") reward gain for best-of-\(n\) as</p>
+  \[
+    R_\text{gold}(d) \;=\; d\,\bigl(\alpha - \beta \log d\bigr),
+  \]
+  <p>which increases, peaks at \(\log d = \alpha/\beta - 1\), and then falls. The proxy score the search is actually maximizing keeps rising the whole time. That divergence is Goodhart's law with a formula attached: past the peak, additional samples are reliably finding reward-model errors rather than better answers.</p>
+
+  <div class="figure">
+    <canvas id="plot-overopt" aria-label="Proxy reward model score rises monotonically with sample count while true gold reward peaks and declines"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-amber)"></span> proxy score (what best-of-\(n\) maximizes)</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span> gold reward (what you wanted)</span>
+    </div>
+    <p class="figure-caption">
+      <strong>Reward-model overoptimization has an optimal \(n\).</strong> Both curves use Gao et al.'s form
+      \(R(d)=d(\alpha-\beta\log d)\) with \(d=\sqrt{\log n - (n-1)/n}\) — the exact best-of-\(n\) KL from above —
+      differing only in \(\beta\). The gold reward peaks near \(n\approx 10^2\) and declines thereafter, while the
+      proxy score keeps climbing, so the search reports success the whole way down. Note the \(x\) axis is
+      logarithmic: the entire useful range is spanned before \(n\) reaches a few hundred.
+    </p>
+  </div>
+
+  <div class="note">
+    Composing the two results: the gain scales like \(d=\sqrt{\mathrm{KL}}\approx\sqrt{\log n}\). To <em>double</em> the reward gain you must raise \(n\) to the fourth power — and that is the optimistic reading, valid only left of the peak. This is the quantitative core of "diminishing returns from search."
+  </div>
+
+  <h2 id="sequential">6. Sequential scaling and the optimal mix</h2>
+  <p>Sequential revision breaks the independence assumption of §3, and that is the point. If attempt \(t\) conditions on attempts \(1..t-1\), the failure probability is no longer \((1-p)^t\) — a model that can diagnose its own error has a per-step success rate that <em>rises</em> along the chain. When it can't, conditioning hurts: it anchors on the flawed first attempt and every revision inherits the mistake.</p>
+
+  <p>That gives a clean prediction, which Snell et al. (2024) confirmed empirically: <strong>which axis wins depends on question difficulty.</strong></p>
+
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">Easy questions</div>
+      <p>The first attempt is close. Sequential revision wins — it polishes a nearly-right answer instead of re-rolling from scratch.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Hard questions</div>
+      <p>The first attempt is in the wrong basin entirely. Parallel width wins — you need a genuinely different starting point, not a refinement of a doomed one.</p>
+    </div>
+  </div>
+
+  <p>Because the right ratio is question-dependent, a strategy that <em>estimates difficulty per prompt</em> and allocates accordingly beats any fixed strategy. Snell et al. report roughly 4× better compute efficiency from this "compute-optimal" allocation versus a uniform best-of-\(n\) baseline — the same shape of result as compute-optimal allocation in <a href="scaling-laws.html">training scaling laws</a>, one level up.</p>
+
+  <div class="note">
+    Difficulty is estimated at inference from the model's own signals — verifier score spread across a few cheap probe samples, answer-distribution entropy, or a learned difficulty predictor. The estimate itself costs compute, so it has to be much cheaper than the search it is budgeting.
+  </div>
+
+  <h2 id="exchange">7. Trading training compute for test-time compute</h2>
+  <p>Both budgets buy accuracy, so the real question is a portfolio allocation over a model's whole lifetime:</p>
+  \[
+    C_\text{total} \;=\; \underbrace{6ND}_{\text{pretraining, paid once}} \;+\; \underbrace{Q\cdot C_\text{query}}_{\text{inference, paid } Q \text{ times}}
+  \]
+  <p>Consider spending a marginal \(\Delta C\). Put it in pretraining and every one of the \(Q\) queries gets a better policy. Put it in inference and each query gets only \(\Delta C/Q\) extra FLOPs. So:</p>
+
+  <div class="result">
+    <div class="result-label">Marginal allocation rule</div>
+    \[
+      \text{train} \;\succ\; \text{search}
+      \quad\Longleftrightarrow\quad
+      \frac{\partial A}{\partial C_\text{train}} \;>\; \frac{1}{Q}\,\frac{\partial A}{\partial C_\text{query}}
+    \]
+  </div>
+
+  <p>Two forces both push toward training as deployment scales. The \(1/Q\) factor is the obvious one. The subtler one is that \(\partial A/\partial C_\text{query}\) decays fast — from §5, accuracy gain grows like \(\log n\) or \(\sqrt{\log n}\), so the marginal value of the \(n\)-th sample falls off like \(1/n\). Search is a <em>last-mile</em> instrument: excellent for a handful of high-value hard queries, ruinous as a default for a high-\(Q\) product.</p>
+
+  <p>This is the same logic that makes deployment-optimal training differ from Chinchilla-optimal training (Sardana et al., 2023): if \(Q\) is large, over-train a <em>smaller</em> model far past 20 tokens/param so every inference is cheap. See the <a href="scaling-laws.html#chinchilla">compute-optimal ≠ deployment-optimal</a> note there.</p>
+
+  <div class="step">
+    <div class="step-label">When does a small model + search beat a big model?</div>
+    <p>Snell et al. ran the FLOPs-matched comparison directly. On easy and intermediate questions, a smaller model given a test-time compute budget outperformed a model roughly 14× larger evaluated with a single sample. On the <em>hardest</em> questions it did not — there, additional pretraining was the more effective use of the same FLOPs. The reason follows from §3: search can only surface solutions the policy already assigns nonzero probability. If \(p_i = 0\), no budget \(k\) recovers it, and only a better policy will do.</p>
+  </div>
+
+  <div class="read">
+    <div class="read-label">The dividing line</div>
+    <p>Test-time compute <em>redistributes</em> probability mass the model already has. Training <em>changes</em> the mass. Search is leverage on an existing policy; it cannot create a capability that isn't in the support.</p>
+  </div>
+
+  <h2 id="longcot">8. RL-trained long CoT — why o1/R1 changed the shape</h2>
+  <p>Everything above treats search as an <em>external harness</em> wrapped around a frozen policy: sample, score, select. Reasoning models take the other route — use RL with verifiable rewards to train the policy to do the searching <em>inside its own token stream</em>. The long thinking trace is a linearized search: propose a step, check it, notice a contradiction, backtrack, try again.</p>
+
+  <p>Three concrete advantages over an external best-of-\(n\) harness, each of which maps onto something derived above:</p>
+  <ul>
+    <li><strong>It escapes the \(\log n\) ceiling.</strong> §5 bounds how far best-of-\(n\) can move a <em>fixed</em> policy. RL moves the policy itself, so there is no such bound — it is a training-time change wearing test-time clothes.</li>
+    <li><strong>It conditions.</strong> Every token of the trace sees all prior reasoning (§6), so a failed approach is not silently re-derived the way it is across independent samples.</li>
+    <li><strong>It needs no inference-time verifier.</strong> The verifier is used during <em>training</em> to shape the policy, so §4's verifier gap does not apply at serving time — no reward model in the serving path, and no overoptimization pressure at inference.</li>
+  </ul>
+
+  <p>Empirically, accuracy for these models rises roughly linearly in \(\log\) (thinking tokens) across a wide range — the familiar log-linear signature. See <a href="deepseek-r1.html">the DeepSeek-R1 recipe</a> for how the RL that induces this behaviour is set up, and <a href="grpo.html">GRPO</a> for the objective.</p>
+
+  <div class="note">
+    The trace length is a controllable knob, not just an emergent one. Muennighoff et al.'s <em>s1</em> (2025) demonstrated "budget forcing" — suppressing the end-of-thinking token and appending a continuation cue like "Wait" to make the model think longer, or truncating to make it stop — which traces out the test-time scaling curve for a single model at inference.
+  </div>
+
+  <h2 id="serving">9. What it costs to serve</h2>
+  <p>The two axes stress a serving stack in completely different places, which matters because a test-time-scaled workload is usually 10–100× the tokens of a normal one.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th></th><th>Parallel width (\(n\) samples)</th><th>Sequential depth (long chain)</th></tr>
+      <tr><td>KV cache</td><td>\(n\) branches share the prompt's cache — <a href="paged-attention.html">PagedAttention</a>'s copy-on-write makes this nearly free</td><td>One cache that grows to the full trace length; the binding constraint on batch size</td></tr>
+      <tr><td>Batching</td><td>Fills the batch by itself — great arithmetic intensity, <a href="continuous-batching.html">continuous batching</a> keeps it saturated</td><td>Long-running requests hold slots; head-of-line blocking on shorter requests</td></tr>
+      <tr><td>Latency</td><td>≈ one sample's latency, if you have the hardware</td><td>Scales linearly with tokens — the user waits through the whole trace</td></tr>
+      <tr><td>Best lever</td><td>Throughput work: <a href="offline-batch-inference.html">offline batching</a>, larger batches</td><td><a href="speculative-decoding.html">Speculative decoding</a> — attacks the serial bottleneck directly</td></tr>
+    </table>
+  </div>
+
+  <p>The underlying asymmetry is the one from <a href="inference-compute-model.html">the inference compute model</a>: decode is memory-bandwidth-bound, so each decode step pays a full weight read regardless of batch size. Parallel sampling amortizes that read across \(n\) sequences and is therefore <em>cheaper per token</em> than its FLOP count suggests. A single long chain gets no such amortization — which flips the §2 conclusion in practice: equal FLOPs, but width is meaningfully cheaper per token on real hardware.</p>
+
+  <h2 id="limits">10. Where the curve bends</h2>
+  <ul>
+    <li><strong>The verifier ceiling (§4).</strong> Without a sound verifier, realized accuracy saturates far below coverage — and with a learned one it eventually reverses. This binds long before the sampling budget does.</li>
+    <li><strong>The coverage floor (§3).</strong> Questions with \(p_i=0\) under the policy contribute \(k^{-\alpha}\to\) nothing. The exponent \(\alpha\) is fixed by the model and the benchmark; search cannot change it.</li>
+    <li><strong>Linear cost, logarithmic reward (§5).</strong> \(n\)× the spend for \(\log n\) nats of movement, and \(\sqrt{\log n}\) of reward gain. Every measured test-time curve is plotted on a log \(x\)-axis for a reason.</li>
+    <li><strong>Overthinking.</strong> On easy questions, forcing more sequential compute measurably <em>hurts</em> — the model talks itself out of a correct first answer. Uniform budgets are wrong in both directions, which is the case for per-question allocation (§6).</li>
+    <li><strong>Metric inflation.</strong> pass@\(k\) at large \(k\) is an upper bound nobody can serve. Quoting coverage as if it were accuracy overstates the deployable result by exactly the verifier gap.</li>
+  </ul>
+
+  <h2 id="summary">11. Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">Two axes</div>
+      <p>Parallel width (i.i.d. samples) vs sequential depth (conditioned tokens). Near-equal FLOPs, very different behaviour</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Coverage law</div>
+      <p>\(1-\bar c(k)\sim k^{-\alpha}\); the exponent is the left-tail index of the difficulty distribution</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Verifier gap</div>
+      <p>Sound verifier → accuracy = coverage. Learned → peaks then declines. None → majority-vote ceiling</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Best-of-\(n\)</div>
+      <p>\(\mathrm{KL}=\log n-\frac{n-1}{n}\) — linear cost, logarithmic leverage, \(\sqrt{\log n}\) reward</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Optimal mix</div>
+      <p>Easy → revise sequentially; hard → sample in parallel. Per-question allocation ≈ 4× more efficient</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Train vs test</div>
+      <p>Train wins when \(\partial A/\partial C_\text{train} > \frac{1}{Q}\partial A/\partial C_\text{query}\) — i.e. at high query volume</p>
+    </div>
+  </div>
+
+  <div class="table-wrap" style="margin-top: 2em;">
+    <table>
+      <tr><th>When you see…</th><th>Recognize it as</th></tr>
+      <tr><td>Accuracy plotted against a log \(x\)-axis of "test-time compute"</td><td>The \(k^{-\alpha}\) coverage law — linear cost, logarithmic payoff</td></tr>
+      <tr><td>pass@\(k\) rising while pass@1 is flat</td><td>Coverage the policy already has, gated by the absence of a verifier</td></tr>
+      <tr><td>Best-of-\(n\) accuracy peaking then falling</td><td>Reward-model overoptimization — \(R_\text{gold}(d)=d(\alpha-\beta\log d)\) past its peak</td></tr>
+      <tr><td>Self-consistency flattening around \(k\approx 40\)</td><td>Convergence to the modal answer — a ceiling, not a slow climb</td></tr>
+      <tr><td>"Small model + search beats a 14× larger model"</td><td>True on easy/medium questions; false on the hard tail where \(p_i\approx 0\)</td></tr>
+      <tr><td>A model that thinks for 30k tokens before answering</td><td>Search internalized into the policy by RL — no \(\log n\) ceiling, no serving-time verifier</td></tr>
+    </table>
+  </div>
+
+  <h2>Sources</h2>
+  <ul>
+    <li><a href="https://arxiv.org/abs/2407.21787">Brown et al. (2024) — Large Language Monkeys: Scaling Inference Compute with Repeated Sampling</a> — the coverage power law, measured</li>
+    <li><a href="https://arxiv.org/abs/2408.03314">Snell et al. (2024) — Scaling LLM Test-Time Compute Optimally Can Be More Effective Than Scaling Model Parameters</a> — sequential vs parallel, difficulty-adaptive allocation, the FLOPs-matched comparison</li>
+    <li><a href="https://arxiv.org/abs/2408.00724">Wu et al. (2024) — Inference Scaling Laws: An Empirical Analysis of Compute-Optimal Inference</a></li>
+    <li><a href="https://arxiv.org/abs/2210.10760">Gao, Schulman &amp; Hilton (2023) — Scaling Laws for Reward Model Overoptimization</a> — the \(d=\sqrt{\mathrm{KL}}\) parameterization and the gold/proxy divergence</li>
+    <li><a href="https://arxiv.org/abs/2401.01879">Beirami et al. (2024) — Theoretical Guarantees on the Best-of-\(n\) Alignment Policy</a> — when \(\log n - (n-1)/n\) is exact vs an upper bound</li>
+    <li><a href="https://arxiv.org/abs/2401.00448">Sardana et al. (2023) — Beyond Chinchilla-Optimal: Accounting for Inference in LM Scaling Laws</a></li>
+    <li><a href="https://arxiv.org/abs/2203.11171">Wang et al. (2022) — Self-Consistency Improves Chain of Thought Reasoning</a></li>
+    <li><a href="https://arxiv.org/abs/2305.20050">Lightman et al. (2023) — Let's Verify Step by Step</a> — process reward models</li>
+    <li><a href="https://arxiv.org/abs/2501.19393">Muennighoff et al. (2025) — s1: Simple Test-Time Scaling</a> — budget forcing</li>
+    <li><a href="https://arxiv.org/abs/2501.12948">DeepSeek-AI (2025) — DeepSeek-R1</a> — RL-induced long chain-of-thought</li>
+  </ul>
+
+  <p style="margin-top:2em;"><strong>Related pages:</strong> <a href="scaling-laws.html">Neural Scaling Laws</a> (the training-time counterpart) · <a href="tree-search-llm.html">Tree Search for LLMs</a> (the search algorithms) · <a href="deepseek-r1.html">DeepSeek-R1</a> (RL for long CoT) · <a href="inference-compute-model.html">The Inference Compute Model</a> (what the FLOPs cost on real hardware).</p>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; Test-time compute — the coverage power law, the verifier gap, and the \(\log n\) ceiling
+</footer>
+
+<script>
+(function () {
+  // resolve colors at render time so the plot follows the OS light/dark scheme
+  function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+  /* ── Lanczos log-gamma (g=7, n=9) ───────────────────────────── */
+  var LG = [676.5203681218851, -1259.1392167224028, 771.32342877765313,
+            -176.61502916214059, 12.507343278686905, -0.13857109526572012,
+            9.9843695780195716e-6, 1.5056327351493116e-7];
+  function lgamma(z) {
+    if (z < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * z)) - lgamma(1 - z);
+    z -= 1;
+    var x = 0.99999999999980993;
+    for (var i = 0; i < 8; i++) x += LG[i] / (z + i + 1);
+    var t = z + 7.5;
+    return 0.5 * Math.log(2 * Math.PI) + (z + 0.5) * Math.log(t) - t + Math.log(x);
+  }
+
+  /* ── Plot 1: coverage vs sample budget ──────────────────────── */
+  var A = 0.3, B = 3.0;                       // difficulty ~ Beta(A, B)
+  var LC = lgamma(A + B) - lgamma(B);         // log[ Gamma(a+b)/Gamma(b) ]
+  var PBAR = A / (A + B);                     // mean success rate = 0.0909
+  var ASYM = Math.exp(LC);                    // power-law prefactor = 1.3417
+
+  function mixCoverage(k)    { return 1 - Math.exp(LC + lgamma(B + k) - lgamma(A + B + k)); }
+  function singleCoverage(k) { return 1 - Math.pow(1 - PBAR, k); }
+  function asymCoverage(k)   { return 1 - ASYM * Math.pow(k, -A); }
+
+  /* ── Plot 2: best-of-n overoptimization ─────────────────────── */
+  function bonKL(n) { return n <= 1 ? 0 : Math.log(n) - (n - 1) / n; }
+  function reward(beta) {
+    return function (n) {
+      var d = Math.sqrt(bonKL(n));
+      if (d < 1e-6) return 0;                 // d·log d -> 0, but 0·(-Inf) is NaN
+      return d * (1 - beta * Math.log(d));
+    };
+  }
+  var goldReward  = reward(0.60);
+  var proxyReward = reward(0.12);
+
+  function drawPlot(canvas, cfg) {
+    var dpr = window.devicePixelRatio || 1;
+    var cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    var ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    var mL = 50, mR = 14, mT = 14, mB = 42;
+    var pw = cssW - mL - mR, ph = cssH - mT - mB;
+    var xMin = cfg.xMin, xMax = cfg.xMax, yMin = cfg.yMin, yMax = cfg.yMax;
+    var X = function (x) { return mL + (x - xMin) / (xMax - xMin) * pw; };
+    var Y = function (y) { return mT + (yMax - y) / (yMax - yMin) * ph; };
+
+    // gridlines + tick labels
+    ctx.font = '11px Inter, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(function (t, i) {
+      var px = X(t);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.fillText(cfg.xTickLabels ? cfg.xTickLabels[i] : String(t), px, mT + ph + 6);
+    });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(function (t, i) {
+      var py = Y(t);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+      ctx.fillText(cfg.yTickLabels ? cfg.yTickLabels[i] : String(t), mL - 8, py);
+    });
+
+    // axis labels
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(cfg.xLabel, mL + pw / 2, cssH - 8);
+    ctx.save();
+    ctx.translate(13, mT + ph / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText(cfg.yLabel, 0, 0);
+    ctx.restore();
+
+    // emphasized baseline
+    ctx.strokeStyle = cssVar('--plot-axis');
+    ctx.lineWidth = 1.25;
+    ctx.beginPath(); ctx.moveTo(mL, Y(0)); ctx.lineTo(mL + pw, Y(0)); ctx.stroke();
+
+    // curves (clipped to plot area)
+    ctx.save();
+    ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    ctx.lineJoin = 'round';
+    cfg.series.forEach(function (s) {
+      ctx.beginPath();
+      ctx.lineWidth = s.width || 2;
+      ctx.strokeStyle = s.color.indexOf('--') === 0 ? cssVar(s.color) : s.color;
+      ctx.setLineDash(s.dash || []);
+      var M = 260;
+      for (var i = 0; i <= M; i++) {
+        var x = xMin + (xMax - xMin) * i / M;
+        var px = X(x), py = Y(s.fn(x));
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  var plots = [];
+
+  var covCanvas = document.getElementById('plot-coverage');
+  if (covCanvas) plots.push([covCanvas, {
+    xMin: 0, xMax: 10, yMin: 0, yMax: 1,
+    xTicks: [0, 2, 4, 6, 8, 10],
+    xTickLabels: ['1', '4', '16', '64', '256', '1024'],
+    yTicks: [0, 0.25, 0.5, 0.75, 1],
+    xLabel: 'samples drawn per question, k  (log scale)',
+    yLabel: 'coverage  (pass@k)',
+    series: [
+      { fn: function (x) { return asymCoverage(Math.pow(2, x)); },   color: '--plot-gray',   width: 1.75, dash: [5, 4] },
+      { fn: function (x) { return singleCoverage(Math.pow(2, x)); }, color: '--plot-teal',   width: 2.5 },
+      { fn: function (x) { return mixCoverage(Math.pow(2, x)); },    color: '--plot-violet', width: 2.75 }
+    ]
+  }]);
+
+  var optCanvas = document.getElementById('plot-overopt');
+  if (optCanvas) plots.push([optCanvas, {
+    xMin: 0, xMax: 12, yMin: 0, yMax: 2.6,
+    xTicks: [0, 2, 4, 6, 8, 10, 12],
+    xTickLabels: ['1', '4', '16', '64', '256', '1024', '4096'],
+    yTicks: [0, 0.5, 1, 1.5, 2, 2.5],
+    xLabel: 'best-of-n sample count, n  (log scale)',
+    yLabel: 'reward gain over base policy',
+    series: [
+      { fn: function (x) { return proxyReward(Math.pow(2, x)); }, color: '--plot-amber',  width: 2.5 },
+      { fn: function (x) { return goldReward(Math.pow(2, x)); },  color: '--plot-violet', width: 2.75 }
+    ]
+  }]);
+
+  function renderAll() { plots.forEach(function (p) { drawPlot(p[0], p[1]); }); }
+  renderAll();
+  var raf;
+  window.addEventListener('resize', function () { cancelAnimationFrame(raf); raf = requestAnimationFrame(renderAll); });
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq.addEventListener) mq.addEventListener('change', renderAll);
+})();
+</script>
+
+</body>
+</html>
