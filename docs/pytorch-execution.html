@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
   <title>The PyTorch Execution Model — Tensors, Autograd, Operators &amp; Eager Dispatch</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -17,6 +18,7 @@
   <style>
     *, *::before, *::after { box-sizing: border-box; }
     :root {
+      color-scheme: light;
       --bg: #ffffff; --surface: #f8f9fa; --border: #e8eaed;
       --text: #1a1a2e; --muted: #6b7280;
       --accent: #b45309; --accent-light: #fef3c7;
@@ -25,9 +27,85 @@
       --boxed-bg: #fff7ed; --boxed-border: #f97316;
       --compare-bg: #eff6ff; --compare-border: #3b82f6;
       --code-bg: #1e1b4b; --code-text: #e2e8f0;
+      --nav-bg: rgba(255,255,255,0.92);
+      --ink: #374151;
+      --icode-bg: #f1f5f9;
+      --kw-fg: #c084fc;
+      --fn-fg: #60a5fa;
+      --cm-fg: #94a3b8;
+      --str-fg: #86efac;
+      --num-fg: #fbbf24;
+      --dec-fg: #f9a8d4;
+      --row-hover: #fafafa;
+      --good-fg: #16a34a;
+      --bad-fg: #dc2626;
+      --compare-fg: #2563eb;
+      --amber-border: #fcd34d;
+      --note-fg: #78350f;
+      --chip-hbm-bg: #fee2e2;
+      --chip-sram-bg: #d1fae5;
+      --chip-sram-fg: #059669;
+      --fig-bg: #fff;
+      --plot-grid: #eceef1;
+      --plot-axis: #cbd5e1;
+      --plot-tick: #9ca3af;
+      --plot-label: #6b7280;
+      --plot-gray: #9ca3af;
+      --plot-amber: #b45309;
+      --plot-orange: #ea580c;
     }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #fbbf24;
+        --accent-light: #251c0b;
+        --warning-bg: #251c0b;
+        --warning-border: #b45309;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #251c0b;
+        --boxed-border: #c2410c;
+        --compare-bg: #101a2b;
+        --compare-border: #1e40af;
+        --code-bg: #221f3d;
+        --code-text: #e2e8f0;
+        --nav-bg: rgba(15,17,21,0.9);
+        --ink: #cbd5e1;
+        --icode-bg: #1c2531;
+        --kw-fg: #c084fc;
+        --fn-fg: #60a5fa;
+        --cm-fg: #94a3b8;
+        --str-fg: #86efac;
+        --num-fg: #fbbf24;
+        --dec-fg: #f9a8d4;
+        --row-hover: #191e25;
+        --good-fg: #4ade80;
+        --bad-fg: #f87171;
+        --compare-fg: #60a5fa;
+        --amber-border: #78350f;
+        --note-fg: #fcd34d;
+        --chip-hbm-bg: #2a1214;
+        --chip-sram-bg: #0e2016;
+        --chip-sram-fg: #34d399;
+        --fig-bg: #14181e;
+        --plot-grid: #232830;
+        --plot-axis: #3a4149;
+        --plot-tick: #6b7280;
+        --plot-label: #9aa1ab;
+        --plot-gray: #6b7280;
+        --plot-amber: #fbbf24;
+        --plot-orange: #fb923c;
+      }
+    }
+
     body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 0; line-height: 1.75; font-size: 16px; }
-    nav { position: sticky; top: 0; z-index: 100; background: rgba(255,255,255,0.92); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 52px; }
+    nav { position: sticky; top: 0; z-index: 100; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 52px; }
     .nav-brand {
       display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 0.9rem; color: var(--accent); text-decoration: none; white-space: nowrap; }
     .nav-links { display: flex; gap: 4px; overflow-x: auto; flex: 1; }
@@ -41,60 +119,60 @@
     .hero-pill { display: inline-block; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 100px; font-size: 0.78rem; padding: 3px 12px; margin-bottom: 16px; letter-spacing: 0.04em; text-transform: uppercase; }
     .page-wrap { max-width: 820px; margin: 0 auto; padding: 48px 24px 80px; }
     h2 { font-size: 1.15rem; font-weight: 600; margin: 2.8em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); color: var(--text); }
-    h3 { font-size: 0.97rem; font-weight: 600; margin: 1.6em 0 0.4em; color: #374151; }
+    h3 { font-size: 0.97rem; font-weight: 600; margin: 1.6em 0 0.4em; color: var(--ink); }
     p { margin: 0.6em 0; }
     ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
     li { margin-bottom: 0.4em; }
     code { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
-    p code, li code, td code { background: #f1f5f9; padding: 1px 6px; border-radius: 4px; font-size: 0.88em; color: #b45309; }
+    p code, li code, td code { background: var(--icode-bg); padding: 1px 6px; border-radius: 4px; font-size: 0.88em; color: var(--accent); }
     pre { background: var(--code-bg); color: var(--code-text); border-radius: 10px; padding: 20px 24px; overflow-x: auto; font-size: 0.87rem; line-height: 1.6; margin: 1.2em 0; }
     pre code { background: none; padding: 0; font-size: inherit; color: inherit; }
-    .kw  { color: #c084fc; }
-    .fn  { color: #60a5fa; }
-    .cm  { color: #94a3b8; font-style: italic; }
-    .str { color: #86efac; }
-    .num { color: #fbbf24; }
-    .dec { color: #f9a8d4; }
+    .kw  { color: var(--kw-fg); }
+    .fn  { color: var(--fn-fg); }
+    .cm  { color: var(--cm-fg); font-style: italic; }
+    .str { color: var(--str-fg); }
+    .num { color: var(--num-fg); }
+    .dec { color: var(--dec-fg); }
     .table-wrap { overflow-x: auto; margin: 1.2em 0; }
     table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
     th, td { border: 1px solid var(--border); padding: 9px 16px; text-align: left; vertical-align: top; }
     th { background: var(--surface); font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
-    tr:hover td { background: #fafafa; }
-    td.good { color: #16a34a; font-weight: 600; }
-    td.bad  { color: #dc2626; }
+    tr:hover td { background: var(--row-hover); }
+    td.good { color: var(--good-fg); font-weight: 600; }
+    td.bad  { color: var(--bad-fg); }
     td.ctr, th.ctr { text-align: center; }
     .step { background: var(--step-bg); border: 1px solid var(--step-border); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 1.2em 0; }
     .step-label { font-weight: 600; font-size: 0.88rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
     .step-label::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
-    .note { background: var(--warning-bg); border-left: 3px solid var(--warning-border); border-radius: 0 8px 8px 0; padding: 10px 16px; margin: 1em 0; font-size: 0.92em; color: #78350f; }
+    .note { background: var(--warning-bg); border-left: 3px solid var(--warning-border); border-radius: 0 8px 8px 0; padding: 10px 16px; margin: 1em 0; font-size: 0.92em; color: var(--note-fg); }
     .result { background: var(--boxed-bg); border: 1.5px solid var(--boxed-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; text-align: center; }
     .result-label { font-size: 0.8rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
     .compare { background: var(--compare-bg); border: 1.5px solid var(--compare-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; }
-    .compare-label { font-size: 0.8rem; font-weight: 600; color: #2563eb; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
+    .compare-label { font-size: 0.8rem; font-weight: 600; color: var(--compare-fg); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
     .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 1.2em 0; }
-    .summary-card { background: var(--accent-light); border: 1px solid #fcd34d; border-radius: 8px; padding: 14px 16px; }
+    .summary-card { background: var(--accent-light); border: 1px solid var(--amber-border); border-radius: 8px; padding: 14px 16px; }
     .summary-card-label { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
     .summary-card p { margin: 0; font-size: 0.9rem; }
-    .xref { background: var(--accent-light); border: 1px solid #fcd34d; border-radius: 8px; padding: 12px 18px; margin: 1.4em 0; font-size: 0.92rem; }
+    .xref { background: var(--accent-light); border: 1px solid var(--amber-border); border-radius: 8px; padding: 12px 18px; margin: 1.4em 0; font-size: 0.92rem; }
     .xref a { color: var(--accent); font-weight: 600; text-decoration: none; }
     .xref a:hover { text-decoration: underline; }
     /* Memory pass diagram */
     .pass-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 1.2em 0; }
     .pass-box { border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
     .pass-box h4 { font-size: 0.85rem; font-weight: 600; margin: 0 0 10px; text-transform: uppercase; letter-spacing: 0.04em; }
-    .pass-bad  { border-left: 3px solid #dc2626; }
-    .pass-good { border-left: 3px solid #16a34a; }
+    .pass-bad  { border-left: 3px solid var(--bad-fg); }
+    .pass-good { border-left: 3px solid var(--good-fg); }
     .pass-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 0.87rem; }
     .pass-arrow { color: var(--muted); font-size: 0.8rem; }
     .mem-chip { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.78rem; font-weight: 600; }
-    .chip-hbm  { background: #fee2e2; color: #dc2626; }
-    .chip-sram { background: #d1fae5; color: #059669; }
+    .chip-hbm  { background: var(--chip-hbm-bg); color: var(--bad-fg); }
+    .chip-sram { background: var(--chip-sram-bg); color: var(--chip-sram-fg); }
     /* Figure / interactive plot */
-    .figure { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 18px 16px 14px; margin: 1.6em 0; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+    .figure { background: var(--fig-bg); border: 1px solid var(--border); border-radius: 10px; padding: 18px 16px 14px; margin: 1.6em 0; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
     .figure canvas { width: 100%; height: 320px; display: block; }
     .controls { display: flex; flex-wrap: wrap; gap: 18px 28px; margin: 14px 4px 4px; }
     .control { flex: 1 1 240px; }
-    .control label { display: flex; justify-content: space-between; font-size: 0.82rem; font-weight: 600; color: #374151; margin-bottom: 6px; }
+    .control label { display: flex; justify-content: space-between; font-size: 0.82rem; font-weight: 600; color: var(--ink); margin-bottom: 6px; }
     .control label .val { color: var(--accent); font-variant-numeric: tabular-nums; }
     .control input[type=range] { width: 100%; accent-color: var(--accent); }
     .readout { font-size: 0.86rem; color: var(--text); line-height: 1.6; margin: 14px 4px 2px; padding: 12px 14px; background: var(--step-bg); border: 1px solid var(--border); border-radius: 8px; }
@@ -293,18 +371,18 @@
 
   <div class="pass-grid">
     <div class="pass-box pass-bad">
-      <h4 style="color:#dc2626;">Eager: 3 kernels, 3 HBM round-trips</h4>
+      <h4 style="color:var(--bad-fg);">Eager: 3 kernels, 3 HBM round-trips</h4>
       <div class="pass-row"><span class="mem-chip chip-hbm">read x</span> <span class="pass-arrow">→</span> <code>t1 = 1.702*x</code> <span class="pass-arrow">→</span> <span class="mem-chip chip-hbm">write t1</span></div>
       <div class="pass-row"><span class="mem-chip chip-hbm">read t1</span> <span class="pass-arrow">→</span> <code>t2 = sigmoid(t1)</code> <span class="pass-arrow">→</span> <span class="mem-chip chip-hbm">write t2</span></div>
       <div class="pass-row"><span class="mem-chip chip-hbm">read x, t2</span> <span class="pass-arrow">→</span> <code>y = x*t2</code> <span class="pass-arrow">→</span> <span class="mem-chip chip-hbm">write y</span></div>
-      <p style="font-size:0.85rem;color:#dc2626;margin:8px 0 0;">≈ 7N elements move through HBM · 3 kernel launches.</p>
+      <p style="font-size:0.85rem;color:var(--bad-fg);margin:8px 0 0;">≈ 7N elements move through HBM · 3 kernel launches.</p>
     </div>
     <div class="pass-box pass-good">
-      <h4 style="color:#16a34a;">Fused: 1 kernel, 1 HBM round-trip</h4>
+      <h4 style="color:var(--good-fg);">Fused: 1 kernel, 1 HBM round-trip</h4>
       <div class="pass-row"><span class="mem-chip chip-hbm">read x once</span> <span class="pass-arrow">→</span> keep in <span class="mem-chip chip-sram">registers</span></div>
       <div class="pass-row"><span class="mem-chip chip-sram">registers</span> <span class="pass-arrow">→</span> compute <code>1.702·x</code>, <code>σ</code>, multiply in place</div>
       <div class="pass-row"><span class="mem-chip chip-sram">registers</span> <span class="pass-arrow">→</span> <span class="mem-chip chip-hbm">write y once</span></div>
-      <p style="font-size:0.85rem;color:#16a34a;margin:8px 0 0;">≈ 2N elements move through HBM · 1 kernel launch.</p>
+      <p style="font-size:0.85rem;color:var(--good-fg);margin:8px 0 0;">≈ 2N elements move through HBM · 1 kernel launch.</p>
     </div>
   </div>
 
@@ -406,6 +484,9 @@
   const X_MIN = 10, X_MAX = 26;        // log2(elements)
   const Y_MIN = 0,  Y_MAX = 3;         // log10(microseconds): 1 µs … 1000 µs
 
+  // resolve colors at draw time so the plot follows the OS light/dark scheme
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
   function draw() {
     if (!canvas) return;
     const dpr = window.devicePixelRatio || 1;
@@ -426,8 +507,8 @@
     // gridlines + ticks
     ctx.font = '11px Inter, sans-serif';
     ctx.lineWidth = 1;
-    ctx.strokeStyle = '#eceef1';
-    ctx.fillStyle = '#9ca3af';
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.fillStyle = cssVar('--plot-tick');
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     const xt = [[10,'1K'],[14,'16K'],[18,'256K'],[22,'4M'],[26,'64M']];
     xt.forEach(([lx, lab]) => { const px = X(lx);
@@ -440,29 +521,29 @@
       ctx.fillText(lab, mL - 8, py); });
 
     // axis titles
-    ctx.fillStyle = '#6b7280'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.fillStyle = cssVar('--plot-label'); ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     ctx.fillText('tensor size (elements, log scale)', mL + pw / 2, mT + ph + 24);
 
     // launch-overhead floor (dashed)
     const floorLY = toLY(TLAUNCH);
     ctx.save();
-    ctx.strokeStyle = '#9ca3af'; ctx.lineWidth = 1.5; ctx.setLineDash([5, 4]);
+    ctx.strokeStyle = cssVar('--plot-gray'); ctx.lineWidth = 1.5; ctx.setLineDash([5, 4]);
     ctx.beginPath(); ctx.moveTo(mL, Y(floorLY)); ctx.lineTo(mL + pw, Y(floorLY)); ctx.stroke();
     ctx.restore();
-    ctx.fillStyle = '#9ca3af'; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+    ctx.fillStyle = cssVar('--plot-tick'); ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
     ctx.fillText('launch floor (~5 µs)', mL + 6, Y(floorLY) - 4);
 
     // crossover vertical
     const lxStar = Math.log2(nStar);
     ctx.save();
-    ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 1.25; ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = cssVar('--plot-axis'); ctx.lineWidth = 1.25; ctx.setLineDash([3, 3]);
     ctx.beginPath(); ctx.moveTo(X(lxStar), mT); ctx.lineTo(X(lxStar), mT + ph); ctx.stroke();
     ctx.restore();
 
     // tOp curve (clipped)
     ctx.save();
     ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
-    ctx.beginPath(); ctx.lineWidth = 2.75; ctx.strokeStyle = '#b45309'; ctx.lineJoin = 'round';
+    ctx.beginPath(); ctx.lineWidth = 2.75; ctx.strokeStyle = cssVar('--plot-amber'); ctx.lineJoin = 'round';
     const STEPS = 240;
     for (let i = 0; i <= STEPS; i++) {
       const lx = X_MIN + (X_MAX - X_MIN) * i / STEPS;
@@ -478,17 +559,17 @@
     const nNow = Math.pow(2, lxNow);
     const launchBound = tBW(nNow) < TLAUNCH;
     ctx.save();
-    ctx.strokeStyle = '#ea580c'; ctx.lineWidth = 1.5;
+    ctx.strokeStyle = cssVar('--plot-orange'); ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.moveTo(X(lxNow), mT); ctx.lineTo(X(lxNow), mT + ph); ctx.stroke();
     ctx.restore();
     const pyNow = Y(toLY(tOp(nNow)));
-    ctx.beginPath(); ctx.fillStyle = '#b45309';
+    ctx.beginPath(); ctx.fillStyle = cssVar('--plot-amber');
     ctx.arc(X(lxNow), pyNow, 5, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.strokeStyle = cssVar('--fig-bg'); ctx.lineWidth = 1.5; ctx.stroke();
 
     // regime tag near the dot
     ctx.font = '600 11px Inter, sans-serif';
-    ctx.fillStyle = launchBound ? '#dc2626' : '#16a34a';
+    ctx.fillStyle = cssVar(launchBound ? '--bad-fg' : '--good-fg');
     const tag = launchBound ? 'launch-bound' : 'bandwidth-bound';
     const onLeft = X(lxNow) > mL + pw * 0.55;
     ctx.textAlign = onLeft ? 'right' : 'left';
@@ -524,6 +605,8 @@
     kSlider.addEventListener('input', update);
     let raf;
     window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(draw); });
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    if (mq.addEventListener) mq.addEventListener('change', draw);
     update();
   }
 })();
