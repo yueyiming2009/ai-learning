@@ -13,28 +13,39 @@ the right place on the index. This skill is the single source of truth for *wher
 Related: [`add-plot`](../add-plot/SKILL.md) governs the figures *inside* a page; this skill
 governs the page's *entry on the index*.
 
-## The taxonomy (4 collapsible domains)
+## The taxonomy (6 collapsible domains)
 
-`docs/index.html` is organized into four top-level **domains**, each a
+`docs/index.html` is organized into six top-level **domains**, each a
 `<details class="domain" id="…">` that is **collapsed by default** (no `open` attribute). Its
 `<summary class="domain-header">` carries the numbered badge, the `<h1>`, and a `▸` chevron;
 inside the `<details>` come a `<p class="domain-desc">` and the **subsections** (`<h2>`,
-restyled as small uppercase labels), each holding a `card-grid` of cards. Within Systems &
-Hardware and within Inference the subsections run bottom-up (hardware → up; foundations →
-workloads).
+restyled as small uppercase labels), each holding a `card-grid` of cards. The domains run in
+reading order — isolated math, then the chips, then the model, then the cluster, then RL, then
+serving. Within Systems & Scaling and within Inference the subsections run bottom-up
+(kernels → up; foundations → workloads).
 
 | # | Domain (`id` / class / accent) | Subsections (in page order) | A page belongs here if it's about… |
 |---|---|---|---|
-| 01 | **Deep Learning Foundations** — `#foundations` / `domain-foundations` / indigo | Foundations · Loss Functions · Normalization · Activations & FFN · Positional Encoding · Optimization · Sampling & Estimation · Tokenization · Architecture | the math of how a model computes & trains: a gradient, a loss's probabilistic basis, an optimizer rule, the tokenizer/routing math |
-| 02 | **Systems & Hardware** — `#systems` / `domain-systems` / orange | Hardware · GPU Kernels · Communication & Parallelism · Distributed Training | the training substrate: chips, kernels, collectives, parallelism, distributed plumbing |
-| 03 | **Reinforcement Learning** — `#rl` / `domain-rl` / teal | RL Theory · Alignment & RLHF · RL Frameworks · Training Walkthroughs · RL Efficiency | anything RL — the theory (MDP → tree search), the alignment methods (RLHF/GRPO/DPO/…), the frameworks that run RL jobs (verl/TRL/landscape/placement), and the systems pages (walkthroughs, async RL, efficiency) |
-| 04 | **Inference** — `#inference` / `domain-inference` / blue | Inference Foundations · Inference Techniques · Inference Workloads | serving a trained model fast: the prefill/decode compute model, its optimizations, and serving workloads |
+| 01 | **Deep Learning Foundations** — `#foundations` / `domain-foundations` / indigo | Foundations · Loss Functions · Normalization · Activations & FFN · Positional Encoding · Optimization · Sampling & Estimation · Tokenization · Test-Time Scaling · Interpretability | the math of how a model computes & trains, component by component: a gradient, a loss's probabilistic basis, an optimizer rule, the tokenizer algorithm — **derivations that stand alone from the transformer** |
+| 02 | **Hardware** — `#hardware` / `domain-hardware` / lime | Accelerators | the physical chip: SM/tensor-core layout, memory hierarchy, interconnect topology |
+| 03 | **Transformer & Pretraining** — `#transformer` / `domain-transformer` / violet | Architecture · Training | assembling the pieces into a working model and training it: attention, the block, the layer variants (linear attn, DeltaNet, MoE routing), the next-token objective, and how to **size** the run (scaling laws) |
+| 04 | **Systems & Scaling** — `#systems` / `domain-systems` / orange | Performance & Kernels · Communication & Parallelism · Distributed Training | the substrate that trains it across many devices: kernels, MFU, collectives, parallelism, distributed plumbing |
+| 05 | **Reinforcement Learning** — `#rl` / `domain-rl` / teal | RL Theory · Alignment & RLHF · RL Frameworks · Training Walkthroughs · RL Efficiency | anything RL — the theory (MDP → tree search), the alignment methods (RLHF/GRPO/DPO/…), the frameworks that run RL jobs (verl/TRL/landscape/placement), and the systems pages (walkthroughs, async RL, efficiency) |
+| 06 | **Inference** — `#inference` / `domain-inference` / blue | Inference Foundations · Inference Techniques · Inference Workloads | serving a trained model fast: the prefill/decode compute model, its optimizations, and serving workloads |
 
-Rule of thumb: **Foundations = "why the formula is true," Systems & Hardware = "the machine
+Rule of thumb: **Foundations = "why this formula is true, in isolation," Hardware = "the chip,"
+Transformer & Pretraining = "the model, assembled and trained," Systems & Scaling = "the cluster
 that trains it," RL = "anything reinforcement learning, theory through production,"
 Inference = "serving it fast."** RL and Inference each own their *whole* vertical — an RL
 training walkthrough goes under RL (not a generic "practices" bucket), and an inference serving
 recipe goes under Inference.
+
+**The Foundations ↔ Transformer seam is the one that gets mis-drawn.** The test is whether the
+page is a *standalone derivation* or a *transformer component*. SwiGLU and RoPE are gradient
+derivations that happen to be used in transformers → Foundations. MoE routing describes a layer
+of the model → Transformer & Pretraining. If a page's subject only exists inside a transformer,
+it is not a Foundations page. Note both domains have a subsection that has at some point been
+called "Architecture" — do not let the name alone route you.
 
 ## How to add the card
 
