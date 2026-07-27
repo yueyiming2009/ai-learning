@@ -135,6 +135,7 @@
   <a class="nav-brand" href="index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>FlashAttention</a>
   <div class="nav-links">
     <a href="index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#notation">Notation</a>
     <a href="#standard">Standard attention cost</a>
     <a href="#tiling">The tiling insight</a>
     <a href="#online-softmax">Online softmax</a>
@@ -157,6 +158,40 @@
 <p>
   The attention operation is the single most memory-bandwidth-intensive part of a transformer at long context. Most of the cost is not arithmetic — it is the cost of writing and reading back the intermediate \(N \times N\) score matrix. FlashAttention's contribution is entirely algorithmic: the same exact output, computed without ever materializing that matrix, by fusing the three attention steps (QK^T, softmax, and PV) into a single kernel that operates in tiles small enough to live in SRAM.
 </p>
+
+<!-- ═══════════════════════════════════════════ NOTATION -->
+<h2 id="notation">Notation</h2>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Symbol</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td>\(N\)</td><td>Sequence length (number of tokens attended over)</td></tr>
+      <tr><td>\(d\)</td><td>Head dimension — the width of one attention head, typically 64 or 128</td></tr>
+      <tr><td>\(B\)</td><td>Batch size</td></tr>
+      <tr><td>\(Q, K, V \in \mathbb{R}^{N \times d}\)</td><td>Query, key, and value matrices for one head; the kernel's inputs, resident in HBM</td></tr>
+      <tr><td>\(S = QK^\top \in \mathbb{R}^{N \times N}\)</td><td>Score (logit) matrix — the intermediate FlashAttention never writes to HBM</td></tr>
+      <tr><td>\(P = \text{softmax}(S/\sqrt{d})\)</td><td>Attention weights — row-wise softmax of the scaled scores, also \(N \times N\)</td></tr>
+      <tr><td>\(O = PV \in \mathbb{R}^{N \times d}\)</td><td>Attention output — the only large tensor written back to HBM</td></tr>
+      <tr><td>\(B_r,\, B_c\)</td><td>Tile sizes: \(B_r\) rows of \(Q\), \(B_c\) columns of \(K, V\) per SRAM block</td></tr>
+      <tr><td>\(Q_i,\; K_j, V_j\)</td><td>The \(i\)-th query row tile and \(j\)-th key/value column tile</td></tr>
+      <tr><td>\(\tilde{S}_{ij} = Q_i K_j^\top / \sqrt{d}\)</td><td>Partial score tile — \(B_r \times B_c\), lives entirely in SRAM</td></tr>
+      <tr><td>\(N/B_r,\; N/B_c\)</td><td>Number of row tiles (outer loop) and column tiles (inner loop)</td></tr>
+      <tr><td>\(M\)</td><td>SRAM capacity in elements; tiles are sized so \(B_rB_c + B_rd + B_cd \leq M\)</td></tr>
+      <tr><td>\(m^{(j)}\)</td><td>Running row maximum after \(j\) tiles — the stability shift of the online softmax</td></tr>
+      <tr><td>\(\ell^{(j)}\)</td><td>Running softmax normalizer \(\sum e^{\tilde{S} - m^{(j)}}\), rescaled whenever \(m\) grows</td></tr>
+      <tr><td>\(O^{(j)}\)</td><td>Running partial output after \(j\) tiles; \(O^{(N/B_c)}\) is the exact final row of \(O\)</td></tr>
+      <tr><td>\(I\)</td><td>Arithmetic intensity — FLOPs per byte of HBM traffic; \(I \approx 1\) for untiled softmax + PV</td></tr>
+      <tr><td>\(T_p\)</td><td>Prompt length at prefill — the \(N\) that produces a \(T_p \times T_p\) score matrix</td></tr>
+      <tr><td>\(T\)</td><td>Cached context length at decode; the new query scores a \(1 \times T\) vector</td></tr>
+      <tr><td>\(h_{\rm kv}\)</td><td>Number of KV heads (fewer than query heads under GQA/MQA)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="note">
+  Symbols are per attention head with the batch dimension suppressed, matching the <a href="attention.html" style="color:var(--note-fg);">Self-Attention</a> page — except that \(d\) here always means the <em>head</em> dimension \(d_k\), since the whole argument is about one head's kernel.
+</div>
 
 <!-- ═══════════════════════════════════════════ STANDARD ATTENTION -->
 <h2 id="standard">1 · Standard attention — the HBM bottleneck</h2>
