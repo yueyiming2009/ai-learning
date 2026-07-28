@@ -41,6 +41,12 @@
       --spec-num: #6ee7b7;
       --spec-key: #94a3b8;
       --mem-track: #f3f4f6;
+      --plot-grid: #eceef1;
+      --plot-axis: #c7cbd1;
+      --plot-tick: #9ca3af;
+      --plot-gray: #9ca3af;
+      --plot-green: #059669;
+      --plot-amber: #d97706;
     }
 
     @media (prefers-color-scheme: dark) {
@@ -68,6 +74,12 @@
         --spec-num: #6ee7b7;
         --spec-key: #94a3b8;
         --mem-track: #262b33;
+        --plot-grid: #232830;
+        --plot-axis: #3a4149;
+        --plot-tick: #6b7280;
+        --plot-gray: #6b7280;
+        --plot-green: #34d399;
+        --plot-amber: #fbbf24;
       }
     }
     body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 0; line-height: 1.75; font-size: 16px; }
@@ -125,6 +137,14 @@
     .mem-label { width: 130px; font-size: 0.82rem; color: var(--muted); flex-shrink: 0; text-align: right; }
     .mem-track { flex: 1; height: 28px; background: var(--mem-track); border-radius: 6px; overflow: hidden; display: flex; }
     .mem-seg { height: 100%; display: flex; align-items: center; justify-content: center; font-size: 0.7rem; font-weight: 600; color: white; transition: width 0.3s; }
+    /* Figure / plot */
+    .figure { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 18px 16px 14px; margin: 1.6em 0; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+    .figure canvas { width: 100%; height: 300px; display: block; }
+    .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; justify-content: center; margin-top: 12px; font-size: 0.82rem; color: var(--text); }
+    .legend-item { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, var(--plot-gray) 0 5px, transparent 5px 9px); }
+    .figure-caption { font-size: 0.85rem; color: var(--muted); line-height: 1.6; margin: 14px 4px 2px; }
     footer { border-top: 1px solid var(--border); padding: 28px 24px; text-align: center; font-size: 0.82rem; color: var(--muted); }
     @media (max-width: 600px) { .hero { padding: 40px 16px 36px; } .page-wrap { padding: 32px 16px 60px; } }
   </style>
@@ -141,6 +161,7 @@
     <a href="#online-softmax">Online softmax</a>
     <a href="#io-complexity">IO complexity</a>
     <a href="#fa2-fa3">FA-2 &amp; FA-3</a>
+    <a href="#fa4">FA-4 &amp; Blackwell</a>
     <a href="#inference">Inference vs. training</a>
     <a href="#summary">Summary</a>
   </div>
@@ -185,6 +206,7 @@
       <tr><td>\(T_p\)</td><td>Prompt length at prefill — the \(N\) that produces a \(T_p \times T_p\) score matrix</td></tr>
       <tr><td>\(T\)</td><td>Cached context length at decode; the new query scores a \(1 \times T\) vector</td></tr>
       <tr><td>\(h_{\rm kv}\)</td><td>Number of KV heads (fewer than query heads under GQA/MQA)</td></tr>
+      <tr><td>\(\tau\)</td><td>FA-4's rescaling threshold — how far the running max may drift before the output accumulator is rescaled</td></tr>
     </tbody>
   </table>
 </div>
@@ -354,8 +376,126 @@
 </ul>
 <p>FA-3 achieves 75% of the H100 FP16 theoretical peak for attention (vs. ~35% for FA-2), and up to 1.5 PFLOP/s for FP8 attention.</p>
 
+<!-- ═══════════════════════════════════════════ FA-4 -->
+<h2 id="fa4">6 · FlashAttention-4 — when softmax becomes the bottleneck</h2>
+
+<p>
+  FA-1 through FA-3 all rest on one assumption: <em>the tensor cores are the scarce resource, and everything else can be hidden behind them.</em> Tiling hides HBM traffic; warp specialization hides TMA latency; the online-softmax exponentials and rescaling multiplies were assumed to fit in the shadow of the matmuls. On Blackwell (B200/GB200) that assumption breaks — not because the algorithm changed, but because the hardware scaled <strong>asymmetrically</strong>: the tensor cores doubled and nothing else did.
+</p>
+
+<div class="compare">
+  <div class="compare-label">Asymmetric scaling, H100 → B200 (per SM, per clock)</div>
+  <div class="table-wrap" style="margin:0">
+    <table style="margin:0">
+      <thead><tr><th>Resource</th><th class="ctr">Hopper H100</th><th class="ctr">Blackwell B200</th><th class="ctr">Scaling</th></tr></thead>
+      <tbody>
+        <tr><td>BF16 tensor core FLOPs</td><td class="ctr">4096</td><td class="ctr">8192</td><td class="ctr good">2×</td></tr>
+        <tr><td>Exponentials (<code>MUFU.EX2</code> on the SFU)</td><td class="ctr">16</td><td class="ctr">16</td><td class="ctr bad">1×</td></tr>
+        <tr><td>Shared-memory bandwidth</td><td class="ctr">—</td><td class="ctr">—</td><td class="ctr bad">1×</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="margin:10px 0 0;font-size:0.9rem">
+    Aggregate BF16 throughput rises from ~1 to 2.25 PFLOP/s, but the special-function unit that evaluates \(2^x\) retires the same 16 values per SM per clock it did on Hopper — a 512:1 ratio between matmul and exponential throughput.
+  </p>
+</div>
+
+<h3>The roofline flips at \(d = 128\)</h3>
+
+<p>
+  Count the work per element of the score matrix. Each score participates in two matmuls — \(QK^\top\) and \(PV\) — contributing \(2d\) FLOPs each, so \(4d\) FLOPs total; and it needs exactly <em>one</em> exponential. So for one \(128 \times 128\) score tile:
+</p>
+
+<div class="result">
+  <div class="result-label">Cycles per 128×128 score tile</div>
+  \[
+    t_{\rm mma} = \frac{4 \cdot 128^2 \cdot d}{\text{FLOPs/clk}}, \qquad
+    t_{\rm exp} = \frac{128^2}{16} = 1024 \ \text{cycles}
+  \]
+  <div style="font-size:0.85rem;color:var(--muted);margin-top:6px">
+    The exponential cost is <em>independent of \(d\)</em>; only the matmul cost grows with head dimension. The two are balanced when \(4d = \text{FLOPs/clk} / 16\) — i.e. \(d = 64\) on Hopper, \(d = 128\) on Blackwell.
+  </div>
+</div>
+
+<div class="figure">
+  <canvas id="plot-roofline" aria-label="Cycles per 128 by 128 score tile versus head dimension: matmul cost on H100 and B200 against the fixed exponential cost"></canvas>
+  <div class="legend">
+    <span class="legend-item"><span class="lg dash"></span> Matmul, H100 (4096 FLOP/clk/SM)</span>
+    <span class="legend-item"><span class="lg" style="--c:var(--plot-green)"></span> Matmul, B200 (8192 FLOP/clk/SM)</span>
+    <span class="legend-item"><span class="lg" style="--c:var(--plot-amber)"></span> Exponentials (16/clk/SM, both)</span>
+  </div>
+  <p class="figure-caption">
+    <strong>Blackwell doubled the matmul rate and moved the crossover from \(d=64\) to \(d=128\).</strong>
+    Wherever the matmul line sits <em>above</em> the flat exponential line, softmax hides completely behind the tensor cores — the situation FA-2 and FA-3 were designed for, comfortably true on H100 at the standard \(d = 128\) (2048 vs. 1024 cycles). On B200 the same point lands exactly <em>on</em> the exponential line: 1024 cycles of matmul, 1024 cycles of exp. There is no slack left to hide softmax in, and once the rescaling multiplies and other element-wise work are added, the non-matmul path <em>exceeds</em> MMA time by 25–60%.
+  </p>
+</div>
+
+<p>
+  So FA-4 is not another memory-traffic optimization — the \(O(Nd)\) IO result of §4 still stands untouched. It is an attack on the two resources that Blackwell did <em>not</em> scale: <strong>exponentials in the forward pass</strong> and <strong>shared-memory bandwidth in the backward pass</strong>.
+</p>
+
+<h3>Software-emulated exponential</h3>
+<p>
+  If the SFU can only produce 16 exponentials per clock, produce the rest somewhere else. FA-4 splits \(2^x\) across two independent pipes: the hardware <code>MUFU.EX2</code> unit, and the ordinary FMA pipe (which is idle, since the FLOPs are all going through the tensor cores). The FMA path is a classic three-step float emulation:
+</p>
+<ol>
+  <li><strong>Cody–Waite range reduction:</strong> split \(x = n + f\) with \(n\) integer and \(f \in [0,1)\), so \(2^x = 2^n \cdot 2^f\).</li>
+  <li><strong>Degree-3 polynomial in Horner form:</strong> \(2^f \approx p_0 + f(p_1 + f(p_2 + f p_3))\) with \(p_0 = 1.0,\ p_1 \approx 0.6951,\ p_2 \approx 0.2276,\ p_3 \approx 0.0771\) — coefficients fitted with Sollya to minimize relative error on \([0,1)\). Three FFMA instructions.</li>
+  <li><strong>Bit-shift recombination:</strong> apply the \(2^n\) factor by adding \(n\) directly into the exponent field.</li>
+</ol>
+<p>
+  Accuracy: max relative error \(8.77 \times 10^{-5}\) in FP32, and after rounding to BF16 it matches the hardware instruction to within 1 ULP on 99% of inputs — well inside the noise floor of BF16 attention. FA-4 also explicitly <em>staggers</em> its two softmax warpgroups so they never issue to the MUFU at the same instant, removing SFU contention.
+</p>
+
+<h3>Conditional softmax rescaling</h3>
+<p>
+  The online recurrence of §3 rescales the output accumulator by \(e^{m^{(j-1)} - m^{(j)}}\) every time the running max grows — a full \(B_r \times d\) element-wise multiply per tile, all of it non-matmul work on the critical path. FA-4 observes that \(m\) does not have to be the <em>true</em> running max; it only has to keep \(e^{\tilde S - m}\) inside float range. So it leaves \(m\) alone unless the new tile's max exceeds it by more than a threshold \(\tau\):
+</p>
+<div class="result">
+  <div class="result-label">Conditional rescale</div>
+  \[
+    \text{if } m_j - m_{j-1} \leq \tau: \ \text{keep } m_{j-1}, \text{ skip the accumulator rescale}
+  \]
+  <div style="font-size:0.85rem;color:var(--muted);margin-top:6px">
+    With \(\tau = \log_2 256 = 8\), the un-normalized numerators may run up to 256× above unity — harmless in FP32 — and the final division by \(\ell\) restores the exact answer. Most tiles now skip the rescale entirely.
+  </div>
+</div>
+<p>
+  A dedicated <strong>correction warpgroup</strong> handles the rescales that do happen, off the critical path of the softmax and MMA warpgroups.
+</p>
+
+<h3>Pipeline redesign for fully asynchronous tensor cores</h3>
+<p>
+  Blackwell's fifth-generation <code>tcgen05.mma</code> instructions are issued by a <em>single thread</em> and write their accumulator into <strong>Tensor Memory (TMEM)</strong> — 256 KB per SM of scratchpad wired directly into the tensor cores, rather than into registers. The largest single-CTA tile grows to \(128 \times 256 \times 16\), roughly double Hopper's WGMMA. Two consequences FA-4 exploits:
+</p>
+<ul>
+  <li><strong>Deeper warp specialization without register spilling.</strong> Accumulators live in TMEM, freeing the register budget that on Hopper capped how many roles a kernel could run. FA-4 carries two query tiles per CTA in a ping-pong: while one tile's matmuls occupy the tensor cores, the other tile's softmax runs on the SFU and FMA pipes.</li>
+  <li><strong>2-CTA MMA mode.</strong> A pair of CTAs issues one UMMA cooperatively over shared TMEM, reaching a \(256 \times 256 \times 16\) tile and halving the shared-memory traffic for the shared operand — the decisive win in the backward pass.</li>
+</ul>
+
+<h3>The backward pass — a shared-memory problem</h3>
+<p>
+  Backward attention runs five matmuls (\(dV, dP, dS, dQ, dK\)) plus element-wise work, and on B200 it is bound by shared-memory bandwidth rather than by the tensor cores. FA-4 partitions the output accumulators across a CTA pair (\(M = 256,\ N = K = 128\)), halving operand-B shared-memory traffic, and resolves the resulting reduction-axis mismatch by exchanging \(dS\) through <strong>distributed shared memory</strong> so each CTA ends up owning \(M/2\) rows with the full \(2N\) reduction dimension. A side benefit: the global atomic adds for \(dQ\) are halved. A deterministic mode, which serializes those \(dQ\) reductions with semaphore-style locking, still runs at 85–90% of the non-deterministic throughput.
+</p>
+
+<h3>Scheduling and implementation</h3>
+<p>
+  Causal masking and variable-length batches leave work tiles wildly unequal, so FA-4 adds grid swizzling (reverse \(m\)-block traversal within a batch-head section), longest-processing-time-first scheduling to shrink the tail, and an optional preprocessing kernel that sorts batches by per-tile cost. The whole kernel is written in <strong>CuTe-DSL</strong>, CUTLASS's Python kernel DSL that lowers to PTX — which compiles 20–30× faster than the equivalent C++ template metaprogramming, the practical reason a kernel this specialized is maintainable at all.
+</p>
+
+<div class="spec-grid">
+  <div class="spec"><div class="spec-num">1613</div><div class="spec-key">TFLOP/s BF16 on B200</div></div>
+  <div class="spec"><div class="spec-num">71%</div><div class="spec-key">of B200 peak utilization</div></div>
+  <div class="spec"><div class="spec-num">1.1–1.3×</div><div class="spec-key">vs. cuDNN 9.13 (forward)</div></div>
+  <div class="spec"><div class="spec-num">2.1–2.7×</div><div class="spec-key">vs. Triton</div></div>
+</div>
+
+<div class="note">
+  These margins are against cuDNN 9.13; later cuDNN releases absorbed many of the same ideas and are now roughly comparable. The durable lesson is not the benchmark number but the shape of the problem: <em>which</em> resource is scarce is a property of the specific silicon, and an "IO-aware" algorithm has to be re-derived each time the ratios move. FA-2 chased non-matmul FLOPs, FA-3 chased asynchrony, FA-4 chases exponentials and shared memory — all computing the identical exact output of §3.
+</div>
+
 <!-- ═══════════════════════════════════════════ INFERENCE VS TRAINING -->
-<h2 id="inference">6 · Inference vs. training — where FlashAttention matters most</h2>
+<h2 id="inference">7 · Inference vs. training — where FlashAttention matters most</h2>
 
 <p>
   FlashAttention applies to both training and inference, but its relative impact differs between the two phases:
@@ -397,7 +537,7 @@
 </div>
 
 <!-- ═══════════════════════════════════════════ SUMMARY -->
-<h2 id="summary">7 · Summary</h2>
+<h2 id="summary">8 · Summary</h2>
 
 <div class="summary-grid">
   <div class="summary-card">
@@ -421,6 +561,10 @@
     <p>FA-2: better warp-level parallelism (~2× vs FA-1 on A100). FA-3: H100 warp specialization + TMA overlap + FP8 — reaches 75% of H100 theoretical attention throughput.</p>
   </div>
   <div class="summary-card">
+    <div class="summary-card-label">FA-4</div>
+    <p>Blackwell doubled tensor-core throughput but not the exp unit or SMEM bandwidth, so softmax became the bottleneck. FA-4 emulates \(2^x\) on the idle FMA pipe, rescales only when the max drifts past \(\tau\), and uses TMEM + 2-CTA MMA — 1613 TFLOP/s, 71% of peak.</p>
+  </div>
+  <div class="summary-card">
     <div class="summary-card-label">Inference impact</div>
     <p>Critical for prefill (eliminates \(T_p^2\) HBM traffic). Moderate for decode (no N² matrix, but helps with KV cache read efficiency at long context).</p>
   </div>
@@ -434,9 +578,117 @@
   <br><br>
   <strong>Related:</strong>
   <a href="kv-cache.html">KV Cache →</a> — FlashAttention on the decode side reads the cached K, V tensors that the KV cache stores.
+  &nbsp;·&nbsp;
+  <a href="triton-kernels.html">Triton Kernels →</a> — writing a fused attention kernel by hand, the same fusion FA performs.
+  <br><br>
+  <strong>Papers:</strong> FlashAttention (Dao et al., 2022) · FlashAttention-2 (Dao, 2023) · FlashAttention-3 (Shah et al., 2024) · FlashAttention-4 (Zadouri, Hoehnerbach, Shah, Liu, Thakkar &amp; Dao, <a href="https://arxiv.org/abs/2603.05451">arXiv:2603.05451</a>, 2026).
 </div>
 
 </div>
+
+<script>
+(function () {
+  // Cycles to process one 128×128 score tile on a single SM, as a function of head dim d.
+  // Each score element costs 4d matmul FLOPs (QKᵀ and PV) and exactly one exponential.
+  const TILE = 128 * 128;
+  const mmaCycles = (d, flopsPerClk) => 4 * TILE * d / flopsPerClk;
+  const expCycles = TILE / 16;   // 1024 — independent of d
+
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+  function drawPlot(canvas, cfg) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const mL = 52, mR = 14, mT = 14, mB = 34;
+    const pw = cssW - mL - mR, ph = cssH - mT - mB;
+    const { xMin, xMax, yMin, yMax } = cfg;
+    const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
+    const Y = y => mT + (yMax - y) / (yMax - yMin) * ph;
+
+    // gridlines + tick labels
+    ctx.font = '11px Inter, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(t => {
+      const px = X(t);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.fillText(String(t), px, mT + ph + 6);
+    });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(t => {
+      const py = Y(t);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+      ctx.fillText(String(t), mL - 8, py);
+    });
+
+    // axis titles
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.fillText('head dimension d', mL + pw / 2, cssH - 1);
+    ctx.save();
+    ctx.translate(11, mT + ph / 2); ctx.rotate(-Math.PI / 2);
+    ctx.textBaseline = 'top';
+    ctx.fillText('cycles per 128×128 tile', 0, 0);
+    ctx.restore();
+
+    // curves (clipped to plot area)
+    ctx.save();
+    ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    ctx.lineJoin = 'round';
+    cfg.series.forEach(s => {
+      ctx.beginPath();
+      ctx.lineWidth = s.width || 2;
+      ctx.strokeStyle = cssVar(s.color);
+      ctx.setLineDash(s.dash || []);
+      const N = 260;
+      for (let i = 0; i <= N; i++) {
+        const x = xMin + (xMax - xMin) * i / N;
+        const px = X(x), py = Y(s.fn(x));
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+
+    // mark the d = 128 crossing on B200
+    const cx = X(128), cy = Y(expCycles);
+    ctx.fillStyle = cssVar('--plot-green');
+    ctx.beginPath(); ctx.arc(cx, cy, 4, 0, 2 * Math.PI); ctx.fill();
+    ctx.restore();
+  }
+
+  const plots = [];
+  const rooflineCanvas = document.getElementById('plot-roofline');
+  if (rooflineCanvas) plots.push([rooflineCanvas, {
+    xMin: 0, xMax: 256, yMin: 0, yMax: 4300,
+    xTicks: [0, 64, 128, 192, 256],
+    yTicks: [0, 1024, 2048, 3072, 4096],
+    series: [
+      { fn: d => mmaCycles(d, 4096), color: '--plot-gray',  width: 1.75, dash: [5, 4] },
+      { fn: d => mmaCycles(d, 8192), color: '--plot-green', width: 2.75 },
+      { fn: () => expCycles,         color: '--plot-amber', width: 2.5 }
+    ]
+  }]);
+
+  function renderAll() { plots.forEach(([c, cfg]) => drawPlot(c, cfg)); }
+  renderAll();
+  let raf;
+  window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(renderAll); });
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq.addEventListener) mq.addEventListener('change', renderAll);
+})();
+</script>
 
 <footer>
   Personal ML notes &nbsp;·&nbsp; FlashAttention — IO-Aware Exact Attention
