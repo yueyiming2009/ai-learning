@@ -209,6 +209,7 @@
     <a href="#gpipe">GPipe</a>
     <a href="#1f1b">1F1B</a>
     <a href="#interleaved">Interleaved</a>
+    <a href="#zero-bubble">Zero bubble</a>
     <a href="#memory">Activation memory</a>
     <a href="#choosing">Choosing PP</a>
     <a href="#summary">Summary</a>
@@ -454,8 +455,71 @@
     memory (now \(v \times PP\) stages' worth per device). Usually \(v \le 4\).
   </div>
 
+  <!-- ════════════════════════ ZERO BUBBLE ════════════════════════ -->
+  <h2 id="zero-bubble">5 · Zero bubble — splitting the backward pass</h2>
+  <p>
+    Everything so far treats the backward pass for a micro-batch as one indivisible unit \(B\) that must
+    run on stage \(p\) before stage \(p-1\) can start its own. That dependency is what forces the bubble.
+    But it is only half true — and the half that is false is where the remaining bubble lives.
+  </p>
+
+  <h3>Two backwards, not one</h3>
+  <p>
+    A layer's backward pass computes two different things:
+  </p>
+  <ul>
+    <li><strong>\(B\)</strong> — the gradient with respect to the layer's <em>inputs</em>. The previous stage
+      cannot start its backward without this. It is on the critical path.</li>
+    <li><strong>\(W\)</strong> — the gradient with respect to the layer's <em>weights</em>. Nobody is waiting
+      for it. It must merely finish before the optimizer step at the end of the iteration.</li>
+  </ul>
+  <p>
+    Standard 1F1B computes both together, which means work that nothing depends on is being executed
+    while a downstream device sits idle. Zero Bubble (Qi et al., 2023) splits them into separately
+    schedulable units \(B\) and \(W\), then uses the \(W\) chunks as filler — pushing them into precisely
+    the slots that would otherwise be bubble.
+  </p>
+
+  <div class="result">
+    <div class="result-label">The scheduling insight</div>
+    \[
+      \underbrace{B}_{\text{blocks the previous stage}} \;+\; \underbrace{W}_{\text{blocks nothing until the step}}
+    \]
+    <div style="font-size:0.85rem;color:var(--muted);margin-top:6px">
+      Roughly \(1/3\) of backward FLOPs are weight-gradient work with no downstream dependency — enough
+      filler to cover a large share of a 1F1B warm-up/cool-down bubble.
+    </div>
+  </div>
+
+  <p>
+    The handwave in the name is worth being precise about: the schedule that reaches a literally empty
+    bubble also has to relax the optimizer-step synchronization at the iteration boundary (the paper
+    bypasses the usual synchronized gradient-clipping/step barrier). The variant most systems actually
+    deploy keeps the synchronization and takes a bubble that is much smaller than 1F1B's without being
+    exactly zero.
+  </p>
+
+  <div class="compare">
+    <div class="compare-label">Where this matters</div>
+    <p style="margin:0">
+      The bubble fraction \((PP-1)/(m+PP-1)\) is worst when \(PP\) is large relative to \(m\) — exactly the
+      regime you are pushed into when you drop tensor parallelism and lean on pipeline depth instead.
+      DeepSeek-V2 is the production example: <strong>16-way zero-bubble PP</strong>, 8-way expert
+      parallelism, ZeRO-1, and <em>no TP at all</em> for a 236B model (see
+      <a href="moe-parallelism.html">MoE Parallelism §5</a>). At \(PP = 16\) a 1F1B schedule would be
+      giving up ~32% at \(m = 32\); that is the cost the split backward is buying back.
+    </p>
+  </div>
+
+  <div class="note">
+    Zero-bubble composes with interleaving rather than replacing it — \(v\) virtual stages reduce the
+    bubble to be filled, and \(W\)-splitting fills what remains. It also interacts with §6: \(W\) chunks
+    deferred to late in the iteration keep their activations alive longer, so the schedule trades some
+    peak activation memory for the bubble it removes.
+  </div>
+
   <!-- ════════════════════════ MEMORY ════════════════════════ -->
-  <h2 id="memory">5 · Activation memory at stage boundaries</h2>
+  <h2 id="memory">6 · Activation memory at stage boundaries</h2>
   <p>
     The activations stored at each stage boundary have the shape \([B_\mu, T, D]\) where
     \(B_\mu = B / m\) is the micro-batch size. In bf16 that is:
@@ -486,7 +550,7 @@
   </p>
 
   <!-- ════════════════════════ CHOOSING ════════════════════════ -->
-  <h2 id="choosing">6 · Choosing the PP degree</h2>
+  <h2 id="choosing">7 · Choosing the PP degree</h2>
   <p>
     The central rule: <strong>use PP when TP at maximum node-width still doesn't fit the model in memory.</strong>
     Beyond that, the key variables are:
@@ -528,7 +592,7 @@
   </p>
 
   <!-- ════════════════════════ SUMMARY ════════════════════════ -->
-  <h2 id="summary">7 · Summary</h2>
+  <h2 id="summary">8 · Summary</h2>
   <div class="summary-grid">
     <div class="summary-card">
       <div class="summary-card-label">The cut</div>
@@ -545,6 +609,10 @@
     <div class="summary-card">
       <div class="summary-card-label">Interleaved 1F1B</div>
       <p>Virtual stages: \(v\) non-contiguous layer chunks per device. Bubble shrinks to \(\frac{1}{v}(PP-1)/(m+PP-1)\) at the cost of \(v\) extra P2P sends per step.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Zero bubble</div>
+      <p>Split backward into \(B\) (input grads, on the critical path) and \(W\) (weight grads, blocking nothing until the step), then schedule \(W\) into the bubble. DeepSeek-V2 ran 16-way ZB-PP with no TP.</p>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">Memory</div>

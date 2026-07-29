@@ -311,6 +311,38 @@
     (A permutation's total data volume equals the number of elements being permuted.)
   </div>
 
+  <h3>Fan-out — the term the volume formula misses</h3>
+  <p>
+    Bytes are not the whole cost. What the payload formula hides is <em>how many distinct peers</em> each
+    token's copy must reach: a token routed to \(K\) experts scattered across \(K\) different nodes
+    generates \(K\) separate inter-node messages, each with its own latency and its own place in the
+    slowest-link calculation. Total volume is unchanged; wall-clock is not.
+  </p>
+  <p>
+    This is a mild issue at \(K = 2\) and a serious one for fine-grained MoE, where \(K = 6\) or 8 is normal
+    (see <a href="moe-routing.html">MoE Routing §8</a>). DeepSeek-V2's answer is
+    <strong>device-limited routing</strong>: before running top-\(K\), first select the \(M\) devices holding
+    the highest-affinity experts, then run top-\(K\) <em>only among experts on those devices</em>.
+  </p>
+
+  <div class="result">
+    <div class="result-label">Device-limited routing</div>
+    \[
+      \text{devices touched per token} \;\le\; M \quad \text{regardless of } K
+    \]
+    <div style="font-size:0.85rem;color:var(--muted);margin-top:6px">
+      DeepSeek-V2: \(M = 3\) with \(D = 8\) device groups and \(K = 6\). The paper reports that \(M \ge 3\)
+      matches unrestricted top-\(K\) quality — so the constraint is nearly free.
+    </div>
+  </div>
+
+  <p>
+    The effect is to decouple communication fan-out from routing multiplicity: you can keep raising \(K\)
+    for specialization without the message count following it. It also gives a hard bound to build on —
+    each device sends at most \(MT\) hidden states — which is what the <em>communication balance loss</em>
+    on the routing page then complements from the receiving side.
+  </p>
+
   <!-- ════════════════════════ EP ════════════════════════ -->
   <h2 id="ep">3 · Expert Parallelism — what it shards and why</h2>
   <p>
@@ -425,6 +457,40 @@
     large enough to be compute-bound at high batch size — rare in standard MoE configurations
     (\(D_e \approx D/4\)). In practice, use EP for experts and TP for attention.
   </div>
+
+  <h3>The counterexample: a 236B model with no TP at all</h3>
+  <p>
+    "Attention is dense, so shard it with TP" is the default, not a law. DeepSeek-V2 — 236B total
+    parameters — was trained with <strong>no tensor parallelism anywhere</strong>: 16-way pipeline
+    parallelism, 8-way expert parallelism, and ZeRO-1 data parallelism, with a portion of operators
+    recomputed rather than stored.
+  </p>
+  <p>
+    The reasoning is worth extracting, because it generalizes. TP buys memory relief and pays for it with
+    two AllReduces per layer on the critical path. What makes that trade good is a large <em>activated</em>
+    parameter count that will not otherwise fit. A sparse model inverts the premise: only 21B parameters
+    are activated per token, so the per-layer working set is small, and selective recomputation covers
+    the remaining activation pressure. With the memory problem solved more cheaply elsewhere, TP is
+    left contributing nothing but communication — so it was dropped.
+  </p>
+  <div class="compare">
+    <div class="compare-label">When to suspect you don't need TP</div>
+    <ul style="margin:0">
+      <li>Activated (not total) parameters per token are small relative to device memory.</li>
+      <li>EP is already sharding the bulk of the weights — in a fine-grained MoE the experts <em>are</em> the model.</li>
+      <li>Recomputation is acceptable: you are trading FLOPs for memory more cheaply than TP trades bandwidth for it.</li>
+      <li>Pipeline depth is available and the schedule is good enough to keep the bubble small (DeepSeek-V2 used a zero-bubble schedule — see <a href="pipeline-parallelism.html">Pipeline Parallelism</a>).</li>
+    </ul>
+  </div>
+
+  <h3>Shared experts as free overlap</h3>
+  <p>
+    One more structural detail: architectures with <em>shared</em> always-on experts get a natural
+    latency hiding opportunity. Shared experts run for every token, so they need no dispatch and no
+    combine — their input is already resident on the rank that holds the token. That makes their FLOPs
+    the ideal thing to schedule <em>during</em> the routed experts' AlltoAll, which is exactly what
+    DeepSeek-V2 does. It is the rare overlap that requires no restructuring: the work was already local.
+  </p>
 
   <!-- ════════════════════════ DP ════════════════════════ -->
   <h2 id="dp">6 · Data Parallelism interaction</h2>

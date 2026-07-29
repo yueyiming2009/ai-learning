@@ -546,10 +546,19 @@ def grpo_loss(logprobs, old_logprobs, ref_logprobs, rewards, eps=0.2, beta=0.04)
       <tr><td>Reward signal</td><td>Reward model</td><td>Reward model or verifier</td><td>Implicit (preference pairs)</td></tr>
       <tr><td>KL handling</td><td>Folded into reward</td><td>Explicit loss term (k3)</td><td>Baked into closed form</td></tr>
       <tr><td>Online sampling</td><td>Yes</td><td>Yes (a group per prompt)</td><td>No (offline)</td></tr>
-      <tr><td>Notable use</td><td>InstructGPT, ChatGPT</td><td>DeepSeekMath, DeepSeek-R1</td><td>Lightweight alignment</td></tr>
+      <tr><td>Notable use</td><td>InstructGPT, ChatGPT</td><td>DeepSeekMath, DeepSeek-V2, DeepSeek-R1</td><td>Lightweight alignment</td></tr>
     </table>
   </div>
   <p>GRPO sits between the two: it keeps online RL and a reward signal like <a href="rlhf.html" style="color:var(--accent);">PPO</a>, but removes the critic for a sampling-based baseline — much of <a href="dpo-loss.html" style="color:var(--accent);">DPO</a>'s simplicity without giving up on-policy exploration.</p>
+
+  <h3>The lineage — and the step that usually gets skipped</h3>
+  <p>GRPO is generally told as a two-point story: DeepSeekMath introduced it for math, DeepSeek-R1 scaled it on verifiable rewards. The missing middle is <strong>DeepSeek-V2</strong> (2024), which is where it was first run at frontier scale as a <em>general preference</em> algorithm — against learned reward models, not verifiers. That matters because it separates two claims that R1 tends to fuse: "the critic is unnecessary" and "the reward should be a verifier." GRPO only requires the first.</p>
+  <p>V2's recipe also introduces the staging that R1 later inherits:</p>
+  <ul>
+    <li><strong>Stage 1 — reasoning alignment.</strong> A dedicated \(RM_{\text{reasoning}}\) for code and math. The stated motivation is empirical: reasoning ability keeps improving over far more RL steps than general ability does, so mixing the two wastes the tail.</li>
+    <li><strong>Stage 2 — human preference.</strong> A multi-reward mix \(r_i = c_1 RM_{\text{helpful}}(o_i) + c_2 RM_{\text{safety}}(o_i) + c_3 RM_{\text{rule}}(o_i)\), combining two learned models with a rule-based one.</li>
+  </ul>
+  <p>Note that the reward models themselves were built from compiler feedback (code) and ground-truth labels (math) — verifiable signal used to <em>train the reward model</em> rather than to replace it. The rollout infrastructure is recognizable too: a hybrid engine running different parallel strategies for training and inference, vLLM as the generation backend, and scheduled CPU offload to fit both on the same GPUs — the shape that <a href="rl-frameworks-landscape.html" style="color:var(--accent);">modern RL frameworks</a> formalized later.</p>
 
   <h2 id="summary">9. Summary</h2>
   <div class="summary-grid">

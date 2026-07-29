@@ -530,7 +530,7 @@
       <h1>Transformer &amp; Pretraining</h1>
       <span class="chevron" aria-hidden="true">▸</span>
     </summary>
-    <p class="domain-desc">Assemble the Foundations pieces into a working model and train it — self-attention and the multi-head split, the pre-norm residual block stacked into a decoder, the layer variants that replace or route it (linear attention, DeltaNet, MoE), then the next-token objective with the loop that optimizes it and the scaling laws that decide how big to make the run. The bridge from isolated derivations to a real training budget.</p>
+    <p class="domain-desc">Assemble the Foundations pieces into a working model and train it — self-attention and the multi-head split, the pre-norm residual block stacked into a decoder, the layer variants that compress, replace, or route it (MLA, linear attention, DeltaNet, MoE), then the next-token objective with the loop that optimizes it and the scaling laws that decide how big to make the run. The bridge from isolated derivations to a real training budget.</p>
     <h2>Architecture</h2>
     <div class="card-grid">
       <a class="card" href="attention.html">
@@ -538,6 +538,12 @@
         <div class="card-title">Self-Attention — Forward &amp; Backward Pass</div>
         <p class="card-desc">The one block where tokens look at each other: Q/K/V projections, scaled dot-product \(\mathrm{softmax}(QK^\top/\sqrt{d_k})V\), why the \(1/\sqrt{d_k}\) factor stops softmax saturation (with an interactive plot), the causal mask, the multi-head split, and the full backward pass through softmax — plus the \(O(T^2)\) wall that drives FlashAttention and KV caching.</p>
         <div class="card-arrow">Read derivation →</div>
+      </a>
+      <a class="card" href="mla.html">
+        <span class="card-tag tag-tf">MLA</span>
+        <div class="card-title">Multi-head Latent Attention — Compressing the KV Cache</div>
+        <p class="card-desc">DeepSeek's way off the MQA/GQA ladder: cache one low-rank latent per token, then absorb \(W^{UK}\) into the query projection and \(W^{UV}\) into \(W^O\) so K and V are never materialized at decode. Why RoPE breaks the absorption and how decoupled RoPE restores it, the 576-elements-per-token arithmetic (GQA with 2.25 groups), the matched MHA-vs-MLA ablations, and the FLOPs-for-bytes trade that makes it a throughput win.</p>
+        <div class="card-arrow">Read guide →</div>
       </a>
       <a class="card" href="transformer-block.html">
         <span class="card-tag tag-tf">Transformer</span>
@@ -560,7 +566,7 @@
       <a class="card" href="moe-routing.html">
         <span class="card-tag tag-tf">MoE Routing</span>
         <div class="card-title">MoE Routing — Gating, Top-K Selection, and Load Balancing</div>
-        <p class="card-desc">How a Mixture-of-Experts layer decides which experts process each token: the gating network (\(\mathbf{x}W_g\) → softmax → top-\(K\)), why gradients still flow through a discrete selection, the expert capacity buffer, and the auxiliary load-balancing loss \(\alpha E \sum_i f_i P_i\) that prevents expert collapse — plus why attention heads self-organize without any of this machinery (summation vs selection).</p>
+        <p class="card-desc">How a Mixture-of-Experts layer decides which experts process each token: the gating network (\(\mathbf{x}W_g\) → softmax → top-\(K\)), why gradients still flow through a discrete selection, the expert capacity buffer, the auxiliary load-balancing loss \(\alpha E \sum_i f_i P_i\) that prevents expert collapse and its device- and communication-level siblings, expert granularity as an axis separate from \(K\) — plus why attention heads self-organize without any of this machinery (summation vs selection).</p>
         <div class="card-arrow">Read guide →</div>
       </a>
     </div>
@@ -632,7 +638,7 @@
       <a class="card" href="pipeline-parallelism.html">
         <span class="card-tag tag-par">Pipeline Parallel</span>
         <div class="card-title">Pipeline Parallelism — Stages, Schedules, and the Bubble</div>
-        <p class="card-desc">When the model overflows one NVLink node, split it by depth. Derives the three schedules — GPipe, 1F1B, and interleaved 1F1B — through their bubble-fraction and memory formulas, and shows when PP is the right axis to reach for.</p>
+        <p class="card-desc">When the model overflows one NVLink node, split it by depth. Derives the schedules — GPipe, 1F1B, interleaved 1F1B, and zero-bubble's split of the backward pass into input-gradient and weight-gradient work — through their bubble-fraction and memory formulas, and shows when PP is the right axis to reach for.</p>
         <div class="card-arrow">Read guide →</div>
       </a>
       <a class="card" href="sequence-parallelism.html">
@@ -644,7 +650,7 @@
       <a class="card" href="moe-parallelism.html">
         <span class="card-tag tag-par">MoE Parallel</span>
         <div class="card-title">MoE Parallelism — EP, TP, and Throughput Tradeoffs</div>
-        <p class="card-desc">Why MoE models need Expert Parallelism: the AlltoAll dispatch cost model, the arithmetic-intensity argument for EP over TP on expert FFN weights, load-imbalance as the EP ceiling, and how to reason about TP × EP × DP degrees — with a worked TP=2, EP=2, DP=2 example and the MoE throughput cross-over formula.</p>
+        <p class="card-desc">Why MoE models need Expert Parallelism: the AlltoAll dispatch cost model, the arithmetic-intensity argument for EP over TP on expert FFN weights, load-imbalance as the EP ceiling, device-limited routing to bound comm fan-out, when a large model needs no TP at all, and how to reason about TP × EP × DP degrees — with a worked TP=2, EP=2, DP=2 example and the MoE throughput cross-over formula.</p>
         <div class="card-arrow">Read guide →</div>
       </a>
     </div>
@@ -753,7 +759,7 @@
       <a class="card" href="grpo.html">
         <span class="card-tag tag-grpo">GRPO</span>
         <div class="card-title">Group Relative Policy Optimization</div>
-        <p class="card-desc">The RL method behind DeepSeek-R1: drop PPO's critic and use a group of sampled answers as the baseline — group-relative advantages, the clipped objective, and the unbiased KL estimator.</p>
+        <p class="card-desc">The RL method behind DeepSeek-R1: drop PPO's critic and use a group of sampled answers as the baseline — group-relative advantages, the clipped objective, the unbiased KL estimator, and the DeepSeekMath → V2 → R1 lineage that separates "no critic" from "verifiable rewards".</p>
         <div class="card-arrow">Read guide →</div>
       </a>
       <a class="card" href="dpo-loss.html">

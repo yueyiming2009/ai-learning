@@ -437,6 +437,23 @@ def moe_forward(x, W_gate, experts, K=2):
     </table>
   </div>
 
+  <h3>Dropping at the device level, and why \(c = 1.0\)</h3>
+  <p>
+    The table above treats \(c\) as a quality/memory dial. DeepSeek-V2 makes a different choice worth
+    knowing: it caps at <strong>exactly \(c = 1.0\)</strong>, applied per <em>device</em> rather than per
+    expert — compute the average budget for each GPU, then drop that device's lowest-affinity tokens
+    until the budget is met. Since the balance losses (§6) already push the load flat, the cap is a
+    backstop rather than a routine event.
+  </p>
+  <p>
+    The interesting part is the argument for it. A capacity factor that differs between training and
+    inference is a silent distribution shift: the model learns under one drop regime and serves under
+    another. DeepSeek-V2 handles this by exempting ~10% of training sequences from dropping entirely,
+    so the model always sees some fully-routed data, and then disables dropping at evaluation. The stated
+    goal is not memory but <em>consistency</em> — being free to turn dropping on or off at deployment
+    according to the efficiency you need, without the model noticing.
+  </p>
+
   <!-- ════════════════════════ AUXILIARY LOSS ════════════════════════ -->
   <h2 id="aux-loss">6 · Auxiliary load-balancing loss</h2>
   <p>
@@ -499,6 +516,75 @@ def moe_forward(x, W_gate, experts, K=2):
     \(f_i\) is a constant in the backward pass — only \(P_i\) provides gradients.
     This asymmetry is intentional: we use the hard routing decision to identify which experts need
     correction, then use the soft probabilities to perform the correction differentiably.
+  </div>
+
+  <h3>Beyond one level — balancing the hardware, not just the experts</h3>
+  <p>
+    \(\mathcal{L}_\text{aux}\) as written balances <em>experts</em>. That is a statement about the model.
+    Once experts are sharded across GPUs, what actually stalls the step is imbalance between
+    <em>devices</em> and between their <em>message volumes</em> — and perfectly balanced experts can
+    still leave one GPU hot if the router happens to favour the experts that live on it.
+  </p>
+  <p>
+    DeepSeek-V2 keeps the \(\sum f \cdot P\) form and instantiates it three times, at three granularities.
+    Partition the \(E\) routed experts into \(D\) device groups \(\{\mathcal{E}_1,\dots,\mathcal{E}_D\}\):
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Level</th><th>Load term</th><th>Probability term</th><th>What it prevents</th><th class="ctr">Coefficient</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Expert</strong></td>
+          <td>\(f_i\) — fraction of tokens to expert \(i\)</td>
+          <td>\(P_i\)</td>
+          <td>Routing collapse; dead experts</td>
+          <td class="ctr">\(\alpha_1 = 0.003\)</td>
+        </tr>
+        <tr>
+          <td><strong>Device</strong></td>
+          <td>\(f'_j = \frac{1}{|\mathcal{E}_j|}\sum_{i \in \mathcal{E}_j} f_i\)</td>
+          <td>\(P'_j = \sum_{i \in \mathcal{E}_j} P_i\)</td>
+          <td>One GPU doing more expert FLOPs than the rest</td>
+          <td class="ctr">\(\alpha_2 = 0.05\)</td>
+        </tr>
+        <tr>
+          <td><strong>Communication</strong></td>
+          <td>\(f''_j\) — fraction of tokens <em>sent to</em> device \(j\)</td>
+          <td>\(P''_j = \sum_{i \in \mathcal{E}_j} P_i\)</td>
+          <td>One GPU receiving a disproportionate share of the AlltoAll</td>
+          <td class="ctr">\(\alpha_3 = 0.02\)</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    The communication term is the least obvious and the most revealing. Device-limited routing
+    (see <a href="moe-parallelism.html">MoE Parallelism</a>) bounds how many devices each token <em>sends</em>
+    to — but nothing bounds how many tokens a device <em>receives</em>. The third loss closes that gap
+    from the model side, pushing each device toward receiving its fair share of incoming hidden states.
+  </p>
+
+  <div class="compare">
+    <div class="compare-label">Read the coefficients</div>
+    <p style="margin:0">
+      \(\alpha_2 = 0.05\) and \(\alpha_3 = 0.02\) are <strong>an order of magnitude larger</strong> than
+      the classic anti-collapse term \(\alpha_1 = 0.003\). In a large EP deployment the dominant
+      load-balancing pressure is not "don't let experts die" — it is "don't let one rank become the
+      straggler." The auxiliary loss has quietly become a systems knob.
+    </p>
+  </div>
+
+  <div class="note">
+    All three losses distort the routing gradient — that is how they work, and it is a real cost:
+    the router is being pulled away from the assignment it would otherwise choose. The successor line
+    tries to remove that distortion by moving balance <em>out</em> of the loss: DeepSeek-V3 adds a
+    per-expert bias to the selection scores only (leaving the mixture weights \(\tilde p_i\), and
+    therefore the gradient, untouched), and later models solve for that bias in closed form instead of
+    nudging it with a step size.
   </div>
 
   <!-- ════════════════════════ VS ATTENTION HEADS ════════════════════════ -->
@@ -617,14 +703,66 @@ def moe_forward(x, W_gate, experts, K=2):
     pattern for Expert Parallelism.
   </p>
 
+  <h3>Expert granularity — the axis that isn't \(K\)</h3>
+  <p>
+    Everything above treats \(E\) and \(K\) as given and asks how to route. There is a prior question:
+    how <em>big</em> should an expert be? Early MoE layers made each expert a full-width FFN and set
+    \(K = 1\) or \(2\). DeepSeekMoE (and DeepSeek-V2 at scale) changes the answer — split each expert
+    into \(m\) narrower ones and raise \(K\) to \(mK\). Activated parameters are unchanged, and so is
+    total parameter count; only the granularity moves.
+  </p>
+  <p>
+    What that buys is combinatorial. The set of expert <em>combinations</em> a token can be assigned is
+    \(\binom{E}{K}\), and splitting grows it violently:
+  </p>
+
+  <div class="result">
+    <div class="result-label">Reachable expert combinations at fixed activated params</div>
+    \[
+      \binom{16}{2} = 120
+      \qquad \longrightarrow \qquad
+      \binom{160}{6} \approx 2.1 \times 10^{10}
+    \]
+    <div style="font-size:0.85rem;color:var(--muted);margin-top:6px">
+      Left: 16 full-width experts, top-2. Right: DeepSeek-V2 — 160 experts of FFN width 1536, top-6.
+      Same FLOPs per token, eight orders of magnitude more distinct assignments.
+    </div>
+  </div>
+
+  <p>
+    The argument for why that matters is about <em>specialization</em>. A wide expert asked to serve
+    many unrelated token populations must learn a blend of all of them; a narrow expert can commit to
+    one, and the router composes six of them per token instead of picking one blend off the shelf.
+    Granularity is therefore a lever on how sharply experts can specialize — independent of \(K\),
+    independent of total size, and not visible anywhere in the gating math of §2–§3.
+  </p>
+  <p>
+    It is not free. Six selected experts instead of two means the token's targets span more GPUs, so
+    the AlltoAll fan-out grows — which is exactly why fine-grained MoE arrived together with
+    <em>device-limited routing</em> (cap each token's experts to at most \(M\) devices) rather than
+    before it. Fine granularity is a routing idea that only ships with a communication fix attached.
+    The trend has continued: later models run 8-of-256 and beyond.
+  </p>
+
   <h3>Shared experts</h3>
   <p>
-    Some architectures (DeepSeek-V2, DeepSeek-V3) add a small number of <em>shared experts</em>
+    The same architectures pair granularity with a small number of <em>shared experts</em>
     that activate for every token, regardless of routing. The router then selects \(K\) additional
-    specialized experts on top. The shared experts handle common patterns (syntax, basic semantics)
-    while the routed experts specialize in domain-specific or less-common patterns. This reduces
-    the coverage risk of expert-choice and can stabilize training of large expert counts.
+    specialized experts on top (DeepSeek-V2: 2 shared alongside 160 routed).
   </p>
+  <p>
+    The motivation is a direct consequence of fine granularity. Some knowledge — syntax, basic
+    semantics, whatever every token needs — is required by <em>every</em> expert, so in a purely routed
+    layer each of the 160 experts must learn its own redundant copy, spending capacity that was
+    supposed to buy specialization. Isolating that common load in an always-on expert lets the routed
+    ones keep only what distinguishes them. It also reduces the coverage risk of expert-choice and
+    can stabilize training at large expert counts.
+  </p>
+  <div class="note">
+    Shared experts have a systems side-effect worth knowing: because they run for every token, they
+    need <em>no dispatch</em> — which makes their compute the natural thing to overlap with the
+    AlltoAll for the routed experts. See <a href="moe-parallelism.html">MoE Parallelism</a>.
+  </div>
 
   <!-- ════════════════════════ SUMMARY ════════════════════════ -->
   <h2 id="summary">9 · Summary</h2>
@@ -649,6 +787,14 @@ def moe_forward(x, W_gate, experts, K=2):
     <div class="summary-card">
       <div class="summary-card-label">Auxiliary loss</div>
       <p>\(\mathcal{L}_\text{aux} = \alpha E \sum_i f_i P_i\). Hard load \(f_i\) identifies overloaded experts; soft probability \(P_i\) carries the gradient that redistributes tokens.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Three levels of balance</div>
+      <p>The same \(\sum f \cdot P\) form applied to experts, devices, and received message volume. In DeepSeek-V2 the two hardware terms carry ~10× the coefficient of the anti-collapse term.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Granularity</div>
+      <p>Splitting \(E\) experts into \(mE\) narrower ones and raising \(K\) to \(mK\) holds FLOPs fixed while growing reachable combinations \(\binom{E}{K}\) by orders of magnitude — a specialization lever independent of \(K\).</p>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">Rich-get-richer fix</div>

@@ -171,7 +171,7 @@
     <a href="#cost">Memory cost</a>
     <a href="#tradeoff">Tradeoff</a>
     <a href="#prefix">Prefix sharing</a>
-    <a href="#gqa">GQA / MQA</a>
+    <a href="#gqa">GQA / MQA / MLA</a>
     <a href="#summary">Summary</a>
   </div>
   <a class="nav-back" href="index.html">Home</a>
@@ -446,14 +446,14 @@ def decode_step(x_t, W_Q, W_K, W_V, t):
         <td><strong>MQA</strong> — Multi-Query Attention</td>
         <td class="ctr">1</td>
         <td class="ctr good">\(h\)× (maximum)</td>
-        <td class="bad">Noticeable quality loss at large scale</td>
+        <td class="bad">Measurably worse: −7.3 MMLU vs. MHA (§6, param-matched 7B)</td>
         <td>PaLM, Falcon</td>
       </tr>
       <tr>
         <td><strong>MLA</strong> — Multi-head Latent Attention</td>
-        <td colspan="2">Compresses K, V into a low-rank latent vector per token; expanded at attention time</td>
-        <td class="bad">Near-MHA quality with very low KV memory</td>
-        <td>DeepSeek-V2/V3</td>
+        <td colspan="2">Caches one low-rank latent \(c_t \in \mathbb{R}^{d_c}\) per token instead of K and V; all \(h\) heads stay distinct. At DeepSeek-V2's shape: <strong>56.9×</strong></td>
+        <td class="good">Beats MHA in matched ablations</td>
+        <td>DeepSeek-V2/V3/R1</td>
       </tr>
     </tbody>
   </table>
@@ -472,10 +472,22 @@ def decode_step(x_t, W_Q, W_K, W_V, t):
   </ul>
 </div>
 
+<h3>How much does the GQA/MQA ladder actually cost?</h3>
+<p>
+  The quality column above is usually asserted rather than measured. DeepSeek-V2's Appendix D.1 measures it: three 7B dense models, identical except for the attention mechanism, parameter-matched by adjusting layer count, all trained on 1.33T tokens. MMLU comes out <strong>MHA 45.2 / GQA-8 41.2 / MQA 37.9</strong>, with the same ordering on BBH, C-Eval and CMMLU. Cache reduction on this ladder is bought, not free — which is what motivates stepping off it.
+</p>
+
 <h3>MLA (DeepSeek-V2/V3)</h3>
 <p>
-  Instead of caching full K and V tensors, MLA caches a low-rank compressed latent vector \(c_t \in \mathbb{R}^{d_c}\) (with \(d_c \ll h \cdot d_h\)) and expands K, V from it at attention time via learned up-projection matrices. This achieves KV memory near the MQA floor while preserving near-MHA expressivity. The trade-off: a small compute overhead per attention call to perform the up-projection.
+  Instead of caching K and V, MLA caches one low-rank latent \(c_t \in \mathbb{R}^{d_c}\) (with \(d_c \ll h \cdot d_h\)) from which both are linear reconstructions. Crucially it does <em>not</em> tie heads together the way GQA and MQA do — after reconstruction all \(h\) heads have distinct keys and values, and it is the <em>rank</em> that is constrained rather than the head count. That is why it sits outside the ladder above rather than at the bottom of it.
 </p>
+<p>
+  The reconstruction is free at decode: the key up-projection folds into the query projection and the value up-projection into \(W^O\), both fixed after training, so <strong>K and V are never materialized</strong> — no per-call up-projection is performed. The real trade is elsewhere. Absorbed, every head scores against the same 576-wide cached vector, so attention does roughly 4.5× the FLOPs per cached token while reading 56.9× fewer bytes — an arithmetic-intensity trade that is favourable precisely because decode is bandwidth-bound. The genuine costs are kernel complexity and a subtlety with RoPE, which breaks the absorption and needs a separate positional channel to restore it.
+</p>
+
+<div class="xref">
+  <strong>Deep dive:</strong> <a href="mla.html">Multi-head Latent Attention →</a> — the compression and absorption algebra, why RoPE obstructs it and how decoupled RoPE fixes it, the full cache arithmetic (576 elements/layer/token = GQA with 2.25 groups), and the matched MHA-vs-MLA ablations.
+</div>
 
 <!-- ═══════════════════════════════════════════ SUMMARY -->
 <h2 id="summary">7 · Summary</h2>
