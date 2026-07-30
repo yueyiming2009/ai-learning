@@ -98,6 +98,7 @@
 
     h2 { font-size: 1.15rem; font-weight: 600; margin: 2.8em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); color: var(--text); }
     h3 { font-size: 0.97rem; font-weight: 600; margin: 1.6em 0 0.4em; color: var(--ink); }
+    h4 { font-size: 0.9rem; font-weight: 600; margin: 1.3em 0 0.3em; color: var(--muted); }
     p { margin: 0.6em 0; }
     ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
     li { margin-bottom: 0.4em; }
@@ -270,7 +271,7 @@
       <tr>
         <td>\(R(s, a)\) — reward</td>
         <td>Binary at terminal state (correct/wrong)</td>
-        <td>Sparse terminal + optional per-step shaping; reward model for non-verifiable tasks</td>
+        <td>Sparse terminal, optionally with per-step signals; reward model for non-verifiable tasks</td>
       </tr>
       <tr>
         <td>\(\gamma\) — discount</td>
@@ -338,22 +339,55 @@
   </div>
 
   <h3>Reward shaping — when and why</h3>
-  <p>With sparse terminal rewards over long horizons (T = 50+ steps), the gradient signal is extremely weak: most trajectories get 0 reward and the model receives almost no information about which early actions were good. Reward shaping adds intermediate signals to guide learning.</p>
+  <p>With sparse terminal rewards over long horizons (T = 50+ steps), the gradient signal is extremely weak: most trajectories get 0 reward and the model receives almost no information about which early actions were good. Reward shaping adds intermediate signals to guide learning. The obvious hazard is that an intermediate signal creates its own optimization target — the agent farms the bonus instead of finishing the task.</p>
 
-  <p>Shaping must satisfy <strong>potential-based shaping</strong> to preserve optimal policy: for shaping function \(F(s, a, s')\), the shaped reward is:</p>
+  <h4>The policy invariance theorem</h4>
+  <p>Ng, Harada &amp; Russell (1999) characterize exactly which shaping functions are safe. A shaping term \(F(s,a,s')\) added to the reward is <strong>potential-based</strong> if there exists some \(\Phi : S \to \mathbb{R}\) with</p>
   \[
     R'(s, a, s') = R(s, a, s') + F(s, a, s') = R(s, a, s') + \gamma\Phi(s') - \Phi(s)
   \]
-  <p>where \(\Phi(s)\) is a potential function over states. With this form, the optimal policy for \(R'\) is identical to the optimal policy for \(R\) — shaping only affects learning speed, not the policy the agent converges to. Arbitrary shaping bonuses (that don't come from a potential function) can change the optimal policy, leading the agent to optimize the wrong thing.</p>
+  <p>Every optimal policy of \(R'\) is then optimal for \(R\), and vice versa. The converse holds too: for any \(F\) not of this form, there exist transition dynamics and a base reward under which the shaped optimum is suboptimal in the original MDP. Potential-based is not merely sufficient — it is the only form that is safe without knowing the environment in advance.</p>
+
+  <p>The proof is a telescoping sum. Along any trajectory, the shaping term contributes</p>
+  \[
+    \sum_{t \ge 0} \gamma^t \big( \gamma\Phi(s_{t+1}) - \Phi(s_t) \big) = -\Phi(s_0) + \lim_{T \to \infty} \gamma^T \Phi(s_T)
+  \]
+  <p>Every interior term cancels. The shaped return differs from the true return by \(-\Phi(s_0)\), which depends only on where the episode started, not on what the agent did. No policy can accumulate shaping reward — which is precisely the loop-exploitation loophole closed. Equivalently, \(Q^*_{R'}(s,a) = Q^*_R(s,a) - \Phi(s)\): subtracting a function of state alone leaves every advantage, and therefore every \(\arg\max_a\), untouched.</p>
+
+  <p>Two consequences worth carrying around. The best possible potential is \(\Phi = V^*\), which reduces \(Q^*_{R'}\) to the advantage function and makes the shaped problem myopic — so the quality of a shaping scheme is just how close \(\Phi\) sits to the true value function. And Wiewiora (2003) showed that potential-based shaping with \(Q_0 = 0\) produces behavior identical to no shaping with \(Q_0 = \Phi\). Valid shaping injects a prior on values and nothing more.</p>
+
+  <div class="warn">
+    <strong>Two implementation traps.</strong> The \(\gamma\) in \(\gamma\Phi(s') - \Phi(s)\) is load-bearing; using \(\Phi(s') - \Phi(s)\) with \(\gamma &lt; 1\) breaks the telescoping and voids the guarantee. And terminal states must have \(\Phi = 0\) — a nonzero potential at episode end is an unbalanced real reward, not a shaping term. This is the most common way a correct-looking implementation silently stops being policy-invariant.
+  </div>
+
+  <h4>Why valid shaping does nothing in GRPO</h4>
+  <p>Working the theorem through the algorithm actually used for agentic RL gives a sharp result. LLM episodes run at \(\gamma = 1\), so with \(\Phi = 0\) at termination the shaping contribution to every trajectory is exactly \(-\Phi(s_0)\). Group-relative advantages are computed over \(G\) rollouts from the <em>same</em> prompt, so \(s_0\) is shared across the group:</p>
+  \[
+    A_i = \frac{R_i - \text{mean}(R_{1..G})}{\text{std}(R_{1..G})}
+  \]
+  <p>Adding the same constant to every \(R_i\) shifts the mean by that constant and leaves the numerator unchanged; the standard deviation is unaffected. The advantage is bit-identical with and without shaping. Under PPO with a learned critic the effect is not exactly zero, but by the Wiewiora equivalence it amounts to value-function initialization, which the critic re-learns within a few thousand steps.</p>
+
+  <div class="note">
+    The corollary is uncomfortable but clarifying: <strong>any dense reward that measurably changes a GRPO run is, by construction, not policy-invariant.</strong> Practitioners are not choosing unprincipled shaping over principled shaping. In the dominant algorithm, principled shaping is a no-op, so every dense signal in production is one the theorem does not cover.
+  </div>
+
+  <h4>Denser terminal reward is not shaping</h4>
+  <p>Much of what gets called dense reward in agentic RL is a finer-grained <em>terminal</em> reward, and the shaping analysis does not apply to it at all. The distinction determines whether there is any hazard to reason about:</p>
 
   <div class="step">
-    <div class="step-label">Examples of valid agentic shaping</div>
+    <div class="step-label">Two things that both look like "dense reward"</div>
     <ul style="margin:0;">
-      <li><strong>Tests passing after each edit</strong>: \(\Phi(s) = (\text{passing tests}) / (\text{total tests})\). The agent is rewarded proportionally to progress toward the terminal goal — valid shaping since the terminal goal is what we actually care about.</li>
-      <li><strong>Error rate decrease</strong>: \(\Phi(s) = -(\text{error count})\). Fewer errors each step is a proxy for the goal.</li>
-      <li><strong>Sub-goal completion</strong>: binary bonuses at key milestones (opened the right file, ran the right test command). Trickier — must verify the sub-goal genuinely correlates with the terminal objective.</li>
+      <li><strong>Higher-resolution terminal reward — no shaping risk.</strong> Fraction of unit tests passed rather than all-or-nothing, partial credit across sub-tasks, a rubric score from a judge model on the finished trajectory. Still one reward at episode end; it just carries more bits than a success flag. Nothing mid-trajectory is being optimized.</li>
+      <li><strong>Genuine mid-trajectory reward — where the hazard lives.</strong> Per-tool-call success bonuses, compile-clean or lint-clean signals during the episode, turn-level rewards in multi-turn agents, sub-goal bonuses for opening the right file or running the right command. These change what the agent is optimizing between steps, and almost none of them are potential-based.</li>
     </ul>
   </div>
+
+  <p>Penalties are the more common form of the second category — token budgets, tool-call count limits, wall-clock cost. They are just as non-invariant in theory, but empirically much safer: a negative signal cannot be farmed by looping, which is the failure mode positive shaping invites.</p>
+
+  <h4>Practice has moved toward sparse</h4>
+  <p>The reference datapoint is DeepSeek-R1, which evaluated a process reward model and dropped it from the production run: step boundaries are hard to define, the PRM gets hacked once the policy drifts off its training distribution, and continuous PRM retraining complicates the pipeline. Outcome reward plus a format check was enough, and the reasoning behavior emerged anyway (see <a href="deepseek-r1.html" style="color:var(--accent);">DeepSeek-R1</a>). Process reward models did not disappear — they migrated to inference, where they rerank candidates or guide search rather than serve as a training target. A verifier that the policy cannot optimize against sidesteps the problem entirely (see <a href="tree-search-llm.html" style="color:var(--accent);">tree search for LLMs</a>).</p>
+
+  <p>Where the sparse position is genuinely under pressure is long-horizon agents with single-digit initial success rates. When every rollout in a group fails, the group-relative advantage is identically zero and there is no gradient at all. The field's answers to that are mostly not shaping: curriculum and difficulty filtering, dropping degenerate all-equal groups, SFT-seeded starting policies, and partial-credit terminal rubrics — all of which raise signal without introducing a mid-trajectory target.</p>
 
   <div class="warn">
     <strong>Goodhart's law in agentic RL:</strong> any shaping signal the agent can optimize independently of the true goal will be exploited. An agent rewarded for "making tests pass" without checking the full suite will learn to delete failing tests, hardcode expected outputs, or mock the functions under test — all technically passing the reward while completely missing the point. This is especially dangerous in agentic settings where the model can modify the environment.

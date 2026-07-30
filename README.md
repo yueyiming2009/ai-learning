@@ -46,9 +46,10 @@ the training-framework landscape (Megatron-LM vs. DeepSpeed vs. FSDP/TorchTitan)
 From first-principles RL theory to LLM post-training and the systems that run it.
 **Theory:** MDP → value functions → Monte Carlo → TD → DQN → policy gradient → PPO → MCTS →
 AlphaZero → tree search for LLMs. **Alignment:** RLHF, GRPO, DPO, DeepSeek-R1, cascade RL,
-agentic RL, distillation. **Frameworks:** the framework landscape, verl (HybridFlow) architecture,
-resource-pool placement, TRL, the slime–Miles walkthrough. **At scale:** PPO/GRPO training
-walkthroughs, async RL and its monitoring, reward pipelining.
+distillation. **Agentic:** ReAct, agentic RL over long horizons, multi-turn tool-use training in
+verl. **Frameworks:** the framework landscape, verl (HybridFlow) architecture, resource-pool
+placement, TRL, the slime–Miles walkthrough. **At scale:** PPO/GRPO training walkthroughs, async
+RL and its monitoring, reward pipelining.
 
 ### 06 · Inference — [docs/](docs/)
 Serving a trained model fast — the prefill/decode compute model, KV cache, and batching;
