@@ -427,6 +427,7 @@
     <a href="#interaction">Interaction API</a>
     <a href="#postprocess">Back to DataProto</a>
     <a href="#custom">Custom loops</a>
+    <a href="#proxy">Mask from outside</a>
     <a href="#config">Config map</a>
     <a href="#refs">References</a>
   </div>
@@ -1158,7 +1159,8 @@ position_ids   = (attention_mask.cumsum(dim=1) - 1) * attention_mask</code></pre
           mismatch.</td>
         <td>You must recover token-exact <code>response_ids</code> and a correct mask from an agent
           that was never written to expose them. Trace-based systems exist for this, but the
-          tokenization seam of §4 is exactly where they get hard.</td>
+          tokenization seam of §4 is exactly where they get hard — <a href="#proxy">§11</a> prices
+          what they actually cost, and where the residual difficulty really sits.</td>
       </tr>
     </table>
   </div>
@@ -1168,8 +1170,150 @@ position_ids   = (attention_mask.cumsum(dim=1) - 1) * attention_mask</code></pre
   a form both the trainer and the server load, rather than maintaining two copies that agree by
   convention.</p>
 
-  <!-- ── §11 Config ─────────────────────────── -->
-  <h2 id="config">11. The Config Map</h2>
+  <!-- ── §11 Proxy boundary ─────────────────── -->
+  <h2 id="proxy">11. Recovering the Mask from Outside</h2>
+
+  <p>§10 priced the second row with a warning rather than a number: <em>you must recover token-exact
+  <code>response_ids</code> and a correct mask from an agent that was never written to expose them.</em>
+  That cost is worth pricing properly, because a recent line of work does exactly this — and the
+  answer is more favourable than the warning suggests, with one genuine hole that is not where you'd
+  expect.</p>
+
+  <h3>The wrap row has three sub-options, not one</h3>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Where the boundary sits</th><th>Systems</th><th>What the agent must give up</th></tr>
+      <tr>
+        <td>Gym-style environment API</td>
+        <td>SkyRL-Gym, NeMo Gym</td>
+        <td>Be expressible as <code>reset()</code>/<code>step()</code> — its own event loop, in practice</td>
+      </tr>
+      <tr>
+        <td>SDK / decorator tracing</td>
+        <td>Agent Lightning, rLLM</td>
+        <td>Be importable and instrumentable; one integration per framework</td>
+      </tr>
+      <tr>
+        <td>Provider-API proxy</td>
+        <td>Polar</td>
+        <td>Nothing — it runs unmodified, including as a binary</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>The third rests on one observation: agents differ arbitrarily inside, but <strong>every LLM agent
+  must talk to a model</strong>, and the provider endpoint is a common interface that already exists
+  <em>outside</em> the agent. So don't integrate with the harness — sit at its model base URL and
+  listen. Per request the gateway detects the provider dialect, normalizes to the local backend's
+  shape with <code>logprobs=true</code> injected, and <strong>stores the prompt token IDs, the sampled
+  response token IDs, the log-probs and the finish reason</strong> before transforming the response
+  back into the shape the harness expects.</p>
+
+  <div class="note">
+    <strong>That storage list is <code>AgentLoopOutput</code> in disguise.</strong> Prompt token IDs
+    and sampled response token IDs are precisely the two things §4 says must never be recovered by
+    re-tokenizing. The proxy captures them at the only point where they provably exist — the moment
+    the engine emitted them.
+  </div>
+
+  <h3>Prefix merging is delta tokenization, one layer down</h3>
+
+  <p>One trace per model call would fragment a session into hundreds of samples. The reassembly step
+  instead splices the sampled tokens back together, and its central rule is a refusal:
+  <strong>never copy the previous assistant turn out of the next request's prompt.</strong> Those
+  tokens were re-rendered and re-tokenized by the provider path — they are the
+  \(T(a \mathbin{\|} b)\) side of §4's failed invariant. The raw sampled tokens are spliced in
+  instead:</p>
+
+  <div class="result">
+    <div class="result-label">Reconstructed sequence and mask</div>
+    \[
+      \begin{aligned}
+      z \;&=\; p_1 \mathbin{\|} a_1 \mathbin{\|} u_1 \mathbin{\|} a_2 \mathbin{\|} u_2 \mathbin{\|} \cdots \mathbin{\|} a_K \\[4pt]
+      m_t \;&=\; \begin{cases} 1 & t \in a_m \quad \text{(sampled by the policy)} \\ 0 & \text{otherwise} \end{cases}
+      \end{aligned}
+    \]
+  </div>
+
+  <p>\(a_m\) are raw sampled tokens; \(u_m\) are the harness-inserted interstitials — tool results,
+  system reminders, injected formatting — recovered from the <em>next</em> request's prompt by
+  locating the first end-of-turn token in its tail. That is the same \(m_t = 1\) on assistant,
+  \(0\) on environment mask §4 defines, and \(z\) is <code>prompt_ids</code> followed by
+  <code>response_ids</code>.</p>
+
+  <div class="step">
+    <div class="step-label">The parallel worth noticing</div>
+    <p style="margin:0">verl's <strong>delta tokenization</strong> templates the message list at
+    length \(i\) and \(i{+}1\) and takes the difference. The proxy does the same subtraction one layer
+    down — differencing successive <em>prompts</em> instead of successive message lists. Same trick,
+    and the proxy has the easier job: the harness already did the templating, so there is nothing to
+    re-template and no chat template to agree on. What verl achieves by controlling the loop, the
+    proxy achieves by observing it.</p>
+  </div>
+
+  <h3>Chains — why one session is not always one <code>AgentLoopOutput</code></h3>
+
+  <p>The splice is only valid where a strict token-prefix relation holds between successive calls,
+  \(p_{i_{m+1}}[1:|p_{i_m}|] = p_{i_m}\). Anything that breaks it opens a <strong>new chain</strong>:
+  context compaction, subagents, parallel branches. One session can yield several training samples
+  rather than one.</p>
+
+  <p>That looks like a loss relative to the in-loop case. It is the opposite, and §4 says why.
+  Tool tokens stay in <code>input_ids</code> — masked but present — <em>because the assistant's later
+  tokens were conditioned on them and the forward pass must see the same context the rollout saw.</em>
+  <strong>Context compaction breaks exactly that invariant.</strong> If the agent compacted at turn 30,
+  the later turns were not conditioned on the raw earlier context, and concatenating anyway would show
+  the forward pass a context the rollout never saw — §4's failure mode one level up, and just as
+  silent. The chain partition is what restores the invariant; the single sequence is the special case
+  where the context happened to be append-only. SkyRL-Agent reaches the same construction
+  independently and makes the fallback explicit: with no context modification during execution, it
+  collapses back to plain concatenate-and-mask.</p>
+
+  <div class="note">
+    <strong>The discriminator is not trajectory length — it is whether the agent modifies its own
+    context.</strong> That is what breaks the prefix relation, and it is the real axis separating
+    "one masked sequence" from "N transitions." A ReAct loop that only appends is one sequence at any
+    length; a harness that compacts is several at any length.
+  </div>
+
+  <h3>What the proxy does not give you</h3>
+
+  <ul>
+    <li><strong>Credit assignment across chains — the actual hole.</strong> The mask is faithful; the
+      advantage attached to it is unsolved. Broadcasting a session-level reward to every chain is the
+      configuration Polar reports produced <em>significant reward hacking</em> — session-level credit
+      on request-level traces, without session normalization or a process reward model, is noisy
+      credit assignment. Process rewards and session normalization are explicitly future work. Note
+      where this lands: not on the tokenization seam §10 warned about, which is solved, but one level
+      up on the objective.</li>
+    <li><strong>The audit.</strong> <code>tokenization_sanity_check_mode</code> works by re-templating
+      and comparing. Through a proxy there is no template to compare against — the harness owns it. The
+      equivalent check is a log-prob consistency test between the captured rollout log-probs and the
+      trainer's recomputed ones, which matters <em>more</em> here than in-loop: a normalization step and
+      a provider-shape transform now sit between the sampler and the trainer, and that seam is exactly
+      where a silent mismatch would enter.</li>
+    <li><strong>True streaming.</strong> Capture needs a non-streaming upstream response, re-emitted to
+      the harness as a synthetic provider-shaped stream. It does not touch the mask; it does matter for
+      latency-sensitive harnesses.</li>
+    <li><strong>Zero integration.</strong> The box is only black <em>below</em> the API — a per-harness
+      adapter (write config, register tools, return the shell command) and a runtime image are still
+      required. Roughly twenty lines rather than a reimplementation, but not nothing.</li>
+  </ul>
+
+  <div class="caution">
+    <strong>What this changes about §10's table.</strong> The second row's cost was stated as
+    recovering token-exact IDs and a correct mask. Capture at the model endpoint solves that, and the
+    empirical case for paying it is strong: training the <em>same</em> harness the model ships in
+    produces gains inversely proportional to how native that harness already was to the base model —
+    largest where the action protocol is unfamiliar, near zero on the model's home turf. Which is the
+    §10 drift argument measured. <strong>The residual cost is not tokenization; it is that a
+    compacting, sub-agenting harness hands you several trainable sequences per episode and one reward
+    to divide among them.</strong>
+  </div>
+
+  <!-- ── §12 Config ─────────────────────────── -->
+  <h2 id="config">12. The Config Map</h2>
 
   <p>Everything below is under <code>actor_rollout_ref.rollout</code>:</p>
 
@@ -1200,8 +1344,8 @@ position_ids   = (attention_mask.cumsum(dim=1) - 1) * attention_mask</code></pre
     tag you have installed rather than trusting any table, including this one.
   </div>
 
-  <!-- ── §12 References ─────────────────────── -->
-  <h2 id="refs">12. References</h2>
+  <!-- ── §13 References ─────────────────────── -->
+  <h2 id="refs">13. References</h2>
 
   <ul>
     <li><a href="https://verl.readthedocs.io/en/latest/advance/agent_loop.html">verl — Agent Loop</a>
@@ -1216,7 +1360,14 @@ position_ids   = (attention_mask.cumsum(dim=1) - 1) * attention_mask</code></pre
       · the manager → worker → server-manager → server path, read at source level.</li>
     <li><a href="https://arxiv.org/html/2508.03680">Agent Lightning</a> and
       <a href="https://arxiv.org/pdf/2511.16108">SkyRL-Agent</a> · the same trainer/agent
-      disaggregation, arrived at independently.</li>
+      disaggregation, arrived at independently. SkyRL-Agent is also the explicit statement of §11's
+      fallback — pack same-prefix transitions, collapse to concatenate-and-mask when the context is
+      unmodified.</li>
+    <li><a href="https://arxiv.org/abs/2605.24220">Polar — Agentic RL on Any Harness at Scale</a>
+      · the provider-API proxy boundary of §11: token-faithful <code>prefix_merging</code>, the chain
+      partition, and the <code>per_request</code> reward-hacking negative result.</li>
+    <li><a href="https://blog.vllm.ai/2025/10/22/agent-lightning.html">No more retokenization drift (vLLM)</a>
+      · §4's invariant seen from the serving side — why a transcript is not a token sequence.</li>
     <li><a href="https://cursor.com/blog/composer">Cursor — Composer</a> · training inside the
       production harness, and the sandbox scale it demands.</li>
     <li><a href="https://www.primeintellect.ai/blog/scaling-agentic-rl">Prime Intellect — Scaling Agentic RL</a>
