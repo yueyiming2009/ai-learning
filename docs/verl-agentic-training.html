@@ -312,10 +312,10 @@
     .d-box { fill: var(--bg); stroke: var(--border); stroke-width: 1.2; }
     .d-box.gpu { fill: var(--accent-light); stroke: var(--accent); }
     .d-box.env { fill: var(--caution-bg); stroke: var(--caution-border); }
-    .d-t { fill: var(--text); font: 600 11px 'Inter', sans-serif; }
-    .d-t.sm { font-size: 10px; }
-    .d-s { fill: var(--muted); font: 9px 'Inter', sans-serif; }
-    .d-s.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 8.5px; }
+    .d-t { fill: var(--text); font: 600 17px 'Inter', sans-serif; }
+    .d-t.sm { font-size: 14px; }
+    .d-s { fill: var(--muted); font: 13.5px 'Inter', sans-serif; }
+    .d-s.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
     .d-a { stroke: var(--accent); stroke-width: 1.4; fill: none; marker-end: url(#ar-f); }
     .d-r { stroke: var(--muted); stroke-width: 1.2; fill: none; stroke-dasharray: 4 3; marker-end: url(#ar-r); }
     .mk-f { fill: var(--accent); }
@@ -498,7 +498,7 @@
   kernel. Each is a Ray actor tier with one job:</p>
 
   <div class="figure">
-    <svg class="diagram" viewBox="0 0 840 580" role="img"
+    <svg class="diagram" viewBox="0 0 810 720" role="img"
          aria-label="Architecture diagram: RayPPOTrainer calls AgentLoopManager, which chunks the batch across AgentLoopWorker actors; each worker runs agent loops that call tools in the environment plane and issue token-level generate requests through AsyncLLMServerManager to per-replica inference servers; AgentLoopOutput returns to the trainer as a padded DataProto.">
       <defs>
         <marker id="ar-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
@@ -510,107 +510,108 @@
       </defs>
 
       <!-- ── Trainer ── -->
-      <rect class="d-box" x="100" y="16" width="340" height="50" rx="7"/>
-      <text class="d-t" x="270" y="38" text-anchor="middle">RayPPOTrainer.fit()</text>
-      <text class="d-s" x="270" y="54" text-anchor="middle">one call — generate_sequences(batch)</text>
+      <rect class="d-box" x="48" y="20" width="396" height="62" rx="8"/>
+      <text class="d-t" x="246" y="48" text-anchor="middle">RayPPOTrainer.fit()</text>
+      <text class="d-s" x="246" y="70" text-anchor="middle">one call — generate_sequences(batch)</text>
 
-      <path class="d-a" d="M340,66 V96"/>
-      <text class="d-s" x="350" y="88">prompts</text>
+      <path class="d-a" d="M360,82 V110"/>
+      <text class="d-s" x="370" y="104">prompts</text>
 
-      <!-- return path -->
-      <path class="d-r" d="M125,200 V70"/>
-      <text class="d-s" x="135" y="88">AgentLoopOutput → padded DataProto</text>
+      <!-- return path to the trainer -->
+      <path class="d-r" d="M64,236 V86"/>
+      <text class="d-s" x="74" y="104">AgentLoopOutput → padded DataProto</text>
 
       <!-- ── Manager ── -->
-      <rect class="d-box" x="150" y="100" width="290" height="62" rx="7"/>
-      <text class="d-t" x="295" y="122" text-anchor="middle">AgentLoopManager</text>
-      <text class="d-s" x="295" y="138" text-anchor="middle">spawn dp_size servers (node affinity) · chunk the batch</text>
-      <text class="d-s" x="295" y="152" text-anchor="middle">wake_up() before · sleep() after</text>
+      <rect class="d-box" x="78" y="116" width="336" height="86" rx="8"/>
+      <text class="d-t" x="246" y="144" text-anchor="middle">AgentLoopManager</text>
+      <text class="d-s" x="246" y="167" text-anchor="middle">spawn dp_size servers · node affinity</text>
+      <text class="d-s" x="246" y="188" text-anchor="middle">chunk the batch · wake_up() / sleep()</text>
 
-      <path class="d-a" d="M295,162 V180 H152 V196"/>
-      <path class="d-a" d="M295,162 V180 H270 V196"/>
-      <path class="d-a" d="M295,162 V180 H388 V196"/>
+      <path class="d-a" d="M246,202 V218 H111 V230"/>
+      <path class="d-a" d="M246,202 V230"/>
+      <path class="d-a" d="M246,202 V218 H381 V230"/>
 
       <!-- ── Workers ── -->
-      <rect class="d-box" x="100" y="200" width="104" height="86" rx="7"/>
-      <text class="d-t sm" x="152" y="222" text-anchor="middle">AgentLoopWorker</text>
-      <text class="d-s" x="152" y="238" text-anchor="middle">Ray actor · CPU</text>
-      <text class="d-s mono" x="152" y="258" text-anchor="middle">AgentLoop × B/N</text>
-      <text class="d-s" x="152" y="274" text-anchor="middle">asyncio tasks</text>
+      <rect class="d-box" x="48" y="236" width="126" height="104" rx="8"/>
+      <text class="d-t sm" x="111" y="263" text-anchor="middle">AgentLoopWorker</text>
+      <text class="d-s" x="111" y="285" text-anchor="middle">Ray actor · CPU</text>
+      <text class="d-s mono" x="111" y="308" text-anchor="middle">AgentLoop ×N</text>
+      <text class="d-s" x="111" y="329" text-anchor="middle">asyncio tasks</text>
 
-      <rect class="d-box" x="218" y="200" width="104" height="86" rx="7"/>
-      <text class="d-t sm" x="270" y="222" text-anchor="middle">AgentLoopWorker</text>
-      <text class="d-s" x="270" y="238" text-anchor="middle">Ray actor · CPU</text>
-      <text class="d-s mono" x="270" y="258" text-anchor="middle">AgentLoop × B/N</text>
-      <text class="d-s" x="270" y="274" text-anchor="middle">asyncio tasks</text>
+      <rect class="d-box" x="183" y="236" width="126" height="104" rx="8"/>
+      <text class="d-t sm" x="246" y="263" text-anchor="middle">AgentLoopWorker</text>
+      <text class="d-s" x="246" y="285" text-anchor="middle">Ray actor · CPU</text>
+      <text class="d-s mono" x="246" y="308" text-anchor="middle">AgentLoop ×N</text>
+      <text class="d-s" x="246" y="329" text-anchor="middle">asyncio tasks</text>
 
-      <rect class="d-box" x="336" y="200" width="104" height="86" rx="7"/>
-      <text class="d-t sm" x="388" y="222" text-anchor="middle">AgentLoopWorker</text>
-      <text class="d-s" x="388" y="238" text-anchor="middle">Ray actor · CPU</text>
-      <text class="d-s mono" x="388" y="258" text-anchor="middle">AgentLoop × B/N</text>
-      <text class="d-s" x="388" y="274" text-anchor="middle">asyncio tasks</text>
+      <rect class="d-box" x="318" y="236" width="126" height="104" rx="8"/>
+      <text class="d-t sm" x="381" y="263" text-anchor="middle">AgentLoopWorker</text>
+      <text class="d-s" x="381" y="285" text-anchor="middle">Ray actor · CPU</text>
+      <text class="d-s mono" x="381" y="308" text-anchor="middle">AgentLoop ×N</text>
+      <text class="d-s" x="381" y="329" text-anchor="middle">asyncio tasks</text>
 
-      <!-- worker ↔ environment -->
-      <path class="d-a" d="M440,230 H536"/>
-      <text class="d-s" x="490" y="222" text-anchor="middle">tool_calls</text>
-      <path class="d-r" d="M540,266 H444"/>
-      <text class="d-s" x="490" y="284" text-anchor="middle">results → mask 0</text>
+      <!-- workers ↔ environment plane -->
+      <path class="d-a" d="M444,268 H536"/>
+      <text class="d-s" x="492" y="258" text-anchor="middle">tool_calls</text>
+      <path class="d-r" d="M540,310 H448"/>
+      <text class="d-s" x="492" y="331" text-anchor="middle">results</text>
 
-      <path class="d-a" d="M152,286 V304 H270 V318"/>
-      <path class="d-a" d="M270,286 V318"/>
-      <path class="d-a" d="M388,286 V304 H270 V318"/>
-      <text class="d-s" x="444" y="302">generate(token ids)</text>
+      <path class="d-a" d="M111,340 V358 H246 V374"/>
+      <path class="d-a" d="M246,340 V374"/>
+      <path class="d-a" d="M381,340 V358 H246 V374"/>
+      <text class="d-s" x="448" y="366">generate()</text>
 
       <!-- ── Server manager ── -->
-      <rect class="d-box" x="100" y="322" width="340" height="58" rx="7"/>
-      <text class="d-t" x="270" y="344" text-anchor="middle">AsyncLLMServerManager</text>
-      <text class="d-s" x="270" y="362" text-anchor="middle">least-request weighted heap · sticky request_id → server (LRU)</text>
+      <rect class="d-box" x="48" y="382" width="396" height="76" rx="8"/>
+      <text class="d-t" x="246" y="414" text-anchor="middle">AsyncLLMServerManager</text>
+      <text class="d-s" x="246" y="438" text-anchor="middle">least-request heap · sticky request_id → server</text>
 
-      <path class="d-a" d="M270,380 V396 H152 V412"/>
-      <path class="d-a" d="M270,380 V412"/>
-      <path class="d-a" d="M270,380 V396 H388 V412"/>
+      <path class="d-a" d="M246,458 V474 H111 V488"/>
+      <path class="d-a" d="M246,458 V488"/>
+      <path class="d-a" d="M246,458 V474 H381 V488"/>
 
       <!-- ── Servers ── -->
-      <rect class="d-box gpu" x="100" y="416" width="104" height="62" rx="7"/>
-      <text class="d-t sm" x="152" y="440" text-anchor="middle">AsyncServer</text>
-      <text class="d-s" x="152" y="456" text-anchor="middle">SGLang / vLLM</text>
-      <text class="d-s" x="152" y="470" text-anchor="middle">Ray actor</text>
+      <rect class="d-box gpu" x="48" y="496" width="126" height="88" rx="8"/>
+      <text class="d-t sm" x="111" y="525" text-anchor="middle">AsyncServer</text>
+      <text class="d-s" x="111" y="548" text-anchor="middle">SGLang / vLLM</text>
+      <text class="d-s" x="111" y="569" text-anchor="middle">Ray actor</text>
 
-      <rect class="d-box gpu" x="218" y="416" width="104" height="62" rx="7"/>
-      <text class="d-t sm" x="270" y="440" text-anchor="middle">AsyncServer</text>
-      <text class="d-s" x="270" y="456" text-anchor="middle">SGLang / vLLM</text>
-      <text class="d-s" x="270" y="470" text-anchor="middle">Ray actor</text>
+      <rect class="d-box gpu" x="183" y="496" width="126" height="88" rx="8"/>
+      <text class="d-t sm" x="246" y="525" text-anchor="middle">AsyncServer</text>
+      <text class="d-s" x="246" y="548" text-anchor="middle">SGLang / vLLM</text>
+      <text class="d-s" x="246" y="569" text-anchor="middle">Ray actor</text>
 
-      <rect class="d-box gpu" x="336" y="416" width="104" height="62" rx="7"/>
-      <text class="d-t sm" x="388" y="440" text-anchor="middle">AsyncServer</text>
-      <text class="d-s" x="388" y="456" text-anchor="middle">SGLang / vLLM</text>
-      <text class="d-s" x="388" y="470" text-anchor="middle">Ray actor</text>
+      <rect class="d-box gpu" x="318" y="496" width="126" height="88" rx="8"/>
+      <text class="d-t sm" x="381" y="525" text-anchor="middle">AsyncServer</text>
+      <text class="d-s" x="381" y="548" text-anchor="middle">SGLang / vLLM</text>
+      <text class="d-s" x="381" y="569" text-anchor="middle">Ray actor</text>
 
-      <text class="d-s" x="450" y="450">× dp_size</text>
+      <text class="d-s" x="454" y="548">× dp_size</text>
 
-      <path class="d-a" d="M152,478 V494 H270 V508"/>
-      <path class="d-a" d="M270,478 V508"/>
-      <path class="d-a" d="M388,478 V494 H270 V508"/>
+      <path class="d-a" d="M111,584 V602 H246 V616"/>
+      <path class="d-a" d="M246,584 V616"/>
+      <path class="d-a" d="M381,584 V602 H246 V616"/>
 
       <!-- ── Engine ── -->
-      <rect class="d-box gpu" x="100" y="512" width="340" height="52" rx="7"/>
-      <text class="d-t" x="270" y="534" text-anchor="middle">inference engine — GPU</text>
-      <text class="d-s" x="270" y="552" text-anchor="middle">TP group · token-in-token-out generate() forwards to tp_rank = 0</text>
+      <rect class="d-box gpu" x="48" y="624" width="396" height="72" rx="8"/>
+      <text class="d-t" x="246" y="656" text-anchor="middle">inference engine — GPU</text>
+      <text class="d-s" x="246" y="680" text-anchor="middle">token-in-token-out · forwards to tp_rank = 0</text>
 
       <!-- ── Environment plane ── -->
-      <rect class="d-box env" x="540" y="200" width="280" height="110" rx="7"/>
-      <text class="d-t" x="680" y="224" text-anchor="middle">environment plane — per rollout</text>
-      <text class="d-s mono" x="680" y="248" text-anchor="middle">@function_tool  ·  BaseTool</text>
-      <text class="d-s" x="680" y="266" text-anchor="middle">create → execute × turns → calc_reward → release</text>
-      <text class="d-s" x="680" y="290" text-anchor="middle">BaseInteraction — user turns, should_terminate</text>
+      <rect class="d-box env" x="540" y="236" width="260" height="134" rx="8"/>
+      <text class="d-t" x="670" y="266" text-anchor="middle">environment plane</text>
+      <text class="d-s mono" x="670" y="292" text-anchor="middle">@function_tool · BaseTool</text>
+      <text class="d-s" x="670" y="313" text-anchor="middle">create → execute × turns</text>
+      <text class="d-s" x="670" y="333" text-anchor="middle">→ calc_reward → release</text>
+      <text class="d-s mono" x="670" y="358" text-anchor="middle">BaseInteraction</text>
 
-      <path class="d-a" d="M680,310 V336"/>
-      <text class="d-s" x="690" y="328">code</text>
+      <path class="d-a" d="M660,370 V412"/>
+      <text class="d-s" x="670" y="396">code</text>
 
-      <rect class="d-box env" x="540" y="340" width="280" height="66" rx="7"/>
-      <text class="d-t" x="680" y="364" text-anchor="middle">Sandbox Fusion (FaaS)</text>
-      <text class="d-s" x="680" y="382" text-anchor="middle">TokenBucketWorker — global semaphore</text>
-      <text class="d-s mono" x="680" y="396" text-anchor="middle">rate_limit · default_timeout</text>
+      <rect class="d-box env" x="540" y="416" width="260" height="92" rx="8"/>
+      <text class="d-t" x="670" y="446" text-anchor="middle">Sandbox Fusion (FaaS)</text>
+      <text class="d-s" x="670" y="470" text-anchor="middle">TokenBucketWorker — semaphore</text>
+      <text class="d-s mono" x="670" y="492" text-anchor="middle">rate_limit · timeout</text>
     </svg>
     <div class="legend">
       <span class="legend-item"><span class="lg" style="--c:#0d9488"></span> policy path — tokens the gradient sees</span>
@@ -1157,12 +1158,12 @@ position_ids   = (attention_mask.cumsum(dim=1) - 1) * attention_mask</code></pre
     const maskY = 128, maskH = 22;
     const barY = 214, barH = 30;
 
-    ctx.font = '11px Inter, sans-serif';
+    ctx.font = '12.5px Inter, sans-serif';
     ctx.textAlign = 'left';
 
     // ── Row 1: the response tape ──
     ctx.fillStyle = C.ink;
-    ctx.font = '600 11px Inter, sans-serif';
+    ctx.font = '600 13px Inter, sans-serif';
     ctx.fillText('response_ids  (generation order →)', padL, tapeY - 12);
 
     L.segs.forEach(s => {
@@ -1214,7 +1215,7 @@ position_ids   = (attention_mask.cumsum(dim=1) - 1) * attention_mask</code></pre
 
     // ── Row 2: the loss mask ──
     ctx.fillStyle = C.ink;
-    ctx.font = '600 11px Inter, sans-serif';
+    ctx.font = '600 13px Inter, sans-serif';
     ctx.fillText('response_mask  (1 = in the loss)', padL, maskY - 10);
 
     // Baseline for mask = 0.
@@ -1240,7 +1241,7 @@ position_ids   = (attention_mask.cumsum(dim=1) - 1) * attention_mask</code></pre
     ctx.stroke();
     ctx.restore();
     ctx.fillStyle = C.accent;
-    ctx.font = '600 10px Inter, sans-serif';
+    ctx.font = '600 11.5px Inter, sans-serif';
     const label = 'response_length = ' + budget;
     const lw = ctx.measureText(label).width;
     ctx.textAlign = 'left';
@@ -1248,7 +1249,7 @@ position_ids   = (attention_mask.cumsum(dim=1) - 1) * attention_mask</code></pre
 
     // ── Row 3: budget composition ──
     ctx.fillStyle = C.ink;
-    ctx.font = '600 11px Inter, sans-serif';
+    ctx.font = '600 13px Inter, sans-serif';
     ctx.textAlign = 'left';
     ctx.fillText('how the budget was spent', padL, barY - 10);
 
@@ -1273,7 +1274,7 @@ position_ids   = (attention_mask.cumsum(dim=1) - 1) * attention_mask</code></pre
 
     // ── Readout ──
     const pct = budget > 0 ? (100 * L.trainable / budget) : 0;
-    ctx.font = '11px Inter, sans-serif';
+    ctx.font = '12.5px Inter, sans-serif';
     ctx.fillStyle = C.muted;
     ctx.textAlign = 'left';
     ctx.fillText(
