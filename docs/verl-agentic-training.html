@@ -306,6 +306,20 @@
       background: var(--surface);
     }
     .figure canvas { width: 100%; height: 320px; display: block; }
+    .figure svg.diagram { width: 100%; height: auto; display: block; }
+
+    /* ── Diagram primitives ──────────────────── */
+    .d-box { fill: var(--bg); stroke: var(--border); stroke-width: 1.2; }
+    .d-box.gpu { fill: var(--accent-light); stroke: var(--accent); }
+    .d-box.env { fill: var(--caution-bg); stroke: var(--caution-border); }
+    .d-t { fill: var(--text); font: 600 11px 'Inter', sans-serif; }
+    .d-t.sm { font-size: 10px; }
+    .d-s { fill: var(--muted); font: 9px 'Inter', sans-serif; }
+    .d-s.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 8.5px; }
+    .d-a { stroke: var(--accent); stroke-width: 1.4; fill: none; marker-end: url(#ar-f); }
+    .d-r { stroke: var(--muted); stroke-width: 1.2; fill: none; stroke-dasharray: 4 3; marker-end: url(#ar-r); }
+    .mk-f { fill: var(--accent); }
+    .mk-r { fill: var(--muted); }
     .controls {
       display: flex;
       flex-wrap: wrap;
@@ -482,6 +496,139 @@
 
   <p>Four layers sit between the trainer's <code>generate_sequences</code> call and the inference
   kernel. Each is a Ray actor tier with one job:</p>
+
+  <div class="figure">
+    <svg class="diagram" viewBox="0 0 840 580" role="img"
+         aria-label="Architecture diagram: RayPPOTrainer calls AgentLoopManager, which chunks the batch across AgentLoopWorker actors; each worker runs agent loops that call tools in the environment plane and issue token-level generate requests through AsyncLLMServerManager to per-replica inference servers; AgentLoopOutput returns to the trainer as a padded DataProto.">
+      <defs>
+        <marker id="ar-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path class="mk-f" d="M0,1 L10,5 L0,9 z"/>
+        </marker>
+        <marker id="ar-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path class="mk-r" d="M0,1 L10,5 L0,9 z"/>
+        </marker>
+      </defs>
+
+      <!-- ── Trainer ── -->
+      <rect class="d-box" x="100" y="16" width="340" height="50" rx="7"/>
+      <text class="d-t" x="270" y="38" text-anchor="middle">RayPPOTrainer.fit()</text>
+      <text class="d-s" x="270" y="54" text-anchor="middle">one call — generate_sequences(batch)</text>
+
+      <path class="d-a" d="M340,66 V96"/>
+      <text class="d-s" x="350" y="88">prompts</text>
+
+      <!-- return path -->
+      <path class="d-r" d="M125,200 V70"/>
+      <text class="d-s" x="135" y="88">AgentLoopOutput → padded DataProto</text>
+
+      <!-- ── Manager ── -->
+      <rect class="d-box" x="150" y="100" width="290" height="62" rx="7"/>
+      <text class="d-t" x="295" y="122" text-anchor="middle">AgentLoopManager</text>
+      <text class="d-s" x="295" y="138" text-anchor="middle">spawn dp_size servers (node affinity) · chunk the batch</text>
+      <text class="d-s" x="295" y="152" text-anchor="middle">wake_up() before · sleep() after</text>
+
+      <path class="d-a" d="M295,162 V180 H152 V196"/>
+      <path class="d-a" d="M295,162 V180 H270 V196"/>
+      <path class="d-a" d="M295,162 V180 H388 V196"/>
+
+      <!-- ── Workers ── -->
+      <rect class="d-box" x="100" y="200" width="104" height="86" rx="7"/>
+      <text class="d-t sm" x="152" y="222" text-anchor="middle">AgentLoopWorker</text>
+      <text class="d-s" x="152" y="238" text-anchor="middle">Ray actor · CPU</text>
+      <text class="d-s mono" x="152" y="258" text-anchor="middle">AgentLoop × B/N</text>
+      <text class="d-s" x="152" y="274" text-anchor="middle">asyncio tasks</text>
+
+      <rect class="d-box" x="218" y="200" width="104" height="86" rx="7"/>
+      <text class="d-t sm" x="270" y="222" text-anchor="middle">AgentLoopWorker</text>
+      <text class="d-s" x="270" y="238" text-anchor="middle">Ray actor · CPU</text>
+      <text class="d-s mono" x="270" y="258" text-anchor="middle">AgentLoop × B/N</text>
+      <text class="d-s" x="270" y="274" text-anchor="middle">asyncio tasks</text>
+
+      <rect class="d-box" x="336" y="200" width="104" height="86" rx="7"/>
+      <text class="d-t sm" x="388" y="222" text-anchor="middle">AgentLoopWorker</text>
+      <text class="d-s" x="388" y="238" text-anchor="middle">Ray actor · CPU</text>
+      <text class="d-s mono" x="388" y="258" text-anchor="middle">AgentLoop × B/N</text>
+      <text class="d-s" x="388" y="274" text-anchor="middle">asyncio tasks</text>
+
+      <!-- worker ↔ environment -->
+      <path class="d-a" d="M440,230 H536"/>
+      <text class="d-s" x="490" y="222" text-anchor="middle">tool_calls</text>
+      <path class="d-r" d="M540,266 H444"/>
+      <text class="d-s" x="490" y="284" text-anchor="middle">results → mask 0</text>
+
+      <path class="d-a" d="M152,286 V304 H270 V318"/>
+      <path class="d-a" d="M270,286 V318"/>
+      <path class="d-a" d="M388,286 V304 H270 V318"/>
+      <text class="d-s" x="444" y="302">generate(token ids)</text>
+
+      <!-- ── Server manager ── -->
+      <rect class="d-box" x="100" y="322" width="340" height="58" rx="7"/>
+      <text class="d-t" x="270" y="344" text-anchor="middle">AsyncLLMServerManager</text>
+      <text class="d-s" x="270" y="362" text-anchor="middle">least-request weighted heap · sticky request_id → server (LRU)</text>
+
+      <path class="d-a" d="M270,380 V396 H152 V412"/>
+      <path class="d-a" d="M270,380 V412"/>
+      <path class="d-a" d="M270,380 V396 H388 V412"/>
+
+      <!-- ── Servers ── -->
+      <rect class="d-box gpu" x="100" y="416" width="104" height="62" rx="7"/>
+      <text class="d-t sm" x="152" y="440" text-anchor="middle">AsyncServer</text>
+      <text class="d-s" x="152" y="456" text-anchor="middle">SGLang / vLLM</text>
+      <text class="d-s" x="152" y="470" text-anchor="middle">Ray actor</text>
+
+      <rect class="d-box gpu" x="218" y="416" width="104" height="62" rx="7"/>
+      <text class="d-t sm" x="270" y="440" text-anchor="middle">AsyncServer</text>
+      <text class="d-s" x="270" y="456" text-anchor="middle">SGLang / vLLM</text>
+      <text class="d-s" x="270" y="470" text-anchor="middle">Ray actor</text>
+
+      <rect class="d-box gpu" x="336" y="416" width="104" height="62" rx="7"/>
+      <text class="d-t sm" x="388" y="440" text-anchor="middle">AsyncServer</text>
+      <text class="d-s" x="388" y="456" text-anchor="middle">SGLang / vLLM</text>
+      <text class="d-s" x="388" y="470" text-anchor="middle">Ray actor</text>
+
+      <text class="d-s" x="450" y="450">× dp_size</text>
+
+      <path class="d-a" d="M152,478 V494 H270 V508"/>
+      <path class="d-a" d="M270,478 V508"/>
+      <path class="d-a" d="M388,478 V494 H270 V508"/>
+
+      <!-- ── Engine ── -->
+      <rect class="d-box gpu" x="100" y="512" width="340" height="52" rx="7"/>
+      <text class="d-t" x="270" y="534" text-anchor="middle">inference engine — GPU</text>
+      <text class="d-s" x="270" y="552" text-anchor="middle">TP group · token-in-token-out generate() forwards to tp_rank = 0</text>
+
+      <!-- ── Environment plane ── -->
+      <rect class="d-box env" x="540" y="200" width="280" height="110" rx="7"/>
+      <text class="d-t" x="680" y="224" text-anchor="middle">environment plane — per rollout</text>
+      <text class="d-s mono" x="680" y="248" text-anchor="middle">@function_tool  ·  BaseTool</text>
+      <text class="d-s" x="680" y="266" text-anchor="middle">create → execute × turns → calc_reward → release</text>
+      <text class="d-s" x="680" y="290" text-anchor="middle">BaseInteraction — user turns, should_terminate</text>
+
+      <path class="d-a" d="M680,310 V336"/>
+      <text class="d-s" x="690" y="328">code</text>
+
+      <rect class="d-box env" x="540" y="340" width="280" height="66" rx="7"/>
+      <text class="d-t" x="680" y="364" text-anchor="middle">Sandbox Fusion (FaaS)</text>
+      <text class="d-s" x="680" y="382" text-anchor="middle">TokenBucketWorker — global semaphore</text>
+      <text class="d-s mono" x="680" y="396" text-anchor="middle">rate_limit · default_timeout</text>
+    </svg>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:#0d9488"></span> policy path — tokens the gradient sees</span>
+      <span class="legend-item"><span class="lg" style="--c:#f59e0b"></span> environment plane — mask-0 tokens</span>
+      <span class="legend-item">dashed = return path (tool results, and the batch home to the trainer)</span>
+    </div>
+    <p class="figure-caption">
+      <strong>One trainer call fans out into thousands of independent turn loops and collapses back
+      into one padded batch.</strong> The whole left column is the policy path; the right column is
+      everything the policy does <em>not</em> get gradient for. Note what crosses the boundary
+      between them — only token IDs — and note that every box above the servers runs on CPU, so
+      tool latency and sandbox round trips never occupy a GPU. The fan-out at
+      <code>AgentLoopManager</code> and the converge at <code>AsyncLLMServerManager</code> are the two
+      places a straggler trajectory stalls the whole step.
+    </p>
+  </div>
+
+  <p>Layer by layer:</p>
 
   <div class="stack">
     <div class="layer">
