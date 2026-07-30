@@ -316,6 +316,17 @@
     .d-t.sm { font-size: 14px; }
     .d-s { fill: var(--muted); font: 13.5px 'Inter', sans-serif; }
     .d-s.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+    .d-xs { fill: var(--muted); font: 12px 'Inter', sans-serif; }
+    .d-xs.on { fill: var(--text); }
+    .d-lane { fill: var(--surface); stroke: var(--border); stroke-width: 1; }
+    .d-blk { fill: var(--bg); stroke: var(--border); stroke-width: 1.2; }
+    .d-blk.gpu { fill: var(--accent-light); stroke: var(--accent); }
+    .d-blk.env { fill: var(--caution-bg); stroke: var(--caution-border); }
+    .d-hatch { fill: url(#hx); stroke: none; }
+    .hx-l { stroke: var(--muted); stroke-width: 1; opacity: 0.3; }
+    .d-axis { stroke: var(--grid-fg); stroke-width: 1; fill: none; }
+    .d-a2 { stroke: var(--accent); stroke-width: 1.4; fill: none; marker-end: url(#ar-f2); }
+    .d-r2 { stroke: var(--muted); stroke-width: 1.2; fill: none; stroke-dasharray: 4 3; marker-end: url(#ar-r2); }
     .d-a { stroke: var(--accent); stroke-width: 1.4; fill: none; marker-end: url(#ar-f); }
     .d-r { stroke: var(--muted); stroke-width: 1.2; fill: none; stroke-dasharray: 4 3; marker-end: url(#ar-r); }
     .mk-f { fill: var(--accent); }
@@ -821,6 +832,119 @@
     </ol>
   </div>
 
+  <p>The part that is easy to get wrong when reading the stack diagram above: <strong>the loop does
+  not hold a GPU across turns.</strong> Each turn is a self-contained request that is issued,
+  served, and completed. Between them this trajectory occupies no compute — it is a Python
+  coroutine awaiting a tool result on a CPU actor — and the engine's
+  <a href="continuous-batching.html">continuous batching</a> backfills those slots with turns
+  belonging to the thousands of other trajectories in flight. Utilization stays high not because any
+  one trajectory is efficient, but because there are enough of them that someone always has a turn
+  ready:</p>
+
+  <div class="figure">
+    <svg class="diagram" viewBox="0 0 810 372" role="img"
+         aria-label="Swimlane timeline of two turns. The agent loop issues a generate request, the GPU produces assistant tokens, the loop parses a tool call, the sandbox executes it, the loop appends the result with mask 0, and the next turn repeats with a longer prompt. Between this trajectory's generate calls the GPU is filled by other trajectories' turns.">
+      <defs>
+        <marker id="ar-f2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path class="mk-f" d="M0,1 L10,5 L0,9 z"/>
+        </marker>
+        <marker id="ar-r2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path class="mk-r" d="M0,1 L10,5 L0,9 z"/>
+        </marker>
+        <pattern id="hx" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <line class="hx-l" x1="0" y1="0" x2="0" y2="7"/>
+        </pattern>
+      </defs>
+
+      <!-- ── lanes ── -->
+      <rect class="d-lane" x="158" y="60" width="632" height="52" rx="4"/>
+      <rect class="d-lane" x="158" y="150" width="632" height="52" rx="4"/>
+      <rect class="d-lane" x="158" y="240" width="632" height="52" rx="4"/>
+
+      <text class="d-t sm" x="142" y="82" text-anchor="end">inference server</text>
+      <text class="d-xs" x="142" y="100" text-anchor="end">GPU</text>
+      <text class="d-t sm" x="142" y="172" text-anchor="end">agent loop</text>
+      <text class="d-xs" x="142" y="190" text-anchor="end">CPU actor</text>
+      <text class="d-t sm" x="142" y="262" text-anchor="end">tool · sandbox</text>
+      <text class="d-xs" x="142" y="280" text-anchor="end">CPU</text>
+
+      <!-- ── GPU lane: other trajectories fill the gaps ── -->
+      <rect class="d-hatch" x="158" y="60" width="46" height="52"/>
+      <rect class="d-hatch" x="316" y="60" width="182" height="52"/>
+      <rect class="d-hatch" x="610" y="60" width="180" height="52"/>
+      <text class="d-xs" x="407" y="90" text-anchor="middle">other trajectories</text>
+
+      <!-- ── turn 1 ── -->
+      <rect class="d-blk gpu" x="208" y="60" width="104" height="52" rx="5"/>
+      <text class="d-xs on" x="260" y="82" text-anchor="middle">generate</text>
+      <text class="d-xs" x="260" y="100" text-anchor="middle">mask 1</text>
+
+      <path class="d-a2" d="M204,150 V116"/>
+      <text class="d-xs" x="210" y="130">prompt = P</text>
+      <path class="d-a2" d="M312,116 V146"/>
+      <text class="d-xs" x="318" y="142">A₁ tokens</text>
+
+      <rect class="d-blk" x="318" y="150" width="42" height="52" rx="5"/>
+      <text class="d-xs on" x="339" y="181" text-anchor="middle">parse</text>
+
+      <path class="d-a2" d="M366,202 V236"/>
+      <text class="d-xs" x="372" y="224">call</text>
+      <rect class="d-blk env" x="366" y="240" width="78" height="52" rx="5"/>
+      <text class="d-xs on" x="405" y="271" text-anchor="middle">execute</text>
+      <path class="d-r2" d="M444,236 V206"/>
+      <text class="d-xs" x="450" y="224">result · mask 0</text>
+
+      <rect class="d-blk" x="450" y="150" width="42" height="52" rx="5"/>
+      <text class="d-xs on" x="471" y="181" text-anchor="middle">append</text>
+
+      <!-- ── turn 2 ── -->
+      <rect class="d-blk gpu" x="502" y="60" width="104" height="52" rx="5"/>
+      <text class="d-xs on" x="554" y="82" text-anchor="middle">generate</text>
+      <text class="d-xs" x="554" y="100" text-anchor="middle">mask 1</text>
+
+      <path class="d-a2" d="M498,150 V116"/>
+      <text class="d-xs" x="504" y="130">prompt = P + A₁ + T₁</text>
+      <path class="d-a2" d="M606,116 V146"/>
+      <text class="d-xs" x="612" y="142">A₂ tokens</text>
+
+      <rect class="d-blk" x="612" y="150" width="42" height="52" rx="5"/>
+      <text class="d-xs on" x="633" y="181" text-anchor="middle">parse</text>
+
+      <path class="d-a2" d="M660,202 V236"/>
+      <text class="d-xs" x="666" y="224">call</text>
+      <rect class="d-blk env" x="660" y="240" width="78" height="52" rx="5"/>
+      <text class="d-xs on" x="699" y="271" text-anchor="middle">execute</text>
+      <path class="d-r2" d="M738,236 V206"/>
+      <text class="d-xs" x="744" y="224">result</text>
+
+      <rect class="d-blk" x="744" y="150" width="42" height="52" rx="5"/>
+      <text class="d-xs on" x="765" y="181" text-anchor="middle">append</text>
+
+      <!-- ── time axis ── -->
+      <path class="d-axis" d="M158,316 H790"/>
+      <path class="d-axis" d="M158,310 V322"/>
+      <path class="d-axis" d="M496,310 V322"/>
+      <path class="d-axis" d="M790,310 V322"/>
+      <text class="d-xs" x="327" y="340" text-anchor="middle">turn 1</text>
+      <text class="d-xs" x="643" y="340" text-anchor="middle">turn 2</text>
+      <text class="d-xs" x="790" y="364" text-anchor="end">wall-clock for one trajectory →</text>
+    </svg>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:#0d9488"></span> GPU work for <em>this</em> trajectory</span>
+      <span class="legend-item"><span class="lg" style="--c:#f59e0b"></span> tool execution — no GPU held</span>
+      <span class="legend-item"><span class="lg hatch" style="--c:#9ca3af"></span> other trajectories' turns</span>
+    </div>
+    <p class="figure-caption">
+      <strong>A turn is an ordinary request that completes; nothing is held open between turns.</strong>
+      One trajectory occupies the GPU only during the teal blocks — while its tool runs, it holds no
+      compute at all, and the engine backfills with other trajectories' turns (hatched). What makes
+      turn 2 cheap is that its prompt is turn 1's prompt <em>extended</em>, so the pinned server still
+      has the prefix in KV and prefills only the new tokens. Durations here are illustrative, not
+      measured; in practice the teal and amber blocks vary by orders of magnitude across trajectories,
+      which is what makes the rollout tail so heavy.
+    </p>
+  </div>
+
   <p>Three termination conditions, and they mean different things for the reward. A clean stop (no
   tool call) is the agent declaring it is finished. Hitting <code>max_assistant_turns</code> or the
   length cap is a <em>truncation</em> — the trajectory is still trainable, but the task was never
@@ -828,6 +952,20 @@
   choice you have to make deliberately. Silently scoring truncations as 0 teaches brevity; scoring
   them as failure teaches the model to hurry. See
   <a href="agentic-rl.html#reward">Agentic RL §3</a>.</p>
+
+  <p>Two consequences follow, and they are the reason multi-turn rollout is a systems problem rather
+  than a prompting one. First, a trajectory's wall-clock is
+  \(\sum_k (\text{generate}_k + \text{tool}_k)\) — a sum over turns, where the tool terms involve
+  no GPU at all. A 15-turn trajectory can take 30× the wall-clock of a 2-turn one while consuming
+  nowhere near 30× the GPU time, which is exactly the straggler shape that
+  <a href="verl-async-training.html#partial">partial rollout</a> and async training exist to absorb.</p>
+
+  <p>Second, the prefix. Turn \(k{+}1\)'s prompt is turn \(k\)'s prompt with the assistant response
+  and tool result appended — never edited, only extended. That monotonicity is what makes the KV
+  cache reusable and what makes §3's sticky routing worth the load imbalance it causes. It is also
+  why the token-splicing discipline of §4 is not optional: the loop is literally carrying a token
+  buffer forward across turns, and any re-tokenization would silently rewrite history the model has
+  already conditioned on.</p>
 
   <!-- ── §6 Tools ───────────────────────────── -->
   <h2 id="tools">6. Defining Tools — Two Levels</h2>
