@@ -1,0 +1,1342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Async Training in verl</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #0d9488;
+      --accent-light: #f0fdfa;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --nav-bg: rgba(255,255,255,0.92);
+      --note-fg: #1e40af;
+      --result-fg: #16a34a;
+      --caution-bg: #fffbeb;
+      --caution-border: #f59e0b;
+      --caution-fg: #92400e;
+      --lane-gen: #0d9488;
+      --lane-train: #7c3aed;
+      --lane-idle: #e5e7eb;
+      --lane-tail: #f59e0b;
+      --grid-fg: #d1d5db;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #2dd4bf;
+        --accent-light: #0c2420;
+        --warning-bg: #101a2b;
+        --warning-border: #1e40af;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --nav-bg: rgba(15,17,21,0.9);
+        --note-fg: #93c5fd;
+        --result-fg: #4ade80;
+        --caution-bg: #241c0c;
+        --caution-border: #b45309;
+        --caution-fg: #fbbf24;
+        --lane-gen: #2dd4bf;
+        --lane-train: #a78bfa;
+        --lane-idle: #2b313a;
+        --lane-tail: #f59e0b;
+        --grid-fg: #333a44;
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #064e3b 0%, #065f46 55%, #0d9488 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.9;
+      font-size: 0.97rem;
+      max-width: 640px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+    a { color: var(--accent); }
+    code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+    pre {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      line-height: 1.55;
+      margin: 1.2em 0;
+    }
+    pre code { background: none; padding: 0; border: none; color: var(--text); }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+
+    /* ── Step boxes ──────────────────────────── */
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    /* ── Callouts ────────────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+    .caution {
+      background: var(--caution-bg);
+      border-left: 3px solid var(--caution-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--caution-fg);
+    }
+
+    /* ── Result / boxed equation ─────────────── */
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Figure ──────────────────────────────── */
+    .figure {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 18px 14px;
+      margin: 1.6em 0;
+      background: var(--surface);
+    }
+    .figure canvas { width: 100%; height: 340px; display: block; }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px;
+      margin-bottom: 14px;
+      align-items: center;
+    }
+    .control {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.84rem;
+      color: var(--ink);
+    }
+    .control input[type=range] { width: 150px; accent-color: var(--accent); }
+    .control .val {
+      font-variant-numeric: tabular-nums;
+      font-weight: 600;
+      color: var(--accent);
+      min-width: 2.6em;
+      display: inline-block;
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-top: 10px;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+    .legend-item { display: inline-flex; align-items: center; gap: 6px; }
+    .lg {
+      width: 14px; height: 10px; border-radius: 2px;
+      background: var(--c); display: inline-block; flex-shrink: 0;
+    }
+    .lg.hatch {
+      background: repeating-linear-gradient(45deg, var(--c) 0 3px, transparent 3px 6px);
+      border: 1px solid var(--c);
+    }
+    .figure-caption {
+      font-size: 0.87rem;
+      color: var(--muted);
+      margin: 12px 0 0;
+      line-height: 1.65;
+    }
+    .figure-caption strong { color: var(--ink); }
+
+    /* ── Mode grid ───────────────────────────── */
+    .mode-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .mode-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .mode-card h4 {
+      margin: 0 0 8px;
+      font-size: 0.86rem;
+      font-weight: 600;
+      color: var(--accent);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .mode-card p { font-size: 0.85rem; margin: 0; }
+
+    /* ── Responsive ──────────────────────────── */
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+      .mode-grid { grid-template-columns: 1fr; }
+      .figure canvas { height: 400px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>verl Async</a>
+  <div class="nav-links">
+    <a href="index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#two-asyncs">Two "asyncs"</a>
+    <a href="#modes">Three modes</a>
+    <a href="#bubbles">Where the bubbles are</a>
+    <a href="#dataplane">Data plane</a>
+    <a href="#buffer">Staleness gate</a>
+    <a href="#pisync">π<sub>old</sub> &amp; sync step</a>
+    <a href="#partial">Partial rollout</a>
+    <a href="#weights">Weight sync</a>
+    <a href="#config">Config map</a>
+    <a href="#lineage">Lineage</a>
+    <a href="#refs">References</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">RL Efficiency · VeRL</span>
+  <h1>Async Training in verl</h1>
+  <p>One <code style="background:rgba(255,255,255,0.15);border:none;color:inherit;">fit()</code> loop, three trainer modes, and a replay buffer that decides what "too stale" means.
+  How the mechanism behind the config knobs actually works — server-mode rollout, TransferQueue,
+  partial rollout, and the checkpoint engine.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="note">
+    Prerequisites: <a href="verl-architecture.html">verl Architecture</a> (WorkerGroup, ResourcePool, the HybridEngine)
+    and <a href="async-rl.html">Async RL</a> (policy lag, IS correction, TIM) — this page assumes both and
+    covers the <em>implementation</em> that the async page describes at the algorithm level.
+    Companion pages: <a href="resource-pool-placement.html">Resource Pool Placement</a> (how many GPUs each pool gets),
+    <a href="async-rl-monitoring.html">Async RL Monitoring</a> (what to log once it's running).
+  </div>
+
+  <p>The async page tells you <em>why</em> off-policy data needs correcting. This page traces
+  <em>what verl actually does</em>: which object holds the samples, who decides a trajectory is
+  too old, what physically happens to a half-finished sequence when the weights change underneath
+  it, and how fresh weights reach the inference engine.</p>
+
+  <!-- ── §1 Two asyncs ──────────────────────── -->
+  <h2 id="two-asyncs">1. Two Different Things Are Called "async"</h2>
+
+  <p>This is the single most common source of confusion, and it is a config-namespace collision:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr>
+        <th>Config key</th>
+        <th>What it selects</th>
+        <th>Does it make training off-policy?</th>
+      </tr>
+      <tr>
+        <td><code>actor_rollout_ref.rollout.mode</code><br><span style="color:var(--muted);font-size:0.85em;">sync | async &nbsp;(default: <code>async</code>)</span></td>
+        <td><strong>How rollout is driven.</strong> <code>sync</code> = one batched
+          <code>generate_sequences</code> call across SPMD workers. <code>async</code> = each replica runs
+          an OpenAI-compatible server; an <em>agent loop</em> issues one request per trajectory
+          and awaits it independently.</td>
+        <td><strong>No.</strong> This is per-request concurrency. Multi-turn tool use needs it.
+          The trainer still waits for the whole batch.</td>
+      </tr>
+      <tr>
+        <td><code>trainer.v1.trainer_mode</code><br><span style="color:var(--muted);font-size:0.85em;">sync | colocate_async | separate_async &nbsp;(default: <code>sync</code>)</span></td>
+        <td><strong>How training relates to generation in time.</strong> Whether the trainer may
+          consume samples produced under an older weight version.</td>
+        <td><strong>Yes</strong> — for the two <code>*_async</code> values. This is the knob that
+          introduces policy lag.</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="caution">
+    <strong>Server mode is now the default, and it is not async training.</strong>
+    <code>rollout.mode: async</code> ships as the default in <code>rollout.yaml</code>, so a stock verl
+    run is already using per-request agent loops against an inference server — while remaining
+    strictly on-policy, because <code>trainer_mode</code> is still <code>sync</code>. Seeing
+    "async" in your rollout config tells you nothing about whether your data is stale.
+  </div>
+
+  <p>Everything below concerns the second row. Note also that <code>trainer_mode</code> lives under
+  <code>trainer.v1</code>: the V1 trainer (<code>trainer.use_v1: true</code>) is where all three modes
+  live. The legacy <code>main_ppo_v0.py</code> path is deprecated.</p>
+
+  <!-- ── §2 Three modes ─────────────────────── -->
+  <h2 id="modes">2. One Loop, Three Modes, Six Hooks</h2>
+
+  <p>verl does not have three trainers. It has one <code>PPOTrainer</code> base class whose
+  <code>fit()</code> loop is identical in all three modes, plus a set of lifecycle hooks that each
+  mode fills differently. The subclasses are startlingly small — <code>trainer_sync.py</code> is
+  42 lines, <code>trainer_colocate_async.py</code> is 59.</p>
+
+  <p>The shared loop, from <code>verl/trainer/ppo/v1/trainer_base.py</code>:</p>
+
+<pre><code>fit():
+  while training:
+    on_step_begin()
+    step(metrics, timing) ────────┐
+    save_checkpoint()  (periodic) │
+    on_step_end()                 │
+    validate()         (periodic) │
+                                  │
+step():                       ◄───┘
+  _add_batch_to_generate()                    # submit train_batch_size prompts
+  for trigger_idx in range(parameter_sync_step):
+      _step_once(sample_batch_size)  ─────┐
+                                          │
+_step_once():                         ◄───┘
+  on_sample_begin()
+  batch = replay_buffer.sample(...)           # ← BLOCKS until enough samples exist
+  on_sample_end()
+  reward → balance → old_log_prob → ref → values → advantage
+  update_critic() ; update_actor()</code></pre>
+
+  <p>Two facts about this loop carry most of the weight:</p>
+
+  <ol>
+    <li><strong>Prompts are submitted, not awaited.</strong> <code>_add_batch_to_generate()</code>
+      registers prompts in the data plane and hands them to the agent loop manager; it returns
+      immediately. Generation is always fire-and-forget.</li>
+    <li><strong>The only blocking point is <code>replay_buffer.sample()</code>.</strong> That call
+      polls until enough completed trajectories are available. Every difference between sync and
+      async training reduces to <em>what the buffer is willing to hand over</em> and <em>what the
+      rollout engines are doing while the trainer works</em>.</li>
+  </ol>
+
+  <h3>What each mode puts in the hooks</h3>
+
+  <div class="table-wrap">
+    <table>
+      <tr>
+        <th>Hook</th>
+        <th><code>sync</code></th>
+        <th><code>colocate_async</code></th>
+        <th><code>separate_async</code></th>
+      </tr>
+      <tr>
+        <td><code>on_sample_end</code><br><span style="font-size:0.85em;color:var(--muted);">after a batch is drawn</span></td>
+        <td><code>sleep_replicas()</code> — free rollout weights + KV cache so the trainer can use the memory</td>
+        <td><code>abort_replicas()</code> then <code>sleep_replicas()</code> — <em>kill in-flight requests</em>, then free memory</td>
+        <td>Flip the hybrid engine to TRAINER mode: pull its replicas out of the load balancer, abort, sleep</td>
+      </tr>
+      <tr>
+        <td><code>on_step_end</code><br><span style="font-size:0.85em;color:var(--muted);">after the optimizer step</span></td>
+        <td><code>update_weights()</code></td>
+        <td><code>update_weights()</code> then <code>resume_generation_replicas()</code></td>
+        <td><code>update_weights()</code> on the <em>standalone</em> rollout pool</td>
+      </tr>
+      <tr>
+        <td><code>on_train_begin</code></td>
+        <td>—</td>
+        <td colspan="2">Submit <code>num_warmup_batches</code> extra batches so the buffer is never empty at step 1</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>Read the <code>colocate_async</code> column carefully — that <code>abort_replicas()</code> is the
+  whole idea. In <code>sync</code>, the buffer only releases a batch once every trajectory in it has
+  finished, so by the time <code>on_sample_end</code> fires nothing is in flight and there is nothing
+  to abort. In <code>colocate_async</code>, the buffer releases as soon as <em>enough</em> trajectories
+  are done; the stragglers are still generating, and they get killed mid-sequence so the GPUs can
+  switch to training. Section 7 covers what happens to their tokens.</p>
+
+  <div class="mode-grid">
+    <div class="mode-card">
+      <h4>sync</h4>
+      <p>Colocated. Rollout drains completely, then trains. No partial rollout. On-policy by
+        construction. The default.</p>
+    </div>
+    <div class="mode-card">
+      <h4>colocate_async</h4>
+      <p>Colocated, but generation is interrupted at the training boundary and resumed after.
+        Kimi-1.5-style streaming rollout with capped-length partial rollout.</p>
+    </div>
+    <div class="mode-card">
+      <h4>separate_async</h4>
+      <p>Rollout gets its own GPUs (<code>rollout.nnodes</code> &gt; 0) and runs continuously.
+        AReaL-style disaggregation with staleness control.</p>
+    </div>
+  </div>
+
+  <!-- ── §3 Figure ──────────────────────────── -->
+  <h2 id="bubbles">3. Where the Bubbles Are</h2>
+
+  <p>The reason to accept stale data is wall-clock. Generation is latency-bound at the tail: the
+  slowest trajectory in a batch takes as long as it takes, and throwing more GPUs at the pool does
+  not shorten it. In synchronous RL the whole cluster waits for that one sequence.</p>
+
+  <div class="figure">
+    <div class="controls">
+      <label class="control">Long-tail severity
+        <input type="range" id="tail-slider" min="0" max="150" value="60" step="5">
+        <span class="val" id="tail-val">0.60</span>
+      </label>
+      <label class="control">Rollout GPU share <em style="font-style:normal;color:var(--muted);">(separate only)</em>
+        <input type="range" id="share-slider" min="25" max="80" value="56" step="1">
+        <span class="val" id="share-val">0.56</span>
+      </label>
+    </div>
+    <canvas id="plot-bubbles" aria-label="Timeline comparing GPU occupancy for verl's sync, colocate_async, and separate_async trainer modes"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--lane-gen)"></span> generating</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--lane-train)"></span> training</span>
+      <span class="legend-item"><span class="lg hatch" style="--c:var(--lane-tail)"></span> long-tail drain (pool mostly idle)</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--lane-idle);border:1px solid var(--border);"></span> idle</span>
+      <span class="legend-item"><span style="color:var(--lane-train);font-weight:700;">⋮</span> weight sync</span>
+      <span class="legend-item"><span style="color:var(--lane-tail);font-weight:700;">▲</span> abort in-flight requests</span>
+    </div>
+    <p class="figure-caption">
+      <strong>Async buys back the tail, not the arithmetic.</strong> Raise the tail slider and
+      <code>sync</code>'s step time grows without bound while <code>colocate_async</code>'s does not —
+      aborting stragglers caps generation at its throughput cost. For <code>separate_async</code>,
+      sweep the share slider: the step time is \(\max(G/s,\; T/(1-s))\), minimized at
+      \(s^\star = G/(G{+}T)\), where it equals exactly \(G+T\) — the same as colocated. Perfect
+      overlap on split pools cannot beat sequential execution on the whole pool. Disaggregation
+      wins for the reasons the arithmetic <em>doesn't</em> show: the rollout pool never stops for a
+      weight sync, staleness &gt; 0 absorbs batch-to-batch jitter, and generation and training can
+      run different parallelism strategies. Mis-size the split and it is strictly worse — which is
+      why verl tells you to tune it against <code>rollouter/idle_ratio</code> vs
+      <code>trainer/idle_ratio</code>.
+    </p>
+  </div>
+
+  <!-- ── §4 Data plane ──────────────────────── -->
+  <h2 id="dataplane">4. The Data Plane: TransferQueue</h2>
+
+  <p>In the V1 trainer, batches are not passed around as tensors. They are passed as
+  <code>KVBatchMeta</code> — a list of keys into <a href="https://github.com/Ascend/TransferQueue">TransferQueue</a>,
+  a distributed KV store. The trainer's control flow moves metadata; the values live wherever the
+  storage units put them.</p>
+
+  <p>Two kinds of record share the store:</p>
+
+  <div class="step">
+    <div class="step-label">Prompt records — key <code>{uid}</code></div>
+    <p style="margin:0">One per prompt sampled from the dataset. Its tag carries
+    <code>global_steps</code> — the step at which it was submitted for generation — and a
+    <code>status</code> that tracks the whole GRPO group:</p>
+    <pre style="margin:10px 0 0;"><code>pending  → sessions not yet started
+running  → all sessions running
+finished → all sessions completed cleanly
+failure  → all sessions done, at least one failed</code></pre>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Trajectory records — key <code>{uid}_{session_id}_{index}</code></div>
+    <p style="margin:0"><code>session_id</code> ranges over <code>[0, rollout.n)</code> — the GRPO group
+    dimension. The value holds the dataset fields plus the agent-loop output
+    (<code>prompt_ids</code>, <code>response_ids</code>, <code>response_mask</code>, log-probs).</p>
+  </div>
+
+  <p>Only groups in a terminal status (<code>finished</code> or <code>failure</code>) are candidates
+  for sampling. This is what makes the group the unit of accounting: GRPO computes a
+  group-relative advantage, so half a group is worthless, and the buffer's eviction logic operates
+  on <code>uid</code>s, never on individual trajectories.</p>
+
+  <p>The <code>global_steps</code> tag on the prompt record is the timestamp that the entire staleness
+  mechanism reads. Everything in the next section is arithmetic on that one number.</p>
+
+  <!-- ── §5 Replay buffer ───────────────────── -->
+  <h2 id="buffer">5. The Replay Buffer Is the Staleness Gate</h2>
+
+  <p><code>ReplayBuffer.sample()</code> is the trainer's only blocking call, and its async subclass
+  <code>ReplayBufferAsync</code> is where "how stale is too stale" is decided. The loop is:</p>
+
+<pre><code>while True:
+    snapshot = sync_metadata_from_transfer_queue()     # one consistent view per pass
+    evicted  = evict_terminal_groups(stale | dapo_filtered | failed)
+    if evicted:
+        refill_fn(len(evicted))                        # submit exactly k replacement prompts
+        continue
+    if has_enough_samples(sampleable, batch_size):
+        select and materialize
+        break
+    sleep(poll_interval)                               # default 2 s</code></pre>
+
+  <h3>The staleness predicate</h3>
+
+  <p>A prompt group's <em>version span</em> is how many weight versions have elapsed between
+  submitting it and consuming it:</p>
+
+  <div class="result">
+    <div class="result-label">Eviction test</div>
+    \[
+      \underbrace{s_{\text{now}} - s_{\text{submit}} + 1}_{\text{version span}} \;>\; \texttt{max\_off\_policy\_threshold}
+    \]
+    <p style="font-size:0.88rem; color:var(--ink); margin-top:8px;">
+      \(s\) = <code>global_steps</code> &nbsp;·&nbsp; default threshold = 8 &nbsp;·&nbsp; span 1 means on-policy
+    </p>
+  </div>
+
+  <p>The <code>+1</code> matters: a group submitted and consumed at the same step has span 1, not 0.
+  So <code>max_off_policy_threshold: 1</code> is the on-policy setting, and the shipped default of
+  <strong>8</strong> permits data seven versions old. That is a deliberately loose ceiling — it is a
+  safety valve against unbounded drift, not the mechanism that actually keeps lag small. What
+  keeps lag small is the pool sizing.</p>
+
+  <h3>Two strategies at the threshold</h3>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th style="width:22%"><code>max_off_policy_strategy</code></th><th>Behavior</th><th>Cost</th></tr>
+      <tr>
+        <td><code>drop</code><br><span style="font-size:0.85em;color:var(--muted);">default</span></td>
+        <td>Evict any terminal group past the threshold and immediately submit <code>k</code> fresh
+          prompts to replace it. An assertion after selection re-verifies that no selected group
+          exceeded the threshold.</td>
+        <td>The compute spent generating those trajectories is thrown away.</td>
+      </tr>
+      <tr>
+        <td><code>wait</code></td>
+        <td><em>Dropless.</em> Block sampling entirely while any <em>in-flight</em> prompt has
+          reached the threshold, letting it finish so it can be trained on rather than discarded.</td>
+        <td>The trainer stalls on the slowest straggler — reintroducing exactly the bubble async
+          was meant to remove.</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>The two options are the classic throughput/sample-efficiency trade, made explicit. <code>drop</code>
+  wastes GPU-hours; <code>wait</code> wastes wall-clock.</p>
+
+  <h3>The sync path is not a no-op</h3>
+
+  <p>In <code>sync</code> mode the same buffer runs with staleness checking disabled (all data is
+  on-policy by construction, so <code>max_off_policy_strategy</code> is a NO-OP), but the DAPO
+  <a href="https://arxiv.org/abs/2503.14476">dynamic-sampling</a> path is live. A group whose reward
+  metric is <em>identical across all its trajectories</em> carries no gradient signal — every
+  advantage in the group is zero — so it is filtered. The sync policy differs from async:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Mode</th><th>Stale</th><th>DAPO-filtered</th><th>Failed</th></tr>
+      <tr>
+        <td><code>sync</code></td>
+        <td>NO-OP</td>
+        <td>Evict <code>k</code>, refill <strong>2<code>k</code></strong>, bounded by
+          <code>max_inflight_gen_batches</code>; then drain in-flight and discard surplus</td>
+        <td>NO-OP, or opt-in refill <code>k</code> via <code>sync_refill_failed_groups</code></td>
+      </tr>
+      <tr>
+        <td><code>*_async</code></td>
+        <td colspan="3">All three the same: evict <code>k</code>, refill <code>k</code> —
+          <code>num_warmup_batches</code> already absorbs the retry cost</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>The <code>2k</code> over-refill in sync is speculative: with no buffer to fall back on, the
+  trainer must over-generate to have any chance of assembling a full batch of signal-bearing
+  groups in one pass. Once enough are sampleable it stops dispatching, drains what is running,
+  and <em>discards the surplus</em>. Async mode doesn't need speculation — a warm buffer already
+  holds spares.</p>
+
+  <div class="note">
+    DAPO filtering requires the reward at sampling time, so it needs either a rule-based reward or
+    <code>reward.reward_model.enable_resource_pool: true</code>. A colocated reward model computes
+    scores <em>after</em> the buffer has already selected — too late to filter on.
+    See <a href="reward-pipelining.html">Reward Pipelining</a>.
+  </div>
+
+  <!-- ── §6 parameter_sync_step ─────────────── -->
+  <h2 id="pisync">6. <code>parameter_sync_step</code> and the \(\pi_{old}\) Problem</h2>
+
+  <p>Look again at <code>step()</code>: it splits one <code>train_batch_size</code> into
+  <code>parameter_sync_step</code> mini-batches and runs the <em>full</em> PPO pipeline on each —
+  including an optimizer step. Weight sync happens once, at <code>on_step_end</code>, after all of
+  them.</p>
+
+  <div class="result">
+    <div class="result-label">separate_async invariant (asserted at construction)</div>
+    \[
+      \texttt{train\_batch\_size} = \texttt{parameter\_sync\_step} \times \texttt{ppo\_mini\_batch\_size}
+    \]
+  </div>
+
+  <p>So with <code>parameter_sync_step: 4</code>, the actor is updated four times between weight
+  pushes. The rollout engines spend all four holding the weights from before update 1. Raising it
+  amortizes sync cost and lets the rollout pool run longer undisturbed; it also makes the last
+  mini-batch three optimizer steps off-policy relative to the data it trains on.</p>
+
+  <h3>Which policy is \(\pi_{old}\)?</h3>
+
+  <p>PPO's ratio \(r_t = \pi_\theta(a_t|s_t)/\pi_{old}(a_t|s_t)\) needs a well-defined denominator.
+  Inside a sync cycle the numerator's weights change every mini-batch, so \(\pi_{old}\) must be
+  pinned — otherwise the ratio silently means something different at trigger step 3 than at
+  trigger step 0. verl offers two answers, and they correspond to the
+  <code>algorithm.rollout_correction</code> preset families:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th style="width:26%">Mode</th><th>How \(\pi_{old}\) is obtained</th><th>Cost</th></tr>
+      <tr>
+        <td><strong>Bypass</strong><br><code>bypass_mode: true</code><br><span style="font-size:0.85em;color:var(--muted);">the <code>bypass_*</code> presets</span></td>
+        <td>Use the log-probs the <em>rollout engine already returned</em>. The PPO ratio becomes
+          \(\pi_\theta/\pi_{\text{rollout}}\), which absorbs the off-policy correction directly.
+          <code>_compute_old_log_prob</code> is skipped.</td>
+        <td>Two policies instead of three — a whole forward pass per mini-batch disappears.
+          But \(\pi_{\text{rollout}}\) carries <a href="async-rl.html#tim">TIM</a>: the inference
+          engine's log-probs differ from the training engine's on identical weights.</td>
+      </tr>
+      <tr>
+        <td><strong>Decoupled</strong><br><code>bypass_mode: false</code><br><span style="font-size:0.85em;color:var(--muted);">the <code>decoupled_*</code> presets</span></td>
+        <td>Recompute with the training engine, pinned to the cycle's starting weights.
+          <code>separate_async</code> overrides <code>_compute_old_log_prob</code> to do this by
+          shuttling weights through host memory:
+          <code>save_model_to_cpu(k)</code> → <code>restore_model_from_cpu(0)</code> → compute →
+          <code>restore_model_from_cpu(k)</code> → <code>clear_cpu_model(k)</code>.</td>
+        <td>An extra forward pass plus two full model copies over PCIe per mini-batch, but every
+          mini-batch in the cycle shares one stable \(\pi_{old}\). This is
+          <a href="https://arxiv.org/abs/2505.24298">AReaL</a>'s Decoupled PPO.</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>The <code>RolloutCorrectionConfig</code> dataclass defaults to <code>bypass_mode: false</code>,
+  but many of the named presets (<code>bypass_ppo_clip</code>, <code>bypass_pg_is</code>,
+  <code>bypass_pg_geo_rs</code>, …) set it true and pair it with a specific loss and rejection-sampling
+  scheme. Choosing a preset chooses both the \(\pi_{old}\) source and the correction algorithm from
+  <a href="async-rl.html#stabilization">§5 of the async page</a> in one line.</p>
+
+  <!-- ── §7 Partial rollout ─────────────────── -->
+  <h2 id="partial">7. Partial Rollout: How an Interrupted Sequence Survives</h2>
+
+  <p>When <code>abort_replicas()</code> fires, every in-flight request on every replica is killed so
+  the GPU can be handed to the trainer. A 6000-token reasoning trace that was 4000 tokens in is
+  now a dead request. Discarding it would waste more compute than the tail wait ever did.</p>
+
+  <p>The trick is that the abort is <strong>invisible to the agent loop</strong>. It is absorbed one
+  layer down, in <code>FullyAsyncLLMServerClient.generate()</code>, which wraps the plain client in a
+  retry loop:</p>
+
+<pre><code>final = TokenOutput(token_ids=[])
+while True:
+    out = await super().generate(
+        prompt_ids   = prompt_ids + final.token_ids,   # ← prompt grows by what we kept
+        sampling_params = {..., max_tokens: original - len(final.token_ids)},
+    )
+    final.token_ids.extend(out.token_ids)
+    final.log_probs.extend(out.log_probs)
+
+    if len(final.token_ids) >= original_max_tokens:
+        final.stop_reason = "length"; break
+    if out.stop_reason not in ("aborted", "abort"):
+        break                                          # genuine EOS / length stop
+    await asyncio.sleep(1)                             # wait out the weight sync, then resume</code></pre>
+
+  <p>So a "resumed" sequence is not really resumed. It is <strong>re-submitted as a longer
+  prompt</strong>. Three consequences follow, and they are the ones worth internalizing:</p>
+
+  <ul>
+    <li><strong>Tokens survive; the KV cache does not.</strong> <code>release_kv_cache()</code> frees
+      it before the weight transfer. The continuation re-prefills all 4000 kept tokens. Partial
+      rollout trades a quadratic-ish prefill re-cost against the tail wait — which is why it pays
+      off precisely when responses are long and the tail is severe.</li>
+    <li><strong>One trajectory can span several weight versions.</strong> The client records
+      <code>min_global_steps</code> and <code>max_global_steps</code> in <code>extra_fields</code>. The
+      first 4000 tokens came from \(\pi_{v}\), the rest from \(\pi_{v+1}\) — a single sequence whose
+      log-probs are a concatenation from two different policies. No IS scheme models this exactly;
+      it is an accepted approximation.</li>
+    <li><strong>MoE routing is stitched, not recomputed.</strong> On resume the client appends
+      routing information only for the newly generated tokens, deliberately keeping the earlier
+      tokens' routing from the older weights.</li>
+  </ul>
+
+  <div class="caution">
+    <strong>The v1 client always retries.</strong> The <code>partial_rollout</code> opt-out check reads
+    <code>config.async_training.partial_rollout</code>, a key that exists only in the experimental
+    <code>fully_async_policy</code> config tree (§10). Under the v1 trainer that attribute is absent, so
+    <code>should_retry</code> stays <code>True</code> and aborted samples are always resumed — the code
+    says so in a comment. Partial rollout is therefore not an independent knob in
+    <code>colocate_async</code>/<code>separate_async</code>; it is intrinsic to them.
+  </div>
+
+  <!-- ── §8 Weight sync ─────────────────────── -->
+  <h2 id="weights">8. Weight Sync: The Checkpoint Engine</h2>
+
+  <p>Fresh weights reach the inference engines through <code>CheckpointEngineManager</code>. Actor
+  training workers hold a model engine (FSDP / Megatron / VeOmni) and a checkpoint engine in the
+  same process; rollout replicas hold a checkpoint engine in a <em>separate</em> process from the
+  inference worker, and bridge that gap with CUDA IPC.</p>
+
+<pre><code>update_weights(global_steps):
+  1. abort_replicas()             # kill in-flight requests (their tokens are kept — §7)
+  2. build a temporary WorkerGroup over all replica workers
+  3. release_kv_cache_replicas()  # free KV only; weight buffers stay allocated
+  4. build_process_group()        # prepare → build_topology → init_process_group
+  5. actor.update_weights() ‖ rollout.update_weights()
+  6. finalize()
+  7. resume_kv_cache_replicas()
+  8. resume_generation_replicas()</code></pre>
+
+  <p>Step 3 is the detail that distinguishes this from the naive path. <code>sleep()</code> frees
+  weights <em>and</em> KV cache; <code>release_kv_cache()</code> frees only the cache, leaving the
+  weight buffers in place so the transfer writes directly into them rather than reallocating.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th style="width:20%">Backend</th><th>Mechanism</th><th>Where it's used</th></tr>
+      <tr>
+        <td><code>naive</code><br><span style="font-size:0.85em;color:var(--muted);">default</span></td>
+        <td>Short-circuits the whole sequence — a single <code>actor_wg.update_weights()</code> on the
+          colocated pool. No process group, no abort.</td>
+        <td>Colocated sync training.</td>
+      </tr>
+      <tr>
+        <td><code>nccl</code></td>
+        <td>Collective over a process group spanning actor and rollout workers.</td>
+        <td>Any cross-pool sync. <strong>Required</strong> for <code>separate_async</code>, which
+          asserts the backend is not <code>naive</code>.</td>
+      </tr>
+      <tr>
+        <td><code>nixl</code> / <code>mooncake</code></td>
+        <td>RDMA transfer engines. On Ascend, the HCCL engine registers under the
+          <code>nccl</code> name rather than adding a separate one.</td>
+        <td>Large models, cross-node pools, non-NVIDIA hardware.</td>
+      </tr>
+      <tr>
+        <td><code>delta_sharded</code></td>
+        <td>Sends only changed parameters, reporting a changed-ratio and wire-payload metric back
+          into the step's logs.</td>
+        <td>When sync cost dominates and updates are sparse (e.g. LoRA).</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>Sync cost is not negligible at scale, and it is the thing <code>parameter_sync_step</code> exists
+  to amortize. verl's published ablation on the Moonshot <code>checkpoint-engine</code> optimization
+  measures a single Qwen3-235B-A22B sync at 58.6 s without it versus 23.7 s with, and a
+  Qwen3-30B-A3B at 15.8 s versus 4.4 s (Megatron, H20, 64 and 16 ranks respectively) — the
+  difference between a tolerable per-step tax and a dominant one.</p>
+
+  <h3>separate_async's second pool</h3>
+
+  <p><code>separate_async</code> is the only mode running two rollout populations at once, and the
+  bookkeeping is worth spelling out:</p>
+
+  <ul>
+    <li>A <strong>standalone</strong> <code>LLMServerManager</code> on the dedicated
+      <code>rollout.nnodes</code> × <code>rollout.n_gpus_per_node</code> GPUs, created at
+      <code>start_rank</code> past the hybrid replicas, with its own <code>CheckpointEngineManager</code>.
+      This pool is the one that runs continuously.</li>
+    <li>The <strong>hybrid</strong> replicas on the trainer's own GPUs, which flip between
+      <code>ROLLOUT</code> and <code>TRAINER</code> mode. Switching to trainer removes them from the
+      standalone pool's <code>GlobalRequestLoadBalancer</code>; switching back re-adds them. Requests
+      keep flowing to the standalone servers throughout.</li>
+    <li><code>_get_n_gpus_for_throughput()</code> is overridden to add the standalone GPUs into the
+      denominator — otherwise the reported throughput silently ignores half the cluster.</li>
+  </ul>
+
+  <div class="note">
+    The idle-time reclamation this design implies is <em>not yet active</em>:
+    <code>should_switch_to_rollout()</code> currently returns <code>False</code> unconditionally, with a
+    TODO to implement a strategy based on buffer depth and switch overhead. In practice the hybrid
+    engine drops to TRAINER mode after the first sample and only returns to ROLLOUT for validation.
+    Read the mode-flipping machinery as scaffolding for elastic placement rather than a live
+    optimization.
+  </div>
+
+  <!-- ── §9 Config map ──────────────────────── -->
+  <h2 id="config">9. The Config Map</h2>
+
+  <p>Everything above, as the keys you would actually set:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th style="width:38%">Key</th><th>Default</th><th>What it does</th></tr>
+      <tr><td><code>trainer.use_v1</code></td><td><code>true</code></td><td>Selects the V1 trainer. All async modes require it.</td></tr>
+      <tr><td><code>trainer.v1.trainer_mode</code></td><td><code>sync</code></td><td><code>sync</code> | <code>colocate_async</code> | <code>separate_async</code>.</td></tr>
+      <tr><td><code>trainer.v1.{mode}.num_warmup_batches</code></td><td><code>1</code></td><td>Extra batches submitted before step 1 so the buffer is never cold.</td></tr>
+      <tr><td><code>trainer.v1.separate_async.parameter_sync_step</code></td><td><code>4</code></td><td>Local updates per weight sync. Must satisfy the §6 invariant.</td></tr>
+      <tr><td><code>trainer.v1.sampler.max_off_policy_threshold</code></td><td><code>8</code></td><td>Max version span a group may have. <code>1</code> = on-policy.</td></tr>
+      <tr><td><code>trainer.v1.sampler.max_off_policy_strategy</code></td><td><code>drop</code></td><td><code>drop</code> (discard + refill) or <code>wait</code> (dropless, stall).</td></tr>
+      <tr><td><code>trainer.v1.sampler.custom_sampler.{path,name}</code></td><td><code>null</code></td><td>Plug in a <code>ReplayBuffer</code> subclass — the supported extension point for a custom staleness or curriculum policy.</td></tr>
+      <tr><td><code>actor_rollout_ref.rollout.mode</code></td><td><code>async</code></td><td>Server mode. Not async <em>training</em> (§1).</td></tr>
+      <tr><td><code>actor_rollout_ref.rollout.nnodes</code></td><td><code>0</code></td><td>Standalone rollout pool size. Must be &gt; 0 for <code>separate_async</code>.</td></tr>
+      <tr><td><code>actor_rollout_ref.rollout.checkpoint_engine.backend</code></td><td><code>naive</code></td><td>Must be <code>nccl</code>/<code>nixl</code>/… for <code>separate_async</code>.</td></tr>
+      <tr><td><code>algorithm.rollout_correction.bypass_mode</code></td><td><code>false</code></td><td>Whether \(\pi_{old}\) comes from the rollout engine (§6).</td></tr>
+      <tr><td><code>algorithm.filter_groups.*</code></td><td>off</td><td>DAPO dynamic sampling; needs a sampling-time reward.</td></tr>
+      <tr><td><code>reward.reward_model.enable_resource_pool</code></td><td><code>false</code></td><td>Must be <code>true</code> under <code>separate_async</code> with a learned RM — the standalone rollout never sleeps, so a colocated RM has no memory to run in.</td></tr>
+    </table>
+  </div>
+
+  <h3>Choosing a mode</h3>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Situation</th><th>Mode</th></tr>
+      <tr><td>Short responses, tail is a small fraction of generation time</td><td><code>sync</code> — the bubble isn't worth any off-policy risk</td></tr>
+      <tr><td>Long reasoning traces, one GPU pool, don't want to re-partition the cluster</td><td><code>colocate_async</code> — kills the tail, no resource split to tune</td></tr>
+      <tr><td>Severe tail, multi-turn tool use, or generation and training want different parallelism</td><td><code>separate_async</code> — but you must now tune the split</td></tr>
+      <tr><td>Rollout pool is idle waiting on the trainer</td><td>Shift GPUs to the trainer, or raise <code>parameter_sync_step</code></td></tr>
+      <tr><td>Trainer is idle waiting on the buffer</td><td>Shift GPUs to rollout, or raise <code>max_off_policy_threshold</code></td></tr>
+      <tr><td>pg_clipfrac climbing, entropy collapsing</td><td>Lower <code>max_off_policy_threshold</code> — see <a href="async-rl-monitoring.html">Monitoring</a></td></tr>
+    </table>
+  </div>
+
+  <!-- ── §10 Lineage ────────────────────────── -->
+  <h2 id="lineage">10. Lineage, and a Naming Warning</h2>
+
+  <p>verl's async support arrived in three waves, and all three are still present in the tree. This
+  matters because <strong>they use different config names for the same ideas</strong>, and most
+  writing about "async verl" — including <a href="async-rl.html#knobs">§7 of the async page</a> —
+  describes the middle one.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th style="width:26%">Generation</th><th>Location</th><th>Its knobs</th></tr>
+      <tr>
+        <td><strong>one_step_off_policy</strong><br><span style="font-size:0.85em;color:var(--muted);">Jul 2025</span></td>
+        <td><code>verl/experimental/one_step_off_policy/</code></td>
+        <td>None to speak of — the lag is hard-wired at exactly one step. Dedicated rollout
+          resources, remainder to training.</td>
+      </tr>
+      <tr>
+        <td><strong>fully_async_policy</strong><br><span style="font-size:0.85em;color:var(--muted);">2026, from Meituan</span></td>
+        <td><code>verl/experimental/fully_async_policy/</code> — separate <code>Rollouter</code>,
+          <code>MessageQueue</code>, <code>Trainer</code>, <code>ParameterSynchronizer</code>, plus a
+          <code>dynamic_schedule/</code> resource controller</td>
+        <td><code>async_training.staleness_threshold</code>,
+          <code>async_training.trigger_parameter_sync_step</code>,
+          <code>async_training.require_batches</code>,
+          <code>async_training.partial_rollout</code></td>
+      </tr>
+      <tr>
+        <td><strong>V1 trainer modes</strong><br><span style="font-size:0.85em;color:var(--muted);">current mainline</span></td>
+        <td><code>verl/trainer/ppo/v1/</code> — everything in §2–§8 above</td>
+        <td><code>trainer.v1.trainer_mode</code>,
+          <code>trainer.v1.sampler.max_off_policy_threshold</code>,
+          <code>trainer.v1.separate_async.parameter_sync_step</code></td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="caution">
+    <strong>Translation table.</strong> If you have read the <code>fully_async</code> docs, the mapping
+    into mainline is: <code>trigger_parameter_sync_step</code> → <code>parameter_sync_step</code>;
+    <code>staleness_threshold</code> → <code>max_off_policy_threshold</code> (and the semantics changed —
+    the old one is a <em>fraction</em> of a batch's worth of surplus samples, typically
+    0–1; the new one is an <em>integer count of weight versions</em>, default 8);
+    <code>partial_rollout: true</code> → implied by choosing an async mode.
+    Setting <code>async_training.*</code> keys on a V1 run does nothing.
+  </div>
+
+  <p>The <code>fully_async_policy</code> line remains worth reading for two things the V1 modes don't
+  yet have: <em>streaming</em> production, where the transfer unit is a single sample rather than a
+  batch (<code>require_batches</code> controls how much the trainer accumulates before updating), and
+  the <code>dynamic_schedule</code> controller that reallocates GPUs between rollout and training
+  mid-run. Its reported results — 2.35–2.67× over colocated sync on Qwen2.5-Math-7B at 32/64/128
+  GPUs, with a staleness ablation showing most of the gain arriving by
+  <code>staleness_threshold ≈ 0.3</code> — are the best published evidence for how much async is
+  worth in verl specifically.</p>
+
+  <div class="step">
+    <div class="step-label">The one-paragraph mental model</div>
+    <p style="margin:0">Prompts are <em>submitted</em>, never awaited: <code>_add_batch_to_generate()</code>
+    writes them into TransferQueue and returns. Agent loops drive one server request per trajectory
+    and write completed sequences back. The trainer's only blocking call is
+    <code>replay_buffer.sample()</code>, which polls the queue, evicts groups whose version span
+    exceeds <code>max_off_policy_threshold</code>, refills the hole, and releases a batch once enough
+    terminal groups exist. <code>trainer_mode</code> then decides what happens to the rollout engines
+    while that batch trains — <code>sync</code> sleeps them, <code>colocate_async</code> aborts and
+    sleeps them, <code>separate_async</code> leaves a whole separate pool running. Aborted sequences
+    are not lost: the client re-submits them as <code>prompt + tokens_so_far</code> once weights land.
+    Weights land via the checkpoint engine, once per <code>parameter_sync_step</code> local updates.</p>
+  </div>
+
+  <!-- ── References ─────────────────────────── -->
+  <h2 id="refs">11. References</h2>
+
+  <div class="table-wrap">
+    <table>
+      <tr>
+        <td><a href="https://github.com/volcengine/verl/tree/main/verl/trainer/ppo/v1">verl/trainer/ppo/v1/</a></td>
+        <td>Source for §2–§6: <code>trainer_base.py</code> (the <code>fit()</code> loop and hooks),
+          <code>trainer_{sync,colocate_async,separate_async}.py</code>, <code>replay_buffer.py</code></td>
+      </tr>
+      <tr>
+        <td><a href="https://github.com/volcengine/verl/blob/main/verl/workers/rollout/llm_server.py">workers/rollout/llm_server.py</a></td>
+        <td><code>FullyAsyncLLMServerClient.generate</code> — the partial-rollout retry loop (§7);
+          <code>GlobalRequestLoadBalancer</code></td>
+      </tr>
+      <tr>
+        <td><a href="https://github.com/volcengine/verl/blob/main/verl/checkpoint_engine/base.py">checkpoint_engine/base.py</a></td>
+        <td><code>CheckpointEngineManager.update_weights</code> — the eight-step sync sequence (§8)</td>
+      </tr>
+      <tr>
+        <td><a href="https://verl.readthedocs.io/en/latest/advance/fully_async.html">verl fully-async docs</a></td>
+        <td>The Meituan design: four pipeline modes, staleness ablations, 7B/30B benchmark tables</td>
+      </tr>
+      <tr>
+        <td><a href="https://verl.readthedocs.io/en/latest/advance/one_step_off.html">verl one-step-off docs</a></td>
+        <td>The original disaggregated design and the DAPO-32B long-tail measurement that motivated it</td>
+      </tr>
+      <tr>
+        <td><a href="https://arxiv.org/abs/2505.24298">AReaL</a></td>
+        <td>Staleness-controlled disaggregated RL; Decoupled PPO, the source of §6's pinned \(\pi_{old}\)</td>
+      </tr>
+      <tr>
+        <td><a href="https://arxiv.org/abs/2501.12599">Kimi k1.5</a></td>
+        <td>Partial rollout with capped length — the pattern <code>colocate_async</code> implements</td>
+      </tr>
+      <tr>
+        <td><a href="https://arxiv.org/abs/2504.15930">StreamRL</a> · <a href="https://arxiv.org/abs/2507.01663">AsyncFlow</a> · <a href="https://arxiv.org/abs/2506.10910">Magistral</a></td>
+        <td>The streaming/disaggregated designs verl's fully-async work cites as prior art</td>
+      </tr>
+      <tr>
+        <td><a href="https://arxiv.org/abs/2503.14476">DAPO</a></td>
+        <td>Dynamic sampling — the group filter in §5</td>
+      </tr>
+      <tr>
+        <td><a href="async-rl.html">Async RL</a> · <a href="async-rl-monitoring.html">Monitoring</a> · <a href="verl-architecture.html">verl Architecture</a> · <a href="resource-pool-placement.html">Placement</a></td>
+        <td>The companion pages: the algorithm layer, the diagnostics, the framework skeleton, the GPU budget</td>
+      </tr>
+    </table>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  const canvas = document.getElementById('plot-bubbles');
+  const tailSlider = document.getElementById('tail-slider');
+  const shareSlider = document.getElementById('share-slider');
+  const tailVal = document.getElementById('tail-val');
+  const shareVal = document.getElementById('share-val');
+
+  // Baseline workload constants (normalized to the full GPU pool).
+  const G = 1.0;   // generation throughput-time for one batch on the whole pool
+  const T = 0.8;   // training time for one batch on the whole pool
+
+  function css(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  // Build the schedule for each mode over `nSteps` steps.
+  function schedules(tail, share) {
+    const L = G * (1 + tail);              // latency floor: the slowest trajectory
+    const s = share;
+
+    return [
+      {
+        name: 'sync',
+        step: L + T,
+        lanes: [
+          { label: 'rollout', segs: [
+            { t: 0,     d: G,     kind: 'gen'  },
+            { t: G,     d: L - G, kind: 'tail' },
+            { t: L,     d: T,     kind: 'idle' }
+          ]},
+          { label: 'trainer', segs: [
+            { t: 0, d: L, kind: 'idle'  },
+            { t: L, d: T, kind: 'train' }
+          ]}
+        ],
+        syncAt: L + T
+      },
+      {
+        name: 'colocate_async',
+        step: G + T,
+        lanes: [
+          { label: 'rollout', segs: [
+            { t: 0, d: G, kind: 'gen'  },
+            { t: G, d: T, kind: 'idle' }
+          ]},
+          { label: 'trainer', segs: [
+            { t: 0, d: G, kind: 'idle'  },
+            { t: G, d: T, kind: 'train' }
+          ]}
+        ],
+        syncAt: G + T,
+        abortAt: G
+      },
+      {
+        name: 'separate_async',
+        step: Math.max(G / s, T / (1 - s)),
+        lanes: [
+          { label: 'rollout', segs: [
+            { t: 0,     d: G / s, kind: 'gen'  },
+            { t: G / s, d: Math.max(0, Math.max(G / s, T / (1 - s)) - G / s), kind: 'idle' }
+          ]},
+          { label: 'trainer', segs: [
+            { t: 0,           d: T / (1 - s), kind: 'train' },
+            { t: T / (1 - s), d: Math.max(0, Math.max(G / s, T / (1 - s)) - T / (1 - s)), kind: 'idle' }
+          ]}
+        ],
+        syncAt: Math.max(G / s, T / (1 - s))
+      }
+    ];
+  }
+
+  function draw() {
+    const tail = tailSlider.value / 100;
+    const share = shareSlider.value / 100;
+    tailVal.textContent = tail.toFixed(2);
+    shareVal.textContent = share.toFixed(2);
+
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth;
+    const cssH = canvas.clientHeight;
+    canvas.width = cssW * dpr;
+    canvas.height = cssH * dpr;
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const colors = {
+      gen: css('--lane-gen'),
+      train: css('--lane-train'),
+      tail: css('--lane-tail'),
+      idle: css('--lane-idle'),
+      grid: css('--grid-fg'),
+      text: css('--text'),
+      muted: css('--muted')
+    };
+
+    const modes = schedules(tail, share);
+    const nSteps = 2;
+
+    // Common time axis across all three modes so the comparison is honest.
+    const tMax = Math.max(...modes.map(m => m.step)) * nSteps;
+
+    const padL = 96, padR = 74, padT = 16, padB = 26;
+    const plotW = cssW - padL - padR;
+    const blockH = (cssH - padT - padB) / modes.length;
+    const laneH = 15, laneGap = 6;
+
+    const x = t => padL + (t / tMax) * plotW;
+
+    ctx.font = '11px Inter, sans-serif';
+    ctx.textBaseline = 'middle';
+
+    modes.forEach((mode, mi) => {
+      const y0 = padT + mi * blockH;
+
+      // Mode label
+      ctx.fillStyle = colors.text;
+      ctx.font = '600 11px ui-monospace, SFMono-Regular, Menlo, monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(mode.name, 4, y0 + 10);
+
+      // Step-time readout on the right
+      ctx.font = '600 11px Inter, sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillStyle = colors.muted;
+      ctx.fillText(mode.step.toFixed(2) + ' / step', cssW - 4, y0 + 10);
+
+      const laneTop = y0 + 24;
+
+      mode.lanes.forEach((lane, li) => {
+        const ly = laneTop + li * (laneH + laneGap);
+
+        ctx.font = '10px Inter, sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillStyle = colors.muted;
+        ctx.fillText(lane.label, padL - 8, ly + laneH / 2);
+
+        for (let rep = 0; rep < nSteps; rep++) {
+          const off = rep * mode.step;
+          lane.segs.forEach(seg => {
+            if (seg.d <= 1e-9) return;
+            const sx = x(off + seg.t);
+            const sw = Math.max(1, x(off + seg.t + seg.d) - sx);
+            if (sx > padL + plotW) return;
+
+            if (seg.kind === 'tail') {
+              // hatched band: the pool is up but nearly empty
+              ctx.save();
+              ctx.beginPath();
+              ctx.rect(sx, ly, sw, laneH);
+              ctx.clip();
+              ctx.fillStyle = colors.idle;
+              ctx.fillRect(sx, ly, sw, laneH);
+              ctx.strokeStyle = colors.tail;
+              ctx.lineWidth = 1.5;
+              for (let d = -laneH; d < sw + laneH; d += 6) {
+                ctx.beginPath();
+                ctx.moveTo(sx + d, ly + laneH);
+                ctx.lineTo(sx + d + laneH, ly);
+                ctx.stroke();
+              }
+              ctx.restore();
+            } else {
+              ctx.fillStyle = seg.kind === 'gen' ? colors.gen
+                            : seg.kind === 'train' ? colors.train
+                            : colors.idle;
+              ctx.fillRect(sx, ly, sw, laneH);
+            }
+          });
+        }
+      });
+
+      // Weight-sync markers + abort markers
+      const laneBot = laneTop + 2 * (laneH + laneGap) - laneGap;
+      for (let rep = 1; rep <= nSteps; rep++) {
+        const sx = x(rep * mode.step);
+        if (sx > padL + plotW + 0.5) continue;
+        ctx.strokeStyle = colors.train;
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([3, 2]);
+        ctx.beginPath();
+        ctx.moveTo(sx, laneTop - 4);
+        ctx.lineTo(sx, laneBot + 4);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      if (mode.abortAt !== undefined) {
+        for (let rep = 0; rep < nSteps; rep++) {
+          const sx = x(rep * mode.step + mode.abortAt);
+          if (sx > padL + plotW) continue;
+          ctx.fillStyle = colors.tail;
+          ctx.beginPath();
+          ctx.moveTo(sx, laneTop - 6);
+          ctx.lineTo(sx - 4, laneTop - 12);
+          ctx.lineTo(sx + 4, laneTop - 12);
+          ctx.closePath();
+          ctx.fill();
+        }
+      }
+    });
+
+    // Time axis
+    ctx.strokeStyle = colors.grid;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(padL, cssH - padB + 6);
+    ctx.lineTo(padL + plotW, cssH - padB + 6);
+    ctx.stroke();
+    ctx.fillStyle = colors.muted;
+    ctx.font = '10px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('steady-state wall-clock (units of one full-pool generation) →', padL + plotW / 2, cssH - padB + 18);
+  }
+
+  let pending = false;
+  function schedule() {
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(() => { pending = false; draw(); });
+  }
+
+  tailSlider.addEventListener('input', schedule);
+  shareSlider.addEventListener('input', schedule);
+  window.addEventListener('resize', schedule);
+  if (window.matchMedia) {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    if (mq.addEventListener) mq.addEventListener('change', schedule);
+  }
+  draw();
+})();
+</script>
+
+</body>
+</html>
