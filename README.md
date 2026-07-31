@@ -54,7 +54,7 @@ RL and its monitoring, reward pipelining.
 ### 06 · Inference — [docs/](docs/)
 Serving a trained model fast — the prefill/decode compute model, KV cache, and batching;
 techniques (FlashAttention, PagedAttention, speculative decoding, quantization, prefill–decode
-disaggregation); and workloads (offline batch, online SLO serving, RL rollout/reward serving).
+disaggregation, MoE serving and the expert coverage law); and workloads (offline batch, online SLO serving, RL rollout/reward serving).
 
 ## Publishing
 
