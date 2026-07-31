@@ -189,6 +189,7 @@
     <a href="#models">Real models</a>
     <a href="#optimistic">When it's optimistic</a>
     <a href="#consequences">Consequences</a>
+    <a href="#versus-dense">Is it a decode win?</a>
     <a href="#summary">Summary</a>
   </div>
   <a class="nav-back" href="index.html">Home</a>
@@ -517,8 +518,151 @@
   On the dense page, quantization helps only below the ridge. An MoE decode step is essentially never above the ridge, so the FP8/INT4 win on expert weights is close to fully realized — bytes halve, \(I\) doubles, throughput doubles. Sparse models are the case where <a href="inference-quantization.html">weight-only quantization</a> is least likely to be wasted, and the experts, being the overwhelming majority of parameters, are exactly what to quantize.
 </p>
 
+<!-- ═══════════════════════════════════════════ VS DENSE -->
+<h2 id="versus-dense">7 · Is MoE a decode win at all?</h2>
+
+<p>
+  Everything so far has compared an MoE to itself at different batch sizes. The sharper question is architectural: given a workload, would a <em>dense</em> model serve it more cheaply? The coverage law answers this, and the answer has a clean form — but it is easy to state wrongly, so it is worth building carefully.
+</p>
+
+<h3>Which parameter count you're billed for</h3>
+
+<div class="result">
+  <div class="result-label">The phase decides the bill</div>
+  \[ \text{compute-bound phase} \;\to\; N_{\rm act} \qquad\qquad \text{bandwidth-bound phase} \;\to\; C(B)\cdot N_{\rm total} \]
+  <div style="font-size:0.85rem;color:var(--muted);margin-top:6px">
+    Sparsity cuts FLOPs unconditionally. It cuts bytes only by \(C(B)\) — and \(C\) saturates.
+  </div>
+</div>
+
+<p>
+  Prefill is the first case, decode is the second. That is the entire asymmetry. It is tempting to summarize it as "MoE is a prefill play, not a decode play," and that is nearly right — but the comparison is meaningless until we say <em>which dense model</em>.
+</p>
+
+<h3>Against which dense model?</h3>
+
+<p>
+  Three candidate baselines for DeepSeek-V3 (\(N_{\rm act} = 37\)B, \(N_{\rm total} = 671\)B), and they give wildly different verdicts:
+</p>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Baseline</th><th class="ctr">Prefill</th><th class="ctr">Decode at \(C \to 1\)</th></tr></thead>
+    <tbody>
+      <tr><td>iso-active — 37B dense</td><td class="ctr">tie</td><td class="ctr">MoE <strong>18× worse</strong></td></tr>
+      <tr><td>iso-total — 671B dense</td><td class="ctr">MoE <strong>18× better</strong></td><td class="ctr">tie</td></tr>
+      <tr><td>iso-quality — ~158B dense</td><td class="ctr">MoE <strong>4.3× better</strong></td><td class="ctr">MoE <strong>4.3× worse</strong></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>
+  Only the third is a real serving decision — nobody deploys an architecture to match a FLOP count. Taking the common heuristic that an MoE matches a dense model of \(N_d = \sqrt{N_{\rm act}N_{\rm total}}\) and writing \(s = \sqrt{N_{\rm total}/N_{\rm act}}\), the two factors in that row are <em>identical</em>, and not by coincidence: \(N_d/N_{\rm act} = N_{\rm total}/N_d = s\) is an algebraic identity of the geometric mean.
+</p>
+
+<div class="result">
+  <div class="result-label">The trade, stated exactly</div>
+  <p style="margin:0">MoE buys a factor \(s = \sqrt{N_{\rm total}/N_{\rm act}}\) on compute-bound phases and pays the same factor \(s\) on bandwidth-bound phases at saturated batch. It is a pure exchange of decode bandwidth for prefill compute, at an exchange rate of \(\sqrt{\text{sparsity}}\).</p>
+</div>
+
+<div class="note">
+  <strong>The geometric-mean heuristic is the weakest link in this whole section.</strong> It is folklore, not a measured law, and the conclusions are sensitive to it: the decode crossover below moves from \(B \approx 3.5\) to \(B \approx 29\) as the assumed iso-quality dense goes from 70B to 400B. The <em>structure</em> of the argument survives any choice; the specific batch numbers do not. Treat them as order-of-magnitude.
+</div>
+
+<h3>The decode crossover is at nine requests, not "high concurrency"</h3>
+
+<p>
+  Per-token decode bytes are \(C(B)N_{\rm total}/B\) for the MoE and \(N_d/B\) for the dense model. The \(1/B\) cancels, so MoE decode is cheaper precisely when
+</p>
+
+<div class="result">
+  <div class="result-label">Decode crossover</div>
+  \[ s\,C(B) < 1 \quad\Longleftrightarrow\quad C(B) < \frac{1}{s} \quad\Longleftrightarrow\quad B \lesssim \frac{E}{k}\ln\!\frac{s}{s-1} \]
+  <div style="font-size:0.85rem;color:var(--muted);margin-top:6px">
+    For V3: \(C^* = 0.235\), reached at \(B \approx 9\). Nine concurrent requests.
+  </div>
+</div>
+
+<p>
+  This is the load-bearing correction to the intuition. The thing that destroys MoE's decode advantage is not high concurrency — it is the coverage knee, and the knee is at single-digit batch. By \(B \approx 100\) the penalty has already reached its asymptote \(s\) and stops getting worse. Everything above that is one regime, not a spectrum.
+</p>
+
+<h3>More concurrency favours MoE, not dense</h3>
+
+<p>
+  Total time per request is a prefill term plus a decode term, and only one of them shrinks with batching:
+</p>
+
+<div class="result">
+  <div class="result-label">Cost per request</div>
+  \[ t \;\propto\; \underbrace{\frac{N_{\rm act}T_p}{F}}_{\text{compute-bound, } B\text{-independent}} \;+\; \underbrace{\frac{C(B)\,N_{\rm total}\,T_d}{\text{BW}\cdot B}}_{\text{bandwidth-bound, falls as } 1/B} \]
+</div>
+
+<p>Setting MoE cost below dense cost and solving for the workload ratio:</p>
+
+<div class="result">
+  <div class="result-label">MoE wins the total bill iff</div>
+  \[ \frac{T_p}{T_d} \;>\; \frac{s\,\bigl(s\,C(B)-1\bigr)}{s-1}\cdot\frac{I^{*}}{B} \]
+</div>
+
+<p>
+  The \(I^*/B\) is the tell. Decode cost per token falls as \(1/B\) for <em>both</em> architectures while their ratio stays pinned at \(s\); the prefill term, where MoE wins, does not shrink at all. So as concurrency rises, the term MoE loses on becomes a smaller share of the bill. <strong>Raising concurrency shifts the balance toward MoE.</strong>
+</p>
+
+<div class="figure">
+  <canvas id="plot-breakeven" aria-label="Break-even prompt-to-generation ratio versus batch size: the curve rises steeply from a vertical asymptote near batch nine, peaks around batch thirty, then falls as one over B, crossing typical RAG and reasoning workload lines"></canvas>
+  <div class="legend">
+    <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span> break-even \(T_p/T_d\)</span>
+    <span class="legend-item"><span class="lg" style="--c:var(--plot-teal)"></span> RAG-like workload (\(T_p/T_d = 10\))</span>
+    <span class="legend-item"><span class="lg" style="--c:var(--plot-amber)"></span> reasoning workload (\(T_p/T_d = 0.1\))</span>
+  </div>
+  <p class="figure-caption">
+    <strong>MoE's worst regime is the middle, not the top.</strong> Above the violet curve MoE is cheaper; below it, dense is. The curve has a vertical asymptote at \(B \approx 9\) — below that, MoE wins at <em>any</em> workload mix — then peaks at \(B \approx 29\), where coverage has saturated but decode still dominates the bill, then decays as \(1/B\) as prefill takes over. A RAG-like workload is above the curve at essentially every batch; a reasoning workload is below it until \(B \approx 12{,}500\). Both axes \(\log_2\); V3 routing, \(s = 4.26\), H100 ridge.
+  </p>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr><th class="ctr">\(B\)</th><th class="ctr">16</th><th class="ctr">32</th><th class="ctr">64</th><th class="ctr">128</th><th class="ctr">256</th><th class="ctr">512</th><th class="ctr">1024</th></tr></thead>
+    <tbody>
+      <tr><td>break-even \(T_p/T_d\)</td><td class="ctr">16.8</td><td class="ctr"><strong>20.7</strong></td><td class="ctr">16.3</td><td class="ctr">9.6</td><td class="ctr">4.9</td><td class="ctr">2.5</td><td class="ctr">1.2</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>What actually decides it</h3>
+
+<ul>
+  <li><strong>Prefill-heavy</strong> — RAG, reranking, classification, long-context summarization, \(T_p/T_d \gtrsim 20\). MoE wins at every batch size. The compute-bound phase is the whole bill and it is billed at \(N_{\rm act}\).</li>
+  <li><strong>Generation-heavy</strong> — reasoning, agentic loops, long-form writing, \(T_p/T_d \approx 0.1\). MoE needs \(B \approx 12{,}500\) to break even, which no single replica reaches. Dense wins at every practical batch above the coverage knee.</li>
+</ul>
+
+<p>
+  So the workload's prompt-to-generation ratio decides it, against a threshold that scales as \(1/B\). Concurrency is a modifier, and its sign is the opposite of the intuitive one.
+</p>
+
+<h3>Four reasons this doesn't settle the architecture question</h3>
+
+<p>
+  The most generation-heavy workload in existence is long-chain reasoning, and essentially every reasoning model shipped is an MoE — R1, Kimi K2, Qwen3-235B. Under the analysis above that looks like a systematic mistake. It isn't, for four reasons that bound how far the serving argument reaches:
+</p>
+
+<ol>
+  <li><strong>The iso-quality dense model doesn't exist.</strong> A 158B dense costs several times the MoE's training FLOPs to reach the same quality — that is the entire reason MoE was adopted. The real choice is not "V3 versus an iso-quality dense" but "V3 versus a smaller dense that is worse." <a href="scaling-laws.html">Training economics</a>, not serving economics, selected the architecture; serving only gets to price it.</li>
+  <li><strong>Capacity is a separate bill, and it strengthens the argument.</strong> \(N_{\rm total}\) must be resident: 671B in FP8 needs 9+ H100s before any KV cache, against 2–3 for a 158B dense. But note this makes the penalty a <em>cost</em> claim (GPU-seconds per token), not a <em>latency</em> claim — wide EP hands you 9× the aggregate bandwidth, so TPOT can be perfectly good while the bill is 4× worse.</li>
+  <li><strong>MoE bundles other architectural choices.</strong> V3 pairs MoE with <a href="mla.html">MLA</a>, which cuts KV to ~35 KB/token. At \(B = 256\) and 8K context that is ~73 GB of KV traffic against ~671 GB of weights — so weight traffic still dominates by ~9×, and the coverage argument is <em>more</em> central for V3-class models, not less. But a clean MoE-versus-dense pair rarely exists to compare.</li>
+  <li><strong>\(B = 1\) inverts everything.</strong> Local and edge inference reads only \(k/E\) of the table, and MoE beats iso-quality dense on decode by the same factor \(s\). Sparsity's decode win is real — it just lives entirely below nine concurrent requests, which is exactly the regime where <a href="#consequences">expert offload</a> also works.</li>
+</ol>
+
+<div class="compare">
+  <div class="compare-label">The claim, restated</div>
+  <p style="margin:0">
+    MoE trades decode bandwidth for prefill compute at a rate of \(\sqrt{N_{\rm total}/N_{\rm act}}\) against an iso-quality dense model. The decode side of that trade turns negative once coverage saturates — around \(B \approx 9\), not at high concurrency — and is fully saturated by \(B \approx 100\). Prefill-heavy workloads therefore favour MoE and generation-heavy workloads favour dense, with break-even at \(T_p/T_d \approx s\,I^{*}/B\). Raising concurrency shifts the balance <em>toward</em> MoE, because it shrinks the decode term both architectures share. Above ~100B, though, the iso-quality dense model is a hypothetical.
+  </p>
+</div>
+
 <!-- ═══════════════════════════════════════════ SUMMARY -->
-<h2 id="summary">7 · Summary</h2>
+<h2 id="summary">8 · Summary</h2>
 
 <div class="summary-grid">
   <div class="summary-card">
@@ -552,6 +696,14 @@
   <div class="summary-card">
     <div class="summary-card-label">Where it hurts</div>
     <p>RL rollouts and low-traffic replicas live in the shelf. Offload and expert caching only work there — and only there.</p>
+  </div>
+  <div class="summary-card">
+    <div class="summary-card-label">Versus dense</div>
+    <p>A pure trade: \(\sqrt{N_{\rm total}/N_{\rm act}}\) gained on compute-bound phases, the same factor paid on bandwidth-bound ones. Decode turns negative at \(B\approx9\), not at high concurrency.</p>
+  </div>
+  <div class="summary-card">
+    <div class="summary-card-label">What decides it</div>
+    <p>The workload's \(T_p/T_d\), against a threshold falling as \(1/B\). Prefill-heavy favours MoE; generation-heavy favours dense. More concurrency favours <em>MoE</em>.</p>
   </div>
 </div>
 
@@ -692,6 +844,34 @@
       { fn: function (x) { return Math.log(intensity(Math.pow(2, x), 4)) / L2; },   color: '--plot-teal',   width: 2.25 },
       { fn: function (x) { return Math.log(intensity(Math.pow(2, x), 32)) / L2; },  color: '--plot-violet', width: 2.75 },
       { fn: function (x) { return Math.log(intensity(Math.pow(2, x), 128)) / L2; }, color: '--plot-amber',  width: 2.25 }
+    ]
+  }]);
+
+  /* ── Plot 3: break-even workload ratio vs batch ─────────────── */
+  // Iso-quality dense = sqrt(N_act * N_total); s = sqrt(N_total/N_act) = 4.26 for V3.
+  // MoE wins iff  Tp/Td  >  s(sC-1)/(s-1) * I*/B.   Undefined (MoE always wins) while sC < 1.
+  var S = Math.sqrt(671 / 37), ISTAR = 295, V3 = 32;
+  function breakEven(B) {
+    var c = coverage(B, V3);
+    var coef = S * (S * c - 1) / (S - 1);
+    return coef <= 0 ? -1 : coef * ISTAR / B;
+  }
+  var beCanvas = document.getElementById('plot-breakeven');
+  if (beCanvas) plots.push([beCanvas, {
+    xMin: 0, xMax: 12, yMin: -4, yMax: 6,
+    xTicks: [0, 2, 4, 6, 8, 10, 12],
+    xTickLabels: ['1', '4', '16', '64', '256', '1K', '4K'],
+    yTicks: [-4, -2, 0, 2, 4, 6],
+    yTickLabels: ['1/16', '1/4', '1', '4', '16', '64'],
+    xLabel: 'running batch size, B  (log scale)',
+    yLabel: 'prompt : generation ratio  Tp/Td',
+    series: [
+      { fn: function () { return Math.log(10) / L2; },  color: '--plot-teal',   width: 1.75, dash: [5, 4] },
+      { fn: function () { return Math.log(0.1) / L2; }, color: '--plot-amber',  width: 1.75, dash: [5, 4] },
+      { fn: function (x) {
+          var t = breakEven(Math.pow(2, x));
+          return t > 0 ? Math.log(t) / L2 : -99;      // clipped: MoE wins at any ratio
+        }, color: '--plot-violet', width: 2.75 }
     ]
   }]);
 
