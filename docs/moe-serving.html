@@ -406,8 +406,8 @@
       <div class="spec"><div class="spec-num" id="mc-ridge">9440</div><div class="spec-key">Ridge batch on H100</div></div>
     </div>
     <p style="margin-top:12px;font-size:0.88rem;margin-bottom:0">
-      Weight bytes read per token, relative to a dense model of the same total size: <b id="mc-rel">2.0%</b>
-      &nbsp;·&nbsp; Regime: <span class="regime-badge regime-mem" id="mc-regime">No amortization</span>
+      Weight bytes read per token: <b id="mc-rel">63.8%</b> of an iso-total dense model at the same batch &nbsp;·&nbsp; <b id="mc-frac">1.99%</b> of the full expert table
+      <br>Regime: <span class="regime-badge regime-mem" id="mc-regime">No amortization</span>
     </p>
   </div>
 </div>
@@ -617,7 +617,7 @@
     <span class="legend-item"><span class="lg" style="--c:var(--plot-amber)"></span> reasoning workload (\(T_p/T_d = 0.1\))</span>
   </div>
   <p class="figure-caption">
-    <strong>MoE's worst regime is the middle, not the top.</strong> Above the violet curve MoE is cheaper; below it, dense is. The curve has a vertical asymptote at \(B \approx 9\) — below that, MoE wins at <em>any</em> workload mix — then peaks at \(B \approx 29\), where coverage has saturated but decode still dominates the bill, then decays as \(1/B\) as prefill takes over. A RAG-like workload is above the curve at essentially every batch; a reasoning workload is below it until \(B \approx 12{,}500\). Both axes \(\log_2\); V3 routing, \(s = 4.26\), H100 ridge.
+    <strong>MoE's worst regime is the middle, not the top.</strong> Above the violet curve MoE is cheaper; below it, dense is. The curve has a vertical asymptote at \(B \approx 9\) — below that, MoE wins at <em>any</em> workload mix — then peaks at \(B \approx 29\), where coverage has saturated but decode still dominates the bill, then decays as \(1/B\) as prefill takes over. The RAG line makes the point: at \(T_p/T_d = 10\) the workload clears the curve at small batch and again past \(B \approx 122\), but <em>dips under it through \(B \in [12, 122]\)</em> — a prefill-heavy workload served more cheaply by the dense model, purely because that window straddles the peak. Staying above the curve at every batch takes \(T_p/T_d \gtrsim 21\). A reasoning workload is below it until \(B \approx 12{,}500\). Both axes \(\log_2\); V3 routing, \(s = 4.26\), H100 ridge.
   </p>
 </div>
 
@@ -650,7 +650,7 @@
 <ol>
   <li><strong>The iso-quality dense model doesn't exist.</strong> A 158B dense costs several times the MoE's training FLOPs to reach the same quality — that is the entire reason MoE was adopted. The real choice is not "V3 versus an iso-quality dense" but "V3 versus a smaller dense that is worse." <a href="scaling-laws.html">Training economics</a>, not serving economics, selected the architecture; serving only gets to price it.</li>
   <li><strong>Capacity is a separate bill, and it strengthens the argument.</strong> \(N_{\rm total}\) must be resident: 671B in FP8 needs 9+ H100s before any KV cache, against 2–3 for a 158B dense. But note this makes the penalty a <em>cost</em> claim (GPU-seconds per token), not a <em>latency</em> claim — wide EP hands you 9× the aggregate bandwidth, so TPOT can be perfectly good while the bill is 4× worse.</li>
-  <li><strong>MoE bundles other architectural choices.</strong> V3 pairs MoE with <a href="mla.html">MLA</a>, which cuts KV to ~35 KB/token. At \(B = 256\) and 8K context that is ~73 GB of KV traffic against ~671 GB of weights — so weight traffic still dominates by ~9×, and the coverage argument is <em>more</em> central for V3-class models, not less. But a clean MoE-versus-dense pair rarely exists to compare.</li>
+  <li><strong>MoE bundles other architectural choices.</strong> V3 pairs MoE with <a href="mla.html">MLA</a>, which cuts KV to a 576-element latent per token per layer — across 61 layers, ~34 KB/token at FP8 or ~69 KB at FP16. Holding both sides at FP8 (the precision the 671 GB above assumes; the roofline in §3 is FP16), \(B = 256\) at 8K context is ~74 GB of KV traffic against ~671 GB of weights — so weight traffic still dominates by ~9×, or ~4.6× with the KV cache left at FP16, and the coverage argument is <em>more</em> central for V3-class models, not less. But a clean MoE-versus-dense pair rarely exists to compare.</li>
   <li><strong>\(B = 1\) inverts everything.</strong> Local and edge inference reads only \(k/E\) of the table, and MoE beats iso-quality dense on decode by the same factor \(s\). Sparsity's decode win is real — it just lives entirely below nine concurrent requests, which is exactly the regime where <a href="#consequences">expert offload</a> also works.</li>
 </ol>
 
@@ -898,8 +898,10 @@
     $('mc-cov').textContent    = (100 * c).toFixed(c > 0.995 ? 2 : 1) + '%';
     $('mc-int').textContent    = I < 10 ? I.toFixed(2) : I.toFixed(0);
     $('mc-ridge').textContent  = Math.round(RIDGE * ratio).toLocaleString();
-    // bytes/token vs a dense model of the same total expert size: C(B)/B
-    $('mc-rel').textContent    = (100 * c / B).toFixed(2) + '%';
+    // vs iso-total dense at the same batch: MoE reads C·N/B per token, dense N/B — the 1/B cancels, ratio is C.
+    $('mc-rel').textContent    = (100 * c).toFixed(1) + '%';
+    // as a fraction of the whole expert table, per token: C(B)/B
+    $('mc-frac').textContent   = (100 * c / B).toFixed(2) + '%';
 
     var reg = $('mc-regime');
     if (I >= RIDGE)      { reg.textContent = 'Compute-bound';       reg.className = 'regime-badge regime-comp'; }
