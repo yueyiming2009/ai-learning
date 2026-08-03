@@ -33,8 +33,9 @@ hierarchy, and interconnect topology.
 ### 03 · Transformer & Pretraining — [docs/](docs/)
 Assembling the Foundations pieces into a working model and training it. **Architecture:**
 self-attention (forward & backward), the pre-norm block, linear attention, Gated DeltaNet, MoE
-routing. **Training:** the next-token objective and single-device loop, and the neural scaling
-laws that size the run (Kaplan vs. Chinchilla, the compute-optimal frontier).
+routing. **Training:** the next-token objective and single-device loop, multi-token prediction
+(parallel heads vs. DeepSeek-V3's sequential MTP modules, and the free draft head that falls out),
+and the neural scaling laws that size the run (Kaplan vs. Chinchilla, the compute-optimal frontier).
 
 ### 04 · Systems & Scaling — [docs/](docs/), [triton/](triton/)
 The engineering substrate that trains it across many devices, built bottom-up — MFU, the PyTorch
