@@ -605,9 +605,23 @@ for i in range(sequence_length):
     This loop is the semantics; it is only used when the fused kernels are missing. In production the
     sequential form runs one step per decoded token, and prefill/training use
     <code>chunk_gated_delta_rule</code> — the chunked form that processes the sequence in blocks of 64
-    with dense matmuls inside each block and this recurrence carried between blocks (the
-    <code>fla</code> library provides both as Triton kernels).
+    with dense matmuls inside each block and this recurrence carried between blocks. Both come from
+    <a href="https://github.com/fla-org/flash-linear-attention" style="color:var(--accent);">flash-linear-attention</a>
+    (<code>fla</code>), which supplies Triton kernels for the chunked and recurrent forms across most of the
+    modern linear-attention and SSM architectures.
   </p>
+
+  <div class="note">
+    <strong>The fallback is silent.</strong> <code>fla</code> and
+    <a href="https://github.com/Dao-AILab/causal-conv1d" style="color:var(--accent);">causal-conv1d</a>
+    (§4) are <em>optional</em> installs. When they are absent the model does not raise — it quietly
+    takes the eager path above and runs the recurrence as a Python loop over the sequence, which is
+    orders of magnitude slower than the chunked kernel and produces the same numbers. So the failure
+    has no error message and no wrong output: it shows up only as an unexplained slowdown, and in a
+    profile as an enormous count of small elementwise ops where a handful of fused kernels should be.
+    <strong>Worth an explicit startup assertion that the fused path actually engaged</strong> — the
+    cost of checking is far below the cost of discovering it later.
+  </div>
 
   <h2 id="qwen">4. Inside Qwen3-Next</h2>
   <p>The full <code>Qwen3NextGatedDeltaNet</code> layer wraps the recurrence with four pieces:</p>
@@ -632,7 +646,13 @@ for i in range(sequence_length):
       <strong>A short causal conv1d</strong> (kernel size 4, depthwise, silu) runs over \(q, k, v\) before
       the recurrence. The delta rule is a pure key–value mechanism with no notion of adjacency; the
       convolution supplies cheap local n-gram mixing so the recurrent state can spend its capacity on
-      longer-range content.
+      longer-range content. In practice this is its own hand-written kernel —
+      <a href="https://github.com/Dao-AILab/causal-conv1d" style="color:var(--accent);">causal-conv1d</a>,
+      shared with Mamba — rather than a <code>torch.nn.Conv1d</code>. Every constraint here is a
+      specialization a general convolution cannot exploit: <em>depthwise</em> means no cross-channel
+      reduction, so it is bandwidth-bound rather than compute-bound; <em>causal</em> makes the left pad
+      implicit; widths of 2–4 unroll completely; and the silu is fused rather than costing a second pass
+      over memory.
     </li>
     <li>
       <strong>Head layout:</strong> 32 value heads of dimension 128 share 16 key/query heads (each
