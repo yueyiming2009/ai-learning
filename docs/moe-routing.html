@@ -44,6 +44,14 @@
       --compare-fg: #2563eb;
       --teal-border: #99f6e4;
       --nav-bg: rgba(255,255,255,0.92);
+      --fig-bg: #fff;
+      --plot-grid: #eceef1;
+      --plot-axis: #c7cbd1;
+      --plot-tick: #9ca3af;
+      --plot-gray: #9ca3af;
+      --plot-violet: #6d28d9;
+      --plot-teal: #0d9488;
+      --plot-amber: #f59e0b;
     }
 
     @media (prefers-color-scheme: dark) {
@@ -73,6 +81,14 @@
         --compare-fg: #60a5fa;
         --teal-border: #134e4a;
         --nav-bg: rgba(15,17,21,0.9);
+        --fig-bg: #14181e;
+        --plot-grid: #232830;
+        --plot-axis: #3a4149;
+        --plot-tick: #6b7280;
+        --plot-gray: #6b7280;
+        --plot-violet: #a78bfa;
+        --plot-teal: #2dd4bf;
+        --plot-amber: #fbbf24;
       }
     }
 
@@ -164,6 +180,14 @@
 
     .eq-block { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; overflow-x: auto; }
 
+    .figure { background: var(--fig-bg); border: 1px solid var(--border); border-radius: 10px; padding: 18px 16px 14px; margin: 1.6em 0; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+    .figure canvas { width: 100%; height: 300px; display: block; }
+    .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; justify-content: center; margin-top: 12px; font-size: 0.82rem; color: var(--text); }
+    .legend-item { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, var(--plot-gray) 0 5px, transparent 5px 9px); }
+    .figure-caption { font-size: 0.85rem; color: var(--muted); line-height: 1.6; margin: 14px 4px 2px; }
+
     footer { border-top: 1px solid var(--border); padding: 28px 24px; text-align: center; font-size: 0.82rem; color: var(--muted); }
 
     @media (max-width: 600px) {
@@ -186,6 +210,7 @@
     <a href="#aux-loss">Auxiliary loss</a>
     <a href="#vs-heads">vs MHA heads</a>
     <a href="#routing-schemes">Routing schemes</a>
+    <a href="#stability">Stability in RL</a>
     <a href="#summary">Summary</a>
   </div>
   <a class="nav-back" href="index.html">Home</a>
@@ -271,7 +296,8 @@
   <p>
     This step is <em>discrete</em>: it returns a set of indices. It is not differentiable in the usual
     sense — there is no smooth path from \(\mathbf{p}\) through the index selection to the output.
-    Section 4 explains how gradients still flow despite this.
+    Section 4 explains how gradients still flow despite this; Section 9 explains what the discontinuity
+    <em>does</em> break, which is not training but the comparison of two nearby parameter versions.
   </p>
 
   <h3>Renormalization</h3>
@@ -765,7 +791,183 @@ def moe_forward(x, W_gate, experts, K=2):
   </div>
 
   <!-- ════════════════════════ SUMMARY ════════════════════════ -->
-  <h2 id="summary">9 · Summary</h2>
+  <!-- ════════════════════════ STABILITY / RL ════════════════════════ -->
+  <h2 id="stability">9 · Routing stability across parameter versions, and routing replay</h2>
+  <p>
+    Section 4 established that discreteness does not block training: at a fixed \(\theta\), the gradient
+    flows through the continuous weights \(\tilde{p}_i\) and everything is well-defined. That argument is
+    <em>local</em> — it concerns the derivative at one point. A different question is what happens when you
+    evaluate the <em>same token</em> under two nearby parameter vectors \(\theta\) and \(\theta'\), or under
+    two different implementations of the same \(\theta\). Nothing in Section 4 bounds that difference, and
+    for an MoE it is not small.
+  </p>
+
+  <h3>The top-K boundary is a threshold, not a function</h3>
+  <p>
+    Selection depends on \(\mathbf{s}\) only through the <em>ordering</em> of its components. The parameter
+    space is therefore carved by the hyperplanes \(s_i = s_j\) into cells; inside a cell \(\mathcal{S}\) is
+    constant, and crossing a wall swaps one expert for another. Define the token's <strong>routing margin</strong>
+    as the gap between the last selected and first rejected logit:
+  </p>
+  <div class="eq-block">
+    \[g_t = s_{(K)} - s_{(K+1)} \;\geq\; 0\]
+  </div>
+  <p>
+    A perturbation that moves the logits by at most \(\varepsilon\) leaves \(\mathcal{S}_t\) unchanged when
+    \(g_t > 2\varepsilon\) and can flip it otherwise. So the layer output is continuous in \(\theta\)
+    <em>except</em> on the measure-zero tie set — and the reassuring "measure zero" is exactly the wrong
+    intuition here, for two reasons.
+  </p>
+  <ul>
+    <li>
+      <strong>The margin distribution has nonzero density at zero.</strong> Nothing in the objective
+      rewards a confident \(K\) vs \(K{+}1\) decision; the aux loss actively pushes tokens toward experts
+      they were marginal about. A steady fraction of tokens sits arbitrarily close to a wall, so
+      \(\Pr[g_t < 2\varepsilon] \approx \rho \cdot 2\varepsilon\) — <em>linear</em> in \(\varepsilon\),
+      not zero.
+    </li>
+    <li>
+      <strong>You do not get one draw, you get \(T \times L\).</strong> With \(T\) tokens through \(L\) MoE
+      layers, the chance that <em>some</em> routing decision flips approaches 1 for any \(\varepsilon\) a
+      real optimizer step or a kernel difference produces. Per-token rarity does not survive aggregation.
+    </li>
+  </ul>
+  <div class="note">
+    <strong>The consequence is a broken Lipschitz bound.</strong> For a dense FFN,
+    \(\|\Delta \mathbf{y}\| = O(\|\Delta\theta\|)\): shrink the update, shrink the output change. For an
+    MoE, a flipped token has \(\|\Delta \mathbf{y}\| = \tilde{p}_j \|\operatorname{FFN}_i(\mathbf{x}) - \operatorname{FFN}_j(\mathbf{x})\|\),
+    which is \(O(1)\) — set by how different two experts are, and completely independent of how small
+    \(\Delta\theta\) was. Expert <em>specialization</em>, the thing MoE is for, is what makes the jump large.
+  </div>
+
+  <div class="figure">
+    <canvas id="plot-flip" aria-label="Relative output change versus perturbation size, split into the smooth term and the routing-flip term"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span> MoE total</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-teal)"></span> smooth term (dense, or MoE + routing replay)</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-amber)"></span> routing-flip term</span>
+    </div>
+    <p class="figure-caption">
+      <strong>The flip term does not vanish with the perturbation — it dominates it.</strong>
+      Schematic, under a margin model \(g \sim \text{Exp}(\bar{g})\) with \(\bar{g} = 0.15\) nats, so
+      \(\Pr[\text{flip}] = 1 - e^{-\varepsilon/\bar{g}}\), an \(O(1)\) swap cost of \(0.35\), and unit
+      sensitivity for the smooth path. Note the shape at the left edge: both terms are linear near
+      \(\varepsilon = 0\), but the flip term leaves the origin with slope \(0.35/\bar{g} \approx 2.3\)
+      against the smooth term's \(1\). Making the update smaller buys you proportionally less than it
+      does in a dense model. Freezing \(\mathcal{S}\) deletes the amber curve entirely, which is the whole
+      of what routing replay does.
+    </p>
+  </div>
+
+  <h3>Why pretraining never notices and RL always does</h3>
+  <p>
+    Supervised pretraining evaluates the network at exactly one \(\theta\) per step: the forward pass and
+    the backward pass agree by construction, and no quantity in the loss compares two versions of the
+    model. The discontinuity is there, but nothing ever probes it.
+  </p>
+  <p>
+    <a href="grpo.html">Policy-gradient RL</a> is built on precisely that comparison. The importance ratio
+  </p>
+  <div class="eq-block">
+    \[\rho_{t} = \frac{\pi_\theta(a_t \mid s_t)}{\pi_{\theta_\text{old}}(a_t \mid s_t)}\]
+  </div>
+  <p>
+    puts two evaluations of the same token in a quotient, and in a real trainer they differ on two axes at once:
+  </p>
+  <div class="step">
+    <div class="step-label">1 — Policy lag (\(\theta \neq \theta_\text{old}\))</div>
+    <p style="margin:0; font-size:.92rem">
+      Rollouts are generated from a snapshot, then several gradient steps are taken against them
+      (more, and staler, under <a href="async-rl.html">async RL</a>). \(\Delta\theta\) is genuinely nonzero,
+      and every token whose margin is below it re-routes.
+    </p>
+  </div>
+  <div class="step">
+    <div class="step-label">2 — Engine mismatch (\(\theta = \theta_\text{old}\), still different)</div>
+    <p style="margin:0; font-size:.92rem">
+      Rollouts come from an inference engine (vLLM/SGLang) and the ratio's numerator from the trainer
+      (FSDP/Megatron). Different kernels, batch sizes, TP degree, and quantization make the logits differ
+      in the last few bits — \(\varepsilon \sim 10^{-3}\) or smaller. For a dense model this is a rounding
+      error in \(\rho\). For an MoE it re-routes the near-tie tokens, and those tokens' numerator and
+      denominator are then computed by <em>different subnetworks</em>.
+    </p>
+  </div>
+  <p>
+    That second case is the one that surprises people: \(\rho_t\) can be far from 1 when the policy has not
+    changed at all. The clip fraction spikes, the gradient acquires large spurious terms, and — because a
+    flipped token's ratio is unbounded in either direction — a few tokens can dominate the batch. This is
+    the MoE-specific amplifier of the general
+    <a href="async-rl.html">train/inference mismatch</a> problem, and it is why MoE RL runs diverge on
+    configurations where the dense equivalent is stable.
+  </p>
+
+  <h3>Routing replay</h3>
+  <p>
+    <strong>Routing Replay (R3)</strong> attacks the mismatch at its source: during rollout, log the selected
+    set \(\mathcal{S}_t\) for every token at every MoE layer, ship those indices alongside the trajectory,
+    and force the trainer's forward pass to use them instead of recomputing top-K. The router still runs —
+    it produces \(\mathbf{s}\), \(\mathbf{p}\), and \(\tilde{p}\), and gradients still flow through
+    \(\tilde{p}\) exactly as in Section 4. Only the \(\operatorname{arg\,top-}K\) is overridden.
+  </p>
+  <div class="result">
+    <div class="result-label">What replay restores</div>
+    Numerator and denominator are computed by the same subnetwork, so \(\rho_t\) again reflects only the
+    genuine parameter change — the teal curve, with the amber one deleted.
+  </div>
+  <p>It is a real fix, and it is a hack, in the specific sense that it costs four things:</p>
+  <ul>
+    <li>
+      <strong>Bandwidth and storage.</strong> \(K\) indices per token per MoE layer. For a DeepSeek-V3-shaped
+      model (58 MoE layers, \(K = 8\)) that is 464 indices per token — packed at one byte each, ~460 B/token,
+      which for long reasoning rollouts rivals or exceeds the logprobs already being shipped.
+    </li>
+    <li>
+      <strong>An inconsistent forward pass.</strong> The trainer computes a gradient for a routing decision
+      the current policy would not make. \(\partial\mathcal{L}/\partial W_g\) is evaluated at a set
+      \(\mathcal{S}\) that is not \(\operatorname{arg\,top-}K(\mathbf{p})\), and the load statistics \(f_i\)
+      feeding the aux loss are the rollout engine's, not the trainer's.
+    </li>
+    <li>
+      <strong>A train/deploy gap.</strong> You are optimizing a function whose routing is supplied
+      externally, then deploying one that routes by argmax. The gap is small but structural, and it grows
+      with staleness — the older the snapshot, the less its routing resembles the current policy's.
+    </li>
+    <li>
+      <strong>Invasive plumbing.</strong> The inference engine must expose per-token, per-layer expert IDs,
+      and the trainer must accept them — cutting across an abstraction boundary that both sides otherwise
+      keep closed.
+    </li>
+  </ul>
+
+  <h3>The alternative: change the estimator instead</h3>
+  <p>
+    Replay fixes the ratio by forcing the two forward passes to agree. The other direction is to accept the
+    disagreement and use a statistic that is insensitive to it. <a href="grpo.html#gspo">GSPO</a> replaces the
+    per-token ratio with a length-normalized sequence-level one — a geometric mean of the per-token ratios.
+    A handful of flipped tokens shifts an average of \(T\) log-ratios by \(O(1/T)\), so the sequence weight
+    stays near 1 even when individual tokens swing wildly. The volatility is not eliminated; it is
+    <em>averaged out</em>, which is cheaper than legislating it away.
+  </p>
+  <p>
+    This is why the two show up as alternatives rather than complements in practice: token-level objectives
+    (<a href="grpo.html">GRPO</a>, PPO) on an MoE tend to need routing replay, and sequence-level ones tend to
+    train MoE stably without it.
+  </p>
+  <div class="note">
+    <strong>The through-line.</strong> Every difficulty on this page traces to the same source. Discrete
+    selection buys sparse compute; it costs a gradient blind spot (Section 4), which costs an auxiliary loss
+    (Section 6); and it costs Lipschitz continuity in \(\theta\), which costs either routing replay or a
+    sequence-level estimator. The aux loss and routing replay are the same kind of object — taxes levied to
+    keep a discrete decision usable.
+  </div>
+
+  <div class="xref">
+    The RL side of this is developed on <a href="grpo.html">GRPO &amp; GSPO</a> (where the ratio is defined
+    and clipped) and <a href="async-rl.html">Async RL &amp; Off-Policy Correction</a> (where routing replay
+    sits among the eliminate/correct/tolerate fix families).
+  </div>
+
+  <h2 id="summary">10 · Summary</h2>
 
   <div class="summary-grid">
     <div class="summary-card">
@@ -801,6 +1003,10 @@ def moe_forward(x, W_gate, experts, K=2):
       <p>Without the aux loss, popular experts improve faster and attract more tokens. The aux loss adds opposing pressure: overloaded experts get penalized until routing spreads out.</p>
     </div>
     <div class="summary-card">
+      <div class="summary-card-label">Routing stability</div>
+      <p>Top-\(K\) is a threshold on the margin \(g_t = s_{(K)} - s_{(K+1)}\), so \(\|\Delta\mathbf{y}\|\) is \(O(1)\), not \(O(\|\Delta\theta\|)\). RL's importance ratio compares two \(\theta\)'s and exposes it; routing replay freezes \(\mathcal{S}\), GSPO averages it out.</p>
+    </div>
+    <div class="summary-card">
       <div class="summary-card-label">Selection vs summation</div>
       <p>Attention heads self-organize with no machinery: every head runs on every token, so losers keep getting gradient and redundancy is penalized in the shared sum. Top-\(K\) selection removes both properties — balance must be legislated.</p>
     </div>
@@ -819,6 +1025,109 @@ def moe_forward(x, W_gate, experts, K=2):
   &nbsp;·&nbsp; <a href="index.html" style="color:inherit">All notes</a>
   &nbsp;·&nbsp; <a href="moe-parallelism.html" style="color:inherit">MoE Parallelism →</a>
 </footer>
+
+<script>
+(function () {
+  // Schematic model for §9: relative output change vs logit perturbation ε.
+  const GBAR = 0.15;   // mean top-K margin, in nats
+  const SWAP = 0.35;   // O(1) relative change when the boundary expert swaps
+  const flip   = e => SWAP * (1 - Math.exp(-e / GBAR));
+  const smooth = e => e;
+  const total  = e => smooth(e) + flip(e);
+
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+  function drawPlot(canvas, cfg) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const mL = 48, mR = 14, mT = 14, mB = 34;
+    const pw = cssW - mL - mR, ph = cssH - mT - mB;
+    const { xMin, xMax, yMin, yMax } = cfg;
+    const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
+    const Y = y => mT + (yMax - y) / (yMax - yMin) * ph;
+
+    ctx.font = '11px Inter, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(t => {
+      const px = X(t);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.fillText(t.toFixed(2), px, mT + ph + 6);
+    });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(t => {
+      const py = Y(t);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+      ctx.fillText(t.toFixed(1), mL - 8, py);
+    });
+
+    ctx.strokeStyle = cssVar('--plot-axis');
+    ctx.lineWidth = 1.25;
+    ctx.beginPath(); ctx.moveTo(mL, Y(yMin)); ctx.lineTo(mL + pw, Y(yMin)); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(X(xMin), mT); ctx.lineTo(X(xMin), mT + ph); ctx.stroke();
+
+    // axis titles
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.fillText('logit perturbation  ε', mL + pw / 2, cssH - 1);
+    ctx.save();
+    ctx.translate(11, mT + ph / 2); ctx.rotate(-Math.PI / 2);
+    ctx.textBaseline = 'top';
+    ctx.fillText('relative ‖Δy‖', 0, 0);
+    ctx.restore();
+
+    ctx.save();
+    ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    ctx.lineJoin = 'round';
+    cfg.series.forEach(s => {
+      ctx.beginPath();
+      ctx.lineWidth = s.width || 2;
+      ctx.strokeStyle = cssVar(s.color);
+      ctx.setLineDash(s.dash || []);
+      const N = 260;
+      for (let i = 0; i <= N; i++) {
+        const x = xMin + (xMax - xMin) * i / N;
+        const px = X(x), py = Y(s.fn(x));
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  const plots = [];
+  const flipCanvas = document.getElementById('plot-flip');
+  if (flipCanvas) plots.push([flipCanvas, {
+    xMin: 0, xMax: 0.3, yMin: 0, yMax: 0.7,
+    xTicks: [0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3],
+    yTicks: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
+    series: [
+      { fn: smooth, color: '--plot-teal',   width: 2 },
+      { fn: flip,   color: '--plot-amber',  width: 2 },
+      { fn: total,  color: '--plot-violet', width: 2.75 }
+    ]
+  }]);
+
+  function renderAll() { plots.forEach(([c, cfg]) => drawPlot(c, cfg)); }
+  renderAll();
+  let raf;
+  window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(renderAll); });
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq.addEventListener) mq.addEventListener('change', renderAll);
+})();
+</script>
 
 </body>
 </html>
