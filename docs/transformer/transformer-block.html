@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>The Transformer Block — Assembling a Decoder-Only Model</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #7c3aed;
+      --accent-light: #f5f3ff;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --note-fg: #1e40af;
+      --result-fg: #16a34a;
+      --violet-border: #ddd6fe;
+      --nav-bg: rgba(255,255,255,0.92);
+      --dgm-norm-bg: #f0fdfa;
+      --dgm-norm-border: #99f6e4;
+      --dgm-norm-fg: #0f766e;
+      --dgm-attn-bg: #f5f3ff;
+      --dgm-attn-border: #ddd6fe;
+      --dgm-attn-fg: #6d28d9;
+      --dgm-mlp-bg: #fff7ed;
+      --dgm-mlp-border: #fed7aa;
+      --dgm-mlp-fg: #c2410c;
+      --dgm-add-bg: #eef2ff;
+      --dgm-add-border: #c7d2fe;
+      --dgm-add-fg: #4338ca;
+      --dgm-arrow: #9ca3af;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #a78bfa;
+        --accent-light: #1a1626;
+        --warning-bg: #101a2b;
+        --warning-border: #1e40af;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --note-fg: #93c5fd;
+        --result-fg: #4ade80;
+        --violet-border: #4c1d95;
+        --nav-bg: rgba(15,17,21,0.9);
+        --dgm-norm-bg: #10201e;
+        --dgm-norm-border: #134e4a;
+        --dgm-norm-fg: #2dd4bf;
+        --dgm-attn-bg: #1a1626;
+        --dgm-attn-border: #4c1d95;
+        --dgm-attn-fg: #a78bfa;
+        --dgm-mlp-bg: #261607;
+        --dgm-mlp-border: #9a3412;
+        --dgm-mlp-fg: #fb923c;
+        --dgm-add-bg: #161533;
+        --dgm-add-border: #3730a3;
+        --dgm-add-fg: #818cf8;
+        --dgm-arrow: #6b7280;
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #5b21b6 0%, #7c3aed 50%, #8b5cf6 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.85;
+      font-size: 0.97rem;
+      max-width: 580px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+    code {
+      font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+      font-size: 0.88em;
+      background: var(--surface);
+      padding: 1px 5px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+    }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+
+    /* ── Step boxes ──────────────────────────── */
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    /* ── Callout / note ──────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+    .note::before { content: '💡 '; }
+
+    /* ── Result / boxed equation ─────────────── */
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Summary card ────────────────────────── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .summary-card {
+      background: var(--accent-light);
+      border: 1px solid var(--violet-border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .summary-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    /* ── Block diagram ───────────────────────── */
+    .diagram {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px;
+      margin: 1.6em 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+    }
+    .dgm-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+      max-width: 420px;
+    }
+    .dgm-box {
+      border-radius: 8px;
+      padding: 9px 14px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      text-align: center;
+      flex: 1;
+      border: 1px solid;
+    }
+    .dgm-norm { background: var(--dgm-norm-bg); border-color: var(--dgm-norm-border); color: var(--dgm-norm-fg); }
+    .dgm-attn { background: var(--dgm-attn-bg); border-color: var(--dgm-attn-border); color: var(--dgm-attn-fg); }
+    .dgm-mlp  { background: var(--dgm-mlp-bg); border-color: var(--dgm-mlp-border); color: var(--dgm-mlp-fg); }
+    .dgm-add  { background: var(--dgm-add-bg); border-color: var(--dgm-add-border); color: var(--dgm-add-fg); font-weight: 600; }
+    .dgm-arrow { color: var(--dgm-arrow); font-size: 1.1rem; line-height: 1; }
+    .dgm-resid {
+      font-size: 0.74rem;
+      color: var(--muted);
+      font-style: italic;
+      margin: 2px 0;
+    }
+    .dgm-stack {
+      width: 100%; max-width: 420px;
+      border: 1.5px dashed var(--accent);
+      border-radius: 10px;
+      padding: 14px;
+      margin: 4px 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      position: relative;
+    }
+    .dgm-stack-label {
+      position: absolute; top: -10px; left: 14px;
+      background: var(--surface);
+      padding: 0 8px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .dgm-spacer { height: 8px; }
+
+    /* ── Footer ──────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    /* ── Responsive ──────────────────────────── */
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Transformer Block</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#stream">Residual Stream</a>
+    <a href="#prenorm">Pre-Norm</a>
+    <a href="#block">The Block</a>
+    <a href="#stack">The Stack</a>
+    <a href="#embed">Embed / Unembed</a>
+    <a href="#params">Parameters</a>
+    <a href="#summary">Summary</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Transformer &amp; Pretraining</span>
+  <h1>The Transformer Block</h1>
+  <p>How the isolated pieces — norm, attention, MLP, residuals — snap together into one repeatable block, and how a stack of them between an embedding and an unembedding becomes a decoder-only language model.</p>
+</div>
+
+<div class="page-wrap">
+
+  <p>The <a href="attention.html" style="color:var(--accent);">attention</a> page built the mixing operation; the <a href="../foundations/rmsnorm-gradient.html" style="color:var(--accent);">norm</a>, <a href="../foundations/swiglu.html" style="color:var(--accent);">SwiGLU</a>, and <a href="../foundations/rope-gradient.html" style="color:var(--accent);">RoPE</a> pages built the other parts. This page does the assembly: it shows the single structural motif that every modern LLM — LLaMA, Qwen, DeepSeek, Mistral — repeats dozens of times, and why it is shaped the way it is.</p>
+
+  <h2 id="stream">1. The Residual Stream</h2>
+  <p>The right mental model for a transformer is <em>not</em> a pipeline that transforms data stage by stage. It is a <strong>residual stream</strong>: a running sum, one \(d\)-dimensional vector per token, that every layer reads from and writes back into.</p>
+
+  \[
+    \mathbf{x}_{\ell+1} = \mathbf{x}_\ell + \mathrm{sublayer}(\mathbf{x}_\ell)
+  \]
+
+  <p>Each sublayer doesn't replace the stream — it computes a <em>delta</em> and adds it. This single design choice does three things at once:</p>
+  <ul>
+    <li><strong>Gradient highway.</strong> The \(+\mathbf{x}_\ell\) term means the backward pass has a path of derivative exactly \(1\) straight from the loss to every layer: \(\partial \mathbf{x}_{\ell+1}/\partial \mathbf{x}_\ell = I + \partial(\mathrm{sublayer})/\partial \mathbf{x}_\ell\). Gradients can't vanish through the identity branch, which is what makes 100-layer depth trainable.</li>
+    <li><strong>Incremental computation.</strong> Each layer only has to learn a correction to the stream, not reconstruct it from scratch.</li>
+    <li><strong>A shared bus.</strong> Layer 30 can read something layer 2 wrote, because it is all the same additive accumulator.</li>
+  </ul>
+
+  <div class="note">
+    Residual connections are the reason normalization is even necessary. Adding a delta every layer makes the stream's magnitude grow with depth; a norm at the entrance of each sublayer rescales it back to a controlled range before the matmuls. The two features are co-dependent.
+  </div>
+
+  <h2 id="prenorm">2. Pre-Norm vs. Post-Norm</h2>
+  <p>Where you place the norm decides whether the residual stream stays a clean highway. Two choices:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th></th><th>Post-Norm (original 2017)</th><th>Pre-Norm (every modern LLM)</th></tr>
+      <tr><td>Formula</td><td>\(\mathbf{x}_{\ell+1}=\mathrm{Norm}(\mathbf{x}_\ell+\mathrm{sub}(\mathbf{x}_\ell))\)</td><td>\(\mathbf{x}_{\ell+1}=\mathbf{x}_\ell+\mathrm{sub}(\mathrm{Norm}(\mathbf{x}_\ell))\)</td></tr>
+      <tr><td>Residual path</td><td>passes <em>through</em> the norm</td><td>stays <em>clean</em> (identity)</td></tr>
+      <tr><td>Deep training</td><td>needs careful LR warmup; unstable past ~12 layers without tricks</td><td>stable to 100+ layers out of the box</td></tr>
+      <tr><td>Used by</td><td>original Transformer, BERT</td><td>GPT-2 onward, LLaMA, Qwen, …</td></tr>
+    </table>
+  </div>
+
+  <p>The reason pre-norm won is exactly the gradient-highway argument from §1: in pre-norm the norm sits <em>inside</em> the sublayer branch, so the \(+\mathbf{x}_\ell\) skip is a pure identity with derivative \(1\). In post-norm the skip runs through the norm's Jacobian at every layer, and those Jacobians multiply — the highway gets resistors in series. This page assumes pre-norm throughout.</p>
+
+  <h2 id="block">3. The Block — Two Sublayers</h2>
+  <p>A transformer block is just the residual motif applied twice: once with attention as the sublayer, once with the MLP. Modern blocks also use <a href="../foundations/rmsnorm-gradient.html" style="color:var(--accent);">RMSNorm</a> (no mean subtraction, cheaper) and a <a href="../foundations/swiglu.html" style="color:var(--accent);">SwiGLU</a> MLP.</p>
+
+  <div class="diagram">
+    <div class="dgm-row"><div class="dgm-box dgm-add" style="flex:0 0 auto;padding:6px 18px;">\(\mathbf{x}_\ell\) — residual stream in</div></div>
+    <div class="dgm-resid">┌─────────── skip (identity) ───────────┐</div>
+    <div class="dgm-row"><div class="dgm-box dgm-norm">RMSNorm</div><span class="dgm-arrow">→</span><div class="dgm-box dgm-attn">Multi-Head Attention</div></div>
+    <div class="dgm-arrow">↓</div>
+    <div class="dgm-row"><div class="dgm-box dgm-add">⊕ &nbsp; add to stream</div></div>
+    <div class="dgm-spacer"></div>
+    <div class="dgm-resid">┌─────────── skip (identity) ───────────┐</div>
+    <div class="dgm-row"><div class="dgm-box dgm-norm">RMSNorm</div><span class="dgm-arrow">→</span><div class="dgm-box dgm-mlp">SwiGLU MLP</div></div>
+    <div class="dgm-arrow">↓</div>
+    <div class="dgm-row"><div class="dgm-box dgm-add">⊕ &nbsp; add to stream</div></div>
+    <div class="dgm-arrow">↓</div>
+    <div class="dgm-row"><div class="dgm-box dgm-add" style="flex:0 0 auto;padding:6px 18px;">\(\mathbf{x}_{\ell+1}\) — residual stream out</div></div>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Sublayer 1 — Attention mixes across tokens</div>
+    \[
+      \mathbf{a}_\ell = \mathbf{x}_\ell + \mathrm{MHA}\big(\mathrm{RMSNorm}(\mathbf{x}_\ell)\big)
+    \]
+    <p>This is the only sublayer where information moves <em>between</em> positions. RoPE is applied to \(Q\) and \(K\) inside the MHA call.</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Sublayer 2 — MLP processes each token</div>
+    \[
+      \mathbf{x}_{\ell+1} = \mathbf{a}_\ell + \mathrm{SwiGLU}\big(\mathrm{RMSNorm}(\mathbf{a}_\ell)\big)
+    \]
+    <p>The MLP acts on each position independently, expanding to a hidden width \(\approx \tfrac{8}{3}d\) and back. This is where most of the parameters and most of the per-token FLOPs live — it is the model's "knowledge" store.</p>
+  </div>
+
+  <div class="result">
+    <div class="result-label">One Pre-Norm Transformer Block</div>
+    \[
+      \mathbf{a} = \mathbf{x} + \mathrm{MHA}(\mathrm{RMSNorm}(\mathbf{x})), \qquad
+      \mathbf{x}' = \mathbf{a} + \mathrm{SwiGLU}(\mathrm{RMSNorm}(\mathbf{a}))
+    \]
+  </div>
+
+  <div class="note">
+    The division of labor is clean and worth memorizing: <strong>attention moves information between tokens; the MLP transforms it within a token.</strong> Stack the two and you can both gather context and compute on it — repeatedly.
+  </div>
+
+  <h2 id="stack">4. The Stack — Depth</h2>
+  <p>A model is just \(L\) of these blocks applied in sequence, all on the same residual stream, each with its own independent weights:</p>
+
+  <div class="diagram">
+    <div class="dgm-row"><div class="dgm-box dgm-add" style="flex:0 0 auto;">tokens → embedding → \(\mathbf{x}_0\)</div></div>
+    <div class="dgm-arrow">↓</div>
+    <div class="dgm-stack">
+      <span class="dgm-stack-label">× L blocks</span>
+      <div class="dgm-box dgm-attn" style="max-width:300px;">Block 1 &nbsp;(attn + MLP)</div>
+      <div class="dgm-arrow">↓</div>
+      <div class="dgm-box dgm-attn" style="max-width:300px;">Block 2</div>
+      <div class="dgm-arrow">⋮</div>
+      <div class="dgm-box dgm-attn" style="max-width:300px;">Block L</div>
+    </div>
+    <div class="dgm-arrow">↓</div>
+    <div class="dgm-row"><div class="dgm-box dgm-norm" style="flex:0 0 auto;">final RMSNorm</div></div>
+    <div class="dgm-arrow">↓</div>
+    <div class="dgm-row"><div class="dgm-box dgm-add" style="flex:0 0 auto;">unembedding → logits</div></div>
+  </div>
+
+  <p>A single final RMSNorm sits after the last block (the pre-norm stream is never normalized at the very top otherwise). \(L\) ranges from ~12 (small) to 80+ (frontier). Depth and width \(d\) are the two main scaling dials — see <a href="scaling-laws.html" style="color:var(--accent);">scaling laws</a>.</p>
+
+  <h2 id="embed">5. Embedding and Unembedding</h2>
+  <p>The stack operates on continuous vectors, but the input and output are discrete token IDs. Two lookup/projection matrices bridge that gap.</p>
+
+  <div class="step">
+    <div class="step-label">Embedding — IDs to vectors</div>
+    <p>The embedding matrix \(E \in \mathbb{R}^{V\times d}\) (vocabulary \(V\), e.g. 128k rows) is a lookup table. Token ID \(t\) becomes row \(\mathbf{e}_t\), the initial residual-stream value \(\mathbf{x}_0\). No positional vector is added — modern models inject position through RoPE inside attention instead.</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Unembedding — vectors to logits</div>
+    <p>After the final norm, project the \(d\)-dim stream back to vocabulary size to get a score per token:</p>
+    \[
+      \mathbf{z}_i = \mathbf{x}^{\text{final}}_i\, U, \qquad U \in \mathbb{R}^{d\times V}
+    \]
+    <p>These logits \(\mathbf{z}_i\) feed the softmax + <a href="../foundations/cross-entropy.html" style="color:var(--accent);">cross-entropy</a> loss during training, or the sampler at inference.</p>
+  </div>
+
+  <div class="note">
+    <strong>Weight tying:</strong> many models set \(U = E^\top\) — the same matrix embeds and unembeds. It saves \(V\!\times\!d\) parameters (often &gt;100M) and reflects a real symmetry: the geometry that maps a token <em>into</em> the stream is a sensible one for reading it back <em>out</em>. GPT-2 and many LLaMA-class models tie; some large models keep them separate.
+  </div>
+
+  <h2 id="params">6. Parameter &amp; FLOP Budget</h2>
+  <p>Per block, the parameters split cleanly between the two sublayers (ignoring norms, which are negligible):</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Component</th><th>Parameters</th><th>Note</th></tr>
+      <tr><td>Attention \(W_Q,W_K,W_V,W_O\)</td><td>\(4d^2\)</td><td>fewer with GQA on the KV side</td></tr>
+      <tr><td>SwiGLU MLP (3 matrices, hidden \(\tfrac{8}{3}d\))</td><td>\(3\cdot d\cdot\tfrac{8}{3}d = 8d^2\)</td><td>the bulk of the block</td></tr>
+      <tr><td><strong>Per block total</strong></td><td><strong>\(\approx 12d^2\)</strong></td><td>×\(L\) blocks</td></tr>
+      <tr><td>Embedding (+ untied unembed)</td><td>\(Vd\) (or \(2Vd\))</td><td>dominates at small \(L\), tiny at scale</td></tr>
+    </table>
+  </div>
+  <p>So total non-embedding parameters \(N \approx 12 L d^2\). This is exactly the \(N\) that the <a href="../systems/mfu.html" style="color:var(--accent);">\(6N\) FLOPs-per-token rule</a> and the <a href="scaling-laws.html" style="color:var(--accent);">scaling laws</a> are written in terms of — the transformer block is where that \(N\) physically comes from.</p>
+
+  <div class="note">
+    The backward pass is just the residual motif run in reverse: gradient flows back through the unembedding, down the stack, and at every \(\oplus\) it <em>splits</em> — one copy continues along the clean skip, one enters the sublayer's VJP. Each sublayer's internal gradients are exactly the <a href="attention.html" style="color:var(--note-fg);">attention</a>, <a href="../foundations/swiglu.html" style="color:var(--note-fg);">SwiGLU</a>, and <a href="../foundations/rmsnorm-gradient.html" style="color:var(--note-fg);">RMSNorm</a> derivations on their own pages. Nothing new to derive — that is the payoff of building the pieces first.
+  </div>
+
+  <h2 id="summary">7. Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">Residual stream</div>
+      <p>\(\mathbf{x}_{\ell+1}=\mathbf{x}_\ell+\mathrm{sub}(\mathbf{x}_\ell)\) — additive bus + gradient highway</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Pre-norm</div>
+      <p>Norm inside the branch; skip stays clean → trains deep</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Two sublayers</div>
+      <p>Attention mixes across tokens; MLP transforms within a token</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">The stack</div>
+      <p>embed → \(L\) blocks → final norm → unembed → logits</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Weight tying</div>
+      <p>\(U=E^\top\) saves \(Vd\) params; embed = unembed geometry</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Budget</div>
+      <p>\(\approx 12d^2\) params/block; \(N\approx 12Ld^2\) total</p>
+    </div>
+  </div>
+
+  <p style="margin-top:2em;color:var(--muted);font-size:0.9rem;">Next: the model is assembled but untrained — the <a href="pretraining.html" style="color:var(--accent);">pretraining loop</a> defines the next-token objective and the optimization loop that fills these \(12Ld^2\) weights with knowledge.</p>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; Assembling the decoder-only transformer
+</footer>
+
+</body>
+</html>

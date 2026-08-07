@@ -1,11 +1,12 @@
 ---
 name: add-plot
-description: Add an interactive visualization to a learning page in this repo whenever it aids understanding. Use when creating or editing any docs/*.html explainer page that describes a function, activation, distribution, curve, geometric relationship, comparison between methods, or training/optimization dynamic — anything where seeing the shape beats reading the formula. Follows the self-contained canvas plotting pattern established on docs/swiglu.html (no external chart libraries).
+description: Add an interactive visualization to a learning page in this repo whenever it aids understanding. Use when creating or editing any docs/<domain>/*.html explainer page that describes a function, activation, distribution, curve, geometric relationship, comparison between methods, or training/optimization dynamic — anything where seeing the shape beats reading the formula. Follows the self-contained canvas plotting pattern established on docs/foundations/swiglu.html (no external chart libraries).
 ---
 
 # Add a plot when it aids understanding
 
-This repo is a self-contained ML/RL learning site (`docs/*.html`, plus `rl/` and `triton/`).
+This repo is a self-contained ML/RL learning site (`docs/<domain>/*.html` across six domain
+folders, plus `rl/` and `triton/`).
 Each page is a single standalone HTML file with inline CSS + MathJax, **no build step and no
 external JS libraries**. When a page explains something with a *shape* — an activation, a
 loss curve, a probability distribution, a gating mechanism, a comparison of two methods, an
@@ -24,9 +25,9 @@ Skip it when the idea is purely algebraic/structural (matrix shapes, index bookk
 control flow) where a plot would be decoration, not insight. Prefer **one well-captioned
 plot that makes a single point** over several busy ones.
 
-## The pattern (copy from docs/swiglu.html)
+## The pattern (copy from docs/foundations/swiglu.html)
 
-`docs/swiglu.html` is the reference implementation. Reuse its three pieces verbatim and adapt:
+`docs/foundations/swiglu.html` is the reference implementation. Reuse its three pieces verbatim and adapt:
 
 1. **CSS** — the `.figure`, `.figure canvas` (`width:100%; height:300px`), `.legend`,
    `.legend-item`, `.lg` / `.lg.dash`, and `.figure-caption` rules. Match the page's existing

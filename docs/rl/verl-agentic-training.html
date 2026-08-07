@@ -1,0 +1,1603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Agentic RL Training in verl</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #0d9488;
+      --accent-light: #f0fdfa;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --nav-bg: rgba(255,255,255,0.92);
+      --note-fg: #1e40af;
+      --result-fg: #16a34a;
+      --caution-bg: #fffbeb;
+      --caution-border: #f59e0b;
+      --caution-fg: #92400e;
+      --seg-asst: #0d9488;
+      --seg-tool: #f59e0b;
+      --seg-prompt: #9ca3af;
+      --seg-unused: #e5e7eb;
+      --grid-fg: #d1d5db;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #2dd4bf;
+        --accent-light: #0c2420;
+        --warning-bg: #101a2b;
+        --warning-border: #1e40af;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --nav-bg: rgba(15,17,21,0.9);
+        --note-fg: #93c5fd;
+        --result-fg: #4ade80;
+        --caution-bg: #241c0c;
+        --caution-border: #b45309;
+        --caution-fg: #fbbf24;
+        --seg-asst: #2dd4bf;
+        --seg-tool: #f59e0b;
+        --seg-prompt: #6b7280;
+        --seg-unused: #2b313a;
+        --grid-fg: #333a44;
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #064e3b 0%, #065f46 55%, #0d9488 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.9;
+      font-size: 0.97rem;
+      max-width: 660px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+    a { color: var(--accent); }
+    code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+    pre {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      line-height: 1.55;
+      margin: 1.2em 0;
+    }
+    pre code { background: none; padding: 0; border: none; color: var(--text); }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+
+    /* ── Step boxes ──────────────────────────── */
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    /* ── Callouts ────────────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+    .caution {
+      background: var(--caution-bg);
+      border-left: 3px solid var(--caution-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--caution-fg);
+    }
+
+    /* ── Result / boxed equation ─────────────── */
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Figure ──────────────────────────────── */
+    .figure {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 18px 14px;
+      margin: 1.6em 0;
+      background: var(--surface);
+    }
+    .figure canvas { width: 100%; height: 320px; display: block; }
+    .figure svg.diagram { width: 100%; height: auto; display: block; }
+
+    /* ── Diagram primitives ──────────────────── */
+    .d-box { fill: var(--bg); stroke: var(--border); stroke-width: 1.2; }
+    .d-box.gpu { fill: var(--accent-light); stroke: var(--accent); }
+    .d-box.env { fill: var(--caution-bg); stroke: var(--caution-border); }
+    .d-t { fill: var(--text); font: 600 17px 'Inter', sans-serif; }
+    .d-t.sm { font-size: 14px; }
+    .d-s { fill: var(--muted); font: 13.5px 'Inter', sans-serif; }
+    .d-s.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+    .d-xs { fill: var(--muted); font: 12px 'Inter', sans-serif; }
+    .d-xs.on { fill: var(--text); }
+    .d-lane { fill: var(--surface); stroke: var(--border); stroke-width: 1; }
+    .d-blk { fill: var(--bg); stroke: var(--border); stroke-width: 1.2; }
+    .d-blk.gpu { fill: var(--accent-light); stroke: var(--accent); }
+    .d-blk.env { fill: var(--caution-bg); stroke: var(--caution-border); }
+    .d-hatch { fill: url(#hx); stroke: none; }
+    .hx-l { stroke: var(--muted); stroke-width: 1; opacity: 0.3; }
+    .d-axis { stroke: var(--grid-fg); stroke-width: 1; fill: none; }
+    .d-a2 { stroke: var(--accent); stroke-width: 1.4; fill: none; marker-end: url(#ar-f2); }
+    .d-r2 { stroke: var(--muted); stroke-width: 1.2; fill: none; stroke-dasharray: 4 3; marker-end: url(#ar-r2); }
+    .d-a { stroke: var(--accent); stroke-width: 1.4; fill: none; marker-end: url(#ar-f); }
+    .d-r { stroke: var(--muted); stroke-width: 1.2; fill: none; stroke-dasharray: 4 3; marker-end: url(#ar-r); }
+    .mk-f { fill: var(--accent); }
+    .mk-r { fill: var(--muted); }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 18px;
+      margin-bottom: 14px;
+      align-items: center;
+    }
+    .control {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-size: 0.84rem;
+      color: var(--ink);
+    }
+    .control input[type=range] { width: 128px; accent-color: var(--accent); }
+    .control .val {
+      font-variant-numeric: tabular-nums;
+      font-weight: 600;
+      color: var(--accent);
+      min-width: 3.2em;
+      display: inline-block;
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-top: 10px;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+    .legend-item { display: inline-flex; align-items: center; gap: 6px; }
+    .lg {
+      width: 14px; height: 10px; border-radius: 2px;
+      background: var(--c); display: inline-block; flex-shrink: 0;
+    }
+    .lg.hatch {
+      background: repeating-linear-gradient(45deg, var(--c) 0 3px, transparent 3px 6px);
+      border: 1px solid var(--c);
+    }
+    .figure-caption {
+      font-size: 0.87rem;
+      color: var(--muted);
+      margin: 12px 0 0;
+      line-height: 1.65;
+    }
+    .figure-caption strong { color: var(--ink); }
+
+    /* ── Layer stack ─────────────────────────── */
+    .stack { margin: 1.4em 0; }
+    .layer {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 11px 16px;
+      margin-bottom: 4px;
+    }
+    .layer-name {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.86rem;
+      font-weight: 600;
+      color: var(--accent);
+    }
+    .layer p { margin: 3px 0 0; font-size: 0.88rem; color: var(--ink); }
+    .layer-arrow {
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.8rem;
+      line-height: 1.1;
+      margin: 0 0 4px;
+    }
+
+    /* ── Responsive ──────────────────────────── */
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+      .figure canvas { height: 380px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>verl Agentic</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#breaks">What breaks</a>
+    <a href="#stack">The AgentLoop stack</a>
+    <a href="#routing">Routing &amp; stickiness</a>
+    <a href="#tito">Token-in-token-out</a>
+    <a href="#toolagentloop">ToolAgentLoop</a>
+    <a href="#tools">Defining tools</a>
+    <a href="#sandbox">Sandbox Fusion</a>
+    <a href="#interaction">Interaction API</a>
+    <a href="#postprocess">Back to DataProto</a>
+    <a href="#custom">Custom loops</a>
+    <a href="#proxy">Mask from outside</a>
+    <a href="#config">Config map</a>
+    <a href="#refs">References</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">RL Frameworks · VeRL</span>
+  <h1>Agentic RL Training in verl</h1>
+  <p>How a multi-turn, tool-calling rollout becomes a trainable batch. The AgentLoop stack,
+  sticky-session routing, the token-in-token-out invariant that keeps the loss mask honest,
+  and the sandbox layer that runs the tools.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="note">
+    Prerequisites: <a href="verl-architecture.html">verl Architecture</a> (WorkerGroup, ResourcePool,
+    DataProto, the HybridEngine) and <a href="agentic-rl.html">Agentic RL</a> (the agent-as-MDP framing,
+    reward design over long horizons). Companion pages:
+    <a href="verl-async-training.html">Async Training in verl</a> (what happens when the trainer stops
+    waiting for the whole batch) and <a href="grpo-training-walkthrough.html">GRPO Training Walkthrough</a>
+    (the single-turn version of the same loop).
+  </div>
+
+  <p>In single-turn RL, generation is one function call: hand <code>generate_sequences</code> a batch of
+  prompts, get back a batch of responses. Every token in the response came from the policy, every
+  sequence is the same shape, and the reward is a function of the final string.</p>
+
+  <p>Agentic RL breaks all three of those assumptions at once. This page traces what verl does about
+  it — not the config surface, but the mechanism underneath: which object runs the turn loop, how it
+  reaches the inference engine, and what invariant has to hold for the resulting tensors to be a
+  valid policy-gradient batch at all.</p>
+
+  <!-- ── §1 What breaks ─────────────────────── -->
+  <h2 id="breaks">1. Three Things a Turn Loop Breaks</h2>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th style="width:26%">Assumption</th><th>How multi-turn violates it</th><th>verl's answer</th></tr>
+      <tr>
+        <td><strong>The batch is one forward pass</strong></td>
+        <td>A trajectory alternates generate → tool call → generate. The number of round trips is
+          data-dependent: one prompt finishes in 2 turns, another in 15. A single batched
+          <code>generate</code> across SPMD ranks cannot express that.</td>
+        <td><strong>Server mode.</strong> Each rollout replica runs behind an OpenAI-compatible
+          server; an <em>agent loop</em> per trajectory issues its own requests and awaits them
+          independently. <code>rollout.mode: async</code>.</td>
+      </tr>
+      <tr>
+        <td><strong>Every response token is policy output</strong></td>
+        <td>Tool results are injected into the context. The model did not generate them, so they
+          carry no <code>log π</code> the gradient may touch — but they <em>do</em> occupy the
+          response, and later tokens are conditioned on them.</td>
+        <td><strong>The response mask.</strong> <code>AgentLoopOutput</code> carries a per-token
+          mask that is 1 on assistant tokens and 0 on tool tokens. §4.</td>
+      </tr>
+      <tr>
+        <td><strong>Reward is a function of a string</strong></td>
+        <td>The score may depend on environment state the string never shows — did the unit tests
+          pass, did the SQL return the right rows, is the file system in the right state.</td>
+        <td><strong>Stateful tools.</strong> A <code>BaseTool</code> instance lives for the duration
+          of one rollout and exposes <code>calc_reward</code> alongside <code>execute</code>. §6.</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="caution">
+    <strong><code>rollout.mode: async</code> is not async training.</strong> It selects
+    per-request concurrency against a rollout server — which is exactly what multi-turn needs — and
+    says nothing about whether the trainer consumes stale data. That is
+    <code>trainer.v1.trainer_mode</code>, covered on the <a href="verl-async-training.html">async
+    training page</a>. Agentic rollouts are the main reason server mode exists, but they are
+    on-policy until you change the <em>other</em> knob.
+  </div>
+
+  <!-- ── §2 Stack ───────────────────────────── -->
+  <h2 id="stack">2. The AgentLoop Stack</h2>
+
+  <p>Four layers sit between the trainer's <code>generate_sequences</code> call and the inference
+  kernel. Each is a Ray actor tier with one job:</p>
+
+  <div class="figure">
+    <svg class="diagram" viewBox="0 0 810 720" role="img"
+         aria-label="Architecture diagram: RayPPOTrainer calls AgentLoopManager, which chunks the batch across AgentLoopWorker actors; each worker runs agent loops that call tools in the environment plane and issue token-level generate requests through AsyncLLMServerManager to per-replica inference servers; AgentLoopOutput returns to the trainer as a padded DataProto.">
+      <defs>
+        <marker id="ar-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path class="mk-f" d="M0,1 L10,5 L0,9 z"/>
+        </marker>
+        <marker id="ar-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path class="mk-r" d="M0,1 L10,5 L0,9 z"/>
+        </marker>
+      </defs>
+
+      <!-- ── Trainer ── -->
+      <rect class="d-box" x="48" y="20" width="396" height="62" rx="8"/>
+      <text class="d-t" x="246" y="48" text-anchor="middle">RayPPOTrainer.fit()</text>
+      <text class="d-s" x="246" y="70" text-anchor="middle">one call — generate_sequences(batch)</text>
+
+      <path class="d-a" d="M360,82 V110"/>
+      <text class="d-s" x="370" y="104">prompts</text>
+
+      <!-- return path to the trainer -->
+      <path class="d-r" d="M64,236 V86"/>
+      <text class="d-s" x="74" y="104">AgentLoopOutput → padded DataProto</text>
+
+      <!-- ── Manager ── -->
+      <rect class="d-box" x="78" y="116" width="336" height="86" rx="8"/>
+      <text class="d-t" x="246" y="144" text-anchor="middle">AgentLoopManager</text>
+      <text class="d-s" x="246" y="167" text-anchor="middle">spawn dp_size servers · node affinity</text>
+      <text class="d-s" x="246" y="188" text-anchor="middle">chunk the batch · wake_up() / sleep()</text>
+
+      <path class="d-a" d="M246,202 V218 H111 V230"/>
+      <path class="d-a" d="M246,202 V230"/>
+      <path class="d-a" d="M246,202 V218 H381 V230"/>
+
+      <!-- ── Workers ── -->
+      <rect class="d-box" x="48" y="236" width="126" height="104" rx="8"/>
+      <text class="d-t sm" x="111" y="263" text-anchor="middle">AgentLoopWorker</text>
+      <text class="d-s" x="111" y="285" text-anchor="middle">Ray actor · CPU</text>
+      <text class="d-s mono" x="111" y="308" text-anchor="middle">AgentLoop ×N</text>
+      <text class="d-s" x="111" y="329" text-anchor="middle">asyncio tasks</text>
+
+      <rect class="d-box" x="183" y="236" width="126" height="104" rx="8"/>
+      <text class="d-t sm" x="246" y="263" text-anchor="middle">AgentLoopWorker</text>
+      <text class="d-s" x="246" y="285" text-anchor="middle">Ray actor · CPU</text>
+      <text class="d-s mono" x="246" y="308" text-anchor="middle">AgentLoop ×N</text>
+      <text class="d-s" x="246" y="329" text-anchor="middle">asyncio tasks</text>
+
+      <rect class="d-box" x="318" y="236" width="126" height="104" rx="8"/>
+      <text class="d-t sm" x="381" y="263" text-anchor="middle">AgentLoopWorker</text>
+      <text class="d-s" x="381" y="285" text-anchor="middle">Ray actor · CPU</text>
+      <text class="d-s mono" x="381" y="308" text-anchor="middle">AgentLoop ×N</text>
+      <text class="d-s" x="381" y="329" text-anchor="middle">asyncio tasks</text>
+
+      <!-- workers ↔ environment plane -->
+      <path class="d-a" d="M444,268 H536"/>
+      <text class="d-s" x="492" y="258" text-anchor="middle">tool_calls</text>
+      <path class="d-r" d="M540,310 H448"/>
+      <text class="d-s" x="492" y="331" text-anchor="middle">results</text>
+
+      <path class="d-a" d="M111,340 V358 H246 V374"/>
+      <path class="d-a" d="M246,340 V374"/>
+      <path class="d-a" d="M381,340 V358 H246 V374"/>
+      <text class="d-s" x="448" y="366">generate()</text>
+
+      <!-- ── Server manager ── -->
+      <rect class="d-box" x="48" y="382" width="396" height="76" rx="8"/>
+      <text class="d-t" x="246" y="414" text-anchor="middle">AsyncLLMServerManager</text>
+      <text class="d-s" x="246" y="438" text-anchor="middle">least-request heap · sticky request_id → server</text>
+
+      <path class="d-a" d="M246,458 V474 H111 V488"/>
+      <path class="d-a" d="M246,458 V488"/>
+      <path class="d-a" d="M246,458 V474 H381 V488"/>
+
+      <!-- ── Servers ── -->
+      <rect class="d-box gpu" x="48" y="496" width="126" height="88" rx="8"/>
+      <text class="d-t sm" x="111" y="525" text-anchor="middle">AsyncServer</text>
+      <text class="d-s" x="111" y="548" text-anchor="middle">SGLang / vLLM</text>
+      <text class="d-s" x="111" y="569" text-anchor="middle">Ray actor</text>
+
+      <rect class="d-box gpu" x="183" y="496" width="126" height="88" rx="8"/>
+      <text class="d-t sm" x="246" y="525" text-anchor="middle">AsyncServer</text>
+      <text class="d-s" x="246" y="548" text-anchor="middle">SGLang / vLLM</text>
+      <text class="d-s" x="246" y="569" text-anchor="middle">Ray actor</text>
+
+      <rect class="d-box gpu" x="318" y="496" width="126" height="88" rx="8"/>
+      <text class="d-t sm" x="381" y="525" text-anchor="middle">AsyncServer</text>
+      <text class="d-s" x="381" y="548" text-anchor="middle">SGLang / vLLM</text>
+      <text class="d-s" x="381" y="569" text-anchor="middle">Ray actor</text>
+
+      <text class="d-s" x="454" y="548">× dp_size</text>
+
+      <path class="d-a" d="M111,584 V602 H246 V616"/>
+      <path class="d-a" d="M246,584 V616"/>
+      <path class="d-a" d="M381,584 V602 H246 V616"/>
+
+      <!-- ── Engine ── -->
+      <rect class="d-box gpu" x="48" y="624" width="396" height="72" rx="8"/>
+      <text class="d-t" x="246" y="656" text-anchor="middle">inference engine — GPU</text>
+      <text class="d-s" x="246" y="680" text-anchor="middle">token-in-token-out · forwards to tp_rank = 0</text>
+
+      <!-- ── Environment plane ── -->
+      <rect class="d-box env" x="540" y="236" width="260" height="134" rx="8"/>
+      <text class="d-t" x="670" y="266" text-anchor="middle">environment plane</text>
+      <text class="d-s mono" x="670" y="292" text-anchor="middle">@function_tool · BaseTool</text>
+      <text class="d-s" x="670" y="313" text-anchor="middle">create → execute × turns</text>
+      <text class="d-s" x="670" y="333" text-anchor="middle">→ calc_reward → release</text>
+      <text class="d-s mono" x="670" y="358" text-anchor="middle">BaseInteraction</text>
+
+      <path class="d-a" d="M660,370 V412"/>
+      <text class="d-s" x="670" y="396">code</text>
+
+      <rect class="d-box env" x="540" y="416" width="260" height="92" rx="8"/>
+      <text class="d-t" x="670" y="446" text-anchor="middle">Sandbox Fusion (FaaS)</text>
+      <text class="d-s" x="670" y="470" text-anchor="middle">TokenBucketWorker — semaphore</text>
+      <text class="d-s mono" x="670" y="492" text-anchor="middle">rate_limit · timeout</text>
+    </svg>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:#0d9488"></span> policy path — tokens the gradient sees</span>
+      <span class="legend-item"><span class="lg" style="--c:#f59e0b"></span> environment plane — mask-0 tokens</span>
+      <span class="legend-item">dashed = return path (tool results, and the batch home to the trainer)</span>
+    </div>
+    <p class="figure-caption">
+      <strong>One trainer call fans out into thousands of independent turn loops and collapses back
+      into one padded batch.</strong> The whole left column is the policy path; the right column is
+      everything the policy does <em>not</em> get gradient for. Note what crosses the boundary
+      between them — only token IDs — and note that every box above the servers runs on CPU, so
+      tool latency and sandbox round trips never occupy a GPU. The fan-out at
+      <code>AgentLoopManager</code> and the converge at <code>AsyncLLMServerManager</code> are the two
+      places a straggler trajectory stalls the whole step.
+    </p>
+  </div>
+
+  <p>Layer by layer:</p>
+
+  <div class="stack">
+    <div class="layer">
+      <div class="layer-name">AgentLoopManager</div>
+      <p>Top-level orchestrator, owned by the trainer. Spins up <code>dp_size</code> server actors
+      with node affinity so each is co-located with the compute workers holding that data-parallel
+      shard's weights, spawns <code>num_workers</code> <code>AgentLoopWorker</code>s, chunks the prompt
+      batch across them, and brackets the whole generation phase with
+      <code>wake_up()</code> / <code>sleep()</code> to release inference KV memory back to training.</p>
+    </div>
+    <div class="layer-arrow">↓ one chunk of prompts per worker</div>
+    <div class="layer">
+      <div class="layer-name">AgentLoopWorker</div>
+      <p>Stateful Ray actor. Instantiates one <code>AgentLoop</code> per prompt in its chunk —
+      roughly <code>train_batch_size / num_workers</code> of them — resolved from the
+      <code>_agent_loop_registry</code> by <code>agent_name</code>, runs them concurrently as asyncio
+      tasks, then post-processes the returned outputs into padded tensors.</p>
+    </div>
+    <div class="layer-arrow">↓ one <code>generate()</code> call per turn, per trajectory</div>
+    <div class="layer">
+      <div class="layer-name">AsyncLLMServerManager</div>
+      <p>Client-side load balancer. Least-request routing over a weighted heap, plus sticky
+      sessions so every turn of one trajectory lands on the same server. §3.</p>
+    </div>
+    <div class="layer-arrow">↓</div>
+    <div class="layer">
+      <div class="layer-name">AsyncSGLangServer / vLLM equivalent</div>
+      <p>Ray actor wrapping the engine, exposing a <strong>token-in-token-out</strong>
+      <code>generate()</code> that forwards to the <code>tp_rank=0</code> master worker. Both SGLang
+      and vLLM are supported backends.</p>
+    </div>
+  </div>
+
+  <p>The shape worth noticing: the agent loop runs on <strong>CPU actors</strong>, not on the GPU
+  workers. Tool execution, HTTP calls to a sandbox, parsing, and turn bookkeeping all happen off the
+  critical GPU path, and the only thing crossing into GPU-land is a token-level generate request.
+  This is the same trainer/agent disaggregation that
+  <a href="https://arxiv.org/html/2508.03680">Agent Lightning</a> and
+  <a href="https://arxiv.org/pdf/2511.16108">SkyRL-Agent</a> arrive at independently — it is the
+  dominant design in the field, not a verl idiosyncrasy.</p>
+
+  <!-- ── §3 Routing ─────────────────────────── -->
+  <h2 id="routing">3. Least-Request Routing, and Why Sessions Are Sticky</h2>
+
+  <p><code>AsyncLLMServerManager</code> keeps a weighted heap of server handles keyed by in-flight
+  request count, so a new trajectory's first turn goes to the least-busy replica. That part is
+  ordinary load balancing. The interesting part is what happens on turn two:</p>
+
+<pre><code>if request_id in self.request_id_to_server:
+    return self.request_id_to_server[request_id]   # session affinity
+# else: pop the least-loaded server off the heap</code></pre>
+
+  <p>An LRU map pins <code>request_id → server</code> for the life of the trajectory. The reason is
+  the <a href="../inference/kv-cache.html">KV cache</a>: turn \(k{+}1\)'s prompt is turn \(k\)'s prompt plus the
+  assistant response plus the tool result — a strict extension of a prefix that server already has
+  resident. Routing that turn elsewhere throws away the prefix and re-prefills the entire
+  conversation from scratch. With a 10-turn trajectory and a growing context, the difference between
+  sticky and round-robin is the difference between prefilling \(O(n)\) new tokens per turn and
+  \(O(n^2)\) total.</p>
+
+  <div class="note">
+    Stickiness and least-request pull against each other: pinning long trajectories to a replica
+    means load imbalance persists for the whole trajectory, and one server can accumulate several
+    15-turn sessions while another drains. The heap only rebalances at trajectory boundaries. This
+    is the multi-turn version of the straggler problem that
+    <a href="verl-async-training.html#partial">partial rollout</a> exists to absorb.
+  </div>
+
+  <!-- ── §4 Token in token out ──────────────── -->
+  <h2 id="tito">4. Token-in-Token-Out, and the Response Mask</h2>
+
+  <p>This is the section that matters most, because getting it wrong produces a run that trains
+  without erroring and simply fails to converge.</p>
+
+  <p>An agent loop returns an <code>AgentLoopOutput</code> with three fields:</p>
+
+  <div class="result">
+    <div class="result-label">AgentLoopOutput</div>
+    <p style="margin:0; text-align:left; font-size:0.93rem;">
+      <code>prompt_ids</code> — the initial templated prompt<br>
+      <code>response_ids</code> — <em>everything after it</em>: assistant tokens <strong>and</strong>
+      tool-response tokens, interleaved in generation order<br>
+      <code>response_mask</code> — 1 where the policy generated the token, 0 where the environment did
+    </p>
+  </div>
+
+  <p>The mask is what makes the batch trainable. The PPO/GRPO objective sums over tokens the policy
+  is responsible for; a tool result has no \(\log \pi_\theta\) to differentiate, and including it
+  would have the model optimizing to predict the sandbox's stdout. So the mask zeroes those
+  positions in the loss — while the tokens stay in <code>input_ids</code>, because the assistant's
+  later tokens were conditioned on them and the forward pass must see the same context the rollout
+  saw.</p>
+
+  <h3>Why the tokens must be spliced, not re-tokenized</h3>
+
+  <p>The tempting implementation is to accumulate a chat-message list, then at the end call
+  <code>apply_chat_template</code> once and tokenize the whole conversation. verl explicitly does not
+  do this, and the docs flag it as a correctness issue that "significantly impacts RL training
+  convergence."</p>
+
+  <p>The problem is that tokenization does not commute with concatenation. Let \(T(\cdot)\) be the
+  tokenizer and \(a, b\) two adjacent message strings:</p>
+
+  <div class="result">
+    <div class="result-label">The invariant that fails</div>
+    \[
+      T(a \mathbin{\|} b) \;\neq\; T(a) \mathbin{\|} T(b)
+    \]
+  </div>
+
+  <p>BPE merges across the seam. A trailing space plus a leading word may merge into one token; a
+  tool result that ends mid-word changes how the next chat-template delimiter tokenizes. Decode-encode
+  round trips during tool-call extraction introduce further drift. The consequence is that the token
+  sequence you'd get by re-tokenizing at the end is <em>not</em> the sequence the model actually
+  sampled — so the log-probs you compute in the training forward pass belong to a slightly different
+  string than the one the policy produced, and the importance ratio \(\pi_\theta / \pi_{\text{old}}\)
+  is silently wrong on exactly the tokens near every turn boundary.</p>
+
+  <p>verl avoids it two ways at once. Generation is <strong>token-in-token-out</strong>: the agent
+  loop passes token IDs to the server and receives token IDs back, never round-tripping through text.
+  And where text must be templated — the tool-result messages — it uses <strong>delta
+  tokenization</strong>: template the message list at length \(i\) and at length \(i{+}1\), and take
+  the difference as the new turn's tokens. A
+  <code>tokenization_sanity_check_mode</code> (<code>strict</code> / <code>ignore_strippable</code> /
+  <code>disable</code>) audits the result against a full re-tokenization and warns on divergence.</p>
+
+  <div class="caution">
+    If you write a custom agent loop (§10), this invariant is <em>your</em> responsibility. Building
+    <code>response_ids</code> by tokenizing strings you assembled yourself is the single most common
+    way to produce a silently broken agentic run. Turn <code>tokenization_sanity_check_mode</code> to
+    <code>strict</code> while developing one.
+  </div>
+
+  <h3>Where the response budget actually goes</h3>
+
+  <p>The mask has a second consequence that is easy to miss until a run underperforms: tool tokens
+  consume <code>response_length</code> without contributing gradient. A verbose tool — a stack trace,
+  a full file dump, an un-truncated SQL result set — can eat most of the budget, leaving few trainable
+  tokens per trajectory and truncating the trajectory before the task is finished.</p>
+
+  <div class="figure">
+    <div class="controls">
+      <label class="control">turns
+        <input type="range" id="c-turns" min="1" max="14" step="1" value="6">
+        <span class="val" id="v-turns">6</span></label>
+      <label class="control">assistant tok/turn
+        <input type="range" id="c-asst" min="20" max="600" step="10" value="140">
+        <span class="val" id="v-asst">140</span></label>
+      <label class="control">tool tok/turn
+        <input type="range" id="c-tool" min="10" max="2000" step="10" value="420">
+        <span class="val" id="v-tool">420</span></label>
+      <label class="control">response_length
+        <input type="range" id="c-budget" min="1024" max="16384" step="256" value="4096">
+        <span class="val" id="v-budget">4096</span></label>
+    </div>
+    <canvas id="plot-tape" aria-label="Interactive diagram of a multi-turn response tape showing assistant and tool segments, the loss mask, and the response_length truncation point"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:#0d9488"></span> assistant tokens (mask = 1, trainable)</span>
+      <span class="legend-item"><span class="lg" style="--c:#f59e0b"></span> tool tokens (mask = 0)</span>
+      <span class="legend-item"><span class="lg hatch" style="--c:#9ca3af"></span> past <code>response_length</code> — never generated</span>
+    </div>
+    <p class="figure-caption">
+      <strong>Tool output is charged to the response budget at full price and refunded no gradient.</strong>
+      Push <em>tool tok/turn</em> up and watch the trainable fraction collapse while the truncation
+      line marches left — the trajectory dies mid-task and the turns past the dashed line never
+      happen. The fix is rarely a bigger budget: it is truncating tool output at the tool, which is
+      why <code>execute()</code> returning a summarized result is a modelling decision, not plumbing.
+    </p>
+  </div>
+
+  <!-- ── §5 ToolAgentLoop ───────────────────── -->
+  <h2 id="toolagentloop">5. ToolAgentLoop — the Built-In ReAct Loop</h2>
+
+  <p>verl ships <code>ToolAgentLoop</code>, a <a href="react.html">ReAct</a>-style loop that covers the
+  common case. Its body, stripped to the essentials:</p>
+
+  <div class="step">
+    <div class="step-label">One iteration</div>
+    <ol style="margin:0">
+      <li><code>server_manager.generate(prompt_ids)</code> → response tokens.</li>
+      <li>Append them to <code>prompt_ids</code>; append <code>1</code>s to the mask.</li>
+      <li>Parse the response for tool calls in the configured <code>multi_turn.format</code>.
+        <strong>No tool call → the trajectory is done.</strong></li>
+      <li>Dispatch the calls concurrently via <code>_call_tool()</code>; await all results.</li>
+      <li>Template the results into tool messages, delta-tokenize, append; append <code>0</code>s to
+        the mask.</li>
+      <li>Loop, unless <code>max_assistant_turns</code> is reached or the accumulated length would
+        exceed <code>response_length</code>.</li>
+    </ol>
+  </div>
+
+  <p>The part that is easy to get wrong when reading the stack diagram above: <strong>the loop does
+  not hold a GPU across turns.</strong> Each turn is a self-contained request that is issued,
+  served, and completed. Between them this trajectory occupies no compute — it is a Python
+  coroutine awaiting a tool result on a CPU actor — and the engine's
+  <a href="../inference/continuous-batching.html">continuous batching</a> backfills those slots with turns
+  belonging to the thousands of other trajectories in flight. Utilization stays high not because any
+  one trajectory is efficient, but because there are enough of them that someone always has a turn
+  ready:</p>
+
+  <div class="figure">
+    <svg class="diagram" viewBox="0 0 810 372" role="img"
+         aria-label="Swimlane timeline of two turns. The agent loop issues a generate request, the GPU produces assistant tokens, the loop parses a tool call, the sandbox executes it, the loop appends the result with mask 0, and the next turn repeats with a longer prompt. Between this trajectory's generate calls the GPU is filled by other trajectories' turns.">
+      <defs>
+        <marker id="ar-f2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path class="mk-f" d="M0,1 L10,5 L0,9 z"/>
+        </marker>
+        <marker id="ar-r2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path class="mk-r" d="M0,1 L10,5 L0,9 z"/>
+        </marker>
+        <pattern id="hx" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <line class="hx-l" x1="0" y1="0" x2="0" y2="7"/>
+        </pattern>
+      </defs>
+
+      <!-- ── lanes ── -->
+      <rect class="d-lane" x="158" y="60" width="632" height="52" rx="4"/>
+      <rect class="d-lane" x="158" y="150" width="632" height="52" rx="4"/>
+      <rect class="d-lane" x="158" y="240" width="632" height="52" rx="4"/>
+
+      <text class="d-t sm" x="142" y="82" text-anchor="end">inference server</text>
+      <text class="d-xs" x="142" y="100" text-anchor="end">GPU</text>
+      <text class="d-t sm" x="142" y="172" text-anchor="end">agent loop</text>
+      <text class="d-xs" x="142" y="190" text-anchor="end">CPU actor</text>
+      <text class="d-t sm" x="142" y="262" text-anchor="end">tool · sandbox</text>
+      <text class="d-xs" x="142" y="280" text-anchor="end">CPU</text>
+
+      <!-- ── GPU lane: other trajectories fill the gaps ── -->
+      <rect class="d-hatch" x="158" y="60" width="46" height="52"/>
+      <rect class="d-hatch" x="316" y="60" width="182" height="52"/>
+      <rect class="d-hatch" x="610" y="60" width="180" height="52"/>
+      <text class="d-xs" x="407" y="90" text-anchor="middle">other trajectories</text>
+
+      <!-- ── turn 1 ── -->
+      <rect class="d-blk gpu" x="208" y="60" width="104" height="52" rx="5"/>
+      <text class="d-xs on" x="260" y="82" text-anchor="middle">generate</text>
+      <text class="d-xs" x="260" y="100" text-anchor="middle">mask 1</text>
+
+      <path class="d-a2" d="M204,150 V116"/>
+      <text class="d-xs" x="210" y="130">prompt = P</text>
+      <path class="d-a2" d="M312,116 V146"/>
+      <text class="d-xs" x="318" y="142">A₁ tokens</text>
+
+      <rect class="d-blk" x="318" y="150" width="42" height="52" rx="5"/>
+      <text class="d-xs on" x="339" y="181" text-anchor="middle">parse</text>
+
+      <path class="d-a2" d="M366,202 V236"/>
+      <text class="d-xs" x="372" y="224">call</text>
+      <rect class="d-blk env" x="366" y="240" width="78" height="52" rx="5"/>
+      <text class="d-xs on" x="405" y="271" text-anchor="middle">execute</text>
+      <path class="d-r2" d="M444,236 V206"/>
+      <text class="d-xs" x="450" y="224">result · mask 0</text>
+
+      <rect class="d-blk" x="450" y="150" width="42" height="52" rx="5"/>
+      <text class="d-xs on" x="471" y="181" text-anchor="middle">append</text>
+
+      <!-- ── turn 2 ── -->
+      <rect class="d-blk gpu" x="502" y="60" width="104" height="52" rx="5"/>
+      <text class="d-xs on" x="554" y="82" text-anchor="middle">generate</text>
+      <text class="d-xs" x="554" y="100" text-anchor="middle">mask 1</text>
+
+      <path class="d-a2" d="M498,150 V116"/>
+      <text class="d-xs" x="504" y="130">prompt = P + A₁ + T₁</text>
+      <path class="d-a2" d="M606,116 V146"/>
+      <text class="d-xs" x="612" y="142">A₂ tokens</text>
+
+      <rect class="d-blk" x="612" y="150" width="42" height="52" rx="5"/>
+      <text class="d-xs on" x="633" y="181" text-anchor="middle">parse</text>
+
+      <path class="d-a2" d="M660,202 V236"/>
+      <text class="d-xs" x="666" y="224">call</text>
+      <rect class="d-blk env" x="660" y="240" width="78" height="52" rx="5"/>
+      <text class="d-xs on" x="699" y="271" text-anchor="middle">execute</text>
+      <path class="d-r2" d="M738,236 V206"/>
+      <text class="d-xs" x="744" y="224">result</text>
+
+      <rect class="d-blk" x="744" y="150" width="42" height="52" rx="5"/>
+      <text class="d-xs on" x="765" y="181" text-anchor="middle">append</text>
+
+      <!-- ── time axis ── -->
+      <path class="d-axis" d="M158,316 H790"/>
+      <path class="d-axis" d="M158,310 V322"/>
+      <path class="d-axis" d="M496,310 V322"/>
+      <path class="d-axis" d="M790,310 V322"/>
+      <text class="d-xs" x="327" y="340" text-anchor="middle">turn 1</text>
+      <text class="d-xs" x="643" y="340" text-anchor="middle">turn 2</text>
+      <text class="d-xs" x="790" y="364" text-anchor="end">wall-clock for one trajectory →</text>
+    </svg>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:#0d9488"></span> GPU work for <em>this</em> trajectory</span>
+      <span class="legend-item"><span class="lg" style="--c:#f59e0b"></span> tool execution — no GPU held</span>
+      <span class="legend-item"><span class="lg hatch" style="--c:#9ca3af"></span> other trajectories' turns</span>
+    </div>
+    <p class="figure-caption">
+      <strong>A turn is an ordinary request that completes; nothing is held open between turns.</strong>
+      One trajectory occupies the GPU only during the teal blocks — while its tool runs, it holds no
+      compute at all, and the engine backfills with other trajectories' turns (hatched). What makes
+      turn 2 cheap is that its prompt is turn 1's prompt <em>extended</em>, so the pinned server still
+      has the prefix in KV and prefills only the new tokens. Durations here are illustrative, not
+      measured; in practice the teal and amber blocks vary by orders of magnitude across trajectories,
+      which is what makes the rollout tail so heavy.
+    </p>
+  </div>
+
+  <p>Three termination conditions, and they mean different things for the reward. A clean stop (no
+  tool call) is the agent declaring it is finished. Hitting <code>max_assistant_turns</code> or the
+  length cap is a <em>truncation</em> — the trajectory is still trainable, but the task was never
+  attempted to completion, and whether that scores as failure or as neutral is a reward-design
+  choice you have to make deliberately. Silently scoring truncations as 0 teaches brevity; scoring
+  them as failure teaches the model to hurry. See
+  <a href="agentic-rl.html#reward">Agentic RL §3</a>.</p>
+
+  <p>Two consequences follow, and they are the reason multi-turn rollout is a systems problem rather
+  than a prompting one. First, a trajectory's wall-clock is
+  \(\sum_k (\text{generate}_k + \text{tool}_k)\) — a sum over turns, where the tool terms involve
+  no GPU at all. A 15-turn trajectory can take 30× the wall-clock of a 2-turn one while consuming
+  nowhere near 30× the GPU time, which is exactly the straggler shape that
+  <a href="verl-async-training.html#partial">partial rollout</a> and async training exist to absorb.</p>
+
+  <p>Second, the prefix. Turn \(k{+}1\)'s prompt is turn \(k\)'s prompt with the assistant response
+  and tool result appended — never edited, only extended. That monotonicity is what makes the KV
+  cache reusable and what makes §3's sticky routing worth the load imbalance it causes. It is also
+  why the token-splicing discipline of §4 is not optional: the loop is literally carrying a token
+  buffer forward across turns, and any re-tokenization would silently rewrite history the model has
+  already conditioned on.</p>
+
+  <!-- ── §6 Tools ───────────────────────────── -->
+  <h2 id="tools">6. Defining Tools — Two Levels</h2>
+
+  <p>Tools come in a stateless and a stateful flavor, and the choice is about whether the tool needs
+  to remember anything across turns of one rollout.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th style="width:20%"></th><th><code>@function_tool</code></th><th><code>BaseTool</code> subclass</th></tr>
+      <tr>
+        <td><strong>Shape</strong></td>
+        <td>A decorated Python function. The OpenAI-style JSON schema is inferred from the signature
+          and docstring.</td>
+        <td>A class implementing four async methods; the schema is declared explicitly in YAML.</td>
+      </tr>
+      <tr>
+        <td><strong>State</strong></td>
+        <td>None. Each call is independent.</td>
+        <td>Per-rollout instance state, keyed by <code>instance_id</code>.</td>
+      </tr>
+      <tr>
+        <td><strong>Config key</strong></td>
+        <td><code>multi_turn.function_tool_path</code></td>
+        <td><code>multi_turn.tool_config_path</code></td>
+      </tr>
+      <tr>
+        <td><strong>Use when</strong></td>
+        <td>Pure functions — a calculator, a formatter, a stateless lookup.</td>
+        <td>Anything with a session: a database connection, a checked-out repo, a browser, a
+          sandbox whose file system must persist across turns. Also required if the tool
+          contributes to the reward.</td>
+      </tr>
+    </table>
+  </div>
+
+  <h3>The BaseTool lifecycle</h3>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th style="width:26%">Method</th><th>Called</th><th>Does</th></tr>
+      <tr><td><code>create(instance_id)</code></td><td>Once, at rollout start</td>
+        <td>Provision the session — open the connection, clone the repo, allocate the sandbox.</td></tr>
+      <tr><td><code>execute(instance_id, parameters)</code></td><td>Every tool call</td>
+        <td>Run it; return the tool result plus metadata. This is the string that becomes mask-0
+          tokens, so its length is a budget decision (§4).</td></tr>
+      <tr><td><code>calc_reward(instance_id)</code></td><td>At rollout end</td>
+        <td>Turn accumulated tool state into a scalar — tests passed, rows matched, goal reached.
+          This is how environment state that never appeared in the text reaches the advantage.</td></tr>
+      <tr><td><code>release(instance_id)</code></td><td>At rollout end</td>
+        <td>Tear down. <strong>Non-optional at scale</strong> — a leak here is a leaked container per
+          trajectory, thousands per step.</td></tr>
+    </table>
+  </div>
+
+  <p>Tools may also return multi-modal content —
+  <code>ToolResponse(image=[...], video=[...], text="...")</code> — for VLM agents. Note the sharp
+  edge: the docs call for <code>return_multi_modal_inputs: False</code> in the dataset config to avoid
+  a key conflict during multi-turn training.</p>
+
+  <!-- ── §7 Sandbox ─────────────────────────── -->
+  <h2 id="sandbox">7. Sandbox Fusion — Running Code Without Melting the Cluster</h2>
+
+  <p>The canonical stateful tool is code execution, and verl integrates
+  <strong>Sandbox Fusion</strong>: a FaaS endpoint that runs the model's code out-of-process and
+  returns stdout as the tool result. The RL-specific engineering here is not the execution — it is
+  the <em>backpressure</em>.</p>
+
+  <p>Consider the arithmetic. A batch of 512 prompts × 8 rollouts per prompt = 4096 concurrent
+  trajectories, each of which may fire a code execution every turn. Without a limiter, one training
+  step opens tens of thousands of near-simultaneous connections to the sandbox service, which either
+  falls over or degrades until every rollout times out — and a timed-out tool call becomes garbage
+  training data, not a dropped request.</p>
+
+  <p>verl throttles with a global token bucket implemented as a Ray actor,
+  <code>TokenBucketWorker</code>, holding a semaphore shared across every data-parallel rank. The
+  detail worth stealing is its concurrency-group split: <strong>acquire is single-threaded, release
+  runs with 10 threads</strong>. Serializing acquisition imposes a fair FIFO order on submission so no
+  rank starves, while parallel release keeps token return from becoming the new bottleneck.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th style="width:34%">Key</th><th>Default</th><th>Meaning</th></tr>
+      <tr><td><code>sandbox_fusion_url</code></td><td>—</td><td>The FaaS endpoint.</td></tr>
+      <tr><td><code>rate_limit</code></td><td><code>10</code></td><td>Max concurrent executions globally. The single most important knob; it is a property of your sandbox service's capacity, not of your GPU count.</td></tr>
+      <tr><td><code>enable_global_rate_limit</code></td><td><code>True</code></td><td>Whether the token bucket is active at all.</td></tr>
+      <tr><td><code>default_timeout</code></td><td><code>30</code> s</td><td>Per-execution wall clock. Interacts with the straggler tail — a long timeout multiplied by max turns is your worst-case trajectory latency.</td></tr>
+      <tr><td><code>default_language</code></td><td><code>python</code></td><td>Runtime selection.</td></tr>
+      <tr><td><code>num_workers</code></td><td>—</td><td>Threads per data-parallel rank issuing requests to runners.</td></tr>
+    </table>
+  </div>
+
+  <div class="caution">
+    <strong>Grader isolation is on you.</strong> If the reward's test suite runs in the same sandbox
+    the agent controls, the policy can find it — writing to the test file, monkey-patching the
+    assertion, or exiting 0. Prime Intellect, which hosts one of the largest environment catalogs,
+    withholds grading material until scoring time and still describes co-locating agent and grader as
+    mitigation rather than a guarantee. Treat any reward computed inside the agent's own sandbox as
+    a reward-hacking surface.
+  </div>
+
+  <!-- ── §8 Interaction ─────────────────────── -->
+  <h2 id="interaction">8. The Interaction API — When the Environment Talks Back</h2>
+
+  <p>Tools model <em>the agent acting on the world</em>. Some tasks need the other direction: a user
+  or environment that responds in the <code>user</code> role — clarifying a request, rejecting a plan,
+  supplying the next observation. That is a separate abstraction, <code>BaseInteraction</code>,
+  configured by <code>multi_turn.interaction_config_path</code> and bounded by
+  <code>max_user_turns</code> alongside <code>max_assistant_turns</code>.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th style="width:32%">Method</th><th>Returns</th><th>Role</th></tr>
+      <tr><td><code>start_interaction(...)</code></td><td><code>instance_id</code></td><td>Open a session for this rollout.</td></tr>
+      <tr><td><code>generate_response(...)</code></td><td><code>(should_terminate, response, score, metadata)</code></td><td>Produce the next user-role turn — and decide, per turn, whether the episode ends.</td></tr>
+      <tr><td><code>calculate_score(...)</code></td><td>scalar</td><td>Turn-level score, for denser credit assignment than a single terminal reward.</td></tr>
+      <tr><td><code>finalize_interaction(...)</code></td><td>—</td><td>Clean up.</td></tr>
+    </table>
+  </div>
+
+  <p>The <code>should_terminate</code> flag in the return tuple is the notable bit: the environment,
+  not the agent, holds the stopping decision. That is the right shape for tasks where success is
+  environment-observable — the customer got their refund, the form validated — and it is what lets
+  the same machinery express a simulated-user dialogue and a stateful game with one interface.</p>
+
+  <p>The per-turn <code>score</code> is likewise worth using. A single terminal reward over a 15-turn
+  trajectory is a brutal credit-assignment problem; turn-level scores let you shape it. The
+  <a href="agentic-rl.html#credit">credit assignment section</a> of the Agentic RL page covers when
+  that helps and when it just adds bias.</p>
+
+  <!-- ── §9 Postprocess ─────────────────────── -->
+  <h2 id="postprocess">9. Back to a DataProto</h2>
+
+  <p>Whatever the loop did, the trainer needs the same rectangular batch it always got. The worker's
+  <code>_postprocess()</code> does the reconciliation:</p>
+
+<pre><code>prompt_ids    ← left-padded  to prompt_length
+response_ids  ← right-padded to response_length
+input_ids      = concat(prompt_ids, response_ids)
+attention_mask = 1 on real tokens, 0 on padding
+position_ids   = (attention_mask.cumsum(dim=1) - 1) * attention_mask</code></pre>
+
+  <p>Left-padding the prompt and right-padding the response is the standard trick that puts the
+  prompt/response boundary at a fixed column for every row, so the loss can be sliced without
+  per-row indexing. The <code>position_ids</code> line is doing real work: because padding sits on both
+  ends, positions must be counted over <em>real</em> tokens only, which is exactly what the
+  cumulative sum of the attention mask gives — then multiplied by the mask again to zero out the pad
+  positions.</p>
+
+  <p>The result is wrapped in a <code>TensorDict</code> whose <code>meta_info</code> carries per-trajectory
+  turn counts and rollout timing. Log those. Mean turns per trajectory and the truncation rate are
+  the two agentic-specific health metrics that no single-turn dashboard will show you, and both move
+  before reward does. See <a href="async-rl-monitoring.html">Async RL Monitoring</a>.</p>
+
+  <div class="note">
+    Note where the padding waste lands: <code>response_length</code> must be sized for the longest
+    trajectory, so a batch where most rollouts finish in 3 turns and one takes 14 is mostly padding.
+    This is the multi-turn form of the same length-variance problem that makes agentic rollout
+    throughput so much worse than its token count suggests.
+  </div>
+
+  <!-- ── §10 Custom ─────────────────────────── -->
+  <h2 id="custom">10. Custom Loops, and the Harness-Parity Question</h2>
+
+  <p>A custom agent loop is one class: inherit <code>AgentLoopBase</code>, implement
+  <code>run()</code>, register it under a name, and point
+  <code>rollout.agent.agent_loop_config_path</code> at it. Inside <code>run()</code> you may do
+  anything — call the LLM, query a database, search the web, run a planner, reflect, recurse — as
+  long as you return an <code>AgentLoopOutput</code> whose three fields are mutually consistent.</p>
+
+  <p>verl is explicit that <code>AgentLoopManager</code> is a <em>reference implementation</em> and is
+  meant to be replaceable by another agent framework entirely. That framing matters, because it puts
+  verl on one side of the central design question in agentic RL: <strong>do you port your agent into
+  the trainer, or point the trainer at the agent you already ship?</strong></p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th style="width:26%">Approach</th><th>What it optimizes</th><th>Cost</th></tr>
+      <tr>
+        <td><strong>Reimplement in <code>AgentLoopBase</code></strong></td>
+        <td>Full control of tokenization, masking, and turn accounting — the invariants of §4 are
+          handled for you if you follow the built-in patterns.</td>
+        <td>Your training harness and your production harness are now two codebases that drift.
+          Every prompt tweak in prod is a train/serve mismatch until someone ports it.</td>
+      </tr>
+      <tr>
+        <td><strong>Wrap the production agent</strong></td>
+        <td>Harness parity by construction. Cursor trains Composer inside the same harness users
+          hit — same tools, same prompt format, same system message — precisely to kill this
+          mismatch.</td>
+        <td>You must recover token-exact <code>response_ids</code> and a correct mask from an agent
+          that was never written to expose them. Trace-based systems exist for this, but the
+          tokenization seam of §4 is exactly where they get hard — <a href="#proxy">§11</a> prices
+          what they actually cost, and where the residual difficulty really sits.</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>verl sits closer to the first row, with the escape hatch of the second. If you go that way, the
+  discipline that makes it survivable is to define the tool set and prompt template <em>once</em>, in
+  a form both the trainer and the server load, rather than maintaining two copies that agree by
+  convention.</p>
+
+  <!-- ── §11 Proxy boundary ─────────────────── -->
+  <h2 id="proxy">11. Recovering the Mask from Outside</h2>
+
+  <p>§10 priced the second row with a warning rather than a number: <em>you must recover token-exact
+  <code>response_ids</code> and a correct mask from an agent that was never written to expose them.</em>
+  That cost is worth pricing properly, because a recent line of work does exactly this — and the
+  answer is more favourable than the warning suggests, with one genuine hole that is not where you'd
+  expect.</p>
+
+  <h3>The wrap row has three sub-options, not one</h3>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Where the boundary sits</th><th>Systems</th><th>What the agent must give up</th></tr>
+      <tr>
+        <td>Gym-style environment API</td>
+        <td>SkyRL-Gym, NeMo Gym</td>
+        <td>Be expressible as <code>reset()</code>/<code>step()</code> — its own event loop, in practice</td>
+      </tr>
+      <tr>
+        <td>SDK / decorator tracing</td>
+        <td>Agent Lightning, rLLM</td>
+        <td>Be importable and instrumentable; one integration per framework</td>
+      </tr>
+      <tr>
+        <td>Provider-API proxy</td>
+        <td>Polar</td>
+        <td>Nothing — it runs unmodified, including as a binary</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>The third rests on one observation: agents differ arbitrarily inside, but <strong>every LLM agent
+  must talk to a model</strong>, and the provider endpoint is a common interface that already exists
+  <em>outside</em> the agent. So don't integrate with the harness — sit at its model base URL and
+  listen. Per request the gateway detects the provider dialect, normalizes to the local backend's
+  shape with <code>logprobs=true</code> injected, and <strong>stores the prompt token IDs, the sampled
+  response token IDs, the log-probs and the finish reason</strong> before transforming the response
+  back into the shape the harness expects.</p>
+
+  <div class="note">
+    <strong>That storage list is <code>AgentLoopOutput</code> in disguise.</strong> Prompt token IDs
+    and sampled response token IDs are precisely the two things §4 says must never be recovered by
+    re-tokenizing. The proxy captures them at the only point where they provably exist — the moment
+    the engine emitted them.
+  </div>
+
+  <h3>Prefix merging is delta tokenization, one layer down</h3>
+
+  <p>One trace per model call would fragment a session into hundreds of samples. The reassembly step
+  instead splices the sampled tokens back together, and its central rule is a refusal:
+  <strong>never copy the previous assistant turn out of the next request's prompt.</strong> Those
+  tokens were re-rendered and re-tokenized by the provider path — they are the
+  \(T(a \mathbin{\|} b)\) side of §4's failed invariant. The raw sampled tokens are spliced in
+  instead:</p>
+
+  <div class="result">
+    <div class="result-label">Reconstructed sequence and mask</div>
+    \[
+      \begin{aligned}
+      z \;&=\; p_1 \mathbin{\|} a_1 \mathbin{\|} u_1 \mathbin{\|} a_2 \mathbin{\|} u_2 \mathbin{\|} \cdots \mathbin{\|} a_K \\[4pt]
+      m_t \;&=\; \begin{cases} 1 & t \in a_m \quad \text{(sampled by the policy)} \\ 0 & \text{otherwise} \end{cases}
+      \end{aligned}
+    \]
+  </div>
+
+  <p>\(a_m\) are raw sampled tokens; \(u_m\) are the harness-inserted interstitials — tool results,
+  system reminders, injected formatting — recovered from the <em>next</em> request's prompt by
+  locating the first end-of-turn token in its tail. That is the same \(m_t = 1\) on assistant,
+  \(0\) on environment mask §4 defines, and \(z\) is <code>prompt_ids</code> followed by
+  <code>response_ids</code>.</p>
+
+  <div class="step">
+    <div class="step-label">The parallel worth noticing</div>
+    <p style="margin:0">verl's <strong>delta tokenization</strong> templates the message list at
+    length \(i\) and \(i{+}1\) and takes the difference. The proxy does the same subtraction one layer
+    down — differencing successive <em>prompts</em> instead of successive message lists. Same trick,
+    and the proxy has the easier job: the harness already did the templating, so there is nothing to
+    re-template and no chat template to agree on. What verl achieves by controlling the loop, the
+    proxy achieves by observing it.</p>
+  </div>
+
+  <h3>Chains — why one session is not always one <code>AgentLoopOutput</code></h3>
+
+  <p>The splice is only valid where a strict token-prefix relation holds between successive calls,
+  \(p_{i_{m+1}}[1:|p_{i_m}|] = p_{i_m}\). Anything that breaks it opens a <strong>new chain</strong>:
+  context compaction, subagents, parallel branches. One session can yield several training samples
+  rather than one.</p>
+
+  <p>That looks like a loss relative to the in-loop case. It is the opposite, and §4 says why.
+  Tool tokens stay in <code>input_ids</code> — masked but present — <em>because the assistant's later
+  tokens were conditioned on them and the forward pass must see the same context the rollout saw.</em>
+  <strong>Context compaction breaks exactly that invariant.</strong> If the agent compacted at turn 30,
+  the later turns were not conditioned on the raw earlier context, and concatenating anyway would show
+  the forward pass a context the rollout never saw — §4's failure mode one level up, and just as
+  silent. The chain partition is what restores the invariant; the single sequence is the special case
+  where the context happened to be append-only. SkyRL-Agent reaches the same construction
+  independently and makes the fallback explicit: with no context modification during execution, it
+  collapses back to plain concatenate-and-mask.</p>
+
+  <div class="note">
+    <strong>The discriminator is not trajectory length — it is whether the agent modifies its own
+    context.</strong> That is what breaks the prefix relation, and it is the real axis separating
+    "one masked sequence" from "N transitions." A ReAct loop that only appends is one sequence at any
+    length; a harness that compacts is several at any length.
+  </div>
+
+  <h3>What the proxy does not give you</h3>
+
+  <ul>
+    <li><strong>Credit assignment across chains — the actual hole.</strong> The mask is faithful; the
+      advantage attached to it is unsolved. Broadcasting a session-level reward to every chain is the
+      configuration Polar reports produced <em>significant reward hacking</em> — session-level credit
+      on request-level traces, without session normalization or a process reward model, is noisy
+      credit assignment. Process rewards and session normalization are explicitly future work. Note
+      where this lands: not on the tokenization seam §10 warned about, which is solved, but one level
+      up on the objective.</li>
+    <li><strong>The audit.</strong> <code>tokenization_sanity_check_mode</code> works by re-templating
+      and comparing. Through a proxy there is no template to compare against — the harness owns it. The
+      equivalent check is a log-prob consistency test between the captured rollout log-probs and the
+      trainer's recomputed ones, which matters <em>more</em> here than in-loop: a normalization step and
+      a provider-shape transform now sit between the sampler and the trainer, and that seam is exactly
+      where a silent mismatch would enter.</li>
+    <li><strong>True streaming.</strong> Capture needs a non-streaming upstream response, re-emitted to
+      the harness as a synthetic provider-shaped stream. It does not touch the mask; it does matter for
+      latency-sensitive harnesses.</li>
+    <li><strong>Zero integration.</strong> The box is only black <em>below</em> the API — a per-harness
+      adapter (write config, register tools, return the shell command) and a runtime image are still
+      required. Roughly twenty lines rather than a reimplementation, but not nothing.</li>
+  </ul>
+
+  <div class="caution">
+    <strong>What this changes about §10's table.</strong> The second row's cost was stated as
+    recovering token-exact IDs and a correct mask. Capture at the model endpoint solves that, and the
+    empirical case for paying it is strong: training the <em>same</em> harness the model ships in
+    produces gains inversely proportional to how native that harness already was to the base model —
+    largest where the action protocol is unfamiliar, near zero on the model's home turf. Which is the
+    §10 drift argument measured. <strong>The residual cost is not tokenization; it is that a
+    compacting, sub-agenting harness hands you several trainable sequences per episode and one reward
+    to divide among them.</strong>
+  </div>
+
+  <!-- ── §12 Config ─────────────────────────── -->
+  <h2 id="config">12. The Config Map</h2>
+
+  <p>Everything below is under <code>actor_rollout_ref.rollout</code>:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th style="width:40%">Key</th><th>What it controls</th></tr>
+      <tr><td><code>mode: async</code></td><td>Server mode. Required for agent loops; not the same as async <em>training</em>.</td></tr>
+      <tr><td><code>name: sglang</code> | <code>vllm</code></td><td>Inference backend behind the server actor.</td></tr>
+      <tr><td><code>multi_turn.enable: True</code></td><td>Turns on the multi-turn path.</td></tr>
+      <tr><td><code>multi_turn.max_assistant_turns</code></td><td>Turn cap; hitting it is a truncation, with reward consequences (§5).</td></tr>
+      <tr><td><code>multi_turn.max_user_turns</code></td><td>Turn cap for the interaction side (§8).</td></tr>
+      <tr><td><code>multi_turn.format</code></td><td>Tool-call syntax the loop parses out of the response.</td></tr>
+      <tr><td><code>multi_turn.tool_config_path</code></td><td>YAML declaring <code>BaseTool</code> classes + their JSON schemas.</td></tr>
+      <tr><td><code>multi_turn.function_tool_path</code></td><td>Module of <code>@function_tool</code> functions.</td></tr>
+      <tr><td><code>multi_turn.interaction_config_path</code></td><td><code>BaseInteraction</code> implementations.</td></tr>
+      <tr><td><code>multi_turn.tokenization_sanity_check_mode</code></td><td><code>strict</code> / <code>ignore_strippable</code> / <code>disable</code> — the §4 audit.</td></tr>
+      <tr><td><code>agent.default_agent_loop: tool_agent</code></td><td>Which registered loop runs by default.</td></tr>
+      <tr><td><code>agent.agent_loop_config_path</code></td><td>Registration file for custom loops.</td></tr>
+      <tr><td><code>agent.num_workers</code></td><td>How many <code>AgentLoopWorker</code> actors split the batch.</td></tr>
+      <tr><td><code>response_length</code></td><td>The budget that tool output competes for (§4).</td></tr>
+    </table>
+  </div>
+
+  <div class="caution">
+    <strong>Version drift warning.</strong> The AgentLoop framework landed around verl 0.4.2 and the
+    config surface has moved between releases — keys have migrated between <code>multi_turn.*</code>
+    and <code>agent.*</code>, and the V1 trainer reorganizes more of it. Check the docs for the exact
+    tag you have installed rather than trusting any table, including this one.
+  </div>
+
+  <!-- ── §13 References ─────────────────────── -->
+  <h2 id="refs">13. References</h2>
+
+  <ul>
+    <li><a href="https://verl.readthedocs.io/en/latest/advance/agent_loop.html">verl — Agent Loop</a>
+      · the <code>AgentLoopOutput</code> contract and the token-in-token-out rationale.</li>
+    <li><a href="https://verl.readthedocs.io/en/latest/sglang_multiturn/multiturn.html">verl — Multi-turn Rollout</a>
+      · config surface, delta tokenization, loss masking.</li>
+    <li><a href="https://verl.readthedocs.io/en/latest/sglang_multiturn/sandbox_fusion.html">verl — Sandbox Fusion</a>
+      · the token-bucket limiter and <code>BaseTool</code> lifecycle.</li>
+    <li><a href="https://verl.readthedocs.io/en/v0.4.1/sglang_multiturn/interaction_system.html">verl — Interaction System</a>
+      · <code>BaseInteraction</code> and turn-level scoring.</li>
+    <li><a href="https://github.com/zhaochenyang20/Awesome-ML-SYS-Tutorial/blob/main/rlhf/verl/multi-turn/code-walk-through/readme-6.md">AgentLoop code walk-through</a>
+      · the manager → worker → server-manager → server path, read at source level.</li>
+    <li><a href="https://arxiv.org/html/2508.03680">Agent Lightning</a> and
+      <a href="https://arxiv.org/pdf/2511.16108">SkyRL-Agent</a> · the same trainer/agent
+      disaggregation, arrived at independently. SkyRL-Agent is also the explicit statement of §11's
+      fallback — pack same-prefix transitions, collapse to concatenate-and-mask when the context is
+      unmodified.</li>
+    <li><a href="https://arxiv.org/abs/2605.24220">Polar — Agentic RL on Any Harness at Scale</a>
+      · the provider-API proxy boundary of §11: token-faithful <code>prefix_merging</code>, the chain
+      partition, and the <code>per_request</code> reward-hacking negative result.</li>
+    <li><a href="https://blog.vllm.ai/2025/10/22/agent-lightning.html">No more retokenization drift (vLLM)</a>
+      · §4's invariant seen from the serving side — why a transcript is not a token sequence.</li>
+    <li><a href="https://cursor.com/blog/composer">Cursor — Composer</a> · training inside the
+      production harness, and the sandbox scale it demands.</li>
+    <li><a href="https://www.primeintellect.ai/blog/scaling-agentic-rl">Prime Intellect — Scaling Agentic RL</a>
+      · environment validation, image catalogs, grader isolation.</li>
+  </ul>
+
+</div>
+
+<script>
+(function () {
+  const canvas = document.getElementById('plot-tape');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+
+  const ids = ['turns', 'asst', 'tool', 'budget'];
+  const sliders = {}, vals = {};
+  ids.forEach(k => { sliders[k] = document.getElementById('c-' + k); vals[k] = document.getElementById('v-' + k); });
+
+  function css(name, fallback) {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+  }
+
+  // Build the segment list for the current settings.
+  function layout(turns, a, t, budget) {
+    const segs = [];
+    let pos = 0;
+    let fitTurns = 0;
+    for (let i = 0; i < turns; i++) {
+      segs.push({ kind: 'a', start: pos, len: a });
+      pos += a;
+      segs.push({ kind: 't', start: pos, len: t });
+      pos += t;
+      if (pos <= budget) fitTurns = i + 1;
+    }
+    const total = pos;
+    let trainable = 0;
+    segs.forEach(s => {
+      if (s.kind !== 'a') return;
+      trainable += Math.max(0, Math.min(s.start + s.len, budget) - s.start);
+    });
+    return { segs, total, trainable, fitTurns, used: Math.min(total, budget) };
+  }
+
+  function draw() {
+    const turns = +sliders.turns.value;
+    const a = +sliders.asst.value;
+    const t = +sliders.tool.value;
+    const budget = +sliders.budget.value;
+    ids.forEach(k => { vals[k].textContent = sliders[k].value; });
+
+    const rect = canvas.getBoundingClientRect();
+    const cssW = rect.width, cssH = rect.height;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const C = {
+      asst: css('--seg-asst', '#0d9488'),
+      tool: css('--seg-tool', '#f59e0b'),
+      unused: css('--seg-unused', '#e5e7eb'),
+      muted: css('--muted', '#6b7280'),
+      ink: css('--ink', '#374151'),
+      grid: css('--grid-fg', '#d1d5db'),
+      accent: css('--accent', '#0d9488')
+    };
+
+    const padL = 14, padR = 14;
+    const plotW = cssW - padL - padR;
+    const L = layout(turns, a, t, budget);
+    const axisMax = Math.max(budget, L.total);
+    const X = v => padL + (v / axisMax) * plotW;
+
+    const tapeY = 54, tapeH = 46;
+    const maskY = 128, maskH = 22;
+    const barY = 214, barH = 30;
+
+    ctx.font = '12.5px Inter, sans-serif';
+    ctx.textAlign = 'left';
+
+    // ── Row 1: the response tape ──
+    ctx.fillStyle = C.ink;
+    ctx.font = '600 13px Inter, sans-serif';
+    ctx.fillText('response_ids  (generation order →)', padL, tapeY - 12);
+
+    L.segs.forEach(s => {
+      const x0 = X(s.start), x1 = X(s.start + s.len);
+      const w = Math.max(1, x1 - x0);
+      const base = s.kind === 'a' ? C.asst : C.tool;
+      const cut = X(budget);
+
+      if (x0 >= cut) {
+        // Entirely past the budget: hatched ghost.
+        ghost(x0, w, tapeY, tapeH, base);
+      } else if (x1 <= cut) {
+        ctx.fillStyle = base;
+        ctx.fillRect(x0, tapeY, w, tapeH);
+      } else {
+        ctx.fillStyle = base;
+        ctx.fillRect(x0, tapeY, cut - x0, tapeH);
+        ghost(cut, x1 - cut, tapeY, tapeH, base);
+      }
+      // Segment separators, only when wide enough to read.
+      if (w > 2) {
+        ctx.strokeStyle = css('--surface', '#f8f9fa');
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x0 + 0.5, tapeY + 0.5, w - 1, tapeH - 1);
+      }
+    });
+
+    function ghost(x, w, y, h, color) {
+      ctx.save();
+      ctx.globalAlpha = 0.28;
+      ctx.fillStyle = color;
+      ctx.fillRect(x, y, Math.max(1, w), h);
+      ctx.restore();
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x, y, Math.max(1, w), h);
+      ctx.clip();
+      ctx.strokeStyle = C.muted;
+      ctx.lineWidth = 1;
+      ctx.globalAlpha = 0.55;
+      for (let d = -h; d < w + h; d += 6) {
+        ctx.beginPath();
+        ctx.moveTo(x + d, y + h);
+        ctx.lineTo(x + d + h, y);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // ── Row 2: the loss mask ──
+    ctx.fillStyle = C.ink;
+    ctx.font = '600 13px Inter, sans-serif';
+    ctx.fillText('response_mask  (1 = in the loss)', padL, maskY - 10);
+
+    // Baseline for mask = 0.
+    ctx.fillStyle = C.unused;
+    ctx.fillRect(padL, maskY + maskH - 4, X(Math.min(L.total, budget)) - padL, 4);
+    L.segs.forEach(s => {
+      if (s.kind !== 'a') return;
+      const x0 = X(s.start), x1 = X(Math.min(s.start + s.len, budget));
+      if (x1 <= x0) return;
+      ctx.fillStyle = C.asst;
+      ctx.fillRect(x0, maskY, Math.max(1, x1 - x0), maskH);
+    });
+
+    // ── The response_length cutoff ──
+    const cutX = X(budget);
+    ctx.save();
+    ctx.strokeStyle = C.accent;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    ctx.moveTo(cutX, tapeY - 6);
+    ctx.lineTo(cutX, maskY + maskH + 10);
+    ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = C.accent;
+    ctx.font = '600 11.5px Inter, sans-serif';
+    const label = 'response_length = ' + budget;
+    const lw = ctx.measureText(label).width;
+    ctx.textAlign = 'left';
+    ctx.fillText(label, Math.min(cutX + 6, cssW - padR - lw), tapeY - 14);
+
+    // ── Row 3: budget composition ──
+    ctx.fillStyle = C.ink;
+    ctx.font = '600 13px Inter, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText('how the budget was spent', padL, barY - 10);
+
+    const toolIn = L.used - L.trainable;
+    const unused = Math.max(0, budget - L.used);
+    const segsBar = [
+      { v: L.trainable, c: C.asst },
+      { v: toolIn, c: C.tool },
+      { v: unused, c: C.unused }
+    ];
+    let bx = padL;
+    segsBar.forEach(s => {
+      const w = (s.v / budget) * plotW;
+      if (w <= 0) return;
+      ctx.fillStyle = s.c;
+      ctx.fillRect(bx, barY, w, barH);
+      bx += w;
+    });
+    ctx.strokeStyle = C.grid;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(padL + 0.5, barY + 0.5, plotW - 1, barH - 1);
+
+    // ── Readout ──
+    const pct = budget > 0 ? (100 * L.trainable / budget) : 0;
+    ctx.font = '12.5px Inter, sans-serif';
+    ctx.fillStyle = C.muted;
+    ctx.textAlign = 'left';
+    ctx.fillText(
+      L.trainable.toLocaleString() + ' trainable of ' + budget.toLocaleString() +
+      ' budgeted tokens  (' + pct.toFixed(1) + '%)',
+      padL, barY + barH + 18
+    );
+    ctx.textAlign = 'right';
+    const truncated = L.total > budget;
+    ctx.fillStyle = truncated ? css('--caution-border', '#f59e0b') : C.muted;
+    ctx.fillText(
+      truncated
+        ? ('truncated — ' + L.fitTurns + ' of ' + turns + ' turns fit')
+        : (turns + ' turns complete, ' + unused.toLocaleString() + ' tokens spare'),
+      padL + plotW, barY + barH + 18
+    );
+  }
+
+  let pending = false;
+  function schedule() {
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(() => { pending = false; draw(); });
+  }
+
+  ids.forEach(k => sliders[k].addEventListener('input', schedule));
+  window.addEventListener('resize', schedule);
+  if (window.matchMedia) {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    if (mq.addEventListener) mq.addEventListener('change', schedule);
+  }
+  draw();
+})();
+</script>
+
+</body>
+</html>

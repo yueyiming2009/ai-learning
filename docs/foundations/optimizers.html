@@ -1,0 +1,935 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Optimizers — The Working Math</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #0d9488;
+      --accent-light: #f0fdfa;
+      --warning-bg: #fffbeb;
+      --warning-border: #f59e0b;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --compare-bg: #eff6ff;
+      --compare-border: #3b82f6;
+      --nav-bg: rgba(255,255,255,0.92);
+      --ink: #374151;
+      --code-bg: #f1f5f9;
+      --code-fg: #0f766e;
+      --row-hover: #fafafa;
+      --note-fg: #78350f;
+      --result-fg: #16a34a;
+      --compare-fg: #2563eb;
+      --teal-border: #99f6e4;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #2dd4bf;
+        --accent-light: #10201e;
+        --warning-bg: #251c0b;
+        --warning-border: #b45309;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --compare-bg: #101a2b;
+        --compare-border: #1e40af;
+        --nav-bg: rgba(15,17,21,0.9);
+        --ink: #cbd5e1;
+        --code-bg: #1c2531;
+        --code-fg: #5eead4;
+        --row-hover: #191e25;
+        --note-fg: #fcd34d;
+        --result-fg: #4ade80;
+        --compare-fg: #60a5fa;
+        --teal-border: #134e4a;
+      }
+    }
+
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .nav-back {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      white-space: nowrap;
+      transition: color 0.15s;
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+    .nav-back:hover { color: var(--text); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #0d9488 0%, #0891b2 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.85;
+      font-size: 0.97rem;
+      max-width: 560px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+
+    /* ── Code ────────────────────────────────── */
+    pre {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      line-height: 1.55;
+      margin: 1.2em 0;
+    }
+    code {
+      font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    p code, li code, td code {
+      background: var(--code-bg);
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 0.88em;
+      color: var(--code-fg);
+    }
+    pre code { background: none; padding: 0; color: var(--text); }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+
+    /* ── Step boxes ──────────────────────────── */
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    /* ── Callout / note ──────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+    .note::before { content: '⚠ '; }
+
+    /* ── Result / boxed equation ─────────────── */
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Comparison box ──────────────────────── */
+    .compare {
+      background: var(--compare-bg);
+      border: 1.5px solid var(--compare-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .compare-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--compare-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 10px;
+    }
+    .compare-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 600px) { .compare-grid { grid-template-columns: 1fr; } }
+    .compare-col-label {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--ink);
+      margin-bottom: 4px;
+    }
+
+    /* ── Summary card ────────────────────────── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .summary-card {
+      background: var(--accent-light);
+      border: 1px solid var(--teal-border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .summary-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    /* ── Cross-link banner ───────────────────── */
+    .xref {
+      background: var(--accent-light);
+      border: 1px solid var(--teal-border);
+      border-radius: 8px;
+      padding: 12px 18px;
+      margin: 1.4em 0;
+      font-size: 0.92rem;
+    }
+    .xref a { color: var(--accent); font-weight: 600; text-decoration: none; }
+    .xref a:hover { text-decoration: underline; }
+
+    /* ── Footer ──────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Optimizers — Working Math</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#sgd">SGD</a>
+    <a href="#noise">Mini-batch noise</a>
+    <a href="#momentum">Momentum / Nesterov</a>
+    <a href="#adam">Adam</a>
+    <a href="#clipping">Clipping</a>
+    <a href="#schedule">LR schedule</a>
+    <a href="#adamw">Weight decay / AdamW</a>
+    <a href="#muon">Muon</a>
+    <a href="#summary">Summary</a>
+  </div>
+  <a class="nav-back" href="../index.html">Home</a>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">ML Math</span>
+  <h1>Optimizers — The Working Math</h1>
+  <p>The update rules behind the LLM training loop, derived: SGD and its noise, momentum and Nesterov, Adam's two moments and bias correction, gradient clipping, the warmup→cosine schedule, AdamW's decoupled weight decay, and Muon's matrix-orthogonalized step.</p>
+</div>
+
+<div class="page-wrap">
+
+  <p>
+    An optimizer turns the gradient produced by backprop into the actual weight update — the rule that
+    sits between <code>loss.backward()</code> and the next forward pass. This page collects the
+    <em>mechanics</em>: the exact update equations and the derivations behind them, walking the same
+    path the field took — SGD → momentum → Adam → AdamW → Muon — so each method reads as a fix to a specific
+    weakness in the one before it.
+  </p>
+
+  <h2 id="notation">Notation</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symbol</th><th>Description</th></tr>
+      <tr><td>\(w_t\)</td><td>Parameters after step \(t\)</td></tr>
+      <tr><td>\(g_t=\nabla_w L\)</td><td>Gradient of the (mini-batch) loss at step \(t\)</td></tr>
+      <tr><td>\(\eta\)</td><td>Learning rate</td></tr>
+      <tr><td>\(\mu,\ \beta_1\)</td><td>Momentum / first-moment decay coefficient</td></tr>
+      <tr><td>\(\beta_2\)</td><td>Second-moment decay coefficient</td></tr>
+      <tr><td>\(m_t,\ v_t\)</td><td>First and second moment (EMA of \(g\) and of \(g^2\))</td></tr>
+      <tr><td>\(\lambda\)</td><td>Weight-decay coefficient</td></tr>
+      <tr><td>\(B\)</td><td>Mini-batch size</td></tr>
+    </table>
+  </div>
+
+  <!-- ════════════════════════ SGD ════════════════════════ -->
+  <h2 id="sgd">1. SGD — the baseline</h2>
+  <p>
+    Vanilla stochastic gradient descent steps downhill by the gradient, scaled by a single global
+    learning rate:
+  </p>
+  <div class="result">
+    <div class="result-label">SGD update</div>
+    \[ w_t = w_{t-1} - \eta\, g_t \]
+  </div>
+  <p>
+    The <strong>"stochastic"</strong> is that \(g_t\) is computed on a <em>mini-batch</em>, not the full
+    dataset — a cheap, noisy estimate of the true gradient \(\nabla_w L\). \(\eta\) is the only knob, and
+    it is global: every parameter gets the same step scale regardless of its own gradient history. That
+    one-rate-for-all is the limitation the second moment \(v_t\) removes (§4), and the reason vanilla SGD
+    is fragile to the learning rate and to ill-conditioned, anisotropic landscapes (a ravine that is
+    steep across and shallow along — SGD bounces between the walls while barely advancing the floor).
+  </p>
+
+  <!-- ════════════════════════ NOISE ════════════════════════ -->
+  <h2 id="noise">2. Why mini-batch noise escapes saddles &amp; shallow minima</h2>
+  <p>
+    Full-batch GD is a <strong>fixed-point iteration</strong>. With the exact gradient, its update at a
+    critical point \(\nabla_w L = 0\) is exactly zero:
+  </p>
+  \[ w_{t+1} = w_t - \eta\,\nabla_w L(w_t) = w_t - \eta\cdot 0 = w_t. \]
+  <p>
+    It has no force to push it off — whether the point is a good minimum, a bad shallow one, or a
+    <strong>saddle</strong>. Saddles dominate high-dimensional loss landscapes and the gradient is
+    vanishingly small on the plateau around them, so GD can stall there for a very long time.
+  </p>
+  <p>
+    Mini-batch SGD replaces the exact gradient with an <strong>unbiased noisy estimate</strong>. On a
+    random batch \(\mathcal{B}_t\),
+  </p>
+  \[
+    \hat g_t = \nabla_w L_{\mathcal{B}_t}(w_t)
+      = \underbrace{\nabla_w L(w_t)}_{\text{true gradient}} + \underbrace{\xi_t}_{\text{noise}},
+    \qquad \mathbb{E}[\xi_t]=0,\quad \mathrm{Var}(\xi_t) \propto \tfrac{1}{B}.
+  \]
+  <p>
+    The expectation is the true gradient, but it fluctuates batch to batch (smaller \(B\) → more noise).
+    The key consequence: <strong>at a critical point the update is not zero</strong>, because
+    \(\nabla_w L(w_t)=0\) but \(\xi_t \neq 0\):
+  </p>
+  \[ w_{t+1} = w_t - \eta\,\hat g_t = w_t - \eta\,\xi_t \neq w_t. \]
+  <p>
+    The iterate keeps jittering — deterministic descent becomes a stochastic process closer to
+    <strong>Langevin dynamics</strong> than a fixed-point map. That buys two escapes GD lacks:
+  </p>
+  <ul>
+    <li><strong>Saddles:</strong> the random kicks have components along the negative-curvature
+      directions; one nudge off the plateau makes the true gradient nonzero again and the iterate rolls away.</li>
+    <li><strong>Shallow minima:</strong> in the Langevin analogy the escape probability over a barrier of
+      height \(\Delta L\) is \(\sim \exp(-\Delta L / T)\) with effective <strong>temperature</strong>
+      \(T \propto \eta/B\). Shallow (low-barrier) minima are escaped quickly; deep, <strong>wide</strong>
+      minima trap the iterate, so SGD accumulates there.</li>
+  </ul>
+  <p>
+    Escape time growing with barrier height biases SGD toward <strong>flat, wide</strong> minima, which
+    are robust to the train→test shift — the standard story for SGD's good generalization. The knobs are
+    exactly \(\eta\) and \(B\): large LR / small batch = hotter = more exploration. This is why
+    <strong>LR decay is annealing</strong> (§6): cool \(T\) late so the iterate settles into the basin it found.
+  </p>
+  <div class="note">
+    It is the gradient <em>noise</em>, not stochasticity per se, that does the work — full-batch GD with
+    explicit injected noise escapes saddles too. Mini-batching just supplies that noise for free.
+  </div>
+
+  <!-- ════════════════════════ MOMENTUM ════════════════════════ -->
+  <h2 id="momentum">3. Momentum &amp; Nesterov</h2>
+  <h3>Heavy-ball momentum</h3>
+  <p>
+    Accumulate a velocity that is an EMA of past gradients and step on <em>that</em> instead of the raw
+    gradient (Polyak's heavy-ball):
+  </p>
+  <div class="result">
+    <div class="result-label">Momentum update</div>
+    \[ v_t = \mu\, v_{t-1} + g_t, \qquad w_t = w_{t-1} - \eta\, v_t \]
+  </div>
+  <p>
+    with \(\mu \approx 0.9\) standard. Velocity builds in directions where the gradient is
+    <strong>persistent</strong> (the ravine floor) and cancels where it keeps <strong>flipping sign</strong>
+    (the walls) — damping the oscillation and accelerating along the consistent slope. Effective averaging
+    window \(\approx \tfrac{1}{1-\mu}\) steps.
+  </p>
+  <div class="note">
+    Convention footgun: PyTorch's <code>SGD(momentum=μ)</code> uses exactly \(v_t = \mu v_{t-1} + g_t\) —
+    the gradient enters with coefficient <strong>1, not \((1-\mu)\)</strong>. So PyTorch's velocity is
+    \(\sim\tfrac{1}{1-\mu}\times\) larger than the \((1-\mu)\)-normalized EMA some papers write, and the
+    effective step is correspondingly larger for the same \(\eta\). Adam (§4) <em>does</em> use the
+    \((1-\beta)\) normalization — mind the mismatch when porting a learning rate.
+  </div>
+
+  <h3>Nesterov — the lookahead correction</h3>
+  <p>
+    Same machinery, but evaluate the gradient at the point momentum is <em>about to carry you to</em>:
+  </p>
+  <div class="result">
+    <div class="result-label">Nesterov update</div>
+    \[ v_t = \mu\, v_{t-1} + \nabla_w L\big(w_{t-1} - \eta\,\mu\, v_{t-1}\big), \qquad w_t = w_{t-1} - \eta\, v_t \]
+  </div>
+  <p>
+    The inner \(w_{t-1} - \eta\mu v_{t-1}\) is the <strong>lookahead point</strong> — a deliberate
+    approximation, not the true landing point. Writing the full step out flat exposes its two pieces:
+  </p>
+  \[
+    w_t = \underbrace{\big(w_{t-1} - \eta\mu v_{t-1}\big)}_{\text{momentum part (lookahead)}}
+      \;\underbrace{-\,\eta\,\nabla_w L(\text{lookahead})}_{\text{gradient correction}}.
+  \]
+  <p>
+    The gradient correction is dropped on purpose: (1) it is <strong>unknowable in advance</strong> — the
+    exact landing depends on the gradient <em>at</em> the landing (an implicit equation), so the
+    momentum-only point is the best probe available before computing any new gradient; (2) it is the
+    <strong>smaller term</strong> exactly when this matters — in the overshoot regime velocity is large,
+    so the momentum displacement dominates. Probing at the lookahead "sees the wall" one step early: if it
+    lands past the minimum on the rising far wall, the gradient there points back uphill and brakes the
+    overshoot <em>this</em> step instead of after. That one-step lead is the whole (modest) benefit.
+  </p>
+  <!-- ════════════════════════ ADAM ════════════════════════ -->
+  <h2 id="adam">4. Adam — momentum + a per-parameter learning rate</h2>
+  <p>
+    Momentum cured SGD's <em>noisy direction</em>; it left the <em>single global learning rate</em>
+    untouched. Adam adds exactly that missing piece by tracking <strong>two</strong> running averages:
+  </p>
+  <ul>
+    <li><strong>First moment</strong> \(m_t\) — the momentum from §3, renamed: an EMA of the gradient
+      (<em>which way</em> to step).</li>
+    <li><strong>Second moment</strong> \(v_t\) — an EMA of the <em>squared</em> gradient: a per-parameter
+      estimate of recent magnitude (<em>how big</em> the step should be).</li>
+  </ul>
+  <div class="result">
+    <div class="result-label">Adam moments &amp; step</div>
+    \[ m_t = \beta_1 m_{t-1} + (1-\beta_1)\,g_t, \qquad v_t = \beta_2 v_{t-1} + (1-\beta_2)\,g_t^2 \]
+    \[ w_t = w_{t-1} - \eta\,\frac{\hat m_t}{\sqrt{\hat v_t}+\epsilon} \]
+  </div>
+  <p>
+    Freeze the denominator (hold \(\sqrt{\hat v_t}\) constant) and Adam collapses back to plain momentum
+    SGD — so it really is "momentum, plus a per-parameter rescaling," nothing more exotic.
+    Both moments use the \((1-\beta)\)-normalized EMA form, so each is a true weighted average living on
+    the scale of \(g\) (and of \(g^2\)).
+  </p>
+
+  <h3>What "second moment" means, and the signal-to-noise reading</h3>
+  <p>
+    The name is literal statistics. The \(n\)-th <strong>raw moment</strong> of a random variable \(X\) is
+    \(\mathbb{E}[X^n]\) — first moment the mean, second \(\mathbb{E}[X^2]\). Treating each parameter's
+    gradient as resampled every batch, the two EMAs estimate exactly those: \(m_t \approx \mathbb{E}[g]\)
+    and \(v_t \approx \mathbb{E}[g^2]\). So \(v_t\) is the <strong>uncentered</strong> second moment,
+    taken <strong>elementwise</strong> (one scalar per parameter). It is not the variance —
+    \(\mathrm{Var}(g) = \mathbb{E}[g^2] - \mathbb{E}[g]^2 = v_t - m_t^2\); Adam wants raw magnitude
+    \(\sqrt{v_t} \approx \mathrm{RMS}(g)\), not spread.
+  </p>
+  <p><strong>Read 1 — magnitude normalization.</strong> Dividing each parameter's step by its own
+    \(\sqrt{\hat v_t}\) hands every weight its own effective learning rate:</p>
+  <ul>
+    <li>persistently <strong>large</strong> gradients → large \(v\) → divided down → <strong>smaller</strong> steps;</li>
+    <li><strong>small / rare</strong> gradients → small \(v\) → <strong>larger</strong> steps.</li>
+  </ul>
+  <p>
+    So one global \(\eta\) copes with the wildly different gradient scales across a transformer
+    (embeddings, attention, MLP, norm gains). That is exactly where SGD breaks down, and why
+    <strong>transformers train with Adam, not SGD</strong>. The \(\epsilon\,(\approx 10^{-8})\) just floors
+    the denominator so a near-zero \(v\) can't blow the step up.
+  </p>
+  <p><strong>Read 2 — signal-to-noise (the deeper intuition).</strong> Look at the ratio Adam steps on:</p>
+  \[ \frac{\hat m_t}{\sqrt{\hat v_t}} \approx \frac{\mathbb{E}[g]}{\sqrt{\mathbb{E}[g^2]}}, \qquad \mathbb{E}[g^2] = \mathbb{E}[g]^2 + \mathrm{Var}(g). \]
+  <p>
+    This is a <strong>signal-to-noise ratio</strong>: the numerator is the consistent part of the
+    gradient, the denominator folds in signal <em>and</em> noise. Consistent gradient (low variance):
+    \(\mathbb{E}[g^2]\approx\mathbb{E}[g]^2\), ratio \(\to\pm1\) → confident full-size step. Noisy gradient
+    (variance \(\gg\) mean²): ratio \(\to 0\) → cautious step. And since
+    \(|\hat m_t/\sqrt{\hat v_t}|\lesssim 1\), the per-step update is naturally bounded by \(\approx\eta\) —
+    which is what makes Adam so insensitive to gradient scale and easy to tune.
+  </p>
+
+  <h3>Bias correction</h3>
+  <p>
+    \(m_0 = v_0 = 0\), so the early EMAs are <strong>biased toward zero</strong>. Without correction the
+    first steps would see a tiny \(v\) → huge \(\hat m/\sqrt{\hat v}\) updates. The correction rescales by
+    \(1-\beta^t\):
+  </p>
+  <div class="result">
+    <div class="result-label">Bias-corrected moments</div>
+    \[ \hat m_t = \frac{m_t}{1-\beta_1^t}, \qquad \hat v_t = \frac{v_t}{1-\beta_2^t} \]
+  </div>
+  <p>
+    At \(t=1\) with \(\beta_2=0.999\), \(v_1=(1-\beta_2)g_1^2\) is \(\sim1000\times\) too small; dividing by
+    \((1-0.999^1)=0.001\) restores its scale. The bias is largest for high \(\beta\) and decays as
+    \(\beta^t \to 0\), so correction only matters for the first few-hundred steps — exactly where warmup
+    (§6) also does its work.
+  </p>
+
+  <h3>\(\beta_1,\ \beta_2\) — the two decay coefficients</h3>
+  <p>
+    \(\beta_1\) is the momentum coefficient (the \(\mu\) of §3); \(\beta_2\) sets the variance-memory
+    window. Both have effective window \(\approx \tfrac{1}{1-\beta}\):
+  </p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Coefficient</th><th>Value</th><th>Window</th><th>Where</th></tr>
+      <tr><td>\(\beta_1\)</td><td>0.9</td><td>~10 steps</td><td>Near-universal; almost nobody changes it</td></tr>
+      <tr><td>\(\beta_2\)</td><td>0.999</td><td>~1000 steps</td><td>Adam default; vision, small-scale</td></tr>
+      <tr><td>\(\beta_2\)</td><td>0.95</td><td>~20 steps</td><td><strong>GPT-2 / GPT-3 / nanoGPT — the LLM default</strong></td></tr>
+    </table>
+  </div>
+  <p>
+    <strong>Why LLMs drop \(\beta_2\) to 0.95:</strong> large-batch pretraining runs comparatively few
+    optimizer steps and the landscape produces occasional <strong>gradient spikes</strong>. A long-memory
+    \(v\) (0.999) reacts too slowly — after a spike it stays inflated for ~1000 steps, suppressing the
+    effective LR, and takes ~1000 steps to warm up at all. A shorter window (0.95) lets \(\sqrt{v}\) track
+    the current gradient scale and re-stabilize faster. The cost is a noisier denominator, but at LLM batch
+    sizes the per-step gradient is already well-averaged, so that noise is tolerable.
+  </p>
+
+  <!-- ════════════════════════ CLIPPING ════════════════════════ -->
+  <h2 id="clipping">5. Gradient clipping — the spike guardrail</h2>
+  <p>
+    Before <code>optimizer.step()</code>, rescale the gradients so their <strong>global norm</strong>
+    doesn't exceed a threshold \(\tau\). Compute the total norm over <em>all</em> params concatenated,
+    \(\lVert g\rVert = \sqrt{\sum_i \lVert g_i\rVert^2}\), and if it exceeds \(\tau\) scale
+    <strong>every</strong> gradient by \(\tau/\lVert g\rVert\):
+  </p>
+  <pre><code>loss.backward()
+norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+optimizer.step()</code></pre>
+  <p><strong><code>max_norm=1.0</code> is the LLM standard.</strong></p>
+  <ul>
+    <li><strong>Why it matters:</strong> a single bad batch can produce an enormous gradient. That huge
+      step doesn't just waste one update — it poisons Adam's \(m\) and \(v\) (especially at low
+      \(\beta_2\)), and can knock the model into a region that takes thousands of steps to recover from,
+      or diverge outright.</li>
+    <li><strong>Global-norm clip preserves direction</strong> — it scales all grads by one scalar, so the
+      update still points the same way, just shorter. Prefer it over <code>clip_grad_value_</code> (clamps
+      each element independently, which distorts the direction).</li>
+    <li><strong>Interaction with Adam:</strong> on a sudden spike the numerator \(m\) jumps before \(v\)
+      catches up, so the adaptive scaling doesn't save you in the moment. Clipping is the upstream guard.</li>
+    <li><strong>Log the return value</strong> — <code>clip_grad_norm_</code> returns the <em>pre-clip</em>
+      total norm, a clean health signal. Steady = healthy; spikes = instability.</li>
+  </ul>
+
+  <!-- ════════════════════════ SCHEDULE ════════════════════════ -->
+  <h2 id="schedule">6. The learning-rate schedule — warmup → cosine</h2>
+  <h3>Warmup</h3>
+  <p>
+    Linearly increase \(\eta\) from ~0 to the peak over the first \(N\) steps (typ. ~0.5–2% of training):
+  </p>
+  \[ \eta_t = \eta_{\max}\cdot \frac{t}{N} \quad (t < N) \]
+  <p>
+    <strong>Why Adam specifically needs it:</strong> in the first steps \(\hat v\) is estimated from a
+    handful of gradients, so the adaptive per-parameter LR is a high-variance, unreliable estimate (the
+    RAdam "variance of the adaptive learning rate" argument). Full-size steps on that noisy denominator
+    produce large erratic updates that can wreck a freshly-initialized model. Warmup keeps steps small
+    until \(v\) stabilizes.
+  </p>
+  <h3>Cosine decay</h3>
+  <p>
+    After warmup, decay the peak down to a floor (commonly \(\eta_{\min} = 0.1\,\eta_{\max}\)) on a cosine curve:
+  </p>
+  \[ \eta_t = \eta_{\min} + \tfrac12\big(\eta_{\max}-\eta_{\min}\big)\Big(1 + \cos\big(\pi\cdot \text{progress}\big)\Big) \]
+  <p>where <code>progress</code> runs 0→1 across the decay span. The full nanoGPT <code>get_lr</code> ties warmup + cosine + floor together:</p>
+  <pre><code>def get_lr(it):
+    if it < warmup_iters:                                   # 1) linear warmup
+        return max_lr * (it + 1) / warmup_iters
+    if it > lr_decay_iters:                                 # 2) past the end → floor
+        return min_lr
+    decay_ratio = (it - warmup_iters) / (lr_decay_iters - warmup_iters)
+    coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))   # 1 → 0
+    return min_lr + coeff * (max_lr - min_lr)               # 3) cosine between</code></pre>
+  <p>
+    <strong>Why decay:</strong> a high LR early makes fast progress; a low LR late reduces effective
+    gradient noise (cooling \(T\) in §2's annealing picture) and lets the model settle instead of bouncing.
+    <strong>Alternatives:</strong> linear decay (simpler, similar); <strong>WSD</strong> (Warmup-Stable-Decay,
+    MiniCPM) — warmup, a long constant plateau, then a short sharp decay, so a decay can branch from any
+    plateau checkpoint without committing to a total step count up front.
+  </p>
+
+  <!-- ════════════════════════ ADAMW ════════════════════════ -->
+  <h2 id="adamw">7. Weight decay &amp; the AdamW decoupling</h2>
+  <p>
+    <strong>Weight decay</strong> shrinks each weight toward zero a little every step — a bias toward
+    small-norm solutions. The subtlety: <strong>"weight decay" and "L2 penalty" are the same for SGD but
+    different for Adam</strong>, and conflating them is the bug AdamW fixes.
+  </p>
+  <div class="compare">
+    <div class="compare-label">Two things people call "weight decay"</div>
+    <div class="compare-grid">
+      <div>
+        <div class="compare-col-label">(A) L2 penalty — modify the loss</div>
+        \[ \tilde{L}(w) = L(w) + \tfrac{\lambda}{2}\lVert w \rVert^2 \;\Rightarrow\; \nabla\tilde{L} = g_t + \lambda w \]
+        <p style="margin:6px 0 0; font-size:0.9rem">The \(\lambda w\) rides along <em>inside the gradient</em>.</p>
+      </div>
+      <div>
+        <div class="compare-col-label">(B) Weight decay proper — modify the update</div>
+        \[ w_t = (1 - \eta\lambda)\,w_{t-1} - \eta\, g_t \]
+        <p style="margin:6px 0 0; font-size:0.9rem">A fixed fraction toward zero, <em>outside</em> the gradient.</p>
+      </div>
+    </div>
+  </div>
+
+  <h3>Identical for SGD, not for Adam</h3>
+  <p>Substitute (A)'s gradient into the SGD update and the two are algebraically the same:</p>
+  \[ w_t = w_{t-1} - \eta(g_t + \lambda w_{t-1}) = (1-\eta\lambda)w_{t-1} - \eta g_t \]
+  <p>
+    So for SGD, "L2 penalty" ≡ "weight decay" — people used the terms interchangeably for years.
+    <strong>Adam breaks it</strong>: it divides the gradient by \(\sqrt{\hat v_t}\), so folding \(\lambda w\)
+    into \(g_t\) means the decay <em>also</em> gets divided by \(\sqrt{\hat v_t}\):
+  </p>
+  \[ w_t = w_{t-1} - \eta\,\frac{\hat m_t(g + \lambda w)}{\sqrt{\hat v_t} + \epsilon} \quad\Rightarrow\quad \text{effective decay on } w_i \propto \frac{\lambda w_i}{\sqrt{v_i}}. \]
+  <p>
+    That is backwards: weights with large gradients (large \(v_i\)) get <strong>weakly</strong> decayed,
+    small-gradient weights <strong>strongly</strong> decayed — regularization strength now depends on noise
+    in the gradient statistics rather than being a uniform shrink.
+  </p>
+
+  <h3>AdamW — decouple the decay</h3>
+  <p>
+    Loshchilov &amp; Hutter (2017) apply the decay as route (B): keep \(\lambda w\) <strong>out</strong> of
+    the gradient so it never touches the \(\sqrt{\hat v}\) normalization.
+  </p>
+  <div class="result">
+    <div class="result-label">AdamW step</div>
+    \[ w_t = w_{t-1} - \eta\!\left(\frac{\hat m_t}{\sqrt{\hat v_t} + \epsilon} + \lambda\, w_{t-1}\right) = (1-\eta\lambda)\,w_{t-1} - \eta\,\frac{\hat m_t}{\sqrt{\hat v_t} + \epsilon} \]
+  </div>
+  <p>Now the decay is a clean, uniform \((1-\eta\lambda)\) shrink applied equally to every weight.</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th></th><th>Adam + L2 penalty</th><th>AdamW (decoupled)</th></tr>
+      <tr><td>Where decay enters</td><td>inside gradient \(g_t \mathrel{+}= \lambda w\)</td><td>directly on \(w\), outside the \(\sqrt{v}\) scaling</td></tr>
+      <tr><td>Effective decay on \(w_i\)</td><td>\(\propto \lambda w_i / \sqrt{v_i}\) — coupled to grad history</td><td>\(\lambda w_i\) — uniform</td></tr>
+      <tr><td>Result</td><td>under-regularizes high-gradient params</td><td>consistent shrink across all params</td></tr>
+    </table>
+  </div>
+  <div class="note">
+    <code>torch.optim.Adam(..., weight_decay=λ)</code> implements route (A) — coupled L2.
+    <code>torch.optim.AdamW(..., weight_decay=λ)</code> implements the decoupled form. Same kwarg, different
+    math — for transformers you almost always want <code>AdamW</code>.
+  </div>
+  <p>
+    <strong>LR-coupling subtlety:</strong> the decay term is multiplied by \(\eta\), so the
+    <em>effective</em> weight decay scales with the LR schedule — as cosine drives \(\eta\to0\) late, the
+    per-step shrink shrinks too. The displayed <code>weight_decay</code> is not the per-step shrink unless
+    you multiply by the current LR.
+  </p>
+
+  <h3>Parameter groups — don't decay everything</h3>
+  <p>
+    Standard practice (GPT-2, LLaMA, nanoGPT): apply weight decay only to the <strong>matrices</strong>
+    (2-D+ tensors — <code>Linear</code>/<code>Embedding</code> weights), and <strong>exclude</strong> biases,
+    LayerNorm/RMSNorm gains, and other 1-D params:
+  </p>
+  <pre><code>decay_params   = [p for p in params if p.dim() >= 2]   # matmul weights, embeddings
+nodecay_params = [p for p in params if p.dim() <  2]   # biases, LayerNorm gains
+optimizer = torch.optim.AdamW([
+    {"params": decay_params,   "weight_decay": 0.1},
+    {"params": nodecay_params, "weight_decay": 0.0},
+], lr=lr, betas=(0.9, 0.95))</code></pre>
+  <ul>
+    <li><strong>Norm gains</strong> (\(\gamma\)) are scales initialized to 1 — decaying them toward 0
+      attacks the normalization's learned scale rather than regularizing capacity.</li>
+    <li><strong>Biases</strong> carry negligible capacity; shrinking them just adds a meaningless offset pull.</li>
+    <li>The capacity that actually overfits lives in the <strong>weight matrices</strong> — that's where
+      the \(\lVert w\rVert^2\) budget belongs.</li>
+  </ul>
+  <p style="font-size:0.9rem; color:var(--muted)">
+    Typical LLM value: \(\lambda = 0.1\) (GPT-2/3, LLaMA) — strikingly high vs the \(10^{-4}\)–\(10^{-5}\)
+    of vision, because web-scale LM training is so far from overfitting that the regularization budget is
+    spent here (and on data scale) rather than on dropout.
+  </p>
+
+  <!-- ════════════════════════ MUON ════════════════════════ -->
+  <h2 id="muon">8. Muon — the matrix-aware step after AdamW</h2>
+  <p>
+    AdamW has been the default for transformer training since ~2018. Every optimizer above — including
+    AdamW — treats the parameters as a <strong>flat bag of scalars</strong>: Adam's \(\sqrt{\hat v}\)
+    rescaling is <em>elementwise</em>, one independent learning rate per weight, blind to the fact that a
+    layer's weights are really a <strong>matrix</strong> \(W\in\mathbb{R}^{m\times n}\) with rows and
+    columns that interact. <strong>Muon</strong> (Jordan et al., 2024) is the first post-AdamW method to win
+    real large-scale traction by exploiting exactly that structure.
+  </p>
+
+  <h3>The idea: orthogonalize the momentum before stepping</h3>
+  <p>
+    Muon keeps the same momentum \(M\) from §3 (an EMA of the gradient <em>matrix</em>), but before applying
+    it, it <strong>orthogonalizes</strong> it. Take the SVD \(M = U\Sigma V^\top\) and replace every singular
+    value with 1:
+  </p>
+  <div class="result">
+    <div class="result-label">Muon update (per matrix \(W\))</div>
+    \[ M_t = \mu\,M_{t-1} + g_t, \qquad O_t = U V^\top = (M_t M_t^\top)^{-1/2} M_t, \qquad W_t = W_{t-1} - \eta\, O_t \]
+  </div>
+  <p>
+    \(O_t = UV^\top\) is the momentum with its <strong>directions kept but all its magnitudes flattened to
+    1</strong> — the closest <em>semi-orthogonal</em> matrix to \(M_t\). Why bother? The raw momentum matrix
+    is almost always dominated by a handful of large singular directions: a plain step pours most of its
+    length into those few directions and starves the rest. Orthogonalizing equalizes the spectrum, so
+    <strong>every direction in the update gets a comparable-size step</strong> — the matrix analogue of what
+    Adam's per-coordinate rescaling does for scalars, but respecting the matrix's row/column geometry instead
+    of treating entries independently.
+  </p>
+
+  <h3>Newton–Schulz: orthogonalize with only matmuls</h3>
+  <p>
+    Computing an SVD every step, for every weight matrix, would be far too slow. Muon never forms the SVD —
+    it approximates \(O_t = (M_t M_t^\top)^{-1/2} M_t\) (the "matrix sign" of \(M_t\)) with a few iterations
+    of the <strong>Newton–Schulz</strong> matrix-polynomial recurrence, which needs only matrix multiplies
+    and runs happily in <code>bf16</code> on the GPU:
+  </p>
+  <pre><code>def orthogonalize(M, steps=5):           # ~5 iters is enough in practice
+    X = M / (M.norm() + 1e-7)             # scale so singular values land in NS's basin
+    for _ in range(steps):
+        A = X @ X.transpose(-2, -1)
+        X = a*X + (b*A + c*A @ A) @ X     # quintic NS iter, (a,b,c)≈(3.4445,-4.7750,2.0315)
+    return X                              # ≈ U Vᵀ</code></pre>
+  <p>
+    The tuned coefficients push the iteration's singular values toward 1 in as few steps as possible. The
+    whole orthogonalization costs a handful of \(n\times n\) matmuls — cheap next to the layer's forward/
+    backward, and well worth it.
+  </p>
+
+  <h3>Muon is a hybrid: it does not replace AdamW everywhere</h3>
+  <p>
+    Orthogonalization only makes sense for a 2-D parameter that <em>has</em> singular-value structure. So a
+    real training run runs <strong>Muon on the hidden weight matrices and AdamW on everything else</strong>:
+  </p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Parameter</th><th>Optimizer</th><th>Why</th></tr>
+      <tr><td>Hidden <code>Linear</code> weights (2-D)</td><td><strong>Muon</strong></td><td>Genuine matrices — orthogonalization balances the update</td></tr>
+      <tr><td>Embedding &amp; final unembedding / head</td><td>AdamW</td><td>Rows are per-token; act like a lookup, not a transform — Muon hurts here</td></tr>
+      <tr><td>Norm gains, biases (1-D)</td><td>AdamW</td><td>Vectors; no singular-value structure to flatten</td></tr>
+    </table>
+  </div>
+  <div class="note">
+    Muon's step size has a different natural scale than Adam's (its update is semi-orthogonal, so
+    \(\lVert O_t\rVert\) is fixed by the matrix shape, not by the gradient magnitude). You generally
+    scale the learning rate by \(\sqrt{\max(m,n)}\) — or normalize the update's RMS to match AdamW — so the
+    Muon and AdamW parameter groups move at compatible rates. Muon also typically keeps AdamW-style weight
+    decay on its matrices.
+  </div>
+
+  <h3>Why it matters</h3>
+  <ul>
+    <li><strong>Speed records.</strong> Muon set a string of wall-clock records on Keller Jordan's
+      <code>modded-nanoGPT</code> speedrun — reaching target loss in meaningfully fewer tokens/seconds than a
+      tuned AdamW baseline.</li>
+    <li><strong>It scales.</strong> The headline validation is large-model pretraining: Moonshot's
+      <strong>Kimi K2</strong> (1T-param MoE) was trained with a Muon variant (<em>MuonClip</em>, which adds
+      a stability clamp), the first clear evidence the method holds up past toy scale.</li>
+    <li><strong>It's a family.</strong> Muon sits alongside other matrix-aware preconditioners —
+      <strong>Shampoo</strong> and its efficient successor <strong>SOAP</strong> — that likewise use the
+      matrix structure (full/Kronecker-factored preconditioners) rather than a diagonal one. Muon is the
+      lightest of them: just orthogonalize the momentum, no preconditioner state to store.</li>
+  </ul>
+  <p style="font-size:0.9rem; color:var(--muted)">
+    Bottom line: AdamW is still the safe default and still runs the embeddings, head, and 1-D params even in a
+    Muon run. Muon is the one genuinely new idea after AdamW with large-scale evidence behind it — and the
+    change is small: keep the momentum, flatten its singular values, step on that.
+  </p>
+
+  <!-- ════════════════════════ SUMMARY ════════════════════════ -->
+  <h2 id="summary">Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">SGD</div>
+      <p>\(w \mathrel{-}= \eta g\). One global rate; mini-batch noise biases it toward flat minima.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">+ Momentum</div>
+      <p>Step on an EMA \(v_t=\mu v_{t-1}+g_t\); Nesterov probes the lookahead to brake overshoot early.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Adam</div>
+      <p>Add second moment \(v_t\); step \(\eta\,\hat m/\sqrt{\hat v}\) — a per-parameter SNR-bounded update.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">AdamW</div>
+      <p>Decouple decay: \((1-\eta\lambda)w - \eta\,\hat m/\sqrt{\hat v}\), matrices only, with clip + warmup→cosine.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Muon</div>
+      <p>Orthogonalize the momentum matrix (\(O=UV^\top\) via Newton–Schulz); hidden 2-D weights only, AdamW elsewhere.</p>
+    </div>
+  </div>
+  <p style="font-size:0.88rem; color: var(--muted);">
+    The LLM recipe in one line: <strong>AdamW</strong>, \(\beta=(0.9,0.95)\), global-norm clip 1.0,
+    warmup→cosine to \(0.1\times\), \(\lambda=0.1\) on matrices only — with <strong>Muon</strong> on the
+    hidden weight matrices as the current frontier upgrade.
+  </p>
+
+  <p style="margin-top:2em;color:var(--muted);font-size:0.9rem;"><strong>Used in:</strong> this update rule is the "step" of the <a href="../transformer/pretraining.html" style="color:var(--accent);">pretraining</a> loop — AdamW under a warmup→cosine schedule is what actually fills the transformer's weights with knowledge.</p>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; Optimizers — the working math (SGD → AdamW → Muon)
+  &nbsp;·&nbsp; <a href="../index.html" style="color:inherit">← All notes</a>
+</footer>
+
+</body>
+</html>

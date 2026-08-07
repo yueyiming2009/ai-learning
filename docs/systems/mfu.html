@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>MFU — Model FLOPs Utilization</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #0d9488;
+      --accent-light: #f0fdfa;
+      --warning-bg: #fffbeb;
+      --warning-border: #f59e0b;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --compare-bg: #eff6ff;
+      --compare-border: #3b82f6;
+      --ink: #374151;
+      --code-bg: #f1f5f9;
+      --code-fg: #0f766e;
+      --row-hover: #fafafa;
+      --note-fg: #78350f;
+      --result-fg: #16a34a;
+      --compare-fg: #2563eb;
+      --teal-border: #99f6e4;
+      --fig-bg: #ffffff;
+      --nav-bg: rgba(255,255,255,0.92);
+      --spec-bg: #0f172a;
+      --spec-fg: #e2e8f0;
+      --spec-num: #5eead4;
+      --spec-muted: #94a3b8;
+      --diagram-g1: #f9fafb;
+      --diagram-g2: #f0fdfa;
+      --meter-ok1: #0d9488;
+      --meter-ok2: #16a34a;
+      --meter-warn: #f59e0b;
+      --meter-bad: #dc2626;
+      --meter-text: #1a1a2e;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #2dd4bf;
+        --accent-light: #10201e;
+        --warning-bg: #251c0b;
+        --warning-border: #b45309;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --compare-bg: #101a2b;
+        --compare-border: #1e40af;
+        --ink: #cbd5e1;
+        --code-bg: #1c2531;
+        --code-fg: #5eead4;
+        --row-hover: #191e25;
+        --note-fg: #fcd34d;
+        --result-fg: #4ade80;
+        --compare-fg: #60a5fa;
+        --teal-border: #134e4a;
+        --fig-bg: #14181e;
+        --nav-bg: rgba(15,17,21,0.9);
+        --spec-bg: #1c2531;
+        --spec-fg: #e2e8f0;
+        --spec-num: #5eead4;
+        --spec-muted: #94a3b8;
+        --diagram-g1: #14181e;
+        --diagram-g2: #10201e;
+        --meter-ok1: #0d9488;
+        --meter-ok2: #16a34a;
+        --meter-warn: #d97706;
+        --meter-bad: #b91c1c;
+        --meter-text: #e5e7eb;
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0; padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky; top: 0; z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 0.9rem; color: var(--accent); text-decoration: none; white-space: nowrap; }
+    .nav-links { display: flex; gap: 4px; overflow-x: auto; flex: 1; }
+    .nav-links a {
+      font-size: 0.82rem; color: var(--muted); text-decoration: none;
+      padding: 4px 10px; border-radius: 6px; white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .nav-back {
+      font-size: 0.82rem; color: var(--muted); text-decoration: none;
+      padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border);
+      white-space: nowrap; transition: color 0.15s; margin-left: auto; flex-shrink: 0;
+    }
+    .nav-back:hover { color: var(--text); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #166534 0%, #0d9488 100%);
+      color: white; padding: 56px 24px 48px; text-align: center;
+    }
+    .hero h1 { font-size: clamp(1.5rem, 4vw, 2.2rem); font-weight: 600; margin: 0 0 12px; letter-spacing: -0.02em; }
+    .hero p { margin: 0 auto; opacity: 0.85; font-size: 0.97rem; max-width: 580px; }
+    .hero-pill {
+      display: inline-block; background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25); border-radius: 100px;
+      font-size: 0.78rem; padding: 3px 12px; margin-bottom: 16px;
+      letter-spacing: 0.04em; text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap { max-width: 820px; margin: 0 auto; padding: 48px 24px 80px; }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem; font-weight: 600; margin: 2.8em 0 0.8em;
+      padding-bottom: 8px; border-bottom: 2px solid var(--border); color: var(--text);
+    }
+    h3 { font-size: 0.97rem; font-weight: 600; margin: 1.6em 0 0.4em; color: var(--ink); }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+
+    /* ── Code ────────────────────────────────── */
+    code { font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace; }
+    p code, li code, td code { background: var(--code-bg); padding: 1px 6px; border-radius: 4px; font-size: 0.88em; color: var(--code-fg); }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
+    th, td { border: 1px solid var(--border); padding: 9px 16px; text-align: left; vertical-align: top; }
+    th { background: var(--surface); font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+    tr:hover td { background: var(--row-hover); }
+    td.ctr, th.ctr { text-align: center; }
+
+    /* ── Step boxes ──────────────────────────── */
+    .step {
+      background: var(--step-bg); border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0;
+      padding: 16px 20px; margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600; font-size: 0.88rem; color: var(--accent);
+      text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .step-label::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+
+    /* ── Callout / note ──────────────────────── */
+    .note {
+      background: var(--warning-bg); border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0; padding: 10px 16px; margin: 1em 0;
+      font-size: 0.92em; color: var(--note-fg);
+    }
+    .note::before { content: '⚠ '; }
+
+    /* ── Result / boxed equation ─────────────── */
+    .result {
+      background: var(--boxed-bg); border: 1.5px solid var(--boxed-border);
+      border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; text-align: center;
+    }
+    .result-label { font-size: 0.8rem; font-weight: 600; color: var(--result-fg); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+
+    /* ── Comparison box ──────────────────────── */
+    .compare { background: var(--compare-bg); border: 1.5px solid var(--compare-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; }
+    .compare-label { font-size: 0.8rem; font-weight: 600; color: var(--compare-fg); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
+
+    /* ── Summary card ────────────────────────── */
+    .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 1.2em 0; }
+    .summary-card { background: var(--accent-light); border: 1px solid var(--teal-border); border-radius: 8px; padding: 14px 16px; }
+    .summary-card-label { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    /* ── Cross-link banner ───────────────────── */
+    .xref { background: var(--accent-light); border: 1px solid var(--teal-border); border-radius: 8px; padding: 12px 18px; margin: 1.4em 0; font-size: 0.92rem; }
+    .xref a { color: var(--accent); font-weight: 600; text-decoration: none; }
+    .xref a:hover { text-decoration: underline; }
+
+    /* ── Spec chips ──────────────────────────── */
+    .spec-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 1.2em 0; }
+    .spec { background: var(--spec-bg); color: var(--spec-fg); border-radius: 10px; padding: 12px 14px; }
+    .spec-num { font-size: 1.25rem; font-weight: 600; color: var(--spec-num); font-family: ui-monospace, monospace; }
+    .spec-key { font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--spec-muted); margin-top: 2px; }
+
+    /* ── Diagram widgets ─────────────────────── */
+    .diagram {
+      background: linear-gradient(180deg, var(--diagram-g1) 0%, var(--diagram-g2) 100%);
+      border: 1px solid var(--teal-border); border-radius: 12px;
+      padding: 18px 20px; margin: 1.6em 0;
+    }
+    .diagram-title { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+    .diagram-hint { font-size: 0.8rem; color: var(--muted); margin-bottom: 14px; }
+    .diagram-stage { background: var(--fig-bg); border-radius: 8px; padding: 16px; overflow-x: auto; }
+    .anim-controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+    .anim-step-label { font-size: 0.83rem; color: var(--muted); font-style: italic; flex: 1; min-width: 0; }
+    input[type=range] { accent-color: var(--accent); width: 220px; max-width: 60vw; }
+    .rf-read { font-size: 0.9rem; }
+    .rf-read b { font-family: ui-monospace, monospace; }
+
+    /* ── MFU calculator ──────────────────────── */
+    .calc-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
+    .calc-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+    .calc-row label { font-size: 0.88rem; min-width: 220px; color: var(--ink); }
+    .calc-row b { font-family: ui-monospace, monospace; color: var(--accent); }
+    .calc-check { font-size: 0.88rem; color: var(--ink); display: flex; align-items: center; gap: 8px; }
+    .calc-check input { accent-color: var(--accent); width: 16px; height: 16px; }
+    .mfu-bar-wrap { background: var(--code-bg); border-radius: 8px; height: 30px; position: relative; overflow: hidden; margin-top: 14px; }
+    .mfu-bar { height: 100%; border-radius: 8px 0 0 8px; background: linear-gradient(90deg, var(--meter-ok1), var(--meter-ok2)); transition: width 0.2s; }
+    .mfu-bar-text { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-family: ui-monospace, monospace; font-weight: 600; font-size: 0.95rem; color: var(--meter-text); }
+
+    footer { border-top: 1px solid var(--border); padding: 28px 24px; text-align: center; font-size: 0.82rem; color: var(--muted); }
+
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>MFU</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#define">Definition</a>
+    <a href="#sixn">The 6N rule</a>
+    <a href="#attention">Attention term</a>
+    <a href="#hfu">MFU vs HFU</a>
+    <a href="#recipe">The recipe</a>
+    <a href="#calculator">Calculator</a>
+    <a href="#gap">Why &lt; 100%</a>
+    <a href="#summary">Summary</a>
+  </div>
+  <a class="nav-back" href="../index.html">Home</a>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Systems · Hardware</span>
+  <h1>MFU — Model FLOPs Utilization</h1>
+  <p>The one number that grades an entire training run against the hardware: how to count a transformer’s FLOPs per token (the 6N rule and its attention correction), turn measured tokens/sec into achieved FLOP/s, and divide by peak — plus MFU vs HFU, and why 40% is good.</p>
+</div>
+
+<div class="page-wrap">
+
+  <p>
+    The <a href="../hardware/gpu-hardware.html#roofline">roofline</a> grades one <em>kernel</em>: arithmetic intensity in,
+    achievable FLOP/s out. <strong>MFU is the same verdict for the whole training run.</strong> Instead of asking
+    how fast one matmul went, it asks: of all the matmul throughput the cluster could theoretically deliver, what
+    fraction did the model’s <em>useful</em> math actually consume? It is the standard single-number health check
+    for a training job — comparable across codebases, cluster sizes, and even hardware generations.
+  </p>
+
+  <div class="result">
+    <div class="result-label">Model FLOPs Utilization</div>
+    \[ \text{MFU} \;=\; \frac{\text{model FLOPs per token} \;\times\; \text{tokens per second}}
+       {\;n_\text{GPUs} \times P_\text{peak}\;} \]
+  </div>
+
+  <p>
+    The denominator is easy — count your GPUs and look up the spec sheet. The whole craft of computing MFU is the
+    numerator: <em>counting the model’s FLOPs per token analytically</em>, from the architecture, not from a
+    profiler. That is what the next two sections derive.
+  </p>
+
+  <!-- ════════════════════════ DEFINITION ════════════════════════ -->
+  <h2 id="define">1 · What exactly gets counted</h2>
+  <p>
+    Three choices define the metric, and all three are about keeping the numerator <em>honest</em>:
+  </p>
+  <ul>
+    <li><strong>Model FLOPs, not hardware FLOPs.</strong> Count only the math the model architecture requires —
+      forward pass and backward pass. Work your <em>implementation</em> added (activation recomputation, a fused
+      kernel’s extra arithmetic) does not count. If you recompute the forward pass to save memory, your GPUs do
+      more FLOPs but your model learns from the same ones — MFU should drop, not rise (§4).</li>
+    <li><strong>Analytical count, not profiler count.</strong> FLOPs per token comes from a formula over the
+      architecture (\(N\), layers, width, context). That makes MFU reproducible and comparable across stacks.</li>
+    <li><strong>Dense peak, at your training precision.</strong> \(P_\text{peak}\) is the dense Tensor-Core number
+      for the dtype you train in — <strong>989 TFLOP/s bf16</strong> on an H100 SXM5, never the “with sparsity”
+      marketing figure.</li>
+  </ul>
+  <div class="note">
+    Quote the peak that matches your matmul dtype. Training in bf16 but quoting the fp8 peak (or vice versa) is the
+    most common way two teams report incomparable MFU numbers for the same run.
+  </div>
+
+  <!-- ════════════════════════ 6N RULE ════════════════════════ -->
+  <h2 id="sixn">2 · Counting model FLOPs: the 6N rule</h2>
+  <p>
+    The famous estimate — used by the scaling-law papers as <em>compute</em> \(C = 6ND\) for training on \(D\)
+    tokens — is that a transformer with \(N\) parameters spends
+  </p>
+  <div class="result">
+    <div class="result-label">FLOPs per token (matmuls only)</div>
+    \[ \underbrace{2N}_{\text{forward}} \;+\; \underbrace{4N}_{\text{backward}} \;=\; 6N \]
+  </div>
+  <p>
+    Both factors fall out of one observation about matmuls. Take any weight matrix \(W \in \mathbb{R}^{D\times F}\)
+    in the model, computing \(Y = XW\) for one token (\(X \in \mathbb{R}^{1\times D}\)):
+  </p>
+
+  <div class="step">
+    <div class="step-label">Forward: 2 FLOPs per parameter</div>
+    <p style="margin-top:0">
+      The matmul costs \(2DF\) FLOPs — every one of the \(DF\) weights is touched <em>exactly once</em>, in one
+      multiply and one add (a fused multiply-accumulate = 2 FLOPs). So the forward cost of one token through one
+      weight matrix is \(2 \times (\text{its parameter count})\). Summing over every matmul in the model:
+      \(\text{forward} = 2N\) FLOPs per token, where \(N\) counts the parameters that participate in matmuls.
+    </p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Backward: 2× the forward, so 4 FLOPs per parameter</div>
+    <p style="margin-top:0">
+      The backward pass through \(Y = XW\) needs <em>two</em> matmuls of the same shape as the forward one:
+    </p>
+    <ul style="margin-bottom:0">
+      <li>\(\partial X = \partial Y \, W^{\!\top}\) — the <strong>activation gradient</strong>, to keep
+        backpropagating: \(2DF\) FLOPs.</li>
+      <li>\(\partial W = X^{\!\top} \partial Y\) — the <strong>weight gradient</strong>, for the optimizer:
+        \(2DF\) FLOPs.</li>
+    </ul>
+    <p style="margin-bottom:0">
+      Same shapes, same cost each, so backward \(= 2\times\) forward \(= 4N\) per token. Total: \(6N\).
+    </p>
+  </div>
+
+  <p>
+    Two bookkeeping conventions to be aware of when you compare numbers across papers:
+  </p>
+  <ul>
+    <li><strong>Embeddings:</strong> the input embedding is a lookup, not a matmul — it does ~no FLOPs and is
+      usually excluded from \(N\) (Kaplan et al.’s “non-embedding parameters”). The unembedding /
+      <code>lm_head</code> <em>is</em> a real matmul and belongs in the count (for large \(N\) the difference is
+      &lt;1–2% either way).</li>
+    <li><strong>What 6N ignores:</strong> everything that isn’t a parameter matmul — norms, softmax, activations,
+      rotary embeddings (negligible FLOPs), and, much more importantly, the <strong>attention score matmuls</strong>,
+      whose cost scales with sequence length and involves no parameters at all. That is the correction term.</li>
+  </ul>
+
+  <!-- ════════════════════════ ATTENTION ════════════════════════ -->
+  <h2 id="attention">3 · The attention correction: + 12·L·D·T per token</h2>
+  <p>
+    Inside each attention layer, two matmuls multiply <em>activations by activations</em> — \(QK^{\!\top}\) (the
+    scores) and \(\text{scores}\times V\) — so the 6N rule never sees them. Per layer, across all heads (the heads
+    partition the model width \(D\), so head count drops out):
+  </p>
+  <div class="step">
+    <div class="step-label">Counting the score matmuls</div>
+    <p style="margin-top:0">
+      For a sequence of length \(T\): \(QK^{\!\top}\) is \([T,D]\times[D,T] = 2T^2D\) FLOPs, and
+      \(\text{scores}\times V\) is \([T,T]\times[T,D] = 2T^2D\) more — forward total \(4T^2D\) per layer, i.e.
+      \(4TD\) <em>per token</em>. Backward is again 2× forward (each of the two matmuls needs two same-shaped
+      gradient matmuls), giving \(12TD\) per token per layer.
+    </p>
+  </div>
+  <div class="result">
+    <div class="result-label">FLOPs per token, full estimate (PaLM Appendix B)</div>
+    \[ F_\text{token} \;=\; 6N \;+\; 12\,L\,D\,T \]
+    <div style="font-size:0.85rem; color:var(--muted); margin-top:6px">\(L\) layers, model width \(D\), sequence length \(T\) &nbsp;·&nbsp; (PaLM writes \(12\,L\,H\,Q\,T\) with \(H\cdot Q = D\))</div>
+  </div>
+  <p>
+    <strong>When does the correction matter?</strong> For a standard transformer \(N \approx 12LD^2\), so the ratio
+    of attention FLOPs to dense FLOPs is
+  </p>
+  <div class="result">
+    \[ \frac{12LDT}{6N} \;\approx\; \frac{12LDT}{72LD^2} \;=\; \frac{T}{6D}. \]
+  </div>
+  <p>
+    At \(T = D\) (e.g. 4K context on a 4096-wide model) attention adds ~17% — already too big to drop. At short
+    context (\(T \ll D\)) the bare \(6N\) is fine; at long context the attention term <em>dominates</em>, which is
+    exactly why long-context training feels so much slower per token.
+  </p>
+  <div class="note">
+    Convention sensitivity: with a causal mask, FlashAttention computes only the lower triangle — roughly
+    <em>half</em> those FLOPs. Some codebases therefore count \(6LDT\) instead of \(12LDT\). Either is defensible;
+    MFU just shifts by a few percent. State which one you used (the PaLM convention — full \(12LDT\) — is the most
+    common default, and is what e.g. Megatron-LM reports).
+  </div>
+
+  <!-- ════════════════════════ MFU vs HFU ════════════════════════ -->
+  <h2 id="hfu">4 · MFU vs HFU: the recomputation trap</h2>
+  <p>
+    Large-model training often uses <strong>activation recomputation</strong> (gradient checkpointing): discard
+    activations in the forward pass and recompute them during the backward pass to save HBM. The GPUs then execute
+    the forward math <em>twice</em> — roughly \(8N\) hardware FLOPs per token instead of \(6N\). This forces a
+    fork in the metric:
+  </p>
+  <div class="compare">
+    <div class="compare-label">Two utilization numbers</div>
+    <ul style="margin:0">
+      <li><strong>MFU</strong> divides the <em>model’s</em> \(6N\)-based FLOPs by peak. Recomputation makes the
+        step slower with no new model FLOPs → <strong>MFU drops</strong>. This is the honest end-to-end number:
+        it measures progress on the training objective per unit of hardware.</li>
+      <li><strong>HFU</strong> (hardware FLOPs utilization) divides the FLOPs the hardware <em>actually executed</em>
+        (\(\approx 8N\) + recomputed attention) by peak. It measures how busy the silicon was, and is always
+        ≥ MFU. Useful for kernel work; flattering for system comparisons.</li>
+    </ul>
+  </div>
+  <p>
+    A system can raise its HFU by doing <em>more redundant work</em> — that is the trap. When two papers disagree
+    about “utilization,” check which one they report: the Megatron-LM paper’s famous “52% of peak” on its
+    1T-parameter benchmark counts the recomputed FLOPs — it is HFU; on the same runs the PaLM paper tabulates
+    MT-NLG 530B at 36% HFU but only 30% MFU. Always optimize and report MFU; glance at HFU only to ask “is the
+    gap recomputation, or real idleness?”
+  </p>
+
+  <!-- ════════════════════════ RECIPE ════════════════════════ -->
+  <h2 id="recipe">5 · The recipe, end to end</h2>
+
+  <div class="step">
+    <div class="step-label">Step 1 — measure tokens per second</div>
+    <p style="margin-top:0; margin-bottom:0">
+      \(\text{tokens/s} = \dfrac{\text{global batch size} \times \text{sequence length}}{\text{measured step time}}\).
+      Use wall-clock time over many steps in steady state (skip warmup/compilation steps), and count <em>all</em>
+      tokens that went through the model — this is why frameworks AllGather per-rank token counts each step
+      (the <a href="https://github.com/yueyiming2009/ai-learning/blob/main/rl/ppo_training_walkthrough.md">verl
+      walkthrough</a> meets exactly such an AllGather, whose only purpose is the MFU denominator).
+    </p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step 2 — compute FLOPs per token from the architecture</div>
+    <p style="margin-top:0; margin-bottom:0">
+      \(F_\text{token} = 6N + 12LDT\) (§2–3). For MoE models, \(N\) here is the <em>activated</em> parameter
+      count per token, not the total. See <a href="moe-parallelism.html#ceiling" style="color:var(--accent);font-weight:600">MoE Parallelism §8 →</a> for how AlltoAll dispatch adds a communication ceiling on top of this formula.
+    </p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step 3 — divide by what the cluster could do</div>
+    <p style="margin-top:0; margin-bottom:0">
+      \(\text{MFU} = \dfrac{F_\text{token} \times \text{tokens/s}}{n_\text{GPUs} \times P_\text{peak}}\), with
+      \(P_\text{peak}\) the dense peak at your training dtype.
+    </p>
+  </div>
+
+  <h3>Worked example: a 7B model on H100s</h3>
+  <p>
+    LLaMA-7B-style model: \(N = 6.7\times10^9\), \(L = 32\), \(D = 4096\), trained at \(T = 4096\) in bf16.
+    Measured throughput: <strong>10,000 tokens/s per GPU</strong>.
+  </p>
+  <div class="spec-grid">
+    <div class="spec"><div class="spec-num">4.02e10</div><div class="spec-key">dense: 6N FLOPs/token</div></div>
+    <div class="spec"><div class="spec-num">0.64e10</div><div class="spec-key">attn: 12LDT FLOPs/token</div></div>
+    <div class="spec"><div class="spec-num">466</div><div class="spec-key">achieved TFLOP/s/GPU</div></div>
+    <div class="spec"><div class="spec-num">47%</div><div class="spec-key">MFU (÷ 989)</div></div>
+  </div>
+  <p>
+    Line by line: \(6N = 4.02\times10^{10}\); \(12LDT = 12 \cdot 32 \cdot 4096 \cdot 4096 = 6.4\times10^{9}\)
+    (the \(T/6D \approx 16\%\) correction); total \(F_\text{token} = 4.66\times10^{10}\) FLOPs/token. Times
+    \(10^4\) tokens/s = \(4.66\times10^{14}\) FLOP/s = 466 TFLOP/s per GPU. Against the 989 TFLOP/s bf16 peak:
+    <strong>MFU = 47%</strong> — a healthy number. Had we dropped the attention term we’d have reported 41% and
+    undersold the run. If this run used full recomputation, the hardware also executed an extra forward
+    (\(2N + 4LDT\) more per token), so HFU ≈ 63% — same training run, very different-looking number.
+  </p>
+
+  <!-- ════════════════════════ CALCULATOR ════════════════════════ -->
+  <h2 id="calculator">6 · Calculator</h2>
+  <p>
+    The same arithmetic, live. Set the architecture and your measured per-GPU throughput; the bar is MFU against
+    the dense bf16 peak you choose.
+  </p>
+
+  <div class="diagram">
+    <div class="diagram-title">▸ MFU calculator</div>
+    <div class="diagram-hint">FLOPs/token = 6N + 12·L·D·T (attention term included when L, D &gt; 0). Per-GPU throughput × FLOPs/token ÷ peak.</div>
+    <div class="diagram-stage">
+      <div class="calc-grid">
+        <div class="calc-row">
+          <label>Parameters \(N\): <b id="c-n">6.7B</b></label>
+          <input type="range" id="c-n-sl" min="0" max="300" value="137">
+        </div>
+        <div class="calc-row">
+          <label>Layers \(L\) × width \(D\): <b id="c-ld">32 × 4096</b></label>
+          <input type="range" id="c-ld-sl" min="0" max="7" value="3">
+        </div>
+        <div class="calc-row">
+          <label>Sequence length \(T\): <b id="c-t">4096</b></label>
+          <input type="range" id="c-t-sl" min="0" max="7" value="3">
+        </div>
+        <div class="calc-row">
+          <label>Tokens/s per GPU: <b id="c-tok">10,000</b></label>
+          <input type="range" id="c-tok-sl" min="0" max="300" value="200">
+        </div>
+        <div class="calc-row">
+          <label>Peak TFLOP/s (dense): <b id="c-peak">989</b></label>
+          <input type="range" id="c-peak-sl" min="0" max="3" value="1">
+          <span class="calc-check"><input type="checkbox" id="c-recompute"> <label for="c-recompute" style="min-width:0">full recomputation (show HFU too)</label></span>
+        </div>
+      </div>
+      <div class="mfu-bar-wrap"><div class="mfu-bar" id="c-bar" style="width:47%"></div><div class="mfu-bar-text" id="c-bar-text">MFU 47%</div></div>
+      <p class="rf-read" id="c-verdict" style="margin:12px 2px 0"></p>
+    </div>
+  </div>
+
+  <!-- ════════════════════════ WHY < 100% ════════════════════════ -->
+  <h2 id="gap">7 · Why nobody hits 100%</h2>
+  <p>
+    MFU charges <em>all</em> wall-clock time against a peak that only the biggest matmuls can touch. Every second
+    spent anywhere else is pure MFU loss. The budget leaks in a fixed set of places:
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Leak</th><th>Why it costs MFU</th></tr></thead>
+      <tbody>
+        <tr><td>Memory-bound ops</td><td>Norms, softmax, rotary, residual adds sit far left of the
+          <a href="../hardware/gpu-hardware.html#roofline">roofline ridge</a> — they burn wall time while contributing ~zero
+          counted FLOPs. Fusion (FlashAttention, fused norms) exists to shrink this slice.</td></tr>
+        <tr><td>Matmul efficiency</td><td>Even a good GEMM reaches ~80–90% of peak, not 100% — tile quantization,
+          wave quantization, epilogue overhead. This alone caps MFU near ~85% before anything else leaks.</td></tr>
+        <tr><td>Exposed communication</td><td>Any collective not hidden under compute — a straggling DP AllReduce,
+          FSDP AllGathers on the critical path, cross-node TP — is idle Tensor-Core time.</td></tr>
+        <tr><td>Pipeline bubbles</td><td>PP warmup/drain steps where some stages have nothing to do; bubble
+          fraction translates one-for-one into lost MFU.</td></tr>
+        <tr><td>Host-side gaps</td><td>Dataloader stalls, kernel-launch gaps, optimizer step, logging,
+          checkpointing — anything that leaves the GPU idle between kernels.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    Calibration for what “good” means in practice:
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Run</th><th class="ctr">MFU</th></tr></thead>
+      <tbody>
+        <tr><td>GPT-3 175B (2020 stack, V100s)</td><td class="ctr">~21%</td></tr>
+        <tr><td>Megatron-Turing 530B (A100)</td><td class="ctr">~30% (36% HFU)</td></tr>
+        <tr><td>PaLM 540B (TPU v4)</td><td class="ctr">46%</td></tr>
+        <tr><td>Well-tuned dense LLM, A100 era</td><td class="ctr">~50–60%</td></tr>
+        <tr><td>Well-tuned dense LLM, H100 era</td><td class="ctr">~35–45%</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note">
+    The H100 numbers being <em>lower</em> than A100’s is not a regression — peak FLOP/s grew ~3× while HBM and
+    network bandwidth grew much less, so the roofline ridge moved right and the same code is now more
+    memory-and-comm-bound. Same lesson as everywhere on this page: MFU is a ratio, and the denominator is doing a
+    lot of work. Compare MFU across same-generation hardware; compare tokens/s/GPU (or cost/token) across
+    generations.
+  </div>
+
+  <!-- ════════════════════════ SUMMARY ════════════════════════ -->
+  <h2 id="summary">8 · Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">The metric</div>
+      <p>MFU = (FLOPs/token × tokens/s) ÷ (n_GPUs × dense peak). Whole-run roofline verdict in one number.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">The 6N rule</div>
+      <p>2 FLOPs/param forward (one MAC per param per token), 4 backward (∂X and ∂W matmuls) → 6N per token.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Attention term</div>
+      <p>+12·L·D·T per token for QKᵀ and scores·V. Relative size ≈ T/6D — dominant at long context.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">MFU vs HFU</div>
+      <p>Recomputation raises hardware FLOPs (~8N) but not model FLOPs. Report MFU; HFU only diagnoses the gap.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Honest denominators</div>
+      <p>Dense peak at your matmul dtype; activated params for MoE; all tokens across all ranks in tokens/s.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Calibration</div>
+      <p>40–50% is a well-tuned run; 20% means something is exposed; &gt;60% on H100 deserves an audit of the count.</p>
+    </div>
+  </div>
+
+  <div class="xref">
+    Back to <a href="../hardware/gpu-hardware.html#roofline">GPU Hardware §6 — the roofline →</a> for the per-kernel version of
+    this argument, and <a href="torch-distributed.html">Data Parallelism →</a> / <a href="tensor-parallelism.html">Tensor
+    Parallelism →</a> for the communication that MFU silently charges you for.
+  </div>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; MFU — Model FLOPs Utilization
+  &nbsp;·&nbsp; <a href="../index.html" style="color:inherit">← All notes</a>
+</footer>
+
+<script>
+  // ── MFU calculator ──────────────────────────────────────────
+  (function () {
+    const $ = id => document.getElementById(id);
+    const nSl = $('c-n-sl'), ldSl = $('c-ld-sl'), tSl = $('c-t-sl'),
+          tokSl = $('c-tok-sl'), peakSl = $('c-peak-sl'), rec = $('c-recompute');
+    if (!nSl) return;
+
+    // resolve colors at render time so the meter follows the OS light/dark scheme
+    const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+    // L×D presets roughly matching common model sizes
+    const LD = [[0, 0], [12, 768], [24, 2048], [32, 4096], [40, 5120], [64, 8192], [80, 8192], [126, 16384]];
+    const LD_NAME = ['off (6N only)', '12 × 768', '24 × 2048', '32 × 4096', '40 × 5120', '64 × 8192', '80 × 8192', '126 × 16384'];
+    const T = [512, 1024, 2048, 4096, 8192, 16384, 32768, 131072];
+    const PEAK = [312, 989, 1979, 2500];  // A100 bf16, H100 bf16, H100 fp8, B200 bf16
+    const PEAK_NAME = ['312 (A100 bf16)', '989 (H100 bf16)', '1979 (H100 fp8)', '2500 (B200 bf16)'];
+
+    const fmtN = n => n >= 1e12 ? (n / 1e12).toFixed(1) + 'T' : n >= 1e9 ? (n / 1e9).toFixed(1) + 'B' : (n / 1e6).toFixed(0) + 'M';
+    const fmtI = n => n.toLocaleString('en-US');
+
+    function update() {
+      // N: log scale 100M .. 1T over slider 0..300
+      const N = Math.pow(10, 8 + nSl.value / 300 * 4);
+      const [L, D] = LD[ldSl.value];
+      const t = T[tSl.value];
+      // tokens/s: log scale 100 .. 100,000 over 0..300
+      const tok = Math.pow(10, 2 + tokSl.value / 300 * 3);
+      const peak = PEAK[peakSl.value];
+
+      $('c-n').textContent = fmtN(N);
+      $('c-ld').textContent = LD_NAME[ldSl.value];
+      $('c-t').textContent = fmtI(t);
+      $('c-tok').textContent = fmtI(Math.round(tok));
+      $('c-peak').textContent = PEAK_NAME[peakSl.value];
+
+      const dense = 6 * N, attn = 12 * L * D * t;
+      const fTok = dense + attn;
+      const achieved = fTok * tok / 1e12;            // TFLOP/s
+      const mfu = achieved / peak * 100;
+      const hwTok = fTok + 2 * N + 4 * L * D * t;    // + one recomputed forward
+      const hfu = hwTok * tok / 1e12 / peak * 100;
+
+      const bar = $('c-bar'), txt = $('c-bar-text');
+      bar.style.width = Math.min(mfu, 100) + '%';
+      bar.style.background = mfu > 100 ? cssVar('--meter-bad')
+        : mfu >= 35 ? 'linear-gradient(90deg,' + cssVar('--meter-ok1') + ',' + cssVar('--meter-ok2') + ')'
+        : mfu >= 20 ? cssVar('--meter-warn') : cssVar('--meter-bad');
+      txt.textContent = 'MFU ' + mfu.toFixed(1) + '%' + (rec.checked ? '  ·  HFU ' + hfu.toFixed(1) + '%' : '');
+
+      let verdict;
+      if (mfu > 100) verdict = 'Over 100% — the FLOP count or the measurement is wrong (sparsity peak? double-counted tokens?).';
+      else if (mfu >= 45) verdict = 'Excellent — near the practical ceiling once matmul efficiency and memory-bound ops are paid for.';
+      else if (mfu >= 35) verdict = 'Healthy — typical of a well-tuned dense run.';
+      else if (mfu >= 20) verdict = 'Room to claw back — look for exposed communication, bubbles, or unfused memory-bound ops.';
+      else verdict = 'Something big is exposed — comm on the critical path, tiny batch, or host-side stalls.';
+      $('c-verdict').innerHTML =
+        'FLOPs/token = <b>' + (fTok / 1e9).toFixed(1) + ' GFLOP</b> (6N = ' + (dense / 1e9).toFixed(1) +
+        (attn ? ', attention = ' + (attn / 1e9).toFixed(1) : '') + ') · achieved <b>' +
+        achieved.toFixed(0) + ' TFLOP/s</b>/GPU — ' + verdict;
+    }
+
+    [nSl, ldSl, tSl, tokSl, peakSl].forEach(el => el.addEventListener('input', update));
+    rec.addEventListener('change', update);
+    update();
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    if (mq.addEventListener) mq.addEventListener('change', update);
+  })();
+</script>
+
+</body>
+</html>

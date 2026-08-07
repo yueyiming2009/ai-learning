@@ -1,0 +1,983 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>PPO Training Walkthrough in slime/Miles</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #1d4ed8;
+      --accent-light: #eff6ff;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --nccl-bg: #fef3c7;
+      --nccl-border: #d97706;
+      --phase-bg: #f5f3ff;
+      --phase-border: #7c3aed;
+      --ep-bg: #fff7ed;
+      --ep-border: #ea580c;
+      --nav-bg: rgba(255,255,255,0.92);
+      --ink: #374151;
+      --ink-soft: #4b5563;
+      --row-hover: #fafafa;
+      --heading-fg: #1e1b4b;
+      --nccl-fg: #92400e;
+      --ep-fg: #9a3412;
+      --note-fg: #1e40af;
+      --tip-bg: #fdf4ff;
+      --tip-border: #a855f7;
+      --tip-fg: #581c87;
+      --tip-label-fg: #7e22ce;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #60a5fa;
+        --accent-light: #101a2b;
+        --warning-bg: #101a2b;
+        --warning-border: #1e40af;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --nccl-bg: #251c0b;
+        --nccl-border: #b45309;
+        --phase-bg: #1a1626;
+        --phase-border: #6d28d9;
+        --ep-bg: #251c0b;
+        --ep-border: #c2410c;
+        --nav-bg: rgba(15,17,21,0.9);
+        --ink: #cbd5e1;
+        --ink-soft: #9aa1ab;
+        --row-hover: #191e25;
+        --heading-fg: #e5e7eb;
+        --nccl-fg: #fcd34d;
+        --ep-fg: #fdba74;
+        --note-fg: #93c5fd;
+        --tip-bg: #1a1626;
+        --tip-border: #7e22ce;
+        --tip-fg: #e9d5ff;
+        --tip-label-fg: #c084fc;
+      }
+    }
+
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #0f172a 0%, #7c2d12 60%, #ea580c 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.4rem, 3.5vw, 2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.9;
+      font-size: 0.95rem;
+      max-width: 660px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    h4 {
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin: 1.2em 0 0.3em;
+      color: var(--ink-soft);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    a { color: var(--accent); }
+    code {
+      font-family: 'JetBrains Mono', monospace;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.85em;
+    }
+    pre {
+      font-family: 'JetBrains Mono', monospace;
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      overflow-x: auto;
+      font-size: 0.83rem;
+      line-height: 1.6;
+      margin: 1.2em 0;
+    }
+    pre code { background: none; padding: 0; border: none; color: var(--text); font-size: inherit; }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.9rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 8px 14px;
+      text-align: left;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+    td code { font-size: 0.8em; }
+
+    /* ── Phase header ────────────────────────── */
+    .phase {
+      background: var(--phase-bg);
+      border: 1px solid var(--phase-border);
+      border-radius: 10px;
+      padding: 18px 22px;
+      margin: 2em 0 1em;
+    }
+    .phase-label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--phase-border);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 4px;
+    }
+    .phase h3 { margin: 0; font-size: 1rem; color: var(--heading-fg); }
+    .phase p { margin: 8px 0 0; font-size: 0.9rem; color: var(--ink); }
+
+    /* ── NCCL callout ────────────────────────── */
+    .nccl {
+      background: var(--nccl-bg);
+      border: 1px solid var(--nccl-border);
+      border-left: 3px solid var(--nccl-border);
+      border-radius: 0 8px 8px 0;
+      padding: 12px 16px;
+      margin: 1em 0;
+      font-size: 0.9rem;
+    }
+    .nccl-label {
+      font-weight: 600;
+      font-size: 0.8rem;
+      color: var(--nccl-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── EP callout (AlltoAll) ───────────────── */
+    .ep {
+      background: var(--ep-bg);
+      border: 1px solid var(--ep-border);
+      border-left: 3px solid var(--ep-border);
+      border-radius: 0 8px 8px 0;
+      padding: 12px 16px;
+      margin: 1em 0;
+      font-size: 0.9rem;
+    }
+    .ep-label {
+      font-weight: 600;
+      font-size: 0.8rem;
+      color: var(--ep-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Note ────────────────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+
+    /* ── Diff callout ────────────────────────── */
+    .diff {
+      background: var(--tip-bg);
+      border: 1px solid var(--tip-border);
+      border-left: 3px solid var(--tip-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.9rem;
+      color: var(--tip-fg);
+    }
+    .diff-label {
+      font-weight: 600;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 4px;
+      color: var(--tip-label-fg);
+    }
+
+    /* ── Responsive ──────────────────────────── */
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>slime/Miles Walkthrough</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#config">Config</a>
+    <a href="#parallelism">Parallelism</a>
+    <a href="#phases">Phases</a>
+    <a href="#comms">Comms</a>
+    <a href="#compare">vs verl</a>
+    <a href="#code">Code</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">RL Systems</span>
+  <h1>PPO Training Walkthrough in slime / Miles</h1>
+  <p>One complete PPO step on a 30B MoE model — SGLang as the HTTP rollout server, Megatron-LM
+  as the training engine, expert parallelism (EP) with AlltoAll dispatch, and TIM elimination
+  instead of IS correction.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="note">
+    Prerequisites: <a href="rlhf.html">RLHF</a>, <a href="../systems/tensor-parallelism.html">Tensor Parallelism</a>,
+    <a href="../systems/torch-distributed.html">FSDP / ZeRO</a>.
+    For the verl approach to the same problem, see <a href="ppo-training-walkthrough.html">PPO Walkthrough in verl</a>.
+    For the async/TIM theory behind the architectural choices here, see <a href="async-rl.html">Async RL</a>.
+    For the theory behind why EP with AlltoAll is chosen over TP for expert FFNs, see <a href="../systems/moe-parallelism.html">MoE Parallelism →</a>.
+  </div>
+
+  <!-- ── §1 Config ──────────────────────────── -->
+  <h2 id="config">1. Concrete Configuration</h2>
+
+  <h3>1.1 Model — Qwen3-MoE style (dense attention, sparse FFN)</h3>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symbol</th><th>Name</th><th>Value</th></tr>
+      <tr><td>\(H\)</td><td>Hidden size</td><td>2048</td></tr>
+      <tr><td>\(A\)</td><td>Attention heads</td><td>16</td></tr>
+      <tr><td>\(d\)</td><td>Head dim (\(H/A\))</td><td>128</td></tr>
+      <tr><td>\(L\)</td><td>Transformer layers</td><td>24</td></tr>
+      <tr><td>\(E\)</td><td>Total experts per MoE layer</td><td>64</td></tr>
+      <tr><td>\(K\)</td><td>Top-k experts active per token</td><td>2</td></tr>
+      <tr><td>\(F\)</td><td>FFN intermediate dim per expert</td><td>1024</td></tr>
+      <tr><td>\(V\)</td><td>Vocabulary size</td><td>32 000</td></tr>
+    </table>
+  </div>
+
+  <p>MoE replaces the dense FFN in each transformer layer with \(E=64\) independent expert FFNs
+  plus a learned router. Only \(K=2\) experts are activated per token; the other 62 are skipped
+  entirely.</p>
+
+  <h3>1.2 Hardware and Parallelism</h3>
+
+  <pre><code>Total GPUs: 8  (2 nodes × 4 GPUs, NVLink intra-node, InfiniBand cross-node)
+
+TP = 2   tensor parallel (attention weight sharding)
+EP = 2   expert parallel (expert sharding across GPUs)
+DP = 2   data parallel (ZeRO-3 / Megatron distributed optimizer)
+PP = 1   pipeline parallel (disabled)
+
+TP × EP × DP × PP = 2 × 2 × 2 × 1 = 8  ✓</code></pre>
+
+  <p><strong>GPU layout</strong> (DP × EP × TP):</p>
+
+  <pre><code>Node 0:
+  GPU 0  →  DP=0, EP=0, TP=0
+  GPU 1  →  DP=0, EP=0, TP=1
+  GPU 2  →  DP=0, EP=1, TP=0
+  GPU 3  →  DP=0, EP=1, TP=1
+Node 1:
+  GPU 4  →  DP=1, EP=0, TP=0
+  GPU 5  →  DP=1, EP=0, TP=1
+  GPU 6  →  DP=1, EP=1, TP=0
+  GPU 7  →  DP=1, EP=1, TP=1</code></pre>
+
+  <p>Each EP rank (a TP-parallel pair within one DP rank) holds \(E/EP = 32\) experts.</p>
+
+  <h3>1.3 Architecture: Server Boundary vs. HybridEngine</h3>
+
+  <p>This is the defining structural difference from verl.</p>
+
+  <p><strong>verl — HybridEngine (co-located monolith):</strong> training and rollout workers
+  share the same GPU memory and NCCL process group. Weight updates flow in-process via NCCL
+  AllGather — no network hop, no process boundary.</p>
+
+  <p><strong>slime/Miles — hard server boundary:</strong> SGLang runs as a standalone HTTP inference
+  server. The training cluster (Megatron) and the rollout server (SGLang) are separate OS
+  processes, possibly on separate GPU pools. Weight updates are serialized and pushed over HTTP.</p>
+
+  <pre><code>verl:
+  [FSDP training workers] ──NCCL AllGather──▶ [vLLM rollout workers]
+   same process group, shared GPU memory
+
+slime/Miles:
+  [Megatron training workers] ──HTTP POST /update_weights──▶ [SGLang server]
+   separate processes; may share or split GPUs across nodes</code></pre>
+
+  <p>The server boundary is the source of both the flexibility (rollout and training can scale
+  independently) and the engineering complexity (weight serialization, format conversion, HTTP
+  latency).</p>
+
+  <h3>1.4 Batch Sizes</h3>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symbol</th><th>Name</th><th>Value</th></tr>
+      <tr><td>\(B\)</td><td>Prompts per step</td><td>16</td></tr>
+      <tr><td>\(n\)</td><td>Rollouts per prompt</td><td>4</td></tr>
+      <tr><td>\(B_{seq}\)</td><td>Total sequences (\(B \times n\))</td><td>64</td></tr>
+      <tr><td>\(P\)</td><td>Prompt length</td><td>512</td></tr>
+      <tr><td>\(R\)</td><td>Response length</td><td>512</td></tr>
+      <tr><td>\(S\)</td><td>Full sequence length (\(P+R\))</td><td>1024</td></tr>
+      <tr><td>\(M\)</td><td>PPO mini-batch size (global)</td><td>16</td></tr>
+    </table>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Quantity</th><th>Formula</th><th>Value</th></tr>
+      <tr><td>Sequences per DP rank (rollout)</td><td>\(B_{seq} / DP\)</td><td>32</td></tr>
+      <tr><td>Mini-batch per DP rank (training)</td><td>\(M / DP\)</td><td>8</td></tr>
+    </table>
+  </div>
+
+  <!-- ── §2 Parallelism ─────────────────────── -->
+  <h2 id="parallelism">2. Parallelism Strategies</h2>
+
+  <h3>2.1 Tensor Parallelism (TP=2)</h3>
+
+  <p>Identical to verl. Column-parallel Q/K/V projections, row-parallel output projection, one
+  AllReduce per attention sub-layer. See the
+  <a href="ppo-training-walkthrough.html#parallelism">verl walkthrough §2.1</a> for the full
+  derivation with explicit tensor shapes.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Weight</th><th>Shape (full)</th><th>Shape per TP rank</th><th>Parallel type</th></tr>
+      <tr><td>W_Q</td><td>(2048, 2048)</td><td>(2048, 1024)</td><td>column</td></tr>
+      <tr><td>W_K</td><td>(2048, 2048)</td><td>(2048, 1024)</td><td>column</td></tr>
+      <tr><td>W_V</td><td>(2048, 2048)</td><td>(2048, 1024)</td><td>column</td></tr>
+      <tr><td>W_O</td><td>(2048, 2048)</td><td>(1024, 2048)</td><td>row → <strong>AllReduce</strong></td></tr>
+    </table>
+  </div>
+
+  <h3>2.2 Expert Parallelism (EP=2) — new vs. verl</h3>
+
+  <p>In MoE models the dense FFN is replaced by \(E=64\) parallel expert FFNs plus a learned
+  router. With EP=2, each EP rank (a TP-parallel pair of GPUs) holds \(E/EP = 32\) experts.</p>
+
+  <p><strong>Expert weight memory per EP rank:</strong></p>
+  <pre><code>32 experts × 2 matrices (W_up, W_down) × (2048 × 1024) × 2 bytes ≈ 256 MB per EP rank
+(vs. ~512 MB without EP)</code></pre>
+
+  <p><strong>The two AlltoAll operations per MoE FFN layer</strong> (training mini-batch,
+  8 sequences × 1024 tokens = 8192 tokens per DP rank):</p>
+
+  <pre><code># Step 1 — Router (local, no communication)
+scores  = x @ W_router           →  (8192, E=64)   bfloat16
+top_idx, top_weight = topk(k=2)  →  (8192, 2)  each
+
+# Step 2 — AlltoAll dispatch: send tokens to the GPU holding their experts
+# EP rank 0 holds experts 0–31; EP rank 1 holds experts 32–63
+dispatch_in : (8192×K=16384, H=2048)  bfloat16   tokens reordered by expert assignment</code></pre>
+
+  <div class="ep">
+    <div class="ep-label">NCCL — AlltoAll (EP group, intra-node NVLink)</div>
+    Each GPU sends tokens targeting experts on the other EP rank and receives tokens targeting its
+    own 32 experts. Cross-EP volume per GPU: <strong>≈ 32 MB</strong>
+  </div>
+
+  <pre><code># Step 3 — Local expert FFN (no communication)
+# Each of the 32 local experts processes the tokens it received
+expert_out : (tokens_received, H=2048)
+
+# Step 4 — AlltoAll combine: return expert outputs to token origin GPUs</code></pre>
+
+  <div class="ep">
+    <div class="ep-label">NCCL — AlltoAll (EP group, intra-node NVLink)</div>
+    Inverse of dispatch — outputs flow back to the GPU that owns each token.
+    Cross-EP volume per GPU: <strong>≈ 32 MB</strong>
+  </div>
+
+  <pre><code># Step 5 — Weighted sum (local)
+out : (8192, H=2048)   bfloat16   K=2 expert outputs combined by router weights</code></pre>
+
+  <p>Compared to verl's dense FFN (one AllReduce of ~16 MB for this hidden size), the MoE layer
+  pays <strong>two AlltoAll calls of ~32 MB each</strong>. AlltoAll avoids the full ring-reduction
+  overhead; its volume scales with dispatched tokens × hidden dim, independent of model width.</p>
+
+  <p><strong>Expert load imbalance:</strong> if the router sends many tokens to a few popular
+  experts, some GPUs do far more compute than others, stalling the pipeline. Miles applies an
+  auxiliary load-balancing loss to keep per-expert token counts close to uniform.</p>
+
+  <h3>2.3 Data Parallelism (DP=2, Megatron ZeRO)</h3>
+
+  <p>Functionally identical to verl's FSDP (ZeRO-3): each DP rank holds 1/DP of each parameter.
+  AllGather before compute; ReduceScatter after backward. Implemented via Megatron's distributed
+  optimizer rather than PyTorch FSDP, but the NCCL primitives are the same.</p>
+
+  <h3>2.4 SGLang as Rollout Server</h3>
+
+  <p>SGLang replaces vLLM and runs as an HTTP inference server with continuous batching
+  (PagedAttention). The controller does not call a library — it sends HTTP requests.</p>
+
+  <pre><code>Training controller
+    │  HTTP POST /generate
+    │  { "prompts": [...], "n": 4, "max_new_tokens": 512, "return_logprobs": true }
+    ▼
+SGLang server  (continuous batching, PagedAttention KV cache)
+    │  — prefill: parallel forward over prompt tokens (with EP AlltoAll per layer)
+    │  — decode:  autoregressive, K=2 experts per step
+    │  — stores:  log_prob_behavior for each generated token
+    ▼
+    │  HTTP response  { "sequences": [...], "log_probs": [...] }
+    ▼
+Training controller</code></pre>
+
+  <p><strong>TIM elimination</strong> (Training-Inference Mismatch): slime/Miles ensures that
+  SGLang and Megatron compute numerically identical log probs for the same token under the same
+  weights. Required conditions: same FP precision, same TP degree, same attention kernel, same
+  expert routing. When these hold, <code>log_prob_behavior ≡ log_prob_training</code> and the IS
+  ratio \(\rho = 1\) by construction — no IS correction layer needed. See
+  <a href="async-rl.html">Async RL</a> for the contrast with IS-correction approaches.</p>
+
+  <!-- ── §3 Phases ──────────────────────────── -->
+  <h2 id="phases">3. Phase-by-Phase Walkthrough</h2>
+
+  <!-- Phase 1 -->
+  <div class="phase">
+    <div class="phase-label">Phase 1</div>
+    <h3>Data Loading</h3>
+    <p><strong>Where:</strong> Training controller (CPU)</p>
+  </div>
+
+  <pre><code>prompts_global : (B=16, P=512)  int64   on controller CPU</code></pre>
+
+  <div class="diff">
+    <div class="diff-label">Differs from verl</div>
+    Prompts are HTTP-posted to the SGLang server rather than scattered via the Ray object store to
+    co-located vLLM workers. The controller may pipeline requests — sending the next batch before
+    the current one completes — to keep SGLang's continuous batcher saturated.
+  </div>
+
+  <!-- Phase 2 -->
+  <div class="phase">
+    <div class="phase-label">Phase 2</div>
+    <h3>Rollout (SGLang Server)</h3>
+    <p><strong>Where:</strong> SGLang server</p>
+  </div>
+
+  <h4>2a. Prefill</h4>
+
+  <p>For each of L=24 layers, the attention sub-layer is identical to verl (TP AllReduce after W_O):</p>
+
+  <div class="nccl">
+    <div class="nccl-label">NCCL — AllReduce ×2 (TP group, intra-node, per layer)</div>
+    tensor: (B_seq/DP=32, P=512, H=2048) bfloat16 &nbsp;·&nbsp; volume: 64 MB each
+  </div>
+
+  <p>MoE FFN per layer (replaces the dense FFN AllReduce in verl):</p>
+
+  <pre><code># Router (local)
+scores = x @ W_router  →  (32, 512, E=64)
+top2_idx, top2_weight = topk(k=2)          →  (32, 512, 2)</code></pre>
+
+  <div class="ep">
+    <div class="ep-label">NCCL — AlltoAll dispatch (EP group, intra-node NVLink)</div>
+    input: (32×512×K=32768, H=2048) bfloat16 &nbsp;·&nbsp; cross-EP volume per GPU: <strong>≈ 64 MB</strong>
+  </div>
+
+  <pre><code># 32 local experts process their tokens (local compute)</code></pre>
+
+  <div class="ep">
+    <div class="ep-label">NCCL — AlltoAll combine (EP group, intra-node NVLink)</div>
+    cross-EP volume per GPU: <strong>≈ 64 MB</strong>
+  </div>
+
+  <p><strong>Per-layer total (prefill):</strong> 2 TP AllReduce × 64 MB + 2 EP AlltoAll × 64 MB = <strong>256 MB</strong>.<br>
+  <strong>Prefill total:</strong> 24 layers × 256 MB = <strong>6 GB</strong>.</p>
+
+  <h4>2b. Decode (R=512 steps, one token at a time)</h4>
+
+  <p>Each step processes a single new token per sequence <code>(32, 1, H=2048)</code>:</p>
+
+  <div class="nccl">
+    <div class="nccl-label">NCCL — AllReduce ×2 (TP group, per layer, per step)</div>
+    tensor: (32, 1, 2048) bfloat16 &nbsp;·&nbsp; volume: 128 KB each
+  </div>
+
+  <div class="ep">
+    <div class="ep-label">NCCL — AlltoAll ×2 (EP group, per layer, per step)</div>
+    input: (32×K=64, H=2048) bfloat16 &nbsp;·&nbsp; cross-EP volume per GPU: <strong>≈ 256 KB each</strong>
+  </div>
+
+  <p><strong>Per-decode-step total:</strong> 24 layers × (2×128 KB + 2×256 KB) ≈ <strong>18 MB per step</strong>.<br>
+  <strong>Decode total for R=512:</strong> 512 × 18 MB ≈ <strong>9 GB</strong>.</p>
+
+  <h4>2c. Log-Prob Collection</h4>
+
+  <p>SGLang records <code>log_prob_behavior</code> for each sampled token during decode — the log
+  prob of the generated token under the current expert+router forward pass.</p>
+
+  <pre><code>log_probs_behavior : (B_seq=64, R=512)  float32   stored on SGLang server</code></pre>
+
+  <h4>2d. Output</h4>
+
+  <p>SGLang returns via HTTP response:</p>
+  <pre><code>sequences   : (64, S=1024)  int64
+log_probs   : (64, R=512)   float32</code></pre>
+
+  <!-- Phase 3 -->
+  <div class="phase">
+    <div class="phase-label">Phase 3</div>
+    <h3>Reward Computation</h3>
+    <p>Identical to verl Phase 3.</p>
+  </div>
+
+  <pre><code>token_level_rewards : (64, 512)  float32</code></pre>
+
+  <!-- Phase 4 -->
+  <div class="phase">
+    <div class="phase-label">Phase 4</div>
+    <h3>Old Log-Probs</h3>
+    <p><strong>Where:</strong> SGLang server (already computed during rollout)</p>
+  </div>
+
+  <div class="diff">
+    <div class="diff-label">Key difference from verl</div>
+    verl runs a separate non-autoregressive forward pass for numerical stability. In slime/Miles,
+    <code>log_probs_behavior</code> was already recorded in Phase 2c and returned in the HTTP
+    response. When TIM elimination holds, no extra forward pass is needed.
+  </div>
+
+  <pre><code>old_log_probs = log_probs_behavior   # (64, 512)  float32   zero extra compute</code></pre>
+
+  <p>If TIM cannot be guaranteed (e.g., TP degree changes between rollout and training), a Megatron
+  recompute pass is run with matched precision and kernel settings.</p>
+
+  <!-- Phase 5 -->
+  <div class="phase">
+    <div class="phase-label">Phase 5</div>
+    <h3>Reference Policy Log-Probs</h3>
+    <p><strong>Where:</strong> Megatron reference policy workers (frozen weights)</p>
+  </div>
+
+  <p>Full non-autoregressive Megatron forward over all 64 sequences. MoE layers add 2 AlltoAll
+  per layer in addition to the TP AllReduce.</p>
+
+  <div class="nccl">
+    <div class="nccl-label">NCCL per layer — TP AllReduce ×2 + EP AlltoAll ×2</div>
+    TP AllReduce: (32, 1024, 2048) bf16 · ~128 MB each &nbsp;·&nbsp;
+    EP AlltoAll: ~64 MB each &nbsp;·&nbsp;
+    Megatron ZeRO AllGather: ~28 MB (attention weights)
+  </div>
+
+  <pre><code>ref_log_probs : (64, 512)  float32</code></pre>
+
+  <!-- Phase 6 -->
+  <div class="phase">
+    <div class="phase-label">Phase 6</div>
+    <h3>Value Estimation (Critic)</h3>
+    <p><strong>Where:</strong> Megatron critic workers</p>
+  </div>
+
+  <p>Same structure as Phase 5. Value head projects last hidden state to a scalar per token:</p>
+  <pre><code>values : (64, 1024)  float32</code></pre>
+
+  <!-- Phase 7 -->
+  <div class="phase">
+    <div class="phase-label">Phase 7</div>
+    <h3>Advantage Estimation (GAE)</h3>
+    <p><strong>Where:</strong> Controller CPU — identical to verl Phase 7. No communication.</p>
+  </div>
+
+  <pre><code>advantages : (64, 512)  float32
+returns    : (64, 512)  float32</code></pre>
+
+  <!-- Phase 8 -->
+  <div class="phase">
+    <div class="phase-label">Phase 8</div>
+    <h3>Actor Update (PPO)</h3>
+    <p><strong>Where:</strong> Megatron actor workers (all 8 GPUs). Mini-batch per DP rank: 8 sequences.</p>
+  </div>
+
+  <h4>8a. Megatron ZeRO AllGather (weight reconstruction per layer)</h4>
+
+  <div class="nccl">
+    <div class="nccl-label">NCCL — AllGather (DP group, cross-node InfiniBand, per layer)</div>
+    Reconstructs full TP-sharded attention weights from ZeRO shards.
+    Per layer: <strong>~28 MB</strong>  (H=2048, smaller than verl's ~56 MB at H=4096)
+  </div>
+
+  <h4>8b. Forward Pass — Attention (TP AllReduce)</h4>
+
+  <div class="nccl">
+    <div class="nccl-label">NCCL — AllReduce ×2 (TP group, intra-node, per layer)</div>
+    tensor: (8, 1024, 2048) bfloat16 &nbsp;·&nbsp; volume: 32 MB each
+  </div>
+
+  <h4>8b. Forward Pass — MoE FFN (EP AlltoAll)</h4>
+
+  <pre><code># Router (local)
+scores = x @ W_router  →  (8, 1024, 64)</code></pre>
+
+  <div class="ep">
+    <div class="ep-label">NCCL — AlltoAll dispatch (EP group, intra-node NVLink)</div>
+    input: (8×1024×K=16384, H=2048) bfloat16 &nbsp;·&nbsp; cross-EP volume per GPU: <strong>≈ 32 MB</strong>
+  </div>
+
+  <pre><code># 32 local experts process their assigned tokens</code></pre>
+
+  <div class="ep">
+    <div class="ep-label">NCCL — AlltoAll combine (EP group, intra-node NVLink)</div>
+    cross-EP volume per GPU: <strong>≈ 32 MB</strong>
+  </div>
+
+  <h4>8c. PPO Loss</h4>
+
+  <p>Because TIM is eliminated, <code>old_log_probs ≡ log_probs_behavior</code> at step 0. The
+  importance ratio \(\rho \approx 1\) initially — no IS weighting overhead:</p>
+
+  <pre><code>log_ratio  = new_log_probs - old_log_probs   # (8, 512)  float32
+ratio      = exp(log_ratio)                  # ≈ 1.0 at start of each PPO epoch
+actor_loss = -mean(min(ratio * adv, clamp(ratio, 1-eps, 1+eps) * adv) * mask)</code></pre>
+
+  <h4>8d. Backward Pass</h4>
+
+  <p>Mirror of forward: TP AllReduce for attention gradients, EP AlltoAll for expert gradients,
+  Megatron ZeRO ReduceScatter to re-shard across DP ranks.</p>
+
+  <div class="nccl">
+    <div class="nccl-label">NCCL — ReduceScatter (DP group, cross-node InfiniBand, per layer)</div>
+    Attention weight gradients re-sharded across DP ranks. Per layer: <strong>~28 MB</strong>
+  </div>
+
+  <div class="ep">
+    <div class="ep-label">NCCL — AlltoAll ×2 (EP group, intra-node, per layer)</div>
+    Expert input gradient dispatch and combine. Per AlltoAll: <strong>≈ 32 MB</strong>
+  </div>
+
+  <h4>8e. Optimizer Step (local, no NCCL)</h4>
+
+  <p>Megatron distributed optimizer: AdamW on each GPU's ZeRO shard. No communication.</p>
+
+  <!-- Phase 9 -->
+  <div class="phase">
+    <div class="phase-label">Phase 9</div>
+    <h3>Critic Update</h3>
+    <p>Same structure as Phase 8, using value regression loss. Identical NCCL operations.</p>
+  </div>
+
+  <pre><code>value_clipped = clip(value_pred, old_values - eps_v, old_values + eps_v)
+value_loss    = 0.5 * mean((value_clipped - returns)^2 * mask)</code></pre>
+
+  <!-- Phase 10 -->
+  <div class="phase">
+    <div class="phase-label">Phase 10</div>
+    <h3>Weight Synchronization</h3>
+    <p><strong>Where:</strong> Megatron training workers → SGLang server via HTTP</p>
+  </div>
+
+  <div class="diff">
+    <div class="diff-label">Key difference from verl</div>
+    verl AllGathers weights in-process and hands them to the co-located vLLM rollout engine via
+    shared GPU memory. Miles serializes weights from Megatron's layout and HTTP-pushes them across
+    the process boundary to the SGLang server.
+  </div>
+
+  <pre><code>Step 1 — Megatron AllGather (reconstruct full TP-sharded model from ZeRO shards):
+  NCCL — AllGather across DP group (2 GPUs, cross-node):
+    input:   ~875 MB ZeRO shard per GPU   (attention + expert weights, 24 layers)
+    output:  ~1.75 GB full TP=2 copy per GPU
+
+Step 2 — HTTP weight push to SGLang:
+  Controller serializes weights from Megatron's TP-sharded layout
+  HTTP POST /update_weights  { "state_dict": &lt;binary blob ~1.75 GB&gt; }
+  Runs every K training steps (async) or every step (sync)
+
+Step 3 — SGLang hot-swap:
+  Drains or pauses in-flight requests
+  Loads new parameter tensors into existing memory allocations
+  Resumes accepting generation requests</code></pre>
+
+  <p>The HTTP boundary adds ~100–500 ms of serialization + network latency per sync, but enables
+  independent process lifetimes and separate GPU allocation for training vs. rollout.</p>
+
+  <!-- ── §4 Comms ────────────────────────────── -->
+  <h2 id="comms">4. Communication Summary</h2>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Phase</th><th>Primitive</th><th>Group</th><th>Tensor</th><th>Volume</th><th>Direction</th></tr>
+      <tr>
+        <td>Rollout prefill — attention (per layer)</td>
+        <td>AllReduce ×2</td><td>TP (intra-node)</td>
+        <td>(32,512,2048) bf16</td><td>64 MB ×2</td><td>intra-node</td>
+      </tr>
+      <tr style="background:var(--ep-bg);">
+        <td>Rollout prefill — MoE FFN (per layer)</td>
+        <td><strong>AlltoAll ×2</strong></td><td>EP (intra-node)</td>
+        <td>(32768, 2048) bf16</td><td>~64 MB ×2</td><td>intra-node</td>
+      </tr>
+      <tr>
+        <td>Rollout decode — attention (per layer, per step)</td>
+        <td>AllReduce ×2</td><td>TP</td>
+        <td>(32,1,2048) bf16</td><td>128 KB ×2</td><td>intra-node</td>
+      </tr>
+      <tr style="background:var(--ep-bg);">
+        <td>Rollout decode — MoE FFN (per layer, per step)</td>
+        <td><strong>AlltoAll ×2</strong></td><td>EP</td>
+        <td>(64, 2048) bf16</td><td>~256 KB ×2</td><td>intra-node</td>
+      </tr>
+      <tr>
+        <td>Ref/critic fwd — attention (per layer)</td>
+        <td>AllReduce ×2</td><td>TP</td>
+        <td>(32,1024,2048) bf16</td><td>~128 MB ×2</td><td>intra-node</td>
+      </tr>
+      <tr style="background:var(--ep-bg);">
+        <td>Ref/critic fwd — MoE FFN (per layer)</td>
+        <td><strong>AlltoAll ×2</strong></td><td>EP</td>
+        <td>(16384, 2048) bf16</td><td>~64 MB ×2</td><td>intra-node</td>
+      </tr>
+      <tr>
+        <td>Megatron ZeRO forward (per layer)</td>
+        <td>AllGather</td><td>DP (cross-node)</td>
+        <td>~28 MB attention weights</td><td>28 MB</td><td>cross-node</td>
+      </tr>
+      <tr>
+        <td>Megatron ZeRO backward (per layer)</td>
+        <td>ReduceScatter</td><td>DP (cross-node)</td>
+        <td>~28 MB attention grads</td><td>28 MB</td><td>cross-node</td>
+      </tr>
+      <tr style="background:var(--ep-bg);">
+        <td>EP backward (per layer)</td>
+        <td><strong>AlltoAll ×2</strong></td><td>EP (intra-node)</td>
+        <td>(16384, 2048) bf16</td><td>~32 MB ×2</td><td>intra-node</td>
+      </tr>
+      <tr>
+        <td>Weight sync</td>
+        <td>HTTP push</td><td>—</td>
+        <td>~1.75 GB state dict</td><td>1.75 GB</td><td>cross-process</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>Rows highlighted in orange are new vs. the verl walkthrough — they arise entirely from
+  MoE expert dispatch and do not appear in dense model training.</p>
+
+  <!-- ── §5 Compare ────────────────────────── -->
+  <h2 id="compare">5. verl vs. slime/Miles: Side-by-Side</h2>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Dimension</th><th>verl</th><th>slime / Miles</th></tr>
+      <tr>
+        <td>Rollout engine</td>
+        <td>vLLM (in-process, SPMD)</td>
+        <td>SGLang (HTTP server, continuous batching)</td>
+      </tr>
+      <tr>
+        <td>Training engine</td>
+        <td>PyTorch FSDP (ZeRO-3)</td>
+        <td>Megatron-LM (ZeRO + PP + EP)</td>
+      </tr>
+      <tr>
+        <td>Rollout–training boundary</td>
+        <td>In-process NCCL (same process group)</td>
+        <td>HTTP (separate processes)</td>
+      </tr>
+      <tr>
+        <td>MoE / expert parallelism</td>
+        <td>Dense-first; EP not in core path</td>
+        <td>MoE-native; EP AlltoAll built into every layer</td>
+      </tr>
+      <tr>
+        <td>FFN communication primitive</td>
+        <td>AllReduce (dense W_down row-parallel)</td>
+        <td><strong>AlltoAll ×2</strong> (expert dispatch + combine)</td>
+      </tr>
+      <tr>
+        <td>Weight sync primitive</td>
+        <td>NCCL AllGather in-memory (~3.5 GB)</td>
+        <td>HTTP push (~1.75 GB for this config)</td>
+      </tr>
+      <tr>
+        <td>Phase 4 (old log-probs)</td>
+        <td>Separate recompute forward pass</td>
+        <td>Returned by SGLang in Phase 2 (zero extra compute)</td>
+      </tr>
+      <tr>
+        <td>Training-inference mismatch</td>
+        <td>IS correction (ρ = exp(log_new − log_old))</td>
+        <td>Elimination (bitwise-identical SGLang ↔ Megatron)</td>
+      </tr>
+      <tr>
+        <td>Rollout scheduling</td>
+        <td>Co-located with training (shared GPUs)</td>
+        <td>Separate GPU pools possible</td>
+      </tr>
+      <tr>
+        <td>Battle-tested scale</td>
+        <td>Dense models up to ~70B</td>
+        <td>MoE models up to 355B+ (GLM-4.6, DeepSeek-V4)</td>
+      </tr>
+    </table>
+  </div>
+
+  <p><strong>Choose verl</strong> when: dense models, FSDP-based training stack, simpler ops setup,
+  tight in-memory weight coupling is preferred.</p>
+
+  <p><strong>Choose slime/Miles</strong> when: MoE models, Megatron training stack, need separate
+  scaling of rollout vs. training capacity, or want SGLang-native features (prefix caching,
+  speculative decoding, structured output).</p>
+
+  <!-- ── §6 Code ────────────────────────────── -->
+  <h2 id="code">6. Key Code Pointers</h2>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Concept</th><th>File</th><th>Notes</th></tr>
+      <tr><td>PPO training loop</td><td><code>slime/trainer/ppo_trainer.py</code></td><td>Main controller</td></tr>
+      <tr><td>SGLang rollout worker</td><td><code>slime/rollout/sglang_rollout.py</code></td><td>HTTP client to SGLang server</td></tr>
+      <tr><td>Weight push</td><td><code>slime/rollout/sglang_rollout.py</code></td><td><code>update_weights()</code> HTTP call</td></tr>
+      <tr><td>Megatron actor</td><td><code>slime/worker/actor_worker.py</code></td><td>Megatron forward/backward</td></tr>
+      <tr><td>Expert parallelism config</td><td><code>slime/config/</code></td><td><code>ep_size</code>, <code>num_experts</code>, <code>topk</code></td></tr>
+      <tr><td>Miles enterprise layer</td><td><a href="https://github.com/radixark/miles">radixark/miles</a></td><td>Ops tooling, AMD/ROCm, FP8 RL on top of slime</td></tr>
+      <tr><td>TIM elimination details</td><td><a href="https://www.lmsys.org/blog/2025-11-19-miles/">LMSYS Miles blog</a></td><td>Bitwise-identical SGLang ↔ Megatron; IS as fallback</td></tr>
+      <tr><td>slime repo</td><td><a href="https://github.com/THUDM/slime">THUDM/slime</a></td><td>Base framework Miles is forked from</td></tr>
+    </table>
+  </div>
+
+</div>
+</body>
+</html>

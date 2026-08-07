@@ -1,0 +1,1056 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Resource Pool Placement in VeRL</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #0d9488;
+      --accent-light: #f0fdfa;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --note-fg: #1e40af;
+      --result-fg: #16a34a;
+      --nav-bg: rgba(255,255,255,0.92);
+      --seg-weights-bg: #bfdbfe;
+      --seg-weights-fg: #1d4ed8;
+      --seg-opt-bg: #bbf7d0;
+      --seg-opt-fg: #15803d;
+      --seg-kv-bg: #fde68a;
+      --seg-kv-fg: #92400e;
+      --seg-act-bg: #fecaca;
+      --seg-act-fg: #b91c1c;
+      --seg-free-bg: #f3f4f6;
+      --seg-free-fg: #9ca3af;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #2dd4bf;
+        --accent-light: #10201e;
+        --warning-bg: #101a2b;
+        --warning-border: #1e40af;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --note-fg: #93c5fd;
+        --result-fg: #4ade80;
+        --nav-bg: rgba(15,17,21,0.9);
+        --seg-weights-bg: #1e3a8a;
+        --seg-weights-fg: #93c5fd;
+        --seg-opt-bg: #14532d;
+        --seg-opt-fg: #86efac;
+        --seg-kv-bg: #78350f;
+        --seg-kv-fg: #fcd34d;
+        --seg-act-bg: #7f1d1d;
+        --seg-act-fg: #fca5a5;
+        --seg-free-bg: #191e25;
+        --seg-free-fg: #6b7280;
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    .hero {
+      background: linear-gradient(135deg, #064e3b 0%, #065f46 55%, #0d9488 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.9;
+      font-size: 0.97rem;
+      max-width: 600px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    h4 {
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin: 1.3em 0 0.3em;
+      color: var(--accent);
+    }
+    .placement-card h4 { margin: 0 0 8px; color: var(--accent); }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+    a { color: var(--accent); }
+    code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+    pre {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      line-height: 1.55;
+      margin: 1.2em 0;
+    }
+    pre code { background: none; padding: 0; border: none; color: var(--text); }
+
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* placement strategy cards */
+    .placement-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .placement-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .placement-card h4 {
+      margin: 0 0 8px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--accent);
+    }
+    .placement-card ul { padding-left: 1.2em; margin: 0; }
+    .placement-card li { font-size: 0.85rem; margin-bottom: 4px; }
+
+    /* memory diagram */
+    .mem-bar-wrap {
+      display: flex;
+      align-items: stretch;
+      height: 36px;
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      margin: 0.6em 0 0.2em;
+      font-size: 0.78rem;
+    }
+    .mem-seg {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 6px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .seg-weights { background: var(--seg-weights-bg); color: var(--seg-weights-fg); }
+    .seg-opt     { background: var(--seg-opt-bg); color: var(--seg-opt-fg); }
+    .seg-kv      { background: var(--seg-kv-bg); color: var(--seg-kv-fg); }
+    .seg-act     { background: var(--seg-act-bg); color: var(--seg-act-fg); }
+    .seg-free    { background: var(--seg-free-bg); color: var(--seg-free-fg); }
+    .mem-legend  { font-size: 0.8rem; color: var(--muted); margin-bottom: 1em; }
+
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+      .placement-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>VeRL Placement</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#workers">Worker model</a>
+    <a href="#hybrid">Hybrid engine</a>
+    <a href="#strategies">Strategies</a>
+    <a href="#memory">Memory budget</a>
+    <a href="#throughput">Throughput</a>
+    <a href="#configs">Config examples</a>
+    <a href="#decision">Decision guide</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">RL Efficiency · VeRL</span>
+  <h1>Resource Pool Placement in VeRL</h1>
+  <p>GPU allocation strategies for actor, rollout, and critic — how the hybrid engine works,
+  how to budget memory across phases, and how to size each pool for throughput.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="note">
+    Prerequisite: <a href="verl-architecture.html">verl Architecture</a> (the WorkerGroup / HybridEngine model this builds on),
+    the <a href="ppo-training-walkthrough.html">PPO Training Walkthrough in VeRL</a> (worker roles, FSDP + vLLM layout),
+    and <a href="async-rl.html">Async RL</a> (policy lag, weight sync, IS correction).
+    This page focuses on the GPU allocation decisions that determine throughput and memory headroom.
+  </div>
+
+  <!-- ── §1 Worker Model ────────────────────────── -->
+  <h2 id="workers">1. VeRL's Worker Model</h2>
+
+  <p>VeRL represents each logical role in RL training as a worker class, scheduled onto GPU
+  resources via Ray. Four worker types participate in a standard PPO/GRPO run:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr>
+        <th>Worker</th>
+        <th>Responsibility</th>
+        <th>Memory profile</th>
+      </tr>
+      <tr>
+        <td><strong>ActorRollout</strong></td>
+        <td>Policy training (FSDP) <em>and</em> token generation (vLLM) — the hybrid engine hosts both.</td>
+        <td>Largest; holds two copies of weights at transition boundary.</td>
+      </tr>
+      <tr>
+        <td><strong>Reference</strong></td>
+        <td>Frozen reference policy used for KL penalty. Weights never change.</td>
+        <td>Usually colocated with ActorRollout; shares weights at startup.</td>
+      </tr>
+      <tr>
+        <td><strong>Critic</strong></td>
+        <td>Value function for advantage estimation (PPO only; absent in GRPO).</td>
+        <td>Typically a smaller model; can share or separate pool from actor.</td>
+      </tr>
+      <tr>
+        <td><strong>RewardModel</strong></td>
+        <td>Scores completed rollouts. May be a neural RM or a rule-based function.</td>
+        <td>Light if rule-based; full model footprint if neural.</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>A <strong>resource pool</strong> is a named set of GPUs. Each worker class is assigned to
+  exactly one pool. Workers in the same pool share GPU memory and are co-scheduled by Ray.
+  Workers in different pools have independent memory spaces and can run concurrently.</p>
+
+  <p>The assignment is specified as a Python <code>mapping</code> dict passed to the
+  <code>ResourcePoolManager</code>:</p>
+
+  <pre><code># pool_name → list of GPUs per node
+resource_pool_spec = {
+    'actor_rollout_ref': ResourcePool(process_on_nodes=[8]),  # 8 GPUs, 1 node
+    'critic':            ResourcePool(process_on_nodes=[4]),  # 4 GPUs, 1 node
+}
+mapping = {
+    ActorRolloutRefWorker: 'actor_rollout_ref',
+    CriticWorker:          'critic',
+}</code></pre>
+
+  <p>How you draw these pool boundaries is the central placement decision.</p>
+
+  <!-- ── §2 Hybrid Engine ───────────────────────── -->
+  <h2 id="hybrid">2. The Hybrid Engine — One GPU Set, Two Roles</h2>
+
+  <p>VeRL's key innovation is the <strong>HybridEngine</strong>: the actor and rollout workers
+  occupy the <em>same</em> GPUs and alternate between two modes within a single step.</p>
+
+  <h3>Phase transitions within one RL step</h3>
+
+  <div class="step">
+    <div class="step-label">Phase A — Rollout (generation)</div>
+    <ol>
+      <li><strong>AllGather</strong>: FSDP param shards are gathered into a full model copy on each GPU.</li>
+      <li><strong>Weight load</strong>: vLLM initializes (or reuses) its engine with the gathered weights.</li>
+      <li><strong>Free FSDP copy</strong>: the AllGathered buffer is freed; vLLM now owns the weights.</li>
+      <li>vLLM runs autoregressive generation; trajectories land in the sample buffer.</li>
+    </ol>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Phase B — Training</div>
+    <ol>
+      <li><strong>vLLM teardown</strong>: KV cache and activation buffers released; vLLM engine suspended.</li>
+      <li><strong>Restore FSDP shards</strong>: each GPU returns to holding 1/N of the full param tensor.</li>
+      <li>FSDP forward + backward + optimizer step.</li>
+      <li>Reference model forward (frozen; same GPU set; weights kept separately in memory).</li>
+    </ol>
+  </div>
+
+  <p>The critical observation: <strong>steps A1–A2 create a brief window where two full
+  copies of the weights coexist</strong> — the FSDP AllGathered buffer and the nascent vLLM
+  engine. This is the GPU memory peak for the colocated configuration.</p>
+
+  <h3>vLLM tensor parallelism within the pool</h3>
+
+  <p>vLLM uses tensor parallelism (TP) for generation. If your pool has <code>N</code> GPUs and
+  vLLM TP degree is <code>t</code>, you get <code>N/t</code> independent vLLM instances running
+  in parallel — each handling a separate subset of the rollout batch.</p>
+
+  <div class="result">
+    <div class="result-label">vLLM instances per pool</div>
+    \[
+      \text{n\_instances} = \frac{N_{\text{pool}}}{t_{\text{TP}}}
+    \]
+    <p style="font-size:0.87rem;color:var(--ink);margin-top:6px;">
+      \(t_{\text{TP}}\) must evenly divide \(N_{\text{pool}}\).
+      Each instance generates concurrently; total rollout throughput scales linearly with n_instances.
+    </p>
+  </div>
+
+  <p>Choosing a smaller TP degree packs more instances (higher rollout throughput) at the cost of
+  more memory per GPU (each instance holds a larger weight shard). The sweet spot depends on
+  model size and GPU VRAM.</p>
+
+  <!-- ── §3 Placement Strategies ───────────────── -->
+  <h2 id="strategies">3. Placement Strategies</h2>
+
+  <p>The right pool layout depends on your <strong>algorithm first</strong>, then on two
+  orthogonal dimensions: whether the rollout runs synchronously on the actor's GPUs or
+  asynchronously on a dedicated pool, and — for PPO only — where the critic lives.</p>
+
+  <!-- ── GRPO ───────────────────────────────────── -->
+  <h3>GRPO — no critic</h3>
+
+  <p>GRPO removes the critic and derives advantages from the rollout batch itself. There is
+  exactly one placement decision: does the rollout share GPUs with the actor, or get its own
+  pool?</p>
+
+  <h4>Colocated (default)</h4>
+
+  <p>Actor, rollout, and reference policy share one pool. The hybrid engine alternates between
+  FSDP training mode and vLLM generation mode on the same GPUs. Keep
+  <code>gpu_memory_utilization</code> low enough that FSDP can resume after vLLM releases.</p>
+
+  <pre><code>resource_pool_spec = {
+    'actor_rollout_ref': ResourcePool(process_on_nodes=[8]),
+}
+mapping = {
+    ActorRolloutRefWorker: 'actor_rollout_ref',
+}</code></pre>
+
+  <h4>Disaggregated sync</h4>
+
+  <p>Rollout workers move to a dedicated GPU pool, but the step loop stays synchronous: training
+  waits for rollout to finish before starting, and rollout waits for the updated weights before
+  generating again. The two pools take turns.</p>
+
+  <p>This is useful when the colocated memory constraint is the bottleneck — the rollout pool
+  can run vLLM at near-maximum <code>gpu_memory_utilization</code> (no FSDP ever runs there),
+  while training retains full GPU memory for FSDP. Policy lag is zero; no IS correction needed.</p>
+
+  <pre><code>resource_pool_spec = {
+    'actor_ref': ResourcePool(process_on_nodes=[8]),   # training
+    'rollout':   ResourcePool(process_on_nodes=[8]),   # generation (dedicated)
+}
+# fully_async=False (default) — synchronous even with separate pools
+# Weight sync happens at step boundary; rollout idles during training and vice versa</code></pre>
+
+  <div class="note">
+    The price of disaggregated sync is GPU idle time: the rollout pool sits idle during every
+    training phase, and the training pool sits idle during every rollout phase. Total GPU-hours
+    consumed is 2× what colocated uses for the same work. Disaggregated async recovers this
+    by overlapping the two — see below.
+  </div>
+
+  <h4>Disaggregated async</h4>
+
+  <p>Rollout workers move to a dedicated GPU pool and run continuously; the trainer never idles
+  waiting for generation. Generation scales by adding rollout replicas without touching the
+  training cluster. The rollout pool can use near-maximum <code>gpu_memory_utilization</code>
+  because FSDP never runs there.</p>
+
+  <pre><code>resource_pool_spec = {
+    'actor_ref': ResourcePool(process_on_nodes=[8]),   # training
+    'rollout':   ResourcePool(process_on_nodes=[8]),   # generation (dedicated)
+}
+# fully_async=True in the trainer config</code></pre>
+
+  <div class="note">
+    <strong>Weight sync (async only):</strong> VeRL pushes updated weights from the actor pool
+    to the rollout pool via NCCL AllGather every <code>trigger_parameter_sync_step</code>
+    training steps. For a 7B BF16 model: ~5–15 s over NVLink, 3–5× slower over InfiniBand.
+    This introduces policy lag — pair with <a href="async-rl.html#is">IS correction</a>.
+    See <a href="async-rl.html#knobs">VeRL async knobs</a>.
+  </div>
+
+  <!-- ── PPO ────────────────────────────────────── -->
+  <h3>PPO — two independent dimensions</h3>
+
+  <p>PPO adds a critic, introducing a second placement choice that is orthogonal to the
+  sync/async decision. Reason through them separately.</p>
+
+  <h4>Dimension 1 — Critic placement</h4>
+
+  <p>In synchronous PPO the critic computes value estimates after every rollout. You decide
+  whether it shares the actor's pool or runs on its own GPUs:</p>
+
+  <div class="placement-grid" style="grid-template-columns: 1fr 1fr; margin: 0.8em 0 1.2em;">
+    <div class="placement-card">
+      <h4>Fully colocated</h4>
+      <p style="font-size:0.85rem;margin:0 0 8px;">Actor + rollout + ref + critic on one pool.</p>
+      <ul>
+        <li>Minimum GPU count</li>
+        <li>Critic and actor forward passes <em>serialize</em></li>
+        <li>Lowest <code>gpu_memory_utilization</code> needed</li>
+        <li>Best for: small clusters, critic is a lightweight value head</li>
+      </ul>
+    </div>
+    <div class="placement-card">
+      <h4>Split critic pool</h4>
+      <p style="font-size:0.85rem;margin:0 0 8px;">Critic on a dedicated pool; actor+rollout+ref on another.</p>
+      <ul>
+        <li>Critic forward can overlap actor update step</li>
+        <li>Critic pool sized independently (often a smaller model)</li>
+        <li>Higher <code>gpu_memory_utilization</code> on actor pool</li>
+        <li>Best for: 30B–70B; critic is a separate full model</li>
+      </ul>
+    </div>
+  </div>
+
+  <pre><code># Fully colocated PPO
+resource_pool_spec = {
+    'shared': ResourcePool(process_on_nodes=[8]),
+}
+mapping = {
+    ActorRolloutRefWorker: 'shared',
+    CriticWorker:          'shared',
+}
+
+# Split critic pool PPO
+resource_pool_spec = {
+    'actor_rollout_ref': ResourcePool(process_on_nodes=[8]),
+    'critic':            ResourcePool(process_on_nodes=[4]),
+}
+mapping = {
+    ActorRolloutRefWorker: 'actor_rollout_ref',
+    CriticWorker:          'critic',
+}</code></pre>
+
+  <h4>Dimension 2 — Sync vs async rollout</h4>
+
+  <p>Independently of critic placement, you can move the rollout worker to its own pool.
+  This is the same async pattern as GRPO above — the critic pool is a third independent pool:</p>
+
+  <pre><code># Disaggregated async PPO (with split critic)
+resource_pool_spec = {
+    'actor_ref': ResourcePool(process_on_nodes=[8]),   # training
+    'rollout':   ResourcePool(process_on_nodes=[8]),   # generation (dedicated)
+    'critic':    ResourcePool(process_on_nodes=[4]),   # value function
+}
+# fully_async=True; critic still advances synchronously with the actor update</code></pre>
+
+  <div class="note">
+    Even in async mode, the critic runs synchronously with the actor update — only the rollout
+    is decoupled. Critic pool GPUs are idle during generation but active during training, so the
+    split-critic overlap benefit is preserved.
+  </div>
+
+  <!-- ── Effective cluster utilization ─────────── -->
+  <h3>Effective cluster utilization</h3>
+
+  <p><code>gpu_memory_utilization</code> is a vLLM KV-cache knob — it says nothing about whether
+  SMs are doing useful work. Autoregressive generation is memory-bandwidth-bound (SM utilization
+  20–45%); FSDP training is compute-bound (50–80%). In synchronous runs the two phases
+  alternate and are separated by a transition penalty (FSDP AllGather + vLLM init/teardown,
+  typically 5–30 s per step). In async runs they fully overlap.</p>
+
+  <p>Effective cluster utilization over one RL step:</p>
+
+  \[
+    U_{\text{eff}} = \frac{U_{\text{rollout}} \cdot T_{\text{rollout}} \;+\; U_{\text{train}} \cdot T_{\text{train}}}
+                         {T_{\text{rollout}} + T_{\text{train}} + T_{\text{transition}}}
+  \]
+
+  <p>With \(T_{\text{rollout}} = 60\text{ s}\), \(T_{\text{train}} = 20\text{ s}\),
+  \(T_{\text{transition}} = 10\text{ s}\): \(U_{\text{eff}} \approx 0.42\) — less than half of
+  GPU-seconds on useful compute.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr>
+        <th>Config</th>
+        <th>Applies to</th>
+        <th>Rollout phase</th>
+        <th>Training phase</th>
+        <th>Typical \(U_{\text{eff}}\)</th>
+      </tr>
+      <tr>
+        <td><strong>Colocated, sync</strong></td>
+        <td>GRPO / PPO</td>
+        <td>All GPUs generate (mem-BW bound)</td>
+        <td>All GPUs train (compute bound)</td>
+        <td>35–50%</td>
+      </tr>
+      <tr>
+        <td><strong>Disaggregated, sync</strong></td>
+        <td>GRPO / PPO</td>
+        <td>Rollout pool generates; training pool idle</td>
+        <td>Training pool trains; rollout pool idle</td>
+        <td>20–35% <em>(pools take turns — low utilization, but full memory for each)</em></td>
+      </tr>
+      <tr>
+        <td><strong>Split critic, sync</strong></td>
+        <td>PPO only</td>
+        <td>Actor pool generates; critic pool idle</td>
+        <td>Actor + critic pools run concurrently</td>
+        <td>45–60%</td>
+      </tr>
+      <tr>
+        <td><strong>Disaggregated async</strong></td>
+        <td>GRPO / PPO</td>
+        <td>Rollout pool generates <em>continuously</em></td>
+        <td>Training pool trains <em>continuously</em>; fully overlap</td>
+        <td>65–80%</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>If rollout dominates step time, disaggregated async is the single highest-leverage
+  utilization improvement. Splitting the critic is a cheaper incremental gain when the critic
+  is large enough to meaningfully serialize with actor training.</p>
+
+  <!-- ── §4 Memory Budget ───────────────────────── -->
+  <h2 id="memory">4. Memory Budget Per GPU</h2>
+
+  <p>GPU memory must cover all live tensors in the <em>most demanding phase</em>. For colocated
+  setups the constraint is the A1–A2 transition (FSDP AllGather + vLLM init). For disaggregated
+  rollout pools the constraint is during generation (vLLM only, so less pressure).</p>
+
+  <h3>Notation</h3>
+  <ul>
+    <li>\(P\) — number of model parameters</li>
+    <li>\(b\) — bytes per parameter in working precision (2 for BF16/FP16)</li>
+    <li>\(N\) — GPUs in the pool</li>
+    <li>\(t\) — vLLM TP degree</li>
+    <li>\(u\) — <code>gpu_memory_utilization</code> (fraction reserved for KV cache)</li>
+    <li>\(V\) — total GPU VRAM (e.g., 80 GB for A100-80G)</li>
+  </ul>
+
+  <h3>Colocated pool — peak (transition phase)</h3>
+
+  <div class="result">
+    <div class="result-label">Peak GPU memory — colocated, transition</div>
+    \[
+      M_{\text{peak}} = \underbrace{\frac{P \cdot b}{N}}_{\text{FSDP shard}}
+      + \underbrace{P \cdot b}_{\text{AllGathered full copy}}
+      + \underbrace{\text{optim}}_{\text{Adam states}}
+    \]
+    <p style="font-size:0.87rem;color:var(--ink);margin-top:6px;">
+      The AllGathered full copy (\(P \cdot b\)) is the dominant term and is <strong>not</strong>
+      divided by \(N\). Every GPU holds a complete copy during the FSDP→vLLM handoff.
+    </p>
+  </div>
+
+  <p>Adam optimizer states in FP32 add \(3 \cdot P \cdot 4 / N\) bytes per GPU (momentum,
+  variance, FP32 param copy), but these are zeroed during the rollout phase (FSDP is suspended),
+  so they don't overlap with the AllGathered copy in practice if VeRL offloads them to CPU during
+  rollout.</p>
+
+  <h3>Colocated pool — training phase</h3>
+  \[
+    M_{\text{train}} = \frac{P \cdot b}{N} \;(\text{params})
+    + \frac{P \cdot b}{N} \;(\text{grads})
+    + \frac{3 P \cdot 4}{N} \;(\text{Adam FP32})
+    + M_{\text{act}}
+  \]
+  <p>where \(M_{\text{act}}\) is activation memory (sequence-length and batch-size dependent).</p>
+
+  <h3>vLLM KV cache available after model weights</h3>
+
+  <p>After vLLM loads weights into each TP shard, the remaining GPU memory is handed to the KV
+  cache pool:</p>
+
+  \[
+    M_{\text{KV}} = \left(V - \frac{P \cdot b}{t}\right) \cdot u
+  \]
+
+  <p>Setting <code>gpu_memory_utilization</code> too high in a colocated pool causes OOM when
+  FSDP resumes after rollout because the KV cache hasn't fully released yet. Typical safe values:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Placement</th><th>Recommended <code>gpu_memory_utilization</code></th><th>Rationale</th></tr>
+      <tr>
+        <td>Fully colocated</td>
+        <td>0.40 – 0.55</td>
+        <td>Must leave ~40% for FSDP params + grads + optimizer + activations during training phase.</td>
+      </tr>
+      <tr>
+        <td>Split critic pool (actor+rollout on one pool, critic on another)</td>
+        <td>0.55 – 0.70</td>
+        <td>Slightly more headroom since critic optimizer states are on a separate pool.</td>
+      </tr>
+      <tr>
+        <td>Disaggregated async (dedicated rollout pool)</td>
+        <td>0.85 – 0.92</td>
+        <td>No FSDP ever runs on this pool; near-maximum KV cache is safe.</td>
+      </tr>
+    </table>
+  </div>
+
+  <h3>Worked example — 7B model, 8× A100-80G, colocated</h3>
+
+  <p>Parameters: \(P = 7 \times 10^9\), BF16 (\(b = 2\)), 8 GPUs, vLLM TP \(t = 4\), \(V = 80\) GB.</p>
+
+  <ul>
+    <li>FSDP shard per GPU: \(7\text{B} \times 2 / 8 = 1.75\) GB</li>
+    <li>AllGathered full copy (peak, every GPU): \(7\text{B} \times 2 = 14\) GB</li>
+    <li>vLLM weight shard (TP=4): \(14 / 4 = 3.5\) GB</li>
+    <li>Adam FP32 states (ZeRO-3): \(7\text{B} \times 12 / 8 \approx 10.5\) GB (FP32 param + m + v)</li>
+    <li>KV cache with \(u = 0.50\): \((80 - 3.5) \times 0.5 \approx 38\) GB</li>
+  </ul>
+
+  <p>Peak at transition: 14 GB (AllGather) + headroom for vLLM init ≈ 20 GB committed before
+  KV cache allocation. With 80 GB per GPU this is comfortably feasible. The binding constraint
+  is training phase: 1.75 + 1.75 + 10.5 + activations, with 38 GB KV cache pre-allocated but
+  idle — vLLM must release cleanly before FSDP needs the memory.</p>
+
+  <!-- ── §5 Throughput Balancing ────────────────── -->
+  <h2 id="throughput">5. Throughput Balancing</h2>
+
+  <p>In synchronous RL, generation and training execute sequentially: the GPU cluster alternates
+  between rollout phase and training phase. Total step time is:</p>
+
+  \[
+    T_{\text{step}} = T_{\text{rollout}} + T_{\text{train}}
+  \]
+
+  <p>GPU utilization suffers when one phase dominates. LLM RL with long responses (1K–8K tokens)
+  typically makes <strong>rollout the bottleneck</strong>: generation is autoregressive and
+  memory-bandwidth-bound, while training runs a single large batched forward+backward.</p>
+
+  <h3>Estimating the rollout-to-train ratio</h3>
+
+  <p>Let \(B\) be the global batch size (sequences per step), \(L\) the mean response length,
+  and \(G\) the number of rollouts per prompt (the GRPO group size).</p>
+
+  <div class="result">
+    <div class="result-label">Rough throughput balance</div>
+    \[
+      \frac{T_{\text{rollout}}}{T_{\text{train}}}
+      \approx \frac{G \cdot L \cdot N_{\text{pool}}}{t_{\text{TP}} \cdot \text{tok/s}_{\text{vllm}}}
+              \cdot \frac{\text{tok/s}_{\text{fsdp}}}{B \cdot L}
+    \]
+    <p style="font-size:0.87rem;color:var(--ink);margin-top:6px;">
+      When this ratio &gt; 1 the rollout is the bottleneck.
+      Use a larger vLLM batch, smaller TP, more rollout GPUs (disaggregated), or shorter rollouts.
+    </p>
+  </div>
+
+  <h3>Levers to reduce rollout time</h3>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Lever</th><th>Effect</th><th>Trade-off</th></tr>
+      <tr>
+        <td>Decrease <code>tensor_model_parallel_size</code></td>
+        <td>More vLLM instances per pool → higher parallel throughput</td>
+        <td>More memory per GPU for KV cache needed; must not OOM</td>
+      </tr>
+      <tr>
+        <td>Increase <code>max_num_seqs</code></td>
+        <td>Larger decode batch → better GPU utilization</td>
+        <td>Longer prefill latency; more KV memory required</td>
+      </tr>
+      <tr>
+        <td>Enable <code>enable_chunked_prefill</code></td>
+        <td>Interleaves prefill and decode; reduces time-to-first-token</td>
+        <td>Slightly higher memory overhead; minimal downside for RL rollouts</td>
+      </tr>
+      <tr>
+        <td>Add dedicated rollout GPUs (disaggregated async)</td>
+        <td>Rollout and training fully overlap; near-zero rollout wait</td>
+        <td>More GPUs; policy lag; requires IS correction</td>
+      </tr>
+      <tr>
+        <td>Reduce response length cap</td>
+        <td>Shorter rollouts; better throughput balance</td>
+        <td>May hurt task performance on long-horizon reasoning</td>
+      </tr>
+    </table>
+  </div>
+
+  <h3>Levers to reduce training time</h3>
+
+  <p>Training time matters less when rollout dominates, but for long-context training (32K+ tokens)
+  with large batches, training can become the bottleneck instead:</p>
+
+  <ul>
+    <li><strong>Gradient checkpointing</strong> — trades compute for activation memory; allows larger batch sizes</li>
+    <li><strong>Sequence packing</strong> — pack multiple short trajectories into one training sequence to reduce padding waste</li>
+    <li><strong>Reduce critic size</strong> — a smaller value head or a shallower critic model speeds up the critic forward pass</li>
+  </ul>
+
+  <!-- ── §6 Config Examples ─────────────────────── -->
+  <h2 id="configs">6. Config Walkthrough</h2>
+
+  <h3>Setup A — 7B model, 8× A100-80G, synchronous, fully colocated</h3>
+
+  <p>The simplest configuration. All workers share 8 GPUs. TP=4 gives 2 vLLM instances for
+  parallel generation. Critic colocates with actor (no separate pool needed for GRPO since
+  there is no critic, or for small PPO critic models).</p>
+
+  <pre><code># trainer section of VeRL YAML
+trainer:
+  n_gpus_per_node: 8
+  nnodes: 1
+
+# resource pool: default colocated (all workers share the 8 GPUs)
+# no explicit resource_pool_spec needed — VeRL defaults to fully colocated
+
+actor_rollout_ref:
+  model:
+    path: meta-llama/Llama-2-7b-hf
+  actor:
+    strategy: fsdp
+    ppo_micro_batch_size: 4
+    optim:
+      lr: 1e-6
+  rollout:
+    name: vllm
+    tensor_model_parallel_size: 4    # 8 GPUs / 4 = 2 vLLM instances
+    gpu_memory_utilization: 0.50     # 50% KV cache; 50% left for FSDP
+    max_num_seqs: 64
+    enable_chunked_prefill: true
+  ref:
+    fsdp_config:
+      param_offload: false           # keep ref weights on GPU (14 GB shared with actor)</code></pre>
+
+  <h3>Setup B — 70B model, 32× A100-80G, split pools</h3>
+
+  <p>A 70B BF16 model requires 140 GB just for weights — 2 GPUs minimum for vLLM TP=2. With 32
+  GPUs available, assign 24 to actor_rollout_ref and 8 to critic (which can be a smaller model
+  or a pruned value head).</p>
+
+  <pre><code>trainer:
+  n_gpus_per_node: 8
+  nnodes: 4                          # 32 GPUs total
+
+# Explicit pool split
+resource_pool_spec:
+  actor_rollout_ref:                 # 24 GPUs (3 nodes)
+    process_on_nodes: [8, 8, 8]
+  critic:                            # 8 GPUs (1 node)
+    process_on_nodes: [8]
+
+actor_rollout_ref:
+  rollout:
+    tensor_model_parallel_size: 8   # 24 / 8 = 3 vLLM instances for 70B
+    gpu_memory_utilization: 0.65    # more room vs colocated critic
+  actor:
+    strategy: fsdp
+    fsdp_config:
+      param_offload: false
+      grad_offload: false
+
+critic:
+  strategy: fsdp
+  model:
+    path: meta-llama/Llama-2-7b-hf  # critic can be a smaller model than actor</code></pre>
+
+  <h3>Setup C — 7B model, disaggregated async, 8 training + 8 rollout GPUs</h3>
+
+  <p>Training and generation run concurrently. The rollout pool dedicates full VRAM to vLLM KV
+  cache (<code>gpu_memory_utilization: 0.90</code>). Weight sync triggers every 10 training
+  steps, keeping policy lag small.</p>
+
+  <pre><code>trainer:
+  n_gpus_per_node: 8
+  nnodes: 2                          # 16 GPUs total: 8 training + 8 rollout
+
+resource_pool_spec:
+  actor_ref:                         # 8 GPUs — training only
+    process_on_nodes: [8]
+  rollout:                           # 8 GPUs — generation only
+    process_on_nodes: [8]
+
+actor_rollout_ref:
+  rollout:
+    tensor_model_parallel_size: 4   # 8 rollout GPUs / 4 = 2 vLLM instances
+    gpu_memory_utilization: 0.90    # dedicated pool → near-max KV cache
+  actor:
+    strategy: fsdp
+
+async_config:
+  fully_async: true
+  trigger_parameter_sync_step: 10   # push weights every 10 train steps
+  staleness_threshold: 20           # discard samples older than 20 steps
+  rollout_is: sequence              # sequence-level IS for lag correction</code></pre>
+
+  <div class="note">
+    <strong>NVLink vs InfiniBand</strong>: weight sync in disaggregated mode sends \(P \times b\)
+    bytes across the interconnect. For a 7B BF16 model that is 14 GB. Over NVLink (600 GB/s)
+    this takes ~25 ms; over InfiniBand HDR (25 GB/s) ~560 ms. If training steps take &lt;1 s,
+    IB sync every 10 steps adds &lt;6% overhead. Over Ethernet (&lt;5 GB/s) sync becomes the
+    bottleneck — raise <code>trigger_parameter_sync_step</code> or colocate instead.
+  </div>
+
+  <!-- ── §7 Decision Guide ──────────────────────── -->
+  <h2 id="decision">7. Decision Guide</h2>
+
+  <div class="table-wrap">
+    <table>
+      <tr>
+        <th>Scenario</th>
+        <th>Recommended placement</th>
+        <th>Key config knob</th>
+      </tr>
+      <tr>
+        <td>Tight GPU budget; 7B–13B model; &lt;1K response tokens</td>
+        <td>Fully colocated</td>
+        <td><code>gpu_memory_utilization: 0.45–0.55</code></td>
+      </tr>
+      <tr>
+        <td>30B–70B model; critic is a separate model</td>
+        <td>PPO split critic pool</td>
+        <td><code>gpu_memory_utilization: 0.60–0.70</code> on actor pool</td>
+      </tr>
+      <tr>
+        <td>Long responses (2K–8K tokens); rollout is the bottleneck</td>
+        <td>Disaggregated async</td>
+        <td><code>fully_async: true</code>; <code>trigger_parameter_sync_step: 5–20</code></td>
+      </tr>
+      <tr>
+        <td>MoE model (expert parallelism)</td>
+        <td>Split critic pool (PPO) or colocated (GRPO); actor pool must match rollout TP degree for TIM control</td>
+        <td>Set equal <code>tensor_model_parallel_size</code> in both engines</td>
+      </tr>
+      <tr>
+        <td>Maximizing rollout throughput on fixed hardware</td>
+        <td>Colocated; reduce TP to pack more vLLM instances</td>
+        <td><code>tensor_model_parallel_size: 1 or 2</code>; monitor for OOM</td>
+      </tr>
+      <tr>
+        <td>Multi-node; cross-node NVLink not available</td>
+        <td>Avoid disaggregated if weight sync crosses IB; prefer colocated per-node</td>
+        <td>Keep <code>nnodes</code> per pool to minimize cross-node weight sync</td>
+      </tr>
+    </table>
+  </div>
+
+  <h3>Quick diagnostic: is rollout or training the bottleneck?</h3>
+
+  <p>Add a timing log around each phase. In VeRL, enable <code>trainer.logger: ['console']</code>
+  and watch for <code>timing/rollout_time</code> vs <code>timing/training_time</code> in the
+  step log. A ratio <code>rollout_time / training_time &gt; 2</code> signals you should either
+  disaggregate or reduce vLLM TP to pack more instances.</p>
+
+  <pre><code># Check in logged metrics
+timing/rollout_time     # seconds spent in vLLM generation this step
+timing/training_time    # seconds spent in FSDP forward+backward+optim
+timing/weight_sync_time # seconds for NCCL AllGather (disaggregated only)</code></pre>
+
+  <!-- ── References ────────────────────────────── -->
+  <h2>References</h2>
+
+  <div class="table-wrap">
+    <table>
+      <tr>
+        <td><a href="https://verl.readthedocs.io/en/latest/workers/ray_trainer.html">VeRL Ray Trainer docs</a></td>
+        <td>ResourcePoolManager API, mapping spec, worker class overview</td>
+      </tr>
+      <tr>
+        <td><a href="https://verl.readthedocs.io/en/latest/advance/fully_async.html">VeRL fully-async docs</a></td>
+        <td><code>trigger_parameter_sync_step</code>, <code>staleness_threshold</code>, <code>partial_rollout</code></td>
+      </tr>
+      <tr>
+        <td><a href="https://verl.readthedocs.io/en/latest/workers/hybrid_engine.html">VeRL HybridEngine docs</a></td>
+        <td>FSDP↔vLLM transition, weight offload strategies, memory layout</td>
+      </tr>
+      <tr>
+        <td><a href="async-rl.html">Async RL — Policy Lag, IS Correction, and TIM</a></td>
+        <td>IS correction math required when using disaggregated async placement</td>
+      </tr>
+      <tr>
+        <td><a href="ppo-training-walkthrough.html">PPO Training Walkthrough in VeRL</a></td>
+        <td>End-to-end tensor shapes and collective ops for the colocated sync case</td>
+      </tr>
+    </table>
+  </div>
+
+</div>
+</body>
+</html>

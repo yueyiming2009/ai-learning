@@ -1,0 +1,1134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>MoE Routing — Gating, Top-K Selection, and Load Balancing</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #0d9488;
+      --accent-light: #f0fdfa;
+      --warning-bg: #fffbeb;
+      --warning-border: #f59e0b;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --compare-bg: #eff6ff;
+      --compare-border: #3b82f6;
+      --ink: #374151;
+      --code-bg: #f1f5f9;
+      --code-fg: #0f766e;
+      --row-hover: #fafafa;
+      --note-fg: #78350f;
+      --result-fg: #16a34a;
+      --compare-fg: #2563eb;
+      --teal-border: #99f6e4;
+      --nav-bg: rgba(255,255,255,0.92);
+      --fig-bg: #fff;
+      --plot-grid: #eceef1;
+      --plot-axis: #c7cbd1;
+      --plot-tick: #9ca3af;
+      --plot-gray: #9ca3af;
+      --plot-violet: #6d28d9;
+      --plot-teal: #0d9488;
+      --plot-amber: #f59e0b;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #2dd4bf;
+        --accent-light: #10201e;
+        --warning-bg: #251c0b;
+        --warning-border: #b45309;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --compare-bg: #101a2b;
+        --compare-border: #1e40af;
+        --ink: #cbd5e1;
+        --code-bg: #1c2531;
+        --code-fg: #5eead4;
+        --row-hover: #191e25;
+        --note-fg: #fcd34d;
+        --result-fg: #4ade80;
+        --compare-fg: #60a5fa;
+        --teal-border: #134e4a;
+        --nav-bg: rgba(15,17,21,0.9);
+        --fig-bg: #14181e;
+        --plot-grid: #232830;
+        --plot-axis: #3a4149;
+        --plot-tick: #6b7280;
+        --plot-gray: #6b7280;
+        --plot-violet: #a78bfa;
+        --plot-teal: #2dd4bf;
+        --plot-amber: #fbbf24;
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 0.9rem; color: var(--accent); text-decoration: none; white-space: nowrap; }
+    .nav-links { display: flex; gap: 4px; overflow-x: auto; flex: 1; }
+    .nav-links a { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; white-space: nowrap; transition: color 0.15s, background 0.15s; }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .nav-back { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); white-space: nowrap; transition: color 0.15s; margin-left: auto; flex-shrink: 0; }
+    .nav-back:hover { color: var(--text); }
+
+    .hero {
+      background: linear-gradient(135deg, #0d9488 0%, #0891b2 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 { font-size: clamp(1.5rem, 4vw, 2.2rem); font-weight: 600; margin: 0 0 12px; letter-spacing: -0.02em; }
+    .hero p { margin: 0 auto; opacity: 0.85; font-size: 0.97rem; max-width: 620px; }
+    .hero-pill { display: inline-block; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 100px; font-size: 0.78rem; padding: 3px 12px; margin-bottom: 16px; letter-spacing: 0.04em; text-transform: uppercase; }
+
+    .page-wrap { max-width: 820px; margin: 0 auto; padding: 48px 24px 80px; }
+
+    h2 { font-size: 1.15rem; font-weight: 600; margin: 2.8em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); color: var(--text); }
+    h3 { font-size: 0.97rem; font-weight: 600; margin: 1.6em 0 0.4em; color: var(--ink); }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+
+    pre { background: var(--step-bg); border: 1px solid var(--step-border); border-radius: 8px; padding: 14px 18px; overflow-x: auto; font-size: 0.85rem; line-height: 1.55; margin: 1.2em 0; }
+    code { font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace; }
+    p code, li code, td code { background: var(--code-bg); padding: 1px 6px; border-radius: 4px; font-size: 0.88em; color: var(--code-fg); }
+    pre code { background: none; padding: 0; color: var(--text); }
+
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
+    th, td { border: 1px solid var(--border); padding: 9px 16px; text-align: left; vertical-align: top; }
+    th { background: var(--surface); font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+    tr:hover td { background: var(--row-hover); }
+
+    .step { background: var(--step-bg); border: 1px solid var(--step-border); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 1.2em 0; }
+    .step-label { font-weight: 600; font-size: 0.88rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+    .step-label::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+
+    .note { background: var(--warning-bg); border-left: 3px solid var(--warning-border); border-radius: 0 8px 8px 0; padding: 10px 16px; margin: 1em 0; font-size: 0.92em; color: var(--note-fg); }
+    .note::before { content: '⚠ '; }
+
+    .result { background: var(--boxed-bg); border: 1.5px solid var(--boxed-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; text-align: center; }
+    .result-label { font-size: 0.8rem; font-weight: 600; color: var(--result-fg); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+
+    .compare { background: var(--compare-bg); border: 1.5px solid var(--compare-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; }
+    .compare-label { font-size: 0.8rem; font-weight: 600; color: var(--compare-fg); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
+    .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 600px) { .compare-grid { grid-template-columns: 1fr; } }
+    .compare-col-label { font-size: 0.82rem; font-weight: 600; color: var(--ink); margin-bottom: 4px; }
+
+    .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 1.2em 0; }
+    .summary-card { background: var(--accent-light); border: 1px solid var(--teal-border); border-radius: 8px; padding: 14px 16px; }
+    .summary-card-label { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    .xref { background: var(--accent-light); border: 1px solid var(--teal-border); border-radius: 8px; padding: 12px 18px; margin: 1.4em 0; font-size: 0.92rem; }
+    .xref a { color: var(--accent); font-weight: 600; text-decoration: none; }
+    .xref a:hover { text-decoration: underline; }
+
+    .eq-block { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; overflow-x: auto; }
+
+    .figure { background: var(--fig-bg); border: 1px solid var(--border); border-radius: 10px; padding: 18px 16px 14px; margin: 1.6em 0; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+    .figure canvas { width: 100%; height: 300px; display: block; }
+    .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; justify-content: center; margin-top: 12px; font-size: 0.82rem; color: var(--text); }
+    .legend-item { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, var(--plot-gray) 0 5px, transparent 5px 9px); }
+    .figure-caption { font-size: 0.85rem; color: var(--muted); line-height: 1.6; margin: 14px 4px 2px; }
+
+    footer { border-top: 1px solid var(--border); padding: 28px 24px; text-align: center; font-size: 0.82rem; color: var(--muted); }
+
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>MoE Routing</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#routing-problem">The problem</a>
+    <a href="#gating">Gating network</a>
+    <a href="#topk">Top-K &amp; output</a>
+    <a href="#gradients">Gradient flow</a>
+    <a href="#imbalance">Load imbalance</a>
+    <a href="#aux-loss">Auxiliary loss</a>
+    <a href="#vs-heads">vs MHA heads</a>
+    <a href="#routing-schemes">Routing schemes</a>
+    <a href="#stability">Stability in RL</a>
+    <a href="#summary">Summary</a>
+  </div>
+  <a class="nav-back" href="../index.html">Home</a>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Algorithms · Architecture</span>
+  <h1>MoE Routing — Gating, Top-K Selection, and Load Balancing</h1>
+  <p>How a Mixture-of-Experts layer decides which experts process each token: the gating network math, how gradients flow through a discrete top-K selection, and the auxiliary loss that prevents expert collapse.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="xref">
+    Prerequisites: <a href="../foundations/swiglu.html">SwiGLU →</a> (each expert FFN is a SwiGLU block),
+    <a href="../foundations/optimizers.html">Optimizers →</a> (auxiliary loss is additive to the main training objective).
+    Next: <a href="../systems/moe-parallelism.html">MoE Parallelism →</a> — how EP distributes experts across GPUs once routing is defined.
+  </div>
+
+  <!-- ════════════════════════ THE PROBLEM ════════════════════════ -->
+  <h2 id="routing-problem">1 · The routing problem</h2>
+  <p>
+    A standard Transformer FFN applies the same two weight matrices to every token — all parameters are
+    active for every input. A Mixture-of-Experts (MoE) FFN replaces this with \(E\) independent expert
+    FFNs and a learned <em>router</em> that selects only \(K\) of them per token (\(K \ll E\)).
+  </p>
+  <p>
+    This sparsity keeps per-token FLOPs constant (matching a dense FFN of equivalent width) while the
+    total parameter count scales with \(E\). The router must satisfy three properties simultaneously:
+  </p>
+  <ul>
+    <li><strong>Differentiable</strong> — trainable end-to-end by backpropagation alongside the expert weights.</li>
+    <li><strong>Sparse</strong> — activating exactly \(K\) experts per token so FLOPs do not grow with \(E\).</li>
+    <li><strong>Balanced</strong> — distributing tokens roughly evenly so no expert is under- or over-utilized.</li>
+  </ul>
+  <p>
+    Sparsity and balance are in tension: the simplest differentiable router (a softmax) is unconstrained
+    and will concentrate tokens on a few experts. This page traces how that tension is resolved.
+  </p>
+
+  <!-- ════════════════════════ GATING NETWORK ════════════════════════ -->
+  <h2 id="gating">2 · The gating network</h2>
+  <p>
+    The router input is the token's hidden-state vector \(\mathbf{x} \in \mathbb{R}^D\) — the same
+    post-attention, post-LayerNorm representation that would enter a dense FFN.
+  </p>
+
+  <h3>Linear projection to expert logits</h3>
+  <p>
+    A single weight matrix \(W_g \in \mathbb{R}^{D \times E}\) maps the token to one scalar score per expert:
+  </p>
+  <div class="eq-block">
+    \[\mathbf{s} = \mathbf{x} W_g \in \mathbb{R}^E\]
+  </div>
+  <p>
+    No bias is used in practice — keeping the gate centered stabilizes initialization.
+    Each component \(s_i\) is the unnormalized affinity of this token for expert \(i\).
+  </p>
+
+  <h3>Softmax normalization</h3>
+  <p>
+    A softmax converts the logits into a probability distribution over all \(E\) experts:
+  </p>
+  <div class="eq-block">
+    \[p_i = \frac{\exp(s_i)}{\sum_{j=1}^{E} \exp(s_j)}, \qquad \mathbf{p} \in \mathbb{R}^E,\quad \sum_i p_i = 1\]
+  </div>
+  <p>
+    \(p_i\) is the router's confidence that expert \(i\) is the right expert for this token.
+    The full vector \(\mathbf{p}\) is computed for every token on every forward pass, even though only
+    \(K\) of the \(E\) experts will actually be invoked.
+  </p>
+
+  <!-- ════════════════════════ TOP-K AND OUTPUT ════════════════════════ -->
+  <h2 id="topk">3 · Top-K selection and the layer output</h2>
+
+  <h3>Selecting K experts</h3>
+  <p>
+    The \(K\) experts with the highest router probability are selected:
+  </p>
+  <div class="eq-block">
+    \[\mathcal{S} = \operatorname{top-K}(\mathbf{p}) \subseteq \{1, \ldots, E\},\quad |\mathcal{S}| = K\]
+  </div>
+  <p>
+    This step is <em>discrete</em>: it returns a set of indices. It is not differentiable in the usual
+    sense — there is no smooth path from \(\mathbf{p}\) through the index selection to the output.
+    Section 4 explains how gradients still flow despite this; Section 9 explains what the discontinuity
+    <em>does</em> break, which is not training but the comparison of two nearby parameter versions.
+  </p>
+
+  <h3>Renormalization</h3>
+  <p>
+    The selected probabilities are renormalized to sum to 1 over the \(K\) chosen experts:
+  </p>
+  <div class="eq-block">
+    \[\tilde{p}_i = \frac{p_i}{\sum_{j \in \mathcal{S}} p_j} \quad \text{for } i \in \mathcal{S}\]
+  </div>
+  <p>
+    Without renormalization, the layer output would have a different total magnitude depending on
+    which experts happened to be selected (e.g., selecting two low-probability experts would give a
+    smaller-than-normal output). Renormalization makes the output magnitude consistent.
+  </p>
+
+  <h3>Layer output</h3>
+  <p>
+    The MoE layer output is a weighted sum of the selected expert outputs:
+  </p>
+  <div class="eq-block">
+    \[\mathbf{y} = \sum_{i \in \mathcal{S}} \tilde{p}_i \cdot \operatorname{FFN}_i(\mathbf{x})\]
+  </div>
+  <p>
+    Each \(\operatorname{FFN}_i(\mathbf{x})\) is a full <a href="../foundations/swiglu.html">SwiGLU</a> expert block —
+    with its own gate projection \(W^\text{gate}_i\), up projection \(W^\text{up}_i\), and down
+    projection \(W^\text{down}_i\), all independent of every other expert.
+  </p>
+
+  <div class="result">
+    <div class="result-label">The full forward pass, token by token</div>
+    \(\mathbf{x} \xrightarrow{W_g} \mathbf{s} \xrightarrow{\text{softmax}} \mathbf{p} \xrightarrow{\text{top-}K} \mathcal{S} \xrightarrow{\text{renorm}} \tilde{\mathbf{p}} \xrightarrow{\sum \tilde{p}_i \cdot \text{FFN}_i} \mathbf{y}\)
+  </div>
+
+<pre><code>import torch, torch.nn.functional as F
+
+def moe_forward(x, W_gate, experts, K=2):
+    # x: [T, D]  W_gate: [D, E]  experts: list of E FFN modules
+    T, E = x.shape[0], len(experts)
+
+    # step 1: linear gate + softmax → router probabilities
+    probs = F.softmax(x @ W_gate, dim=-1)               # [T, E]
+
+    # step 2: select top-K experts per token, renormalize weights to sum to 1
+    topk_w, topk_i = probs.topk(K, dim=-1)              # [T, K] each
+    topk_w = topk_w / topk_w.sum(-1, keepdim=True)      # renorm
+
+    # step 3: dispatch — route each token, accumulate weighted expert outputs
+    # (production code replaces this loop with scatter/gather + batched matmul)
+    out = torch.zeros_like(x)
+    for k in range(K):
+        for e in range(E):
+            mask = topk_i[:, k] == e              # tokens routed to expert e at slot k
+            if not mask.any():
+                continue
+            out[mask] += topk_w[mask, k:k+1] * experts[e](x[mask])
+    return out
+</code></pre>
+
+  <!-- ════════════════════════ GRADIENT FLOW ════════════════════════ -->
+  <h2 id="gradients">4 · Gradient flow through the gate</h2>
+
+  <h3>What is differentiable</h3>
+  <p>
+    The layer output \(\mathbf{y} = \sum_{i \in \mathcal{S}} \tilde{p}_i \cdot \operatorname{FFN}_i(\mathbf{x})\)
+    is differentiable with respect to two sets of parameters:
+  </p>
+  <ul>
+    <li>
+      <strong>Expert weights</strong> \(\{W^\text{gate}_i, W^\text{up}_i, W^\text{down}_i\}\):
+      the gradient is \(\tilde{p}_i \cdot \frac{\partial \mathcal{L}}{\partial \mathbf{y}}\), scaled by the
+      router weight for expert \(i\). Experts with higher \(\tilde{p}_i\) receive larger gradient updates.
+    </li>
+    <li>
+      <strong>Gate weights</strong> \(W_g\): the gradient flows through \(\tilde{p}_i\) →
+      \(\mathbf{p}\) → \(\mathbf{s}\) → \(W_g\), which is a standard chain rule through the softmax.
+    </li>
+  </ul>
+
+  <h3>Why discrete top-K doesn't block gradients</h3>
+  <p>
+    The top-K selection chooses indices — a discrete operation with no gradient of its own.
+    But this is fine because we never need to differentiate <em>through the index selection</em>.
+    The gate weights \(W_g\) enter the loss only through the <em>values</em> \(\tilde{p}_i\), which
+    are continuous functions of \(W_g\) via the softmax. The gradient of the loss with respect
+    to \(W_g\) is:
+  </p>
+  <div class="eq-block">
+    \[\frac{\partial \mathcal{L}}{\partial W_g} = \sum_{i \in \mathcal{S}} \frac{\partial \mathcal{L}}{\partial \tilde{p}_i} \cdot \frac{\partial \tilde{p}_i}{\partial \mathbf{p}} \cdot \frac{\partial \mathbf{p}}{\partial \mathbf{s}} \cdot \frac{\partial \mathbf{s}}{\partial W_g}\]
+  </div>
+  <p>
+    The sum is only over the \(K\) selected experts — unselected experts contribute zero.
+    Each term is differentiable: \(\partial \tilde{p}_i / \partial \mathbf{p}\) is the Jacobian
+    of the renormalization, and \(\partial \mathbf{p} / \partial \mathbf{s}\) is the softmax Jacobian.
+  </p>
+
+  <h3>The gradient blind spot</h3>
+  <p>
+    The key consequence: \(W_g\) receives gradient signal <em>only through selected experts</em>.
+    If expert \(i\) is never selected for any token in the batch, no gradient flows to update \(W_g\)
+    in the direction of expert \(i\). The gate gets no information about whether routing to expert
+    \(i\) would have been better or worse.
+  </p>
+  <p>
+    This creates a positive feedback loop: an expert selected often → updated often → improves →
+    selected more. Experts selected rarely → stagnate → selected less. Left unchecked, the model
+    collapses to using a small subset of experts. Sections 5 and 6 address this.
+  </p>
+
+  <!-- ════════════════════════ LOAD IMBALANCE ════════════════════════ -->
+  <h2 id="imbalance">5 · Load imbalance and expert capacity</h2>
+
+  <h3>Why imbalance emerges</h3>
+  <p>
+    At initialization, \(W_g\) is small and random. Small differences in the initial logits create
+    small differences in \(p_i\). Because the softmax is winner-take-most for confident distributions,
+    early training quickly concentrates tokens on a handful of experts. Those experts improve faster
+    and pull in more tokens, reinforcing the imbalance.
+  </p>
+  <p>
+    At training scale with Expert Parallelism (EP), imbalance has a direct throughput cost: all EP
+    ranks must wait for the most-loaded expert to finish before the AlltoAll combine can proceed.
+    The throughput ceiling is \(1/\lambda\) of balanced, where \(\lambda = \max_i L_i / \bar{L}\)
+    is the load factor.
+  </p>
+
+  <h3>Expert capacity buffer</h3>
+  <p>
+    To bound the runtime impact of imbalance, each expert is given a fixed-size buffer: the
+    <em>expert capacity</em>. With \(T\) tokens in the batch, \(K\) experts per token, and \(E\)
+    experts total, the average load per expert is \(T \cdot K / E\). The capacity is:
+  </p>
+  <div class="eq-block">
+    \[C = \left\lceil \frac{T \cdot K}{E} \cdot c \right\rceil\]
+  </div>
+  <p>
+    where \(c \ge 1\) is the <em>capacity factor</em> (typically 1.0–1.25 in training,
+    1.0–2.0 in inference). Tokens routed to a full expert are <em>dropped</em>: they bypass the
+    expert FFN entirely and are passed through as-is via the residual connection, contributing zeros
+    to the expert output.
+  </p>
+
+  <div class="note">
+    Dropped tokens mean lost compute: the model processes those tokens through the rest of the
+    layer with no expert update. With \(c = 1.25\), up to ~20% overflow capacity exists per expert.
+    In a well-trained model with an auxiliary loss, actual drop rates should be near zero.
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Capacity factor \(c\)</th>
+          <th>Overflow buffer</th>
+          <th>Memory cost</th>
+          <th>Typical use</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>1.0</td><td>None — any overflow is dropped</td><td>Minimal</td><td>Well-converged inference</td></tr>
+        <tr><td>1.25</td><td>25% above average load</td><td>+25% activation memory per expert</td><td>Standard training</td></tr>
+        <tr><td>2.0</td><td>Double average load</td><td>+100% activation memory</td><td>Early training or imbalanced domains</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Dropping at the device level, and why \(c = 1.0\)</h3>
+  <p>
+    The table above treats \(c\) as a quality/memory dial. DeepSeek-V2 makes a different choice worth
+    knowing: it caps at <strong>exactly \(c = 1.0\)</strong>, applied per <em>device</em> rather than per
+    expert — compute the average budget for each GPU, then drop that device's lowest-affinity tokens
+    until the budget is met. Since the balance losses (§6) already push the load flat, the cap is a
+    backstop rather than a routine event.
+  </p>
+  <p>
+    The interesting part is the argument for it. A capacity factor that differs between training and
+    inference is a silent distribution shift: the model learns under one drop regime and serves under
+    another. DeepSeek-V2 handles this by exempting ~10% of training sequences from dropping entirely,
+    so the model always sees some fully-routed data, and then disables dropping at evaluation. The stated
+    goal is not memory but <em>consistency</em> — being free to turn dropping on or off at deployment
+    according to the efficiency you need, without the model noticing.
+  </p>
+
+  <!-- ════════════════════════ AUXILIARY LOSS ════════════════════════ -->
+  <h2 id="aux-loss">6 · Auxiliary load-balancing loss</h2>
+  <p>
+    The capacity buffer caps the runtime damage from imbalance but does not fix the root cause.
+    An <em>auxiliary loss</em> is added to the training objective to actively push the router
+    toward uniform expert utilization (Switch Transformer, Fedus et al. 2021).
+  </p>
+
+  <h3>The two terms</h3>
+  <p>
+    For a batch of \(T\) tokens, define two per-expert quantities:
+  </p>
+
+  <div class="step">
+    <div class="step-label">f<sub>i</sub> — expert load fraction (discrete)</div>
+    <p style="margin:0; font-size:.92rem">
+      \(\displaystyle f_i = \frac{1}{T} \sum_{t=1}^{T} \mathbf{1}[i \in \mathcal{S}_t]\)
+      — the fraction of tokens that were routed to expert \(i\).
+      Computed with a hard indicator: non-differentiable. Treated as a constant in backprop.
+    </p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">P<sub>i</sub> — mean router probability (differentiable)</div>
+    <p style="margin:0; font-size:.92rem">
+      \(\displaystyle P_i = \frac{1}{T} \sum_{t=1}^{T} p_{t,i}\)
+      — the mean softmax probability that any token assigns to expert \(i\).
+      Fully differentiable with respect to \(W_g\).
+    </p>
+  </div>
+
+  <h3>The loss</h3>
+  <div class="eq-block">
+    \[\mathcal{L}_\text{aux} = \alpha \cdot E \cdot \sum_{i=1}^{E} f_i \cdot P_i\]
+  </div>
+  <p>
+    The total training objective is \(\mathcal{L} = \mathcal{L}_\text{main} + \mathcal{L}_\text{aux}\),
+    where \(\alpha\) is a small coefficient (0.001–0.01 in practice).
+  </p>
+
+  <h3>Why the product \(f_i \cdot P_i\) works</h3>
+  <p>
+    When expert \(i\) is overloaded (\(f_i\) large), the gradient \(\partial \mathcal{L}_\text{aux} / \partial P_i = \alpha E f_i\)
+    is large. Backpropagating through \(P_i = \frac{1}{T}\sum_t p_{t,i}\) reduces the softmax probabilities
+    \(p_{t,i}\) for all tokens, pushing the router to send fewer tokens to expert \(i\).
+  </p>
+  <p>
+    At perfectly uniform routing, \(f_i = 1/E\) and \(P_i = 1/E\) for all \(i\), giving:
+  </p>
+  <div class="eq-block">
+    \[\mathcal{L}_\text{aux} = \alpha \cdot E \cdot E \cdot \frac{1}{E} \cdot \frac{1}{E} = \alpha\]
+  </div>
+  <p>
+    Any deviation from uniform routing increases \(\mathcal{L}_\text{aux}\) above \(\alpha\), providing
+    a gradient that pushes back toward balance. The \(E\) prefactor normalizes the loss so that the
+    minimum value is always \(\alpha\) regardless of the number of experts.
+  </p>
+
+  <div class="note">
+    \(f_i\) is a constant in the backward pass — only \(P_i\) provides gradients.
+    This asymmetry is intentional: we use the hard routing decision to identify which experts need
+    correction, then use the soft probabilities to perform the correction differentiably.
+  </div>
+
+  <h3>Beyond one level — balancing the hardware, not just the experts</h3>
+  <p>
+    \(\mathcal{L}_\text{aux}\) as written balances <em>experts</em>. That is a statement about the model.
+    Once experts are sharded across GPUs, what actually stalls the step is imbalance between
+    <em>devices</em> and between their <em>message volumes</em> — and perfectly balanced experts can
+    still leave one GPU hot if the router happens to favour the experts that live on it.
+  </p>
+  <p>
+    DeepSeek-V2 keeps the \(\sum f \cdot P\) form and instantiates it three times, at three granularities.
+    Partition the \(E\) routed experts into \(D\) device groups \(\{\mathcal{E}_1,\dots,\mathcal{E}_D\}\):
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Level</th><th>Load term</th><th>Probability term</th><th>What it prevents</th><th class="ctr">Coefficient</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Expert</strong></td>
+          <td>\(f_i\) — fraction of tokens to expert \(i\)</td>
+          <td>\(P_i\)</td>
+          <td>Routing collapse; dead experts</td>
+          <td class="ctr">\(\alpha_1 = 0.003\)</td>
+        </tr>
+        <tr>
+          <td><strong>Device</strong></td>
+          <td>\(f'_j = \frac{1}{|\mathcal{E}_j|}\sum_{i \in \mathcal{E}_j} f_i\)</td>
+          <td>\(P'_j = \sum_{i \in \mathcal{E}_j} P_i\)</td>
+          <td>One GPU doing more expert FLOPs than the rest</td>
+          <td class="ctr">\(\alpha_2 = 0.05\)</td>
+        </tr>
+        <tr>
+          <td><strong>Communication</strong></td>
+          <td>\(f''_j\) — fraction of tokens <em>sent to</em> device \(j\)</td>
+          <td>\(P''_j = \sum_{i \in \mathcal{E}_j} P_i\)</td>
+          <td>One GPU receiving a disproportionate share of the AlltoAll</td>
+          <td class="ctr">\(\alpha_3 = 0.02\)</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    The communication term is the least obvious and the most revealing. Device-limited routing
+    (see <a href="../systems/moe-parallelism.html">MoE Parallelism</a>) bounds how many devices each token <em>sends</em>
+    to — but nothing bounds how many tokens a device <em>receives</em>. The third loss closes that gap
+    from the model side, pushing each device toward receiving its fair share of incoming hidden states.
+  </p>
+
+  <div class="compare">
+    <div class="compare-label">Read the coefficients</div>
+    <p style="margin:0">
+      \(\alpha_2 = 0.05\) and \(\alpha_3 = 0.02\) are <strong>an order of magnitude larger</strong> than
+      the classic anti-collapse term \(\alpha_1 = 0.003\). In a large EP deployment the dominant
+      load-balancing pressure is not "don't let experts die" — it is "don't let one rank become the
+      straggler." The auxiliary loss has quietly become a systems knob.
+    </p>
+  </div>
+
+  <div class="note">
+    All three losses distort the routing gradient — that is how they work, and it is a real cost:
+    the router is being pulled away from the assignment it would otherwise choose. The successor line
+    tries to remove that distortion by moving balance <em>out</em> of the loss: DeepSeek-V3 adds a
+    per-expert bias to the selection scores only (leaving the mixture weights \(\tilde p_i\), and
+    therefore the gradient, untouched), and later models solve for that bias in closed form instead of
+    nudging it with a step size.
+  </div>
+
+  <!-- ════════════════════════ VS ATTENTION HEADS ════════════════════════ -->
+  <h2 id="vs-heads">7 · Why attention heads need none of this</h2>
+  <p>
+    <a href="attention.html">Multi-head attention</a> is, on paper, the same situation this page has
+    been fixing: \(H\) parallel modules with independently initialized weights and no assigned roles.
+    Yet heads specialize on their own — previous-token heads, induction heads, positional heads —
+    with no balancing loss, no router jitter, no capacity buffers. The difference is one structural
+    bit: <strong>heads are assigned work by summation; experts are assigned work by selection.</strong>
+    Everything in Sections 4–6 follows from that bit being flipped.
+  </p>
+
+  <h3>Follow the gradient of a losing module</h3>
+  <p>
+    Every head processes every token, so every head appears in the forward pass and receives a
+    gradient on every step. A currently-useless head still feels the error the network is making —
+    through its own slice of \(W_O\) — as a pull toward whatever structure remains unexplained. Its
+    situation is <em>self-correcting</em>: being bad at everything is precisely what generates the
+    signal to become good at something.
+  </p>
+  <p>
+    An unselected expert does not execute, so it receives exactly zero gradient — Section 4's blind
+    spot. Being bad is what prevents it from ever improving: the situation is
+    <em>self-reinforcing</em>. Both systems have the same rich-get-richer dynamic on initial noise;
+    only MHA gives its losers a floor.
+  </p>
+
+  <h3>Why redundancy is penalized in one and invisible in the other</h3>
+  <p>
+    Head outputs co-occur on the same token inside one sum, \(\sum_h W_O^h\,\text{head}_h\). If two
+    heads compute the same thing, the second one's marginal contribution is ~zero while residual
+    error still flows through it — the gradient actively reallocates it to an unfilled niche. Two
+    experts, by contrast, almost never process the same token: they occupy different parts of the
+    input distribution, not the same sum, so no single token's loss can compare them or push them
+    apart. Expert specialization is shaped only by the router's partition — and the router is trained
+    myopically on "who is best right now."
+  </p>
+
+  <h3>The decisive asymmetry: which bad equilibrium is stable</h3>
+  <p>
+    MHA's failure state — all heads identical clones — is <em>unstable</em>: any perturbation off it
+    is amplified, because de-duplicating reduces the loss and every head receives the gradient saying
+    so. Training falls out of it for free. MoE's failure state — one expert takes all the traffic —
+    is <em>absorbing</em>: the router's choice is locally correct (that expert genuinely is best by
+    then), and the starved experts emit no gradient that could revise the verdict. One bad
+    equilibrium repels, the other traps — which is why heads need no intervention while expert
+    collapse must be prevented from ever being entered, not corrected afterward.
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th></th><th>Attention heads</th><th>MoE experts</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Work assignment</td><td>All modules run; outputs summed</td><td>Router selects top-\(K\)</td></tr>
+        <tr><td>Gradient to a losing module</td><td>Always flows; points to unfilled niche</td><td>Zero — the module didn't run</td></tr>
+        <tr><td>Redundancy between modules</td><td>Directly penalized (shared sum)</td><td>Invisible to the loss (disjoint tokens)</td></tr>
+        <tr><td>Bad equilibrium</td><td>Clones — unstable, training escapes it</td><td>Collapse — absorbing, must be prevented</td></tr>
+        <tr><td>Required machinery</td><td>None</td><td>Aux loss, jitter, capacity caps</td></tr>
+        <tr><td>Residual failure mode</td><td>Some redundant, prunable heads</td><td>Dead experts; hot EP ranks</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>The control experiment: make the MoE dense</h3>
+  <p>
+    Run all \(E\) experts on every token, weighted by the full softmax — a "soft MoE." Collapse
+    largely disappears, because every expert now always receives gradient, exactly like a head. But
+    the point of MoE was to <em>not</em> run \(E-1\) of the experts. Sparse compute is the product;
+    selection is the mechanism that buys it; starvation collapse is that mechanism's failure mode;
+    the auxiliary loss is the tax that keeps it in check. Top-\(K\) routing is a bandit problem the
+    network would otherwise solve greedily — the aux loss plays the role of forced exploration.
+    Attention heads never face the bandit, because they never have to choose.
+  </p>
+
+  <!-- ════════════════════════ ROUTING SCHEMES ════════════════════════ -->
+  <h2 id="routing-schemes">8 · Token-choice vs expert-choice routing</h2>
+  <p>
+    The description above is <em>token-choice</em> routing: each token independently picks its top-\(K\)
+    experts. This is the most common scheme (GShard, Switch Transformer, Mixtral, DeepSeek-V2) but
+    it is not the only one.
+  </p>
+
+  <div class="compare">
+    <div class="compare-label">Routing scheme comparison</div>
+    <div class="compare-grid">
+      <div>
+        <div class="compare-col-label">Token-choice (top-K per token)</div>
+        <ul style="font-size:0.92rem; margin:0; padding-left:1.2em;">
+          <li>Each token selects its \(K\) highest-scoring experts</li>
+          <li>Every token is always processed by \(K\) experts — no coverage gaps</li>
+          <li>Load imbalance: multiple tokens can select the same expert</li>
+          <li>Requires capacity buffer + auxiliary loss to manage</li>
+          <li>Natural AlltoAll dispatch: each token has a fixed target rank</li>
+        </ul>
+      </div>
+      <div>
+        <div class="compare-col-label">Expert-choice (top-C per expert)</div>
+        <ul style="font-size:0.92rem; margin:0; padding-left:1.2em;">
+          <li>Each expert selects its \(C = T/E\) highest-scoring tokens</li>
+          <li>Guaranteed perfect load balance — every expert processes exactly \(C\) tokens</li>
+          <li>Coverage gap: a token might not be selected by any expert</li>
+          <li>Requires all-to-all probability exchange before selection</li>
+          <li>Less common; typically paired with shared always-on experts</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <p>
+    Expert-choice routing solves the load-imbalance problem exactly but trades it for a coverage
+    problem. In practice, token-choice with an auxiliary loss is the dominant approach in large
+    production models because it guarantees every token is processed and has a simpler dispatch
+    pattern for Expert Parallelism.
+  </p>
+
+  <h3>Expert granularity — the axis that isn't \(K\)</h3>
+  <p>
+    Everything above treats \(E\) and \(K\) as given and asks how to route. There is a prior question:
+    how <em>big</em> should an expert be? Early MoE layers made each expert a full-width FFN and set
+    \(K = 1\) or \(2\). DeepSeekMoE (and DeepSeek-V2 at scale) changes the answer — split each expert
+    into \(m\) narrower ones and raise \(K\) to \(mK\). Activated parameters are unchanged, and so is
+    total parameter count; only the granularity moves.
+  </p>
+  <p>
+    What that buys is combinatorial. The set of expert <em>combinations</em> a token can be assigned is
+    \(\binom{E}{K}\), and splitting grows it violently:
+  </p>
+
+  <div class="result">
+    <div class="result-label">Reachable expert combinations at fixed activated params</div>
+    \[
+      \binom{16}{2} = 120
+      \qquad \longrightarrow \qquad
+      \binom{160}{6} \approx 2.1 \times 10^{10}
+    \]
+    <div style="font-size:0.85rem;color:var(--muted);margin-top:6px">
+      Left: 16 full-width experts, top-2. Right: DeepSeek-V2 — 160 experts of FFN width 1536, top-6.
+      Same FLOPs per token, eight orders of magnitude more distinct assignments.
+    </div>
+  </div>
+
+  <p>
+    The argument for why that matters is about <em>specialization</em>. A wide expert asked to serve
+    many unrelated token populations must learn a blend of all of them; a narrow expert can commit to
+    one, and the router composes six of them per token instead of picking one blend off the shelf.
+    Granularity is therefore a lever on how sharply experts can specialize — independent of \(K\),
+    independent of total size, and not visible anywhere in the gating math of §2–§3.
+  </p>
+  <p>
+    It is not free. Six selected experts instead of two means the token's targets span more GPUs, so
+    the AlltoAll fan-out grows — which is exactly why fine-grained MoE arrived together with
+    <em>device-limited routing</em> (cap each token's experts to at most \(M\) devices) rather than
+    before it. Fine granularity is a routing idea that only ships with a communication fix attached.
+    The trend has continued: later models run 8-of-256 and beyond.
+  </p>
+
+  <h3>Shared experts</h3>
+  <p>
+    The same architectures pair granularity with a small number of <em>shared experts</em>
+    that activate for every token, regardless of routing. The router then selects \(K\) additional
+    specialized experts on top (DeepSeek-V2: 2 shared alongside 160 routed).
+  </p>
+  <p>
+    The motivation is a direct consequence of fine granularity. Some knowledge — syntax, basic
+    semantics, whatever every token needs — is required by <em>every</em> expert, so in a purely routed
+    layer each of the 160 experts must learn its own redundant copy, spending capacity that was
+    supposed to buy specialization. Isolating that common load in an always-on expert lets the routed
+    ones keep only what distinguishes them. It also reduces the coverage risk of expert-choice and
+    can stabilize training at large expert counts.
+  </p>
+  <div class="note">
+    Shared experts have a systems side-effect worth knowing: because they run for every token, they
+    need <em>no dispatch</em> — which makes their compute the natural thing to overlap with the
+    AlltoAll for the routed experts. See <a href="../systems/moe-parallelism.html">MoE Parallelism</a>.
+  </div>
+
+  <!-- ════════════════════════ SUMMARY ════════════════════════ -->
+  <!-- ════════════════════════ STABILITY / RL ════════════════════════ -->
+  <h2 id="stability">9 · Routing stability across parameter versions, and routing replay</h2>
+  <p>
+    Section 4 established that discreteness does not block training: at a fixed \(\theta\), the gradient
+    flows through the continuous weights \(\tilde{p}_i\) and everything is well-defined. That argument is
+    <em>local</em> — it concerns the derivative at one point. A different question is what happens when you
+    evaluate the <em>same token</em> under two nearby parameter vectors \(\theta\) and \(\theta'\), or under
+    two different implementations of the same \(\theta\). Nothing in Section 4 bounds that difference, and
+    for an MoE it is not small.
+  </p>
+
+  <h3>The top-K boundary is a threshold, not a function</h3>
+  <p>
+    Selection depends on \(\mathbf{s}\) only through the <em>ordering</em> of its components. The parameter
+    space is therefore carved by the hyperplanes \(s_i = s_j\) into cells; inside a cell \(\mathcal{S}\) is
+    constant, and crossing a wall swaps one expert for another. Define the token's <strong>routing margin</strong>
+    as the gap between the last selected and first rejected logit:
+  </p>
+  <div class="eq-block">
+    \[g_t = s_{(K)} - s_{(K+1)} \;\geq\; 0\]
+  </div>
+  <p>
+    A perturbation that moves the logits by at most \(\varepsilon\) leaves \(\mathcal{S}_t\) unchanged when
+    \(g_t > 2\varepsilon\) and can flip it otherwise. So the layer output is continuous in \(\theta\)
+    <em>except</em> on the measure-zero tie set — and the reassuring "measure zero" is exactly the wrong
+    intuition here, for two reasons.
+  </p>
+  <ul>
+    <li>
+      <strong>The margin distribution has nonzero density at zero.</strong> Nothing in the objective
+      rewards a confident \(K\) vs \(K{+}1\) decision; the aux loss actively pushes tokens toward experts
+      they were marginal about. A steady fraction of tokens sits arbitrarily close to a wall, so
+      \(\Pr[g_t < 2\varepsilon] \approx \rho \cdot 2\varepsilon\) — <em>linear</em> in \(\varepsilon\),
+      not zero.
+    </li>
+    <li>
+      <strong>You do not get one draw, you get \(T \times L\).</strong> With \(T\) tokens through \(L\) MoE
+      layers, the chance that <em>some</em> routing decision flips approaches 1 for any \(\varepsilon\) a
+      real optimizer step or a kernel difference produces. Per-token rarity does not survive aggregation.
+    </li>
+  </ul>
+  <div class="note">
+    <strong>The consequence is a broken Lipschitz bound.</strong> For a dense FFN,
+    \(\|\Delta \mathbf{y}\| = O(\|\Delta\theta\|)\): shrink the update, shrink the output change. For an
+    MoE, a flipped token has \(\|\Delta \mathbf{y}\| = \tilde{p}_j \|\operatorname{FFN}_i(\mathbf{x}) - \operatorname{FFN}_j(\mathbf{x})\|\),
+    which is \(O(1)\) — set by how different two experts are, and completely independent of how small
+    \(\Delta\theta\) was. Expert <em>specialization</em>, the thing MoE is for, is what makes the jump large.
+  </div>
+
+  <div class="figure">
+    <canvas id="plot-flip" aria-label="Relative output change versus perturbation size, split into the smooth term and the routing-flip term"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span> MoE total</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-teal)"></span> smooth term (dense, or MoE + routing replay)</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-amber)"></span> routing-flip term</span>
+    </div>
+    <p class="figure-caption">
+      <strong>The flip term does not vanish with the perturbation — it dominates it.</strong>
+      Schematic, under a margin model \(g \sim \text{Exp}(\bar{g})\) with \(\bar{g} = 0.15\) nats, so
+      \(\Pr[\text{flip}] = 1 - e^{-\varepsilon/\bar{g}}\), an \(O(1)\) swap cost of \(0.35\), and unit
+      sensitivity for the smooth path. Note the shape at the left edge: both terms are linear near
+      \(\varepsilon = 0\), but the flip term leaves the origin with slope \(0.35/\bar{g} \approx 2.3\)
+      against the smooth term's \(1\). Making the update smaller buys you proportionally less than it
+      does in a dense model. Freezing \(\mathcal{S}\) deletes the amber curve entirely, which is the whole
+      of what routing replay does.
+    </p>
+  </div>
+
+  <h3>Why pretraining never notices and RL always does</h3>
+  <p>
+    Supervised pretraining evaluates the network at exactly one \(\theta\) per step: the forward pass and
+    the backward pass agree by construction, and no quantity in the loss compares two versions of the
+    model. The discontinuity is there, but nothing ever probes it.
+  </p>
+  <p>
+    <a href="../rl/grpo.html">Policy-gradient RL</a> is built on precisely that comparison. The importance ratio
+  </p>
+  <div class="eq-block">
+    \[\rho_{t} = \frac{\pi_\theta(a_t \mid s_t)}{\pi_{\theta_\text{old}}(a_t \mid s_t)}\]
+  </div>
+  <p>
+    puts two evaluations of the same token in a quotient, and in a real trainer they differ on two axes at once:
+  </p>
+  <div class="step">
+    <div class="step-label">1 — Policy lag (\(\theta \neq \theta_\text{old}\))</div>
+    <p style="margin:0; font-size:.92rem">
+      Rollouts are generated from a snapshot, then several gradient steps are taken against them
+      (more, and staler, under <a href="../rl/async-rl.html">async RL</a>). \(\Delta\theta\) is genuinely nonzero,
+      and every token whose margin is below it re-routes.
+    </p>
+  </div>
+  <div class="step">
+    <div class="step-label">2 — Engine mismatch (\(\theta = \theta_\text{old}\), still different)</div>
+    <p style="margin:0; font-size:.92rem">
+      Rollouts come from an inference engine (vLLM/SGLang) and the ratio's numerator from the trainer
+      (FSDP/Megatron). Different kernels, batch sizes, TP degree, and quantization make the logits differ
+      in the last few bits — \(\varepsilon \sim 10^{-3}\) or smaller. For a dense model this is a rounding
+      error in \(\rho\). For an MoE it re-routes the near-tie tokens, and those tokens' numerator and
+      denominator are then computed by <em>different subnetworks</em>.
+    </p>
+  </div>
+  <p>
+    That second case is the one that surprises people: \(\rho_t\) can be far from 1 when the policy has not
+    changed at all. The clip fraction spikes, the gradient acquires large spurious terms, and — because a
+    flipped token's ratio is unbounded in either direction — a few tokens can dominate the batch. This is
+    the MoE-specific amplifier of the general
+    <a href="../rl/async-rl.html">train/inference mismatch</a> problem, and it is why MoE RL runs diverge on
+    configurations where the dense equivalent is stable.
+  </p>
+
+  <h3>Routing replay</h3>
+  <p>
+    <strong>Rollout Routing Replay</strong> — <strong>R3</strong>, after the three R's, not a third method in a
+    series — attacks the mismatch at its source: during rollout, log the selected
+    set \(\mathcal{S}_t\) for every token at every MoE layer, ship those indices alongside the trajectory,
+    and force the trainer's forward pass to use them instead of recomputing top-K. The router still runs —
+    it produces \(\mathbf{s}\), \(\mathbf{p}\), and \(\tilde{p}\), and gradients still flow through
+    \(\tilde{p}\) exactly as in Section 4. Only the \(\operatorname{arg\,top-}K\) is overridden.
+  </p>
+  <div class="result">
+    <div class="result-label">What replay restores</div>
+    Numerator and denominator are computed by the same subnetwork, so \(\rho_t\) again reflects only the
+    genuine parameter change — the teal curve, with the amber one deleted.
+  </div>
+  <p>It is a real fix, and it is a hack, in the specific sense that it costs four things:</p>
+  <ul>
+    <li>
+      <strong>Bandwidth and storage.</strong> \(K\) indices per token per MoE layer. For a DeepSeek-V3-shaped
+      model (58 MoE layers, \(K = 8\)) that is 464 indices per token — packed at one byte each, ~460 B/token,
+      which for long reasoning rollouts rivals or exceeds the logprobs already being shipped.
+    </li>
+    <li>
+      <strong>An inconsistent forward pass.</strong> The trainer computes a gradient for a routing decision
+      the current policy would not make. \(\partial\mathcal{L}/\partial W_g\) is evaluated at a set
+      \(\mathcal{S}\) that is not \(\operatorname{arg\,top-}K(\mathbf{p})\), and the load statistics \(f_i\)
+      feeding the aux loss are the rollout engine's, not the trainer's.
+    </li>
+    <li>
+      <strong>A train/deploy gap.</strong> You are optimizing a function whose routing is supplied
+      externally, then deploying one that routes by argmax. The gap is small but structural, and it grows
+      with staleness — the older the snapshot, the less its routing resembles the current policy's.
+    </li>
+    <li>
+      <strong>Invasive plumbing.</strong> The inference engine must expose per-token, per-layer expert IDs,
+      and the trainer must accept them — cutting across an abstraction boundary that both sides otherwise
+      keep closed.
+    </li>
+  </ul>
+
+  <h3>The alternative: change the estimator instead</h3>
+  <p>
+    Replay fixes the ratio by forcing the two forward passes to agree. The other direction is to accept the
+    disagreement and use a statistic that is insensitive to it. <a href="../rl/grpo.html#gspo">GSPO</a> replaces the
+    per-token ratio with a length-normalized sequence-level one — a geometric mean of the per-token ratios.
+    A handful of flipped tokens shifts an average of \(T\) log-ratios by \(O(1/T)\), so the sequence weight
+    stays near 1 even when individual tokens swing wildly. The volatility is not eliminated; it is
+    <em>averaged out</em>, which is cheaper than legislating it away.
+  </p>
+  <p>
+    This is why the two show up as alternatives rather than complements in practice: token-level objectives
+    (<a href="../rl/grpo.html">GRPO</a>, PPO) on an MoE tend to need routing replay, and sequence-level ones tend to
+    train MoE stably without it.
+  </p>
+  <div class="note">
+    <strong>The through-line.</strong> Every difficulty on this page traces to the same source. Discrete
+    selection buys sparse compute; it costs a gradient blind spot (Section 4), which costs an auxiliary loss
+    (Section 6); and it costs Lipschitz continuity in \(\theta\), which costs either routing replay or a
+    sequence-level estimator. The aux loss and routing replay are the same kind of object — taxes levied to
+    keep a discrete decision usable.
+  </div>
+
+  <div class="xref">
+    The RL side of this is developed on <a href="../rl/grpo.html">GRPO &amp; GSPO</a> (where the ratio is defined
+    and clipped) and <a href="../rl/async-rl.html">Async RL &amp; Off-Policy Correction</a> (where routing replay
+    sits among the eliminate/correct/tolerate fix families).
+  </div>
+
+  <h2 id="summary">10 · Summary</h2>
+
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">The gate</div>
+      <p>\(\mathbf{s} = \mathbf{x}W_g\) → softmax → \(\mathbf{p}\). One linear layer, \(D \times E\) params, produces a probability distribution over \(E\) experts per token.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Top-K &amp; renorm</div>
+      <p>Select \(\mathcal{S} = \text{top-}K(\mathbf{p})\). Renormalize: \(\tilde{p}_i = p_i / \sum_{j \in \mathcal{S}} p_j\). Layer output: \(\mathbf{y} = \sum_{i \in \mathcal{S}} \tilde{p}_i \cdot \text{FFN}_i(\mathbf{x})\).</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Differentiability</div>
+      <p>Top-K index selection is discrete, but gradients flow through the continuous renormalized weights \(\tilde{p}_i\) — only selected experts contribute to \(\partial \mathcal{L}/\partial W_g\).</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Expert capacity</div>
+      <p>Cap each expert at \(C = \lceil TK/E \cdot c \rceil\) tokens. Overflow tokens are dropped (residual bypass). Capacity factor \(c = 1.25\) is common in training.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Auxiliary loss</div>
+      <p>\(\mathcal{L}_\text{aux} = \alpha E \sum_i f_i P_i\). Hard load \(f_i\) identifies overloaded experts; soft probability \(P_i\) carries the gradient that redistributes tokens.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Three levels of balance</div>
+      <p>The same \(\sum f \cdot P\) form applied to experts, devices, and received message volume. In DeepSeek-V2 the two hardware terms carry ~10× the coefficient of the anti-collapse term.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Granularity</div>
+      <p>Splitting \(E\) experts into \(mE\) narrower ones and raising \(K\) to \(mK\) holds FLOPs fixed while growing reachable combinations \(\binom{E}{K}\) by orders of magnitude — a specialization lever independent of \(K\).</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Rich-get-richer fix</div>
+      <p>Without the aux loss, popular experts improve faster and attract more tokens. The aux loss adds opposing pressure: overloaded experts get penalized until routing spreads out.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Routing stability</div>
+      <p>Top-\(K\) is a threshold on the margin \(g_t = s_{(K)} - s_{(K+1)}\), so \(\|\Delta\mathbf{y}\|\) is \(O(1)\), not \(O(\|\Delta\theta\|)\). RL's importance ratio compares two \(\theta\)'s and exposes it; routing replay freezes \(\mathcal{S}\), GSPO averages it out.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Selection vs summation</div>
+      <p>Attention heads self-organize with no machinery: every head runs on every token, so losers keep getting gradient and redundancy is penalized in the shared sum. Top-\(K\) selection removes both properties — balance must be legislated.</p>
+    </div>
+  </div>
+
+  <div class="xref">
+    With routing understood, <a href="../systems/moe-parallelism.html">MoE Parallelism →</a> builds the distributed
+    systems layer: how Expert Parallelism shards the \(E\) expert FFNs across GPUs and derives the
+    AlltoAll dispatch cost model.
+  </div>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; MoE Routing — Gating, Top-K Selection, and Load Balancing
+  &nbsp;·&nbsp; <a href="../index.html" style="color:inherit">All notes</a>
+  &nbsp;·&nbsp; <a href="../systems/moe-parallelism.html" style="color:inherit">MoE Parallelism →</a>
+</footer>
+
+<script>
+(function () {
+  // Schematic model for §9: relative output change vs logit perturbation ε.
+  const GBAR = 0.15;   // mean top-K margin, in nats
+  const SWAP = 0.35;   // O(1) relative change when the boundary expert swaps
+  const flip   = e => SWAP * (1 - Math.exp(-e / GBAR));
+  const smooth = e => e;
+  const total  = e => smooth(e) + flip(e);
+
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+  function drawPlot(canvas, cfg) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const mL = 48, mR = 14, mT = 14, mB = 34;
+    const pw = cssW - mL - mR, ph = cssH - mT - mB;
+    const { xMin, xMax, yMin, yMax } = cfg;
+    const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
+    const Y = y => mT + (yMax - y) / (yMax - yMin) * ph;
+
+    ctx.font = '11px Inter, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(t => {
+      const px = X(t);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.fillText(t.toFixed(2), px, mT + ph + 6);
+    });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(t => {
+      const py = Y(t);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+      ctx.fillText(t.toFixed(1), mL - 8, py);
+    });
+
+    ctx.strokeStyle = cssVar('--plot-axis');
+    ctx.lineWidth = 1.25;
+    ctx.beginPath(); ctx.moveTo(mL, Y(yMin)); ctx.lineTo(mL + pw, Y(yMin)); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(X(xMin), mT); ctx.lineTo(X(xMin), mT + ph); ctx.stroke();
+
+    // axis titles
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.fillText('logit perturbation  ε', mL + pw / 2, cssH - 1);
+    ctx.save();
+    ctx.translate(11, mT + ph / 2); ctx.rotate(-Math.PI / 2);
+    ctx.textBaseline = 'top';
+    ctx.fillText('relative ‖Δy‖', 0, 0);
+    ctx.restore();
+
+    ctx.save();
+    ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    ctx.lineJoin = 'round';
+    cfg.series.forEach(s => {
+      ctx.beginPath();
+      ctx.lineWidth = s.width || 2;
+      ctx.strokeStyle = cssVar(s.color);
+      ctx.setLineDash(s.dash || []);
+      const N = 260;
+      for (let i = 0; i <= N; i++) {
+        const x = xMin + (xMax - xMin) * i / N;
+        const px = X(x), py = Y(s.fn(x));
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  const plots = [];
+  const flipCanvas = document.getElementById('plot-flip');
+  if (flipCanvas) plots.push([flipCanvas, {
+    xMin: 0, xMax: 0.3, yMin: 0, yMax: 0.7,
+    xTicks: [0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3],
+    yTicks: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
+    series: [
+      { fn: smooth, color: '--plot-teal',   width: 2 },
+      { fn: flip,   color: '--plot-amber',  width: 2 },
+      { fn: total,  color: '--plot-violet', width: 2.75 }
+    ]
+  }]);
+
+  function renderAll() { plots.forEach(([c, cfg]) => drawPlot(c, cfg)); }
+  renderAll();
+  let raf;
+  window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(renderAll); });
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq.addEventListener) mq.addEventListener('change', renderAll);
+})();
+</script>
+
+</body>
+</html>

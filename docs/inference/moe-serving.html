@@ -1,0 +1,919 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>MoE Serving — The Expert Coverage Law</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #ffffff; --surface: #f8f9fa; --border: #e8eaed;
+      --text: #1a1a2e; --muted: #6b7280;
+      --accent: #2563eb; --accent-light: #eff6ff;
+      --warning-bg: #fffbeb; --warning-border: #f59e0b;
+      --step-bg: #f9fafb; --step-border: #d1d5db;
+      --boxed-bg: #eff6ff; --boxed-border: #3b82f6;
+      --compare-bg: #faf5ff; --compare-border: #8b5cf6;
+      --ink: #374151;
+      --code-bg: #f1f5f9;
+      --code-fg: #1d4ed8;
+      --row-hover: #fafafa;
+      --note-fg: #78350f;
+      --note-link: #92400e;
+      --result-fg: #2563eb;
+      --compare-fg: #6d28d9;
+      --blue-border: #bfdbfe;
+      --nav-bg: rgba(255,255,255,0.92);
+      --spec-bg: #0f172a;
+      --spec-fg: #e2e8f0;
+      --spec-num: #93c5fd;
+      --spec-key: #94a3b8;
+      --diagram-bg-top: #f9fafb;
+      --diagram-bg-bottom: #eff6ff;
+      --fig-bg: #ffffff;
+      --control-bg: #ffffff;
+      --regime-mem-bg: #fee2e2;
+      --regime-mem-fg: #dc2626;
+      --regime-comp-bg: #dcfce7;
+      --regime-comp-fg: #16a34a;
+      --caveat-bg: #fef9c3;
+      --caveat-border: #ca8a04;
+      --caveat-fg: #713f12;
+      --plot-grid: #eceef1;
+      --plot-axis: #c7cbd1;
+      --plot-tick: #9ca3af;
+      --plot-violet: #6d28d9;
+      --plot-teal: #0d9488;
+      --plot-amber: #d97706;
+      --plot-blue: #2563eb;
+      --plot-gray: #9ca3af;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115; --surface: #171b21; --border: #262b33;
+        --text: #e5e7eb; --muted: #9aa1ab;
+        --accent: #60a5fa; --accent-light: #101a2b;
+        --warning-bg: #251c0b; --warning-border: #b45309;
+        --step-bg: #14181e; --step-border: #333a44;
+        --boxed-bg: #101a2b; --boxed-border: #1e40af;
+        --compare-bg: #1a1626; --compare-border: #5b21b6;
+        --ink: #cbd5e1;
+        --code-bg: #1c2531;
+        --code-fg: #60a5fa;
+        --row-hover: #191e25;
+        --note-fg: #fcd34d;
+        --note-link: #fbbf24;
+        --result-fg: #60a5fa;
+        --compare-fg: #a78bfa;
+        --blue-border: #1e3a8a;
+        --nav-bg: rgba(15,17,21,0.9);
+        --spec-bg: #1c2531;
+        --spec-fg: #e2e8f0;
+        --spec-num: #93c5fd;
+        --spec-key: #94a3b8;
+        --diagram-bg-top: #14181e;
+        --diagram-bg-bottom: #101a2b;
+        --fig-bg: #14181e;
+        --control-bg: #1c2531;
+        --regime-mem-bg: #2a1214;
+        --regime-mem-fg: #f87171;
+        --regime-comp-bg: #0e2016;
+        --regime-comp-fg: #4ade80;
+        --caveat-bg: #251c0b;
+        --caveat-border: #854d0e;
+        --caveat-fg: #fde047;
+        --plot-grid: #232830;
+        --plot-axis: #3a4149;
+        --plot-tick: #6b7280;
+        --plot-violet: #a78bfa;
+        --plot-teal: #2dd4bf;
+        --plot-amber: #fbbf24;
+        --plot-blue: #60a5fa;
+        --plot-gray: #6b7280;
+      }
+    }
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 0; line-height: 1.75; font-size: 16px; }
+    nav { position: sticky; top: 0; z-index: 100; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 52px; }
+    .nav-brand { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 0.9rem; color: var(--accent); text-decoration: none; white-space: nowrap; }
+    .nav-links { display: flex; gap: 4px; overflow-x: auto; flex: 1; }
+    .nav-links a { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; white-space: nowrap; transition: color 0.15s, background 0.15s; }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .nav-back { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); white-space: nowrap; transition: color 0.15s; margin-left: auto; flex-shrink: 0; }
+    .nav-back:hover { color: var(--text); }
+    .hero { background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%); color: white; padding: 56px 24px 48px; text-align: center; }
+    .hero h1 { font-size: clamp(1.5rem, 4vw, 2.2rem); font-weight: 600; margin: 0 0 12px; letter-spacing: -0.02em; }
+    .hero p { margin: 0 auto; opacity: 0.85; font-size: 0.97rem; max-width: 620px; }
+    .hero-pill { display: inline-block; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 100px; font-size: 0.78rem; padding: 3px 12px; margin-bottom: 16px; letter-spacing: 0.04em; text-transform: uppercase; }
+    .page-wrap { max-width: 820px; margin: 0 auto; padding: 48px 24px 80px; }
+    h2 { font-size: 1.15rem; font-weight: 600; margin: 2.8em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); color: var(--text); }
+    h3 { font-size: 0.97rem; font-weight: 600; margin: 1.6em 0 0.4em; color: var(--ink); }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    code { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
+    p code, li code, td code { background: var(--code-bg); padding: 1px 6px; border-radius: 4px; font-size: 0.88em; color: var(--code-fg); }
+    a { color: var(--accent); }
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
+    th, td { border: 1px solid var(--border); padding: 9px 16px; text-align: left; vertical-align: top; }
+    th { background: var(--surface); font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+    tr:hover td { background: var(--row-hover); }
+    td.ctr, th.ctr { text-align: center; }
+    .step { background: var(--step-bg); border: 1px solid var(--step-border); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 1.2em 0; }
+    .step-label { font-weight: 600; font-size: 0.88rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+    .step-label::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+    .note { background: var(--warning-bg); border-left: 3px solid var(--warning-border); border-radius: 0 8px 8px 0; padding: 10px 16px; margin: 1em 0; font-size: 0.92em; color: var(--note-fg); }
+    .note::before { content: '⚠ '; }
+    .note a { color: var(--note-link); }
+    .result { background: var(--boxed-bg); border: 1.5px solid var(--boxed-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; text-align: center; }
+    .result-label { font-size: 0.8rem; font-weight: 600; color: var(--result-fg); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+    .compare { background: var(--compare-bg); border: 1.5px solid var(--compare-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; }
+    .compare-label { font-size: 0.8rem; font-weight: 600; color: var(--compare-fg); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
+    .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 1.2em 0; }
+    .summary-card { background: var(--accent-light); border: 1px solid var(--blue-border); border-radius: 8px; padding: 14px 16px; }
+    .summary-card-label { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+    .xref { background: var(--accent-light); border: 1px solid var(--blue-border); border-radius: 8px; padding: 12px 18px; margin: 1.4em 0; font-size: 0.92rem; }
+    .xref a { color: var(--accent); font-weight: 600; text-decoration: none; }
+    .xref a:hover { text-decoration: underline; }
+    .spec-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 1.2em 0; }
+    .spec { background: var(--spec-bg); color: var(--spec-fg); border-radius: 10px; padding: 12px 14px; }
+    .spec-num { font-size: 1.25rem; font-weight: 600; color: var(--spec-num); font-family: ui-monospace, monospace; }
+    .spec-key { font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--spec-key); margin-top: 2px; }
+    .diagram { background: linear-gradient(180deg, var(--diagram-bg-top) 0%, var(--diagram-bg-bottom) 100%); border: 1px solid var(--blue-border); border-radius: 12px; padding: 18px 20px; margin: 1.6em 0; }
+    .diagram-title { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+    .diagram-hint { font-size: 0.8rem; color: var(--muted); margin-bottom: 14px; }
+    .diagram-stage { background: var(--fig-bg); border-radius: 8px; padding: 16px; overflow-x: auto; }
+    .calc-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 10px; }
+    .calc-row label { font-size: 0.88rem; min-width: 190px; color: var(--ink); }
+    .calc-row b { font-family: ui-monospace, monospace; color: var(--accent); }
+    select { font-size: 0.88rem; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--control-bg); }
+    input[type=range] { accent-color: var(--accent); width: 200px; max-width: 50vw; }
+    .regime-badge { display: inline-block; padding: 3px 12px; border-radius: 100px; font-size: 0.82rem; font-weight: 600; }
+    .regime-mem { background: var(--regime-mem-bg); color: var(--regime-mem-fg); }
+    .regime-comp { background: var(--regime-comp-bg); color: var(--regime-comp-fg); }
+    .figure { background: var(--fig-bg); border: 1px solid var(--border); border-radius: 10px; padding: 18px 16px 14px; margin: 1.6em 0; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+    .figure canvas { width: 100%; height: 300px; display: block; }
+    .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; justify-content: center; margin-top: 12px; font-size: 0.82rem; color: var(--text); }
+    .legend-item { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, var(--plot-gray) 0 5px, transparent 5px 9px); }
+    .figure-caption { font-size: 0.85rem; color: var(--muted); line-height: 1.6; margin: 14px 4px 2px; }
+    footer { border-top: 1px solid var(--border); padding: 28px 24px; text-align: center; font-size: 0.82rem; color: var(--muted); }
+    @media (max-width: 600px) { .hero { padding: 40px 16px 36px; } .page-wrap { padding: 32px 16px 60px; } }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>MoE Serving</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#reads">What decode reads</a>
+    <a href="#law">Coverage law</a>
+    <a href="#roofline">Shifted roofline</a>
+    <a href="#models">Real models</a>
+    <a href="#optimistic">When it's optimistic</a>
+    <a href="#consequences">Consequences</a>
+    <a href="#versus-dense">Is it a decode win?</a>
+    <a href="#summary">Summary</a>
+  </div>
+  <a class="nav-back" href="../index.html">Home</a>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Systems · Inference</span>
+  <h1>MoE Serving — The Expert Coverage Law</h1>
+  <p>A dense decode step reads every weight once, so batching \(B\) requests amortizes the read \(B\) ways. An MoE decode step reads only the experts <em>somebody</em> routed to — and at small batch, each new request pulls in a nearly disjoint set. This page derives \(C(B) = 1-(1-k/E)^B\), the fraction of experts touched, and follows it out to the roofline, to expert parallelism, and to why RL rollout generation on an MoE hurts.</p>
+</div>
+
+<div class="page-wrap">
+
+<p>
+  The <a href="inference-compute-model.html#intensity">dense inference compute model</a> rests on one fact: a weight matrix loaded from HBM is reused by every token in the batch. One load, \(B\) reuses, arithmetic intensity \(I = B\). That single identity is what makes continuous batching the dominant serving lever, and it is what makes decode throughput scale linearly until the compute ridge.
+</p>
+<p>
+  A Mixture-of-Experts model breaks it. Each token activates only \(k\) of \(E\) experts, so a weight matrix is <em>not</em> reused by every token in the batch — it is reused only by the tokens that happened to route to it. Whether batching still amortizes anything depends on how much the batch's routing decisions overlap. The coverage law is the answer to that question, and almost every distinctive property of MoE serving falls out of it.
+</p>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Symbol</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td>\(E\)</td><td>Number of routed experts per MoE layer</td></tr>
+      <tr><td>\(k\)</td><td>Experts activated per token (top-\(k\) routing)</td></tr>
+      <tr><td>\(B\)</td><td>Requests in the running batch — at decode, one token each</td></tr>
+      <tr><td>\(P_e\)</td><td>Parameters in one expert's FFN</td></tr>
+      <tr><td>\(C(B)\)</td><td>Expected fraction of experts touched by the batch — <em>coverage</em></td></tr>
+      <tr><td>\(\lambda\)</td><td>\(Bk/E\) — mean token-assignments per expert, the load factor</td></tr>
+      <tr><td>\(I^*\)</td><td>Roofline ridge, peak FLOP/s ÷ peak bandwidth (H100: ≈295)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ═══════════════════════════════════════════ WHAT DECODE READS -->
+<h2 id="reads">1 · What a decode step actually reads</h2>
+
+<p>
+  Decode is one token per request per step. The GPU must stream from HBM every weight that step will touch, and the coverage question is entirely about the expert FFNs — attention is dense and replicated, so it is read in full every step regardless.
+</p>
+
+<div class="compare">
+  <div class="compare-label">Bytes moved per decode step, per MoE layer (FP16)</div>
+  <div class="table-wrap" style="margin:0">
+    <table style="margin:0">
+      <thead><tr><th>Model</th><th>FLOPs</th><th>Expert weight bytes</th><th>Reuse</th></tr></thead>
+      <tbody>
+        <tr><td>Dense FFN</td><td>\(2 B \cdot N_{\rm ffn}\)</td><td>\(2 N_{\rm ffn}\)</td><td>Every token uses every weight</td></tr>
+        <tr><td>MoE, top-\(k\) of \(E\)</td><td>\(2 B k \cdot P_e\)</td><td>\(2 \, C(B) \cdot E P_e\)</td><td>Only the tokens that routed there</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<p>
+  The FLOPs line is the familiar one — it is the activated-parameter count that <a href="../systems/moe-parallelism.html#ceiling">MoE Parallelism § throughput ceiling</a> uses, \(N_{\rm act} = N_{\rm attn} + \frac{k}{E}N_{\rm ffn}\), and it is why an MoE is cheap to compute. The bytes line is the one nobody writes down, and it carries a completely different factor. Compute scales with \(k/E\); <strong>memory traffic scales with \(C(B)\), which is not \(k/E\)</strong> except at \(B = 1\).
+</p>
+
+<div class="note">
+  This is the gap between "activated parameters" and "resident parameters" as a serving cost. DeepSeek-V3 activates ~37B of 671B parameters per token — a 18× FLOPs saving. It does <em>not</em> get an 18× bandwidth saving at serving batch sizes, because with a hundred concurrent requests the batch collectively touches nearly all 671B.
+</div>
+
+<!-- ═══════════════════════════════════════════ THE LAW -->
+<h2 id="law">2 · The coverage law</h2>
+
+<p>
+  Fix an expert \(e\). Under balanced routing, one token selects it with probability \(k/E\), so one token <em>misses</em> it with probability \(1 - k/E\). The \(B\) requests in the batch are different sequences with independent routing decisions, so \(e\) is missed by all of them with probability \((1-k/E)^B\). By linearity of expectation over the \(E\) experts:
+</p>
+
+<div class="result">
+  <div class="result-label">The expert coverage law</div>
+  \[ C(B) \;=\; 1 - \left(1 - \frac{k}{E}\right)^{B} \]
+  <div style="font-size:0.85rem;color:var(--muted);margin-top:6px">
+    Expected fraction of experts that at least one request in the batch routes to — i.e. the fraction of expert weights the decode step must read.
+  </div>
+</div>
+
+<p>
+  Linearity of expectation is doing real work here: the \(k\) choices <em>within</em> one token are not independent (top-\(k\) picks a \(k\)-subset without replacement), but that never enters the derivation. Only independence <em>across</em> requests is assumed — and §5 is about when even that fails.
+</p>
+
+<p>
+  Two sanity checks. At \(B=1\), \(C = k/E\): a single user reads exactly the \(k\) experts their token routes to, which is the whole promise of sparsity. At \(k = E\) (every expert active) \(C = 1\) for all \(B\) — the dense model, where the law correctly says batching changes nothing about what gets read.
+</p>
+
+<h3>The load factor collapses it to one variable</h3>
+
+<p>
+  For \(k \ll E\), \((1-k/E)^B = e^{B\ln(1-k/E)} \approx e^{-Bk/E}\). Writing \(\lambda = Bk/E\) — the mean number of token-assignments per expert, exactly the occupancy parameter of throwing \(Bk\) balls into \(E\) bins:
+</p>
+
+<div class="result">
+  <div class="result-label">Poissonized form</div>
+  \[ C \;\approx\; 1 - e^{-\lambda}, \qquad \lambda = \frac{Bk}{E} \]
+</div>
+
+<p>
+  So \(B\), \(k\) and \(E\) never matter separately — only the ratio \(\lambda\). A batch of 32 on a 256-expert top-8 model (\(\lambda = 1\)) is in exactly the same regime as a batch of 4 on an 8-expert top-2 model. The natural unit of batch size for an MoE is \(E/k\) requests, not one request.
+</p>
+
+<div class="figure">
+  <canvas id="plot-coverage" aria-label="Expert coverage versus batch size on a log axis, for several expert-to-active ratios: each curve is flat and low at small batch then saturates toward one, shifted right as E over k grows"></canvas>
+  <div class="legend">
+    <span class="legend-item"><span class="lg" style="--c:var(--plot-gray)"></span> \(E/k = 4\) — Mixtral 8×7B</span>
+    <span class="legend-item"><span class="lg" style="--c:var(--plot-teal)"></span> \(E/k = 16\) — Qwen3-235B</span>
+    <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span> \(E/k = 32\) — DeepSeek-V3</span>
+    <span class="legend-item"><span class="lg" style="--c:var(--plot-amber)"></span> \(E/k = 128\) — top-1 routing</span>
+  </div>
+  <p class="figure-caption">
+    <strong>Coverage saturates, and where it saturates is set entirely by \(E/k\).</strong> Every curve is the same shape shifted along the log-\(B\) axis: coverage passes \(\tfrac12\) at \(B \approx 0.69\,E/k\) and 95% at \(B \approx 3\,E/k\). The consequence is the flat left shoulder — while \(C(B)\) rises <em>linearly</em> in \(B\), each added request brings its own experts and the per-token cost does not fall at all. Only past the knee does an extra request become nearly free.
+  </p>
+</div>
+
+<h3>Batch thresholds</h3>
+
+<p>Inverting the law gives the batch size at which a target coverage is reached, \(B(c) = \ln\!\frac{1}{1-c} \big/ \ln\!\frac{1}{1-k/E}\), or in load-factor form simply \(\lambda = \ln\frac{1}{1-c}\):</p>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Coverage \(c\)</th><th class="ctr">\(\lambda = Bk/E\)</th><th class="ctr">Batch size \(B\)</th><th>Reading</th></tr></thead>
+    <tbody>
+      <tr><td>50%</td><td class="ctr">0.69</td><td class="ctr">\(0.69\,E/k\)</td><td>Half the expert table is already resident traffic</td></tr>
+      <tr><td>90%</td><td class="ctr">2.30</td><td class="ctr">\(2.3\,E/k\)</td><td>Sparsity has stopped buying bandwidth</td></tr>
+      <tr><td>99%</td><td class="ctr">4.61</td><td class="ctr">\(4.6\,E/k\)</td><td>Effectively reading the dense model</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>
+  These are small numbers. Even at \(E/k = 32\), a batch of 148 requests reads 99% of every expert in the model — and 148 concurrent requests is an unremarkable load for a single production serving replica.
+</p>
+
+<!-- ═══════════════════════════════════════════ ROOFLINE -->
+<h2 id="roofline">3 · The shifted roofline</h2>
+
+<p>
+  Now divide the two rows of §1's table. Arithmetic intensity for the expert FFNs, in FP16:
+</p>
+
+<div class="step">
+  <div class="step-label">Intensity of an MoE decode step</div>
+  <ul style="margin-bottom:0">
+    <li><strong>FLOPs:</strong> \(2 B k P_e\) — every token does its \(k\) expert FFNs.</li>
+    <li><strong>Bytes:</strong> \(2\, C(B)\, E P_e\) — every touched expert is streamed once, whether one token needs it or a hundred.</li>
+    <li><strong>Intensity:</strong> \(I = \dfrac{2BkP_e}{2\,C(B)\,EP_e} = \dfrac{Bk/E}{C(B)} = \dfrac{\lambda}{C(B)}\).</li>
+  </ul>
+</div>
+
+<div class="result">
+  <div class="result-label">MoE decode intensity</div>
+  \[ I(\lambda) \;=\; \frac{\lambda}{1 - e^{-\lambda}}, \qquad \lambda = \frac{Bk}{E} \]
+  <div style="font-size:0.85rem;color:var(--muted);margin-top:6px">
+    Identically: the average number of tokens routed to each expert that gets read. That average <em>is</em> the reuse factor.
+  </div>
+</div>
+
+<p>
+  The interpretation is worth pausing on. Dense decode has \(I = B\) because every weight is reused by all \(B\) tokens. MoE decode has \(I = \lambda/C\) because a touched expert is reused by \(\lambda E / (C E)\) tokens on average. Reuse is not the batch size; it is the batch size <em>per expert</em>. Both limits follow immediately:
+</p>
+
+<div class="compare">
+  <div class="compare-label">Two regimes</div>
+  <ul style="margin:0">
+    <li><strong>Small batch, \(\lambda \ll 1\) (\(B \ll E/k\)):</strong> \(C \approx \lambda\), so \(I \to 1\). The \(B\)'s cancel. <strong>Batching buys no weight-read amortization whatsoever</strong> — every added request drags in a nearly disjoint set of experts, and per-token bandwidth cost is flat. An MoE at \(B=64\) with \(E/k=128\) is as bandwidth-bound as a dense model at \(B=1\).</li>
+    <li style="margin-top:10px"><strong>Large batch, \(\lambda \gg 1\):</strong> \(C \to 1\), so \(I \to \lambda = Bk/E\). Amortization resumes at full slope, but permanently offset: the MoE sits a factor \(E/k\) below the dense curve, because the FLOPs were cut by \(k/E\) while the bytes were not cut at all.</li>
+  </ul>
+</div>
+
+<div class="figure">
+  <canvas id="plot-intensity" aria-label="Arithmetic intensity versus batch size, both on log axes: the dense line rises with slope one from the origin while MoE curves stay flat near one before turning and rising parallel to dense, offset downward by E over k"></canvas>
+  <div class="legend">
+    <span class="legend-item"><span class="lg dash"></span> dense: \(I = B\)</span>
+    <span class="legend-item"><span class="lg" style="--c:var(--plot-teal)"></span> \(E/k = 4\)</span>
+    <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span> \(E/k = 32\)</span>
+    <span class="legend-item"><span class="lg" style="--c:var(--plot-amber)"></span> \(E/k = 128\)</span>
+    <span class="legend-item"><span class="lg" style="--c:var(--plot-blue)"></span> H100 ridge \(I^*\!\approx\!295\)</span>
+  </div>
+  <p class="figure-caption">
+    <strong>MoE decode pays twice: a flat shelf, then a permanent offset.</strong> Both axes are \(\log_2\). Every MoE curve leaves the origin flat at \(I \approx 1\) — batching does nothing — until \(B \approx E/k\), then turns and runs parallel to dense, displaced downward by exactly \(\log_2(E/k)\). Where the dense model crosses the H100 ridge at \(B \approx 295\), the \(E/k=32\) model needs \(B \approx 9{,}400\) and never reaches it on one GPU. MoE decode is memory-bound essentially always.
+  </p>
+</div>
+
+<div class="result">
+  <div class="result-label">Ridge batch size</div>
+  \[ B^{*}_{\rm MoE} \;\approx\; I^{*} \cdot \frac{E}{k} \]
+  <div style="font-size:0.85rem;color:var(--muted);margin-top:6px">
+    On an H100 (\(I^* \approx 295\)) with \(E/k = 32\): ~9,400 concurrent requests to become compute-bound. This is the number that decides serving architecture.
+  </div>
+</div>
+
+<div class="diagram">
+  <div class="diagram-title">▸ Coverage &amp; intensity calculator</div>
+  <div class="diagram-hint">Pick a routing configuration and sweep the running batch size. Weight bytes per token is the quantity your bandwidth budget actually pays.</div>
+  <div class="diagram-stage">
+    <div class="calc-row">
+      <label>Routing config:</label>
+      <select id="mc-cfg">
+        <option value="8,2">E=8, top-2 — Mixtral 8×7B</option>
+        <option value="128,8">E=128, top-8 — Qwen3-235B-A22B</option>
+        <option value="256,8" selected>E=256, top-8 — DeepSeek-V3 / R1</option>
+        <option value="384,8">E=384, top-8 — Kimi K2</option>
+        <option value="128,1">E=128, top-1 — Llama-4 Maverick</option>
+      </select>
+    </div>
+    <div class="calc-row">
+      <label>Running batch \(B\): <b id="mc-b-val">32</b></label>
+      <input type="range" id="mc-b" min="1" max="1024" value="32">
+    </div>
+    <div style="margin-top:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">
+      <div class="spec"><div class="spec-num" id="mc-lambda">1.00</div><div class="spec-key">Load factor λ = Bk/E</div></div>
+      <div class="spec"><div class="spec-num" id="mc-cov">63%</div><div class="spec-key">Coverage C(B)</div></div>
+      <div class="spec"><div class="spec-num" id="mc-int">1.58</div><div class="spec-key">Intensity (FLOP/byte)</div></div>
+      <div class="spec"><div class="spec-num" id="mc-ridge">9440</div><div class="spec-key">Ridge batch on H100</div></div>
+    </div>
+    <p style="margin-top:12px;font-size:0.88rem;margin-bottom:0">
+      Weight bytes read per token: <b id="mc-rel">63.8%</b> of an iso-total dense model at the same batch &nbsp;·&nbsp; <b id="mc-frac">1.99%</b> of the full expert table
+      <br>Regime: <span class="regime-badge regime-mem" id="mc-regime">No amortization</span>
+    </p>
+  </div>
+</div>
+
+<div class="note" style="background:var(--caveat-bg); border-left-color:var(--caveat-border); color:var(--caveat-fg)">
+  <strong>Attention is unchanged and still binding.</strong> Everything above concerns the expert FFNs. The attention block is dense, and its intensity is capped by sequence length rather than batch size — see <a href="inference-compute-model.html#batch" style="color:var(--caveat-fg);font-weight:600">the dense page's caveat</a> and <a href="../transformer/mla.html" style="color:var(--caveat-fg);font-weight:600">MLA</a> for why KV traffic is attacked separately. An MoE step is therefore memory-bound on <em>both</em> halves: expert weights on the FFN side, KV cache on the attention side. Coverage explains the first; neither is fixed by the other.
+</div>
+
+<!-- ═══════════════════════════════════════════ REAL MODELS -->
+<h2 id="models">4 · Where real models sit</h2>
+
+<p>
+  Published routing configurations, with the batch thresholds the law implies. \(B_{1/2}\) and \(B_{95}\) are exact from \(C(B)\); the ridge column assumes an H100's \(I^* \approx 295\) and FP16 weights.
+</p>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Model</th><th class="ctr">\(E\)</th><th class="ctr">\(k\)</th><th class="ctr">\(E/k\)</th><th class="ctr">\(B_{1/2}\)</th><th class="ctr">\(B_{95}\)</th><th class="ctr">Ridge \(B\)</th></tr></thead>
+    <tbody>
+      <tr><td>Mixtral 8×7B</td><td class="ctr">8</td><td class="ctr">2</td><td class="ctr">4</td><td class="ctr">2.4</td><td class="ctr">10</td><td class="ctr">~1,200</td></tr>
+      <tr><td>Qwen3-235B-A22B</td><td class="ctr">128</td><td class="ctr">8</td><td class="ctr">16</td><td class="ctr">11</td><td class="ctr">46</td><td class="ctr">~4,700</td></tr>
+      <tr><td>DeepSeek-V3 / R1<sup>†</sup></td><td class="ctr">256</td><td class="ctr">8</td><td class="ctr">32</td><td class="ctr">22</td><td class="ctr">94</td><td class="ctr">~9,400</td></tr>
+      <tr><td>Kimi K2<sup>†</sup></td><td class="ctr">384</td><td class="ctr">8</td><td class="ctr">48</td><td class="ctr">33</td><td class="ctr">142</td><td class="ctr">~14,000</td></tr>
+      <tr><td>Llama-4 Maverick<sup>†</sup></td><td class="ctr">128</td><td class="ctr">1</td><td class="ctr">128</td><td class="ctr">88</td><td class="ctr">382</td><td class="ctr">~37,800</td></tr>
+    </tbody>
+  </table>
+</div>
+<p style="font-size:0.86rem;color:var(--muted)"><sup>†</sup> Also has a shared expert that every token uses. Shared experts are read unconditionally, so they are dense bytes added on top of \(C(B)\,E P_e\) — they raise the floor and slightly soften the small-batch cliff.</p>
+
+<p>
+  The trend across generations is the point. Mixtral's \(E/k = 4\) saturates by \(B \approx 10\) — at any realistic serving load it behaves like a dense model of its total size, and coverage is not a design consideration. Every model since has pushed toward finer granularity (more, smaller experts) because <a href="../transformer/moe-routing.html">fine-grained routing improves the quality-per-activated-FLOP tradeoff</a>. That same move multiplies \(E/k\), which pushes the coverage knee to larger batch and drives the ridge batch out of reach. <strong>Fine-grained MoE is a training-side win paid for on the serving side in bandwidth.</strong>
+</p>
+
+<!-- ═══════════════════════════════════════════ OPTIMISTIC -->
+<h2 id="optimistic">5 · When the law is optimistic — and when it's the wrong average</h2>
+
+<p>
+  \(C(B)\) as derived is an idealization in three specific ways, two of which make real coverage <em>lower</em> and one of which makes the mean the wrong statistic entirely.
+</p>
+
+<div class="step">
+  <div class="step-label">Correlated routing across requests</div>
+  <p style="margin:0">
+    Requests in a batch are not independent draws. A serving replica handling one workload — all code completion, all one language, all the same system prompt — gets routing that clusters, since experts specialize by domain. Correlation means the batch's experts overlap more than chance, so true coverage sits <em>below</em> \(1-(1-k/E)^B\). This is good for bandwidth. It is also fragile: it evaporates the moment traffic is heterogeneous, so it is not something to provision against.
+  </p>
+</div>
+
+<div class="step">
+  <div class="step-label">Non-uniform expert popularity</div>
+  <p style="margin:0">
+    The derivation used a uniform \(k/E\) per expert. With unequal marginals \(p_e\) (summing to \(k\)), expected coverage is \(\sum_e [1-(1-p_e)^B]\), and since \(1-(1-p)^B\) is concave in \(p\), any imbalance <em>reduces</em> the sum. Uniform routing maximizes coverage. This yields an irony worth stating plainly: the <a href="../transformer/moe-routing.html#aux-loss">auxiliary load-balancing loss</a>, whose job is to flatten expert utilization so training doesn't waste capacity, is also pushing decode coverage up toward the law's upper bound. Balanced routing is optimal for training throughput and pessimal for decode bandwidth.
+  </p>
+</div>
+
+<div class="step">
+  <div class="step-label">Under expert parallelism, the mean is the wrong statistic</div>
+  <p style="margin:0">
+    With <a href="../systems/moe-parallelism.html#ep">EP</a> across \(G\) devices, each device holds \(E/G\) experts and reads its own covered fraction. In expectation that fraction is the same \(C(B)\), but the step does not finish until the <em>slowest</em> device finishes — step time tracks \(\max_g\) load, not the mean. At small \(\lambda\), where the number of touched experts per device is a handful, that maximum is well above the mean and the variance is large. This is the same tail that motivates redundant/replicated hot experts and dynamic expert placement in production MoE serving.
+  </p>
+</div>
+
+<div class="note">
+  All three caveats are about <em>how much worse or noisier</em> than \(C(B)\) reality is — none of them restore amortization at small \(\lambda\). The flat shelf in the intensity plot is a structural property of sparse routing, not an artifact of the independence assumption.
+</div>
+
+<!-- ═══════════════════════════════════════════ CONSEQUENCES -->
+<h2 id="consequences">6 · What follows for serving</h2>
+
+<h3>Batch aggregation is the whole game, and the target is \(E/k\)× larger</h3>
+<p>
+  For a dense model, "keep the batch full" means keep it near \(I^*\). For an MoE it means keep it near \(I^* E/k\) — thousands of concurrent requests. No single replica gathers that from one GPU's worth of KV cache, which is why large-scale MoE decode is deployed as a wide, disaggregated cluster: prefill and decode split onto separate pools (<a href="pd-disaggregation.html">P/D disaggregation</a>) so the decode pool aggregates requests from many prefill workers, with expert parallelism spread across many nodes purely to make the batch big enough. The deployment shape is a direct consequence of the coverage law, not of model size.
+</p>
+
+<h3>EP + DP beats TP at decode</h3>
+<p>
+  Two ways to split experts across devices, and coverage decides between them:
+</p>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th></th><th>Tensor parallel</th><th>Expert parallel</th></tr></thead>
+    <tbody>
+      <tr><td>What's sharded</td><td>Each expert's weight matrices, columnwise</td><td>Whole experts, by index</td></tr>
+      <tr><td>Bytes read per device</td><td>\(C(B) \cdot E P_e / \mathrm{TP}\) — a shard of <em>every touched</em> expert</td><td>\(C(B) \cdot E P_e / \mathrm{EP}\) — only its own experts</td></tr>
+      <tr><td>Comms per layer</td><td>AllReduce of activations, \(B \times D\), latency-bound at decode</td><td>AllToAll of \(B k \times D\) tokens — small at decode batch</td></tr>
+      <tr><td>GEMM shape</td><td>Thin and getting thinner as TP grows</td><td>Full-width, batched by expert</td></tr>
+    </tbody>
+  </table>
+</div>
+<p>
+  Both reduce per-device bytes by the parallel degree, so bandwidth is a wash. The difference is everything else: TP adds a latency-bound AllReduce on the critical path of every layer and shrinks the already-tiny decode GEMMs, while EP's AllToAll moves activations whose size is \(Bk D\) — negligible at decode batch sizes, in contrast to <a href="../systems/moe-parallelism.html#dispatch">training</a>, where AllToAll on the full token batch is the dominant cost. Hence the standard serving recipe, EP + DP with TP=1, which shows up in vLLM as <code>--enable-expert-parallel</code> with data parallelism rather than tensor parallelism (the same configuration <a href="rl-inference.html">RL Inference</a> recommends for MoE reward models).
+</p>
+
+<h3>RL rollout generation is the worst case</h3>
+<p>
+  Rollout generation for <a href="../rl/grpo.html">GRPO</a>-style training sits exactly in the flat shelf. Batches are bounded by the group size and prompt set rather than by arriving traffic; sequences finish at ragged times so the running batch <a href="continuous-batching.html">decays through the step</a>; and the long tail of a reasoning rollout can be a handful of live sequences generating thousands of tokens each. When \(B\) falls below \(E/k\), intensity is pinned at \(I \approx 1\) — the rollout phase reads a large fraction of a 671B-parameter expert table to produce a few dozen tokens. This is a large part of why the generation phase dominates MoE RL step time far more than the activated parameter count suggests, and why <a href="../rl/async-rl.html">async RL</a>'s ability to keep many rollouts in flight matters more for MoE than for dense models: it is buying \(\lambda\), not just utilization.
+</p>
+<p>
+  It also reframes <a href="speculative-decoding.html">speculative decoding</a> and multi-token prediction for MoE. Verifying \(\gamma\) draft tokens per request makes the step carry \(B(\gamma{+}1)\) tokens, which moves right along the coverage curve. On a dense model that mostly trades wasted FLOPs for fewer steps; on an MoE in the flat shelf, the extra tokens ride along on expert reads that were happening anyway — the drafted tokens are close to bandwidth-free.
+</p>
+
+<h3>Expert offload works only at \(B \lesssim E/k\)</h3>
+<p>
+  Keeping cold experts in CPU RAM or on SSD and paging them into HBM on demand is viable exactly when the working set is small — that is, when \(C(B)\) is small. Single-user local inference (\(B=1\), \(C = k/E\), a few percent of the table) is the regime where offload and LRU expert caching genuinely work, and it is why consumer MoE inference is practical on hardware that cannot hold the model. Past the knee the working set is the whole expert table every step, and a cache with a ~100% miss-stream has nothing to exploit. The coverage law is the precise criterion for which side of that line a deployment is on.
+</p>
+
+<h3>Weight quantization pays disproportionately</h3>
+<p>
+  On the dense page, quantization helps only below the ridge. An MoE decode step is essentially never above the ridge, so the FP8/INT4 win on expert weights is close to fully realized — bytes halve, \(I\) doubles, throughput doubles. Sparse models are the case where <a href="inference-quantization.html">weight-only quantization</a> is least likely to be wasted, and the experts, being the overwhelming majority of parameters, are exactly what to quantize.
+</p>
+
+<!-- ═══════════════════════════════════════════ VS DENSE -->
+<h2 id="versus-dense">7 · Is MoE a decode win at all?</h2>
+
+<p>
+  Everything so far has compared an MoE to itself at different batch sizes. The sharper question is architectural: given a workload, would a <em>dense</em> model serve it more cheaply? The coverage law answers this, and the answer has a clean form — but it is easy to state wrongly, so it is worth building carefully.
+</p>
+
+<h3>Which parameter count you're billed for</h3>
+
+<div class="result">
+  <div class="result-label">The phase decides the bill</div>
+  \[ \text{compute-bound phase} \;\to\; N_{\rm act} \qquad\qquad \text{bandwidth-bound phase} \;\to\; C(B)\cdot N_{\rm total} \]
+  <div style="font-size:0.85rem;color:var(--muted);margin-top:6px">
+    Sparsity cuts FLOPs unconditionally. It cuts bytes only by \(C(B)\) — and \(C\) saturates.
+  </div>
+</div>
+
+<p>
+  Prefill is the first case, decode is the second. That is the entire asymmetry. It is tempting to summarize it as "MoE is a prefill play, not a decode play," and that is nearly right — but the comparison is meaningless until we say <em>which dense model</em>.
+</p>
+
+<h3>Against which dense model?</h3>
+
+<p>
+  Three candidate baselines for DeepSeek-V3 (\(N_{\rm act} = 37\)B, \(N_{\rm total} = 671\)B), and they give wildly different verdicts:
+</p>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Baseline</th><th class="ctr">Prefill</th><th class="ctr">Decode at \(C \to 1\)</th></tr></thead>
+    <tbody>
+      <tr><td>iso-active — 37B dense</td><td class="ctr">tie</td><td class="ctr">MoE <strong>18× worse</strong></td></tr>
+      <tr><td>iso-total — 671B dense</td><td class="ctr">MoE <strong>18× better</strong></td><td class="ctr">tie</td></tr>
+      <tr><td>iso-quality — ~158B dense</td><td class="ctr">MoE <strong>4.3× better</strong></td><td class="ctr">MoE <strong>4.3× worse</strong></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>
+  Only the third is a real serving decision — nobody deploys an architecture to match a FLOP count. Taking the common heuristic that an MoE matches a dense model of \(N_d = \sqrt{N_{\rm act}N_{\rm total}}\) and writing \(s = \sqrt{N_{\rm total}/N_{\rm act}}\), the two factors in that row are <em>identical</em>, and not by coincidence: \(N_d/N_{\rm act} = N_{\rm total}/N_d = s\) is an algebraic identity of the geometric mean.
+</p>
+
+<div class="result">
+  <div class="result-label">The trade, stated exactly</div>
+  <p style="margin:0">MoE buys a factor \(s = \sqrt{N_{\rm total}/N_{\rm act}}\) on compute-bound phases and pays the same factor \(s\) on bandwidth-bound phases at saturated batch. It is a pure exchange of decode bandwidth for prefill compute, at an exchange rate of \(\sqrt{\text{sparsity}}\).</p>
+</div>
+
+<div class="note">
+  <strong>The geometric-mean heuristic is the weakest link in this whole section.</strong> It is folklore, not a measured law, and the conclusions are sensitive to it: the decode crossover below moves from \(B \approx 3.5\) to \(B \approx 29\) as the assumed iso-quality dense goes from 70B to 400B. The <em>structure</em> of the argument survives any choice; the specific batch numbers do not. Treat them as order-of-magnitude.
+</div>
+
+<h3>The decode crossover is at nine requests, not "high concurrency"</h3>
+
+<p>
+  Per-token decode bytes are \(C(B)N_{\rm total}/B\) for the MoE and \(N_d/B\) for the dense model. The \(1/B\) cancels, so MoE decode is cheaper precisely when
+</p>
+
+<div class="result">
+  <div class="result-label">Decode crossover</div>
+  \[ s\,C(B) < 1 \quad\Longleftrightarrow\quad C(B) < \frac{1}{s} \quad\Longleftrightarrow\quad B \lesssim \frac{E}{k}\ln\!\frac{s}{s-1} \]
+  <div style="font-size:0.85rem;color:var(--muted);margin-top:6px">
+    For V3: \(C^* = 0.235\), reached at \(B \approx 9\). Nine concurrent requests.
+  </div>
+</div>
+
+<p>
+  This is the load-bearing correction to the intuition. The thing that destroys MoE's decode advantage is not high concurrency — it is the coverage knee, and the knee is at single-digit batch. By \(B \approx 100\) the penalty has already reached its asymptote \(s\) and stops getting worse. Everything above that is one regime, not a spectrum.
+</p>
+
+<h3>More concurrency favours MoE, not dense</h3>
+
+<p>
+  Total time per request is a prefill term plus a decode term, and only one of them shrinks with batching:
+</p>
+
+<div class="result">
+  <div class="result-label">Cost per request</div>
+  \[ t \;\propto\; \underbrace{\frac{N_{\rm act}T_p}{F}}_{\text{compute-bound, } B\text{-independent}} \;+\; \underbrace{\frac{C(B)\,N_{\rm total}\,T_d}{\text{BW}\cdot B}}_{\text{bandwidth-bound, falls as } 1/B} \]
+</div>
+
+<p>Setting MoE cost below dense cost and solving for the workload ratio:</p>
+
+<div class="result">
+  <div class="result-label">MoE wins the total bill iff</div>
+  \[ \frac{T_p}{T_d} \;>\; \frac{s\,\bigl(s\,C(B)-1\bigr)}{s-1}\cdot\frac{I^{*}}{B} \]
+</div>
+
+<p>
+  The \(I^*/B\) is the tell. Decode cost per token falls as \(1/B\) for <em>both</em> architectures while their ratio stays pinned at \(s\); the prefill term, where MoE wins, does not shrink at all. So as concurrency rises, the term MoE loses on becomes a smaller share of the bill. <strong>Raising concurrency shifts the balance toward MoE.</strong>
+</p>
+
+<div class="figure">
+  <canvas id="plot-breakeven" aria-label="Break-even prompt-to-generation ratio versus batch size: the curve rises steeply from a vertical asymptote near batch nine, peaks around batch thirty, then falls as one over B, crossing typical RAG and reasoning workload lines"></canvas>
+  <div class="legend">
+    <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span> break-even \(T_p/T_d\)</span>
+    <span class="legend-item"><span class="lg" style="--c:var(--plot-teal)"></span> RAG-like workload (\(T_p/T_d = 10\))</span>
+    <span class="legend-item"><span class="lg" style="--c:var(--plot-amber)"></span> reasoning workload (\(T_p/T_d = 0.1\))</span>
+  </div>
+  <p class="figure-caption">
+    <strong>MoE's worst regime is the middle, not the top.</strong> Above the violet curve MoE is cheaper; below it, dense is. The curve has a vertical asymptote at \(B \approx 9\) — below that, MoE wins at <em>any</em> workload mix — then peaks at \(B \approx 29\), where coverage has saturated but decode still dominates the bill, then decays as \(1/B\) as prefill takes over. The RAG line makes the point: at \(T_p/T_d = 10\) the workload clears the curve at small batch and again past \(B \approx 122\), but <em>dips under it through \(B \in [12, 122]\)</em> — a prefill-heavy workload served more cheaply by the dense model, purely because that window straddles the peak. Staying above the curve at every batch takes \(T_p/T_d \gtrsim 21\). A reasoning workload is below it until \(B \approx 12{,}500\). Both axes \(\log_2\); V3 routing, \(s = 4.26\), H100 ridge.
+  </p>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr><th class="ctr">\(B\)</th><th class="ctr">16</th><th class="ctr">32</th><th class="ctr">64</th><th class="ctr">128</th><th class="ctr">256</th><th class="ctr">512</th><th class="ctr">1024</th></tr></thead>
+    <tbody>
+      <tr><td>break-even \(T_p/T_d\)</td><td class="ctr">16.8</td><td class="ctr"><strong>20.7</strong></td><td class="ctr">16.3</td><td class="ctr">9.6</td><td class="ctr">4.9</td><td class="ctr">2.5</td><td class="ctr">1.2</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>What actually decides it</h3>
+
+<ul>
+  <li><strong>Prefill-heavy</strong> — RAG, reranking, classification, long-context summarization, \(T_p/T_d \gtrsim 20\). MoE wins at every batch size. The compute-bound phase is the whole bill and it is billed at \(N_{\rm act}\).</li>
+  <li><strong>Generation-heavy</strong> — reasoning, agentic loops, long-form writing, \(T_p/T_d \approx 0.1\). MoE needs \(B \approx 12{,}500\) to break even, which no single replica reaches. Dense wins at every practical batch above the coverage knee.</li>
+</ul>
+
+<p>
+  So the workload's prompt-to-generation ratio decides it, against a threshold that scales as \(1/B\). Concurrency is a modifier, and its sign is the opposite of the intuitive one.
+</p>
+
+<h3>Four reasons this doesn't settle the architecture question</h3>
+
+<p>
+  The most generation-heavy workload in existence is long-chain reasoning, and essentially every reasoning model shipped is an MoE — R1, Kimi K2, Qwen3-235B. Under the analysis above that looks like a systematic mistake. It isn't, for four reasons that bound how far the serving argument reaches:
+</p>
+
+<ol>
+  <li><strong>The iso-quality dense model doesn't exist.</strong> A 158B dense costs several times the MoE's training FLOPs to reach the same quality — that is the entire reason MoE was adopted. The real choice is not "V3 versus an iso-quality dense" but "V3 versus a smaller dense that is worse." <a href="../transformer/scaling-laws.html">Training economics</a>, not serving economics, selected the architecture; serving only gets to price it.</li>
+  <li><strong>Capacity is a separate bill, and it strengthens the argument.</strong> \(N_{\rm total}\) must be resident: 671B in FP8 needs 9+ H100s before any KV cache, against 2–3 for a 158B dense. But note this makes the penalty a <em>cost</em> claim (GPU-seconds per token), not a <em>latency</em> claim — wide EP hands you 9× the aggregate bandwidth, so TPOT can be perfectly good while the bill is 4× worse.</li>
+  <li><strong>MoE bundles other architectural choices.</strong> V3 pairs MoE with <a href="../transformer/mla.html">MLA</a>, which cuts KV to a 576-element latent per token per layer — across 61 layers, ~34 KB/token at FP8 or ~69 KB at FP16. Holding both sides at FP8 (the precision the 671 GB above assumes; the roofline in §3 is FP16), \(B = 256\) at 8K context is ~74 GB of KV traffic against ~671 GB of weights — so weight traffic still dominates by ~9×, or ~4.6× with the KV cache left at FP16, and the coverage argument is <em>more</em> central for V3-class models, not less. But a clean MoE-versus-dense pair rarely exists to compare.</li>
+  <li><strong>\(B = 1\) inverts everything.</strong> Local and edge inference reads only \(k/E\) of the table, and MoE beats iso-quality dense on decode by the same factor \(s\). Sparsity's decode win is real — it just lives entirely below nine concurrent requests, which is exactly the regime where <a href="#consequences">expert offload</a> also works.</li>
+</ol>
+
+<div class="compare">
+  <div class="compare-label">The claim, restated</div>
+  <p style="margin:0">
+    MoE trades decode bandwidth for prefill compute at a rate of \(\sqrt{N_{\rm total}/N_{\rm act}}\) against an iso-quality dense model. The decode side of that trade turns negative once coverage saturates — around \(B \approx 9\), not at high concurrency — and is fully saturated by \(B \approx 100\). Prefill-heavy workloads therefore favour MoE and generation-heavy workloads favour dense, with break-even at \(T_p/T_d \approx s\,I^{*}/B\). Raising concurrency shifts the balance <em>toward</em> MoE, because it shrinks the decode term both architectures share. Above ~100B, though, the iso-quality dense model is a hypothetical.
+  </p>
+</div>
+
+<!-- ═══════════════════════════════════════════ SUMMARY -->
+<h2 id="summary">8 · Summary</h2>
+
+<div class="summary-grid">
+  <div class="summary-card">
+    <div class="summary-card-label">The law</div>
+    <p>\(C(B) = 1-(1-k/E)^B\) — the fraction of experts a decode step must read with \(B\) requests in flight. Only independence across requests is assumed.</p>
+  </div>
+  <div class="summary-card">
+    <div class="summary-card-label">One variable</div>
+    <p>Everything depends on \(\lambda = Bk/E\) alone: \(C \approx 1-e^{-\lambda}\). The natural batch unit for an MoE is \(E/k\) requests.</p>
+  </div>
+  <div class="summary-card">
+    <div class="summary-card-label">Intensity</div>
+    <p>\(I = \lambda/C(B)\) = mean tokens per activated expert. \(I \to 1\) at small batch, \(I \to Bk/E\) at large batch.</p>
+  </div>
+  <div class="summary-card">
+    <div class="summary-card-label">The flat shelf</div>
+    <p>For \(B \ll E/k\), batching buys <em>zero</em> weight-read amortization — each request brings disjoint experts. Per-token bandwidth cost is flat.</p>
+  </div>
+  <div class="summary-card">
+    <div class="summary-card-label">The offset</div>
+    <p>Past the knee, MoE runs parallel to dense but \(E/k\) below it. Ridge batch \(\approx I^{*}E/k\) — ~9,400 requests for DeepSeek-V3 on an H100.</p>
+  </div>
+  <div class="summary-card">
+    <div class="summary-card-label">Direction of travel</div>
+    <p>Finer-grained routing raises \(E/k\), which is a training win paid for in serving bandwidth. Balanced routing maximizes coverage — and thus cost.</p>
+  </div>
+  <div class="summary-card">
+    <div class="summary-card-label">Deployment shape</div>
+    <p>Wide EP + DP with TP=1, P/D disaggregation, huge aggregated decode batches. All of it is chasing \(\lambda\).</p>
+  </div>
+  <div class="summary-card">
+    <div class="summary-card-label">Where it hurts</div>
+    <p>RL rollouts and low-traffic replicas live in the shelf. Offload and expert caching only work there — and only there.</p>
+  </div>
+  <div class="summary-card">
+    <div class="summary-card-label">Versus dense</div>
+    <p>A pure trade: \(\sqrt{N_{\rm total}/N_{\rm act}}\) gained on compute-bound phases, the same factor paid on bandwidth-bound ones. Decode turns negative at \(B\approx9\), not at high concurrency.</p>
+  </div>
+  <div class="summary-card">
+    <div class="summary-card-label">What decides it</div>
+    <p>The workload's \(T_p/T_d\), against a threshold falling as \(1/B\). Prefill-heavy favours MoE; generation-heavy favours dense. More concurrency favours <em>MoE</em>.</p>
+  </div>
+</div>
+
+<div class="xref">
+  <strong>Prerequisites:</strong>
+  <a href="inference-compute-model.html">Prefill &amp; Decode →</a> (the dense roofline this generalizes) &nbsp;·&nbsp;
+  <a href="../transformer/moe-routing.html">MoE Routing →</a> (top-\(k\) gating, load balancing).
+  <br><br>
+  <strong>Related:</strong>
+  <a href="../systems/moe-parallelism.html">MoE Parallelism →</a> (EP/TP/DP and AlltoAll on the training side) &nbsp;·&nbsp;
+  <a href="pd-disaggregation.html">P/D Disaggregation →</a> &nbsp;·&nbsp;
+  <a href="rl-inference.html">RL Inference →</a> &nbsp;·&nbsp;
+  <a href="inference-quantization.html">Inference Quantization →</a>.
+</div>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; MoE Serving — The Expert Coverage Law
+  &nbsp;·&nbsp; <a href="../index.html" style="color:inherit">← All notes</a>
+</footer>
+
+<script>
+(function () {
+  function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+  // Exact coverage law: fraction of E experts touched by B independent top-k requests.
+  function coverage(B, ratio) { return 1 - Math.pow(1 - 1 / ratio, B); }   // ratio = E/k
+  function intensity(B, ratio) {
+    var c = coverage(B, ratio);
+    return c <= 0 ? 1 : (B / ratio) / c;
+  }
+
+  /* ── generic canvas plotter ─────────────────────────────────── */
+  function drawPlot(canvas, cfg) {
+    var dpr = window.devicePixelRatio || 1;
+    var cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    var ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    var mL = 52, mR = 14, mT = 14, mB = 42;
+    var pw = cssW - mL - mR, ph = cssH - mT - mB;
+    var xMin = cfg.xMin, xMax = cfg.xMax, yMin = cfg.yMin, yMax = cfg.yMax;
+    var X = function (x) { return mL + (x - xMin) / (xMax - xMin) * pw; };
+    var Y = function (y) { return mT + (yMax - y) / (yMax - yMin) * ph; };
+
+    ctx.font = '11px Inter, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(function (t, i) {
+      var px = X(t);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.fillText(cfg.xTickLabels ? cfg.xTickLabels[i] : String(t), px, mT + ph + 6);
+    });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(function (t, i) {
+      var py = Y(t);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+      ctx.fillText(cfg.yTickLabels ? cfg.yTickLabels[i] : String(t), mL - 8, py);
+    });
+
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(cfg.xLabel, mL + pw / 2, cssH - 8);
+    ctx.save();
+    ctx.translate(13, mT + ph / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText(cfg.yLabel, 0, 0);
+    ctx.restore();
+
+    ctx.strokeStyle = cssVar('--plot-axis');
+    ctx.lineWidth = 1.25;
+    ctx.beginPath(); ctx.moveTo(mL, Y(yMin)); ctx.lineTo(mL + pw, Y(yMin)); ctx.stroke();
+
+    ctx.save();
+    ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    ctx.lineJoin = 'round';
+    cfg.series.forEach(function (s) {
+      ctx.beginPath();
+      ctx.lineWidth = s.width || 2;
+      ctx.strokeStyle = s.color.indexOf('--') === 0 ? cssVar(s.color) : s.color;
+      ctx.setLineDash(s.dash || []);
+      var M = 260;
+      for (var i = 0; i <= M; i++) {
+        var x = xMin + (xMax - xMin) * i / M;
+        var px = X(x), py = Y(s.fn(x));
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  var plots = [];
+
+  /* ── Plot 1: coverage C(B) ──────────────────────────────────── */
+  var covCanvas = document.getElementById('plot-coverage');
+  if (covCanvas) plots.push([covCanvas, {
+    xMin: 0, xMax: 10, yMin: 0, yMax: 1,
+    xTicks: [0, 2, 4, 6, 8, 10],
+    xTickLabels: ['1', '4', '16', '64', '256', '1024'],
+    yTicks: [0, 0.25, 0.5, 0.75, 1],
+    yTickLabels: ['0', '25%', '50%', '75%', '100%'],
+    xLabel: 'running batch size, B  (log scale)',
+    yLabel: 'expert coverage  C(B)',
+    series: [
+      { fn: function (x) { return coverage(Math.pow(2, x), 4); },   color: '--plot-gray',   width: 2 },
+      { fn: function (x) { return coverage(Math.pow(2, x), 16); },  color: '--plot-teal',   width: 2.25 },
+      { fn: function (x) { return coverage(Math.pow(2, x), 32); },  color: '--plot-violet', width: 2.75 },
+      { fn: function (x) { return coverage(Math.pow(2, x), 128); }, color: '--plot-amber',  width: 2.25 }
+    ]
+  }]);
+
+  /* ── Plot 2: arithmetic intensity, log2 on both axes ────────── */
+  var L2 = Math.log(2);
+  var intCanvas = document.getElementById('plot-intensity');
+  if (intCanvas) plots.push([intCanvas, {
+    xMin: 0, xMax: 12, yMin: 0, yMax: 12,
+    xTicks: [0, 2, 4, 6, 8, 10, 12],
+    xTickLabels: ['1', '4', '16', '64', '256', '1K', '4K'],
+    yTicks: [0, 2, 4, 6, 8, 10, 12],
+    yTickLabels: ['1', '4', '16', '64', '256', '1K', '4K'],
+    xLabel: 'running batch size, B  (log scale)',
+    yLabel: 'intensity I  (FLOP/byte, log scale)',
+    series: [
+      { fn: function (x) { return Math.log(295) / L2; }, color: '--plot-blue', width: 1.5, dash: [3, 3] },
+      { fn: function (x) { return x; }, color: '--plot-gray', width: 1.75, dash: [5, 4] },
+      { fn: function (x) { return Math.log(intensity(Math.pow(2, x), 4)) / L2; },   color: '--plot-teal',   width: 2.25 },
+      { fn: function (x) { return Math.log(intensity(Math.pow(2, x), 32)) / L2; },  color: '--plot-violet', width: 2.75 },
+      { fn: function (x) { return Math.log(intensity(Math.pow(2, x), 128)) / L2; }, color: '--plot-amber',  width: 2.25 }
+    ]
+  }]);
+
+  /* ── Plot 3: break-even workload ratio vs batch ─────────────── */
+  // Iso-quality dense = sqrt(N_act * N_total); s = sqrt(N_total/N_act) = 4.26 for V3.
+  // MoE wins iff  Tp/Td  >  s(sC-1)/(s-1) * I*/B.   Undefined (MoE always wins) while sC < 1.
+  var S = Math.sqrt(671 / 37), ISTAR = 295, V3 = 32;
+  function breakEven(B) {
+    var c = coverage(B, V3);
+    var coef = S * (S * c - 1) / (S - 1);
+    return coef <= 0 ? -1 : coef * ISTAR / B;
+  }
+  var beCanvas = document.getElementById('plot-breakeven');
+  if (beCanvas) plots.push([beCanvas, {
+    xMin: 0, xMax: 12, yMin: -4, yMax: 6,
+    xTicks: [0, 2, 4, 6, 8, 10, 12],
+    xTickLabels: ['1', '4', '16', '64', '256', '1K', '4K'],
+    yTicks: [-4, -2, 0, 2, 4, 6],
+    yTickLabels: ['1/16', '1/4', '1', '4', '16', '64'],
+    xLabel: 'running batch size, B  (log scale)',
+    yLabel: 'prompt : generation ratio  Tp/Td',
+    series: [
+      { fn: function () { return Math.log(10) / L2; },  color: '--plot-teal',   width: 1.75, dash: [5, 4] },
+      { fn: function () { return Math.log(0.1) / L2; }, color: '--plot-amber',  width: 1.75, dash: [5, 4] },
+      { fn: function (x) {
+          var t = breakEven(Math.pow(2, x));
+          return t > 0 ? Math.log(t) / L2 : -99;      // clipped: MoE wins at any ratio
+        }, color: '--plot-violet', width: 2.75 }
+    ]
+  }]);
+
+  function renderAll() { plots.forEach(function (p) { drawPlot(p[0], p[1]); }); }
+  renderAll();
+  var raf;
+  window.addEventListener('resize', function () { cancelAnimationFrame(raf); raf = requestAnimationFrame(renderAll); });
+
+  /* ── Calculator ─────────────────────────────────────────────── */
+  var $ = function (id) { return document.getElementById(id); };
+  var RIDGE = 295;
+
+  function updateCalc() {
+    var parts = $('mc-cfg').value.split(',');
+    var E = parseFloat(parts[0]), k = parseFloat(parts[1]);
+    var B = parseInt($('mc-b').value, 10);
+    var ratio = E / k;
+    var lam = B * k / E;
+    var c = coverage(B, ratio);
+    var I = (B / ratio) / c;
+
+    $('mc-b-val').textContent  = B;
+    $('mc-lambda').textContent = lam < 10 ? lam.toFixed(2) : lam.toFixed(0);
+    $('mc-cov').textContent    = (100 * c).toFixed(c > 0.995 ? 2 : 1) + '%';
+    $('mc-int').textContent    = I < 10 ? I.toFixed(2) : I.toFixed(0);
+    $('mc-ridge').textContent  = Math.round(RIDGE * ratio).toLocaleString();
+    // vs iso-total dense at the same batch: MoE reads C·N/B per token, dense N/B — the 1/B cancels, ratio is C.
+    $('mc-rel').textContent    = (100 * c).toFixed(1) + '%';
+    // as a fraction of the whole expert table, per token: C(B)/B
+    $('mc-frac').textContent   = (100 * c / B).toFixed(2) + '%';
+
+    var reg = $('mc-regime');
+    if (I >= RIDGE)      { reg.textContent = 'Compute-bound';       reg.className = 'regime-badge regime-comp'; }
+    else if (lam >= 2.3) { reg.textContent = 'Amortizing (C→1)';    reg.className = 'regime-badge regime-comp'; }
+    else                 { reg.textContent = 'No amortization';     reg.className = 'regime-badge regime-mem'; }
+  }
+
+  $('mc-cfg').addEventListener('change', updateCalc);
+  $('mc-b').addEventListener('input', updateCalc);
+  updateCalc();
+})();
+</script>
+
+</body>
+</html>

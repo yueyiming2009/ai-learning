@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>verl Architecture — The HybridFlow Controller Model</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #0d9488;
+      --accent-light: #f0fdfa;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --nav-bg: rgba(255,255,255,0.92);
+      --fig-bg: #ffffff;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --note-fg: #1e40af;
+      --result-fg: #16a34a;
+      --arch-driver-bg: #ecfeff;
+      --arch-bridge-bg: #fefce8;
+      --arch-workers-bg: #f0fdf4;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #2dd4bf;
+        --accent-light: #10201e;
+        --warning-bg: #101a2b;
+        --warning-border: #1e40af;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --nav-bg: rgba(15,17,21,0.9);
+        --fig-bg: #14181e;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --note-fg: #93c5fd;
+        --result-fg: #4ade80;
+        --arch-driver-bg: #0c1f26;
+        --arch-bridge-bg: #221f0c;
+        --arch-workers-bg: #0e2016;
+      }
+    }
+
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    .hero {
+      background: linear-gradient(135deg, #064e3b 0%, #065f46 55%, #0d9488 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.9;
+      font-size: 0.97rem;
+      max-width: 640px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    h4 {
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin: 1.3em 0 0.3em;
+      color: var(--accent);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+    a { color: var(--accent); }
+    code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+    pre {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      line-height: 1.55;
+      margin: 1.2em 0;
+    }
+    pre code { background: none; padding: 0; border: none; color: var(--text); }
+
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* two-column comparison */
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .col-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .col-card h4 { margin: 0 0 8px; }
+    .col-card ul { padding-left: 1.2em; margin: 0; }
+    .col-card li { font-size: 0.87rem; margin-bottom: 5px; }
+
+    /* layered architecture diagram */
+    .arch {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      margin: 1.4em 0;
+      font-size: 0.85rem;
+    }
+    .arch-layer { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+    .arch-layer:last-child { border-bottom: none; }
+    .arch-driver  { background: var(--arch-driver-bg); }
+    .arch-bridge  { background: var(--arch-bridge-bg); }
+    .arch-workers { background: var(--arch-workers-bg); }
+    .arch-title { font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 4px; }
+    .arch-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+    .arch-box {
+      background: var(--fig-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 0.82rem;
+      font-weight: 500;
+    }
+
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+      .two-col { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>verl Architecture</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#problem">The problem</a>
+    <a href="#hybrid">Hybrid controller</a>
+    <a href="#abstractions">Abstractions</a>
+    <a href="#loop">Control loop</a>
+    <a href="#backends">Backends</a>
+    <a href="#resharding">Weight resharding</a>
+    <a href="#map">Where things live</a>
+    <a href="#run">Launching a run</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">RL Frameworks · VeRL</span>
+  <h1>verl Architecture — The HybridFlow Controller Model</h1>
+  <p>How verl expresses an RLHF dataflow as ordinary single-process Python while every line fans
+  out to a distributed cluster — the hybrid single/multi-controller model, the WorkerGroup and
+  DataProto abstractions, the trainer control loop, and the pluggable training and rollout backends.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="note">
+    <strong>verl</strong> (<em>Volcano Engine Reinforcement Learning</em>) is the open-source
+    implementation of <strong>HybridFlow</strong> (ByteDance, <a href="https://arxiv.org/abs/2409.19256">arXiv:2409.19256</a>).
+    This page is the architectural map: <em>how the framework is put together</em>. For the GPU-allocation
+    decisions on top of it see <a href="resource-pool-placement.html">Resource Pool Placement</a>;
+    for a step-by-step tensor trace see the <a href="ppo-training-walkthrough.html">PPO</a> and
+    <a href="grpo-training-walkthrough.html">GRPO</a> walkthroughs.
+  </div>
+
+  <!-- ── §1 The problem ─────────────────────────── -->
+  <h2 id="problem">1. The Problem: RL Post-Training Is a Dataflow of Mismatched Workloads</h2>
+
+  <p>A single RLHF/GRPO step chains together workloads that want completely different execution
+  models:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Stage</th><th>Workload</th><th>Wants to run as…</th></tr>
+      <tr><td><strong>Generation</strong></td><td>Autoregressive decoding of long responses</td><td>An inference engine (vLLM/SGLang) with its own TP layout, paged KV cache, continuous batching</td></tr>
+      <tr><td><strong>Experience prep</strong></td><td>old/ref log-probs, value estimates, rewards</td><td>Batched forward passes — often a different sharding than training</td></tr>
+      <tr><td><strong>Training</strong></td><td>Actor + critic forward/backward/optimizer</td><td>An SPMD distributed-training job (FSDP or Megatron TP/PP/EP)</td></tr>
+      <tr><td><strong>Advantage / loss</strong></td><td>GAE or group-relative normalization</td><td>Light, mostly-sequential array math on the gathered batch</td></tr>
+    </table>
+  </div>
+
+  <p>The hard part is not any one stage — it is <em>orchestrating the dataflow between them</em>:
+  data has to move from an inference engine's layout into a training engine's layout, weights have
+  to move the other way, and the whole thing has to be expressed in code a researcher can read and
+  modify. Two naive designs each fail at one end:</p>
+
+  <div class="two-col">
+    <div class="col-card">
+      <h4>Single-controller everywhere</h4>
+      <ul>
+        <li>One driver issues every op to every GPU (à la classic Ray / RPC-per-op).</li>
+        <li><strong>Easy to express</strong> — the dataflow is just Python.</li>
+        <li><strong>Too slow for training</strong> — per-op control + data dispatch overhead across thousands of micro-ops crushes throughput.</li>
+      </ul>
+    </div>
+    <div class="col-card">
+      <h4>Multi-controller everywhere (pure SPMD)</h4>
+      <ul>
+        <li>Every rank runs the same program; collectives coordinate them (à la Megatron / DeepSpeed launch).</li>
+        <li><strong>Fast</strong> — no central bottleneck inside a stage.</li>
+        <li><strong>Rigid to express</strong> — cross-stage dataflow and resharding become tangled rank-aware code; hard to prototype a new algorithm.</li>
+      </ul>
+    </div>
+  </div>
+
+  <p>HybridFlow's thesis: use <strong>each model where it is strong</strong>. Orchestrate the
+  <em>dataflow between stages</em> with a single controller, and run the <em>heavy compute inside
+  each stage</em> as multi-controller SPMD. verl is that idea made concrete.</p>
+
+  <!-- ── §2 Hybrid controller ───────────────────── -->
+  <h2 id="hybrid">2. The Hybrid Single/Multi-Controller Model</h2>
+
+  <p>verl splits the program into two planes:</p>
+
+  <div class="arch">
+    <div class="arch-layer arch-driver">
+      <div class="arch-title">Single-controller plane — one driver process</div>
+      <div><code>RayPPOTrainer.fit()</code> — the RL algorithm written as sequential Python over the <em>whole batch</em>.</div>
+      <div class="arch-row">
+        <span class="arch-box">generate_sequences()</span>
+        <span class="arch-box">compute_log_prob()</span>
+        <span class="arch-box">compute_values()</span>
+        <span class="arch-box">compute_advantage() ·driver-side</span>
+        <span class="arch-box">update_actor()</span>
+      </div>
+    </div>
+    <div class="arch-layer arch-bridge">
+      <div class="arch-title">Bridge — @register(dispatch_mode=…) + DataProto</div>
+      <div>Each driver call is intercepted: the batch is <strong>scattered</strong> to workers, the method runs SPMD, results are <strong>gathered</strong> back into one DataProto.</div>
+    </div>
+    <div class="arch-layer arch-workers">
+      <div class="arch-title">Multi-controller plane — WorkerGroups (SPMD over GPUs)</div>
+      <div class="arch-row">
+        <span class="arch-box">ActorRollout WorkerGroup<br>(FSDP/Megatron + vLLM/SGLang)</span>
+        <span class="arch-box">Critic WorkerGroup</span>
+        <span class="arch-box">Reference WorkerGroup</span>
+        <span class="arch-box">RewardModel WorkerGroup</span>
+      </div>
+    </div>
+  </div>
+
+  <p>The driver never touches an individual GPU rank. It calls a method on a <em>WorkerGroup</em>
+  as if it were a single object; the bridge turns that one call into an SPMD invocation across all
+  the group's ranks and reassembles the output. That is the whole trick — and it is what lets the
+  body of <code>fit()</code> read like a NumPy script while executing on hundreds of GPUs.</p>
+
+  <h3>The dispatch/collect bridge</h3>
+
+  <p>A worker method becomes driver-callable by decorating it with <code>@register</code>, which
+  declares <em>how the driver's single call maps onto the ranks</em>:</p>
+
+  <pre><code>from verl.single_controller.base.decorator import register, Dispatch
+
+class CriticWorker(Worker):
+
+    @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
+    def compute_values(self, data: DataProto) -> DataProto:
+        # runs on every rank; `data` is already this rank's shard
+        values = self.critic_model(data.batch['input_ids'])
+        return DataProto.from_dict({'values': values})</code></pre>
+
+  <p>The <code>dispatch_mode</code> picks the scatter/gather strategy:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Dispatch mode</th><th>Scatter</th><th>Gather</th><th>Used for</th></tr>
+      <tr><td><code>ONE_TO_ALL</code></td><td>Broadcast same args to every rank</td><td>—</td><td>Lifecycle: <code>init_model</code>, <code>save_checkpoint</code></td></tr>
+      <tr><td><code>DP_COMPUTE_PROTO</code></td><td>Split the DataProto into <em>N</em> equal chunks, one per DP rank</td><td>Concatenate the <em>N</em> returned DataProtos</td><td>The workhorse: log-probs, values, generation, updates</td></tr>
+      <tr><td><code>MEGATRON_COMPUTE_PROTO</code></td><td>DP-chunk, but broadcast within each TP/PP group</td><td>Collect only from the rank that owns the output</td><td>Megatron-backed workers</td></tr>
+    </table>
+  </div>
+
+  <p>With <code>DP_COMPUTE_PROTO</code>, the driver hands the bridge one batch of, say, 1024
+  sequences; the bridge <code>chunk()</code>s it into 8 shards for an 8-way data-parallel group,
+  calls <code>compute_values</code> on each rank with its shard, then <code>concat()</code>s the 8
+  results back into one 1024-row DataProto for the next line of <code>fit()</code>. The padding to
+  make the batch divisible by the DP size, the scatter, and the gather are all handled by the
+  decorator — invisible in the algorithm code.</p>
+
+  <!-- ── §3 Abstractions ────────────────────────── -->
+  <h2 id="abstractions">3. The Four Core Abstractions</h2>
+
+  <h3>Worker &amp; WorkerGroup</h3>
+  <p>A <strong>Worker</strong> is a Ray actor pinned to a GPU. A <strong>WorkerGroup</strong>
+  (concretely <code>RayWorkerGroup</code>) is the set of workers that run one role SPMD-style. The
+  driver holds one handle per group — <code>actor_rollout_wg</code>, <code>critic_wg</code>,
+  <code>ref_policy_wg</code>, <code>rm_wg</code> — and the registered methods of the underlying
+  worker class appear as methods on that handle.</p>
+
+  <pre><code>from verl.single_controller.ray import RayWorkerGroup, RayClassWithInitArgs
+
+actor_rollout_wg = RayWorkerGroup(
+    resource_pool = actor_pool,                       # which GPUs (see Placement page)
+    ray_cls_with_init = RayClassWithInitArgs(
+        cls = ActorRolloutRefWorker, config = config.actor_rollout_ref),
+)
+actor_rollout_wg.init_model()                         # ONE_TO_ALL → runs on all ranks</code></pre>
+
+  <h3>ResourcePool — which GPUs a group lives on</h3>
+  <p>A <strong>ResourcePool</strong> is a named set of GPUs; the <code>ResourcePoolManager</code>
+  maps each worker class to a pool. Two groups in the <em>same</em> pool are colocated (they share
+  VRAM and take turns); groups in different pools run on disjoint GPUs and can overlap. This is the
+  single most consequential knob for throughput and memory — it gets its own page:
+  <a href="resource-pool-placement.html">Resource Pool Placement in VeRL</a>.</p>
+
+  <h3>DataProto — the universal batch container</h3>
+  <p>Every method on the driver↔worker boundary speaks <strong>DataProto</strong>: a wrapper around
+  a TensorDict (<code>.batch</code>, the GPU tensors) plus a dict of NumPy/object arrays
+  (<code>.non_tensor_batch</code>, e.g. raw prompts) and a free-form <code>.meta_info</code>. It is
+  the lingua franca that makes the bridge generic — scatter/gather only has to know how to split
+  and join DataProtos, not every method's bespoke arguments.</p>
+
+  <pre><code>data = DataProto.from_dict({'input_ids': ids, 'attention_mask': mask})
+shards = data.chunk(8)                 # what DP_COMPUTE_PROTO does to scatter
+merged = DataProto.concat(shards)      # …and to gather
+batch  = batch.union(gen_output)       # glue generation outputs onto the prompts
+group  = batch.repeat(n_samples)       # GRPO: n responses per prompt</code></pre>
+
+  <p>Because resharding the batch is just <code>chunk</code>/<code>concat</code>/<code>union</code>
+  on a DataProto, the same algorithm code runs whether the actor is 8-way FSDP or a Megatron
+  TP×PP×DP mesh — only the dispatch mode changes.</p>
+
+  <h3>The HybridEngine — training and generation on one GPU set</h3>
+  <p>The <strong>ActorRolloutRefWorker</strong> is special: it hosts <em>both</em> the training
+  engine (FSDP/Megatron) and the rollout engine (vLLM/SGLang) on the <em>same</em> GPUs, switching
+  modes within a step. This colocation — the "HybridEngine" — is why a default verl run needs only
+  one pool. The memory choreography of that switch (all-gather weights → load into vLLM → free →
+  generate → tear down → resume FSDP) is detailed on the
+  <a href="resource-pool-placement.html#hybrid">Placement</a> page.</p>
+
+  <!-- ── §4 Control loop ────────────────────────── -->
+  <h2 id="loop">4. The Control Loop — <code>RayPPOTrainer.fit()</code></h2>
+
+  <p>Here is the entire RL algorithm, stripped to its skeleton. Read it as ordinary single-process
+  code; remember that every <code>*_wg.*</code> call silently scatters to a cluster and gathers
+  back. This single function is the whole point of the architecture:</p>
+
+  <pre><code>for batch in dataloader:                                  # prompts
+    # ── 1. Generation (rollout engine inside the ActorRollout group) ──
+    gen = actor_rollout_wg.generate_sequences(batch)       # DP_COMPUTE_PROTO
+    batch = batch.union(gen)                                # prompts + responses
+
+    # ── 2. Experience: recompute log-probs, ref, values, rewards ──
+    batch = batch.union(actor_rollout_wg.compute_log_prob(batch))   # old π logprob
+    batch = batch.union(ref_policy_wg.compute_ref_log_prob(batch))  # KL reference
+    batch = batch.union(critic_wg.compute_values(batch))           # PPO only
+    batch = batch.union(rm_wg.compute_rm_score(batch))            # or a rule fn
+
+    # ── 3. Advantage — driver-side array math, no GPU group needed ──
+    batch = compute_advantage(batch, estimator=config.algorithm.adv_estimator)
+            # GAE for PPO · group-relative z-score for GRPO
+
+    # ── 4. Update ──
+    critic_wg.update_critic(batch)                          # PPO only
+    actor_rollout_wg.update_actor(batch)                    # clipped PG step
+
+    # ── 5. Sync fresh weights into the rollout engine ──
+    #     (implicit in HybridEngine; explicit + async in disaggregated mode)</code></pre>
+
+  <p>Two things to notice. First, <strong>advantage estimation runs on the driver</strong> — it is
+  light array math over the already-gathered batch, so there is no reason to pay dispatch overhead
+  for it; swapping PPO's GAE for GRPO's group-relative baseline is a one-line change here, not a
+  distributed-systems change. Second, <strong>which groups exist is algorithm-dependent</strong>:
+  GRPO simply never constructs <code>critic_wg</code>, and the corresponding lines vanish. The
+  walkthroughs trace exactly what each line does to the tensors —
+  <a href="ppo-training-walkthrough.html">PPO</a> (with critic, GAE) and
+  <a href="grpo-training-walkthrough.html">GRPO</a> (no critic, group baseline).</p>
+
+  <!-- ── §5 Backends ────────────────────────────── -->
+  <h2 id="backends">5. Pluggable Backends</h2>
+
+  <p>The roles above are <em>interfaces</em>; verl ships interchangeable implementations. You pick
+  a training backend and a rollout backend in config, and the control loop is unchanged.</p>
+
+  <h3>Training backend — FSDP vs Megatron</h3>
+  <div class="two-col">
+    <div class="col-card">
+      <h4>FSDP / FSDP2 (default)</h4>
+      <ul>
+        <li>ZeRO-3 parameter + grad + optimizer sharding across the DP group.</li>
+        <li>Almost no model-code changes — wraps a HuggingFace model directly.</li>
+        <li>Best for prototyping and up to ~70B; the easy on-ramp.</li>
+        <li>Dispatch: <code>DP_COMPUTE_PROTO</code>.</li>
+      </ul>
+    </div>
+    <div class="col-card">
+      <h4>Megatron-LM</h4>
+      <ul>
+        <li>Full 4-D parallelism: tensor (TP), pipeline (PP), expert (EP), context (CP).</li>
+        <li>Needed for very large dense models and large MoE (expert parallelism).</li>
+        <li>Requires a Megatron model definition / weight conversion.</li>
+        <li>Dispatch: <code>MEGATRON_COMPUTE_PROTO</code>.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Rollout backend — vLLM vs SGLang</h3>
+  <p>Generation is delegated to a production inference engine: <strong>vLLM</strong> or
+  <strong>SGLang</strong>, both with paged KV cache and continuous batching. verl drives the engine
+  for generation and, in async/disaggregated mode, runs it as a standing server. The choice is a
+  config string (<code>actor_rollout_ref.rollout.name: vllm | sglang</code>); the
+  <a href="slime-miles-walkthrough.html">slime / Miles walkthrough</a> shows the contrasting
+  SGLang-HTTP-server design used by another framework.</p>
+
+  <div class="result">
+    <div class="result-label">The pluggability invariant</div>
+    <p style="margin:0;">Training backend, rollout backend, and RL algorithm vary independently.
+    FSDP+vLLM+GRPO, Megatron+SGLang+PPO, and everything between reuse the <em>same</em>
+    <code>fit()</code> loop — because every combination communicates only through DataProto across
+    the dispatch bridge.</p>
+  </div>
+
+  <!-- ── §6 Weight resharding ───────────────────── -->
+  <h2 id="resharding">6. Weight Resharding — The Crux Between Train and Generate</h2>
+
+  <p>The actor's weights live in two different layouts: the training engine's (FSDP shards, or a
+  Megatron TP×PP mesh) and the inference engine's (vLLM/SGLang TP layout). After every actor update
+  the fresh weights must move from the first into the second before the next rollout. verl handles
+  this with a per-backend <strong>sharding manager</strong> that knows both layouts and performs the
+  resharding — gathering/regrouping parameters and loading them into the running inference engine
+  in place, without a checkpoint round-trip.</p>
+
+  <ul>
+    <li><strong>Colocated (HybridEngine):</strong> resharding is a same-GPU memory operation each
+      step — all-gather the FSDP shard (or regroup the Megatron mesh) into the inference TP layout,
+      hand it to vLLM/SGLang, free the training copy. Cheap, but it is the memory peak of the step.</li>
+    <li><strong>Disaggregated / async:</strong> training and rollout pools are different GPUs, so
+      resharding becomes a <em>cross-pool weight transfer</em> over NCCL on a cadence
+      (<code>trigger_parameter_sync_step</code>). The rollout engine then runs slightly stale
+      weights between syncs — which is exactly the policy-lag problem.</li>
+  </ul>
+
+  <div class="note">
+    Async weight sync is what makes rollouts off-policy, and it is why disaggregated verl needs
+    importance-sampling correction. The math of that lag and its fixes (TIS/GSPO, MILES-style
+    elimination) is on <a href="async-rl.html">Async RL — Policy Lag, IS Correction, and TIM</a>;
+    the cadence/staleness knobs and the cross-interconnect cost are on
+    <a href="resource-pool-placement.html#strategies">Placement</a>.
+  </div>
+
+  <!-- ── §7 Map ─────────────────────────────────── -->
+  <h2 id="map">7. Where Each Concern Lives in These Notes</h2>
+
+  <p>This page is the skeleton; the rest of the RL Frameworks section and the RL Efficiency pages
+  hang specific concerns off it. The map:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>You want to understand…</th><th>verl piece</th><th>Page</th></tr>
+      <tr><td>How GPUs are divided among roles; the FSDP↔vLLM memory switch</td><td>ResourcePool, HybridEngine</td><td><a href="resource-pool-placement.html">Resource Pool Placement</a></td></tr>
+      <tr><td>One PPO step end-to-end, every tensor shape and collective</td><td>The <code>fit()</code> loop with a critic</td><td><a href="ppo-training-walkthrough.html">PPO Walkthrough</a></td></tr>
+      <tr><td>One GRPO step; what disappears vs PPO</td><td><code>fit()</code> without critic; group advantage</td><td><a href="grpo-training-walkthrough.html">GRPO Walkthrough</a></td></tr>
+      <tr><td>Policy lag from async weight sync and its corrections</td><td>Sharding manager, async sync cadence</td><td><a href="async-rl.html">Async RL</a></td></tr>
+      <tr><td>How async training is actually implemented — trainer modes, staleness eviction, partial rollout</td><td><code>trainer/ppo/v1/</code>, <code>ReplayBuffer</code>, <code>CheckpointEngineManager</code></td><td><a href="verl-async-training.html">Async Training in verl</a></td></tr>
+      <tr><td>Hiding slow reward sources (LLM-judge, sandboxes)</td><td>Reward stage of the loop</td><td><a href="reward-pipelining.html">Reward Pipelining</a></td></tr>
+      <tr><td>A contrasting framework design (SGLang server + Megatron)</td><td>—</td><td><a href="slime-miles-walkthrough.html">slime / Miles Walkthrough</a></td></tr>
+      <tr><td>How verl compares to TRL, OpenRLHF, NeMo-Aligner</td><td>—</td><td><a href="rl-frameworks-landscape.html">RL Frameworks Landscape</a></td></tr>
+    </table>
+  </div>
+
+  <!-- ── §8 Launching a run ─────────────────────── -->
+  <h2 id="run">8. Launching a Run — How the Pieces Assemble</h2>
+
+  <p>A verl job is a Hydra-configured entrypoint. The driver builds the resource pools, constructs
+  the WorkerGroups onto them, then calls <code>fit()</code>:</p>
+
+  <pre><code># entrypoint: python -m verl.trainer.main_ppo --config-name ppo_trainer \
+#     algorithm.adv_estimator=grpo \
+#     actor_rollout_ref.model.path=Qwen/Qwen2.5-7B \
+#     actor_rollout_ref.rollout.name=vllm \
+#     actor_rollout_ref.actor.strategy=fsdp \
+#     trainer.n_gpus_per_node=8 trainer.nnodes=1
+
+# main_ppo.py (sketch)
+ray.init()
+role_worker_mapping = {
+    Role.ActorRollout: ActorRolloutRefWorker,   # FSDP/Megatron + vLLM/SGLang
+    Role.Critic:       CriticWorker,            # omitted when adv_estimator=grpo
+    Role.RefPolicy:    ActorRolloutRefWorker,
+    Role.RewardModel:  RewardModelWorker,       # or a rule-based reward fn
+}
+resource_pool_manager = ResourcePoolManager(resource_pool_spec, mapping)
+
+trainer = RayPPOTrainer(config, role_worker_mapping, resource_pool_manager, ...)
+trainer.init_workers()    # build the WorkerGroups on their pools
+trainer.fit()             # the §4 loop</code></pre>
+
+  <p>Everything you tune day-to-day is a Hydra override on this command: the algorithm
+  (<code>adv_estimator</code>), the model, the two backends, the parallel degrees, the placement,
+  and the optimization knobs. The architecture is what makes that flat config surface possible —
+  each override flips an implementation behind a stable interface, and the <code>fit()</code> loop
+  never notices.</p>
+
+  <div class="result">
+    <div class="result-label">The one-paragraph mental model</div>
+    <p style="margin:0;">verl writes the RL algorithm as single-controller Python over whole
+    batches of <strong>DataProto</strong>. Each call to a role's <strong>WorkerGroup</strong> is
+    intercepted by an <strong>@register dispatch mode</strong> that scatters the batch to SPMD
+    <strong>multi-controller</strong> workers and gathers the result. Roles run on
+    <strong>ResourcePools</strong> of GPUs; the actor colocates training and generation in the
+    <strong>HybridEngine</strong>, and a <strong>sharding manager</strong> moves fresh weights from
+    the training layout into the inference layout each step. Backends (FSDP/Megatron,
+    vLLM/SGLang) and algorithms (PPO/GRPO) swap underneath an unchanged control loop.</p>
+  </div>
+
+  <!-- ── References ─────────────────────────────── -->
+  <h2>References</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><td><a href="https://arxiv.org/abs/2409.19256">HybridFlow: A Flexible and Efficient RLHF Framework</a></td><td>The paper behind verl — the hybrid single/multi-controller programming model</td></tr>
+      <tr><td><a href="https://verl.readthedocs.io/en/latest/">verl documentation</a></td><td>WorkerGroup, dispatch decorators, DataProto, Ray trainer, backend configs</td></tr>
+      <tr><td><a href="https://github.com/volcengine/verl">volcengine/verl (GitHub)</a></td><td>Source: <code>single_controller/</code>, <code>workers/</code>, <code>trainer/ppo/ray_trainer.py</code></td></tr>
+      <tr><td><a href="resource-pool-placement.html">Resource Pool Placement in VeRL</a></td><td>GPU allocation, the HybridEngine memory switch, sync vs async pools</td></tr>
+      <tr><td><a href="rl-frameworks-landscape.html">RL Frameworks Landscape</a></td><td>verl vs TRL / OpenRLHF / NeMo-Aligner / slime across design axes</td></tr>
+    </table>
+  </div>
+
+</div>
+</body>
+</html>

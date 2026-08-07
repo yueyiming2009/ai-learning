@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>MoE Parallelism — EP, TP, and Throughput Tradeoffs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #0d9488;
+      --accent-light: #f0fdfa;
+      --warning-bg: #fffbeb;
+      --warning-border: #f59e0b;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --compare-bg: #eff6ff;
+      --compare-border: #3b82f6;
+      --ink: #374151;
+      --code-bg: #f1f5f9;
+      --code-fg: #0f766e;
+      --row-hover: #fafafa;
+      --note-fg: #78350f;
+      --result-fg: #16a34a;
+      --compare-fg: #2563eb;
+      --teal-border: #99f6e4;
+      --nav-bg: rgba(255,255,255,0.92);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #2dd4bf;
+        --accent-light: #10201e;
+        --warning-bg: #251c0b;
+        --warning-border: #b45309;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --compare-bg: #101a2b;
+        --compare-border: #1e40af;
+        --ink: #cbd5e1;
+        --code-bg: #1c2531;
+        --code-fg: #5eead4;
+        --row-hover: #191e25;
+        --note-fg: #fcd34d;
+        --result-fg: #4ade80;
+        --compare-fg: #60a5fa;
+        --teal-border: #134e4a;
+        --nav-bg: rgba(15,17,21,0.9);
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 0.9rem; color: var(--accent); text-decoration: none; white-space: nowrap; }
+    .nav-links { display: flex; gap: 4px; overflow-x: auto; flex: 1; }
+    .nav-links a { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; white-space: nowrap; transition: color 0.15s, background 0.15s; }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .nav-back { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); white-space: nowrap; transition: color 0.15s; margin-left: auto; flex-shrink: 0; }
+    .nav-back:hover { color: var(--text); }
+
+    .hero {
+      background: linear-gradient(135deg, #0d9488 0%, #0891b2 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 { font-size: clamp(1.5rem, 4vw, 2.2rem); font-weight: 600; margin: 0 0 12px; letter-spacing: -0.02em; }
+    .hero p { margin: 0 auto; opacity: 0.85; font-size: 0.97rem; max-width: 600px; }
+    .hero-pill { display: inline-block; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 100px; font-size: 0.78rem; padding: 3px 12px; margin-bottom: 16px; letter-spacing: 0.04em; text-transform: uppercase; }
+
+    .page-wrap { max-width: 820px; margin: 0 auto; padding: 48px 24px 80px; }
+
+    h2 { font-size: 1.15rem; font-weight: 600; margin: 2.8em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); color: var(--text); }
+    h3 { font-size: 0.97rem; font-weight: 600; margin: 1.6em 0 0.4em; color: var(--ink); }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+
+    pre { background: var(--step-bg); border: 1px solid var(--step-border); border-radius: 8px; padding: 14px 18px; overflow-x: auto; font-size: 0.85rem; line-height: 1.55; margin: 1.2em 0; }
+    code { font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace; }
+    p code, li code, td code { background: var(--code-bg); padding: 1px 6px; border-radius: 4px; font-size: 0.88em; color: var(--code-fg); }
+    pre code { background: none; padding: 0; color: var(--text); }
+
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
+    th, td { border: 1px solid var(--border); padding: 9px 16px; text-align: left; vertical-align: top; }
+    th { background: var(--surface); font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+    tr:hover td { background: var(--row-hover); }
+
+    .step { background: var(--step-bg); border: 1px solid var(--step-border); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 1.2em 0; }
+    .step-label { font-weight: 600; font-size: 0.88rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+    .step-label::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+
+    .note { background: var(--warning-bg); border-left: 3px solid var(--warning-border); border-radius: 0 8px 8px 0; padding: 10px 16px; margin: 1em 0; font-size: 0.92em; color: var(--note-fg); }
+    .note::before { content: '⚠ '; }
+
+    .result { background: var(--boxed-bg); border: 1.5px solid var(--boxed-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; text-align: center; }
+    .result-label { font-size: 0.8rem; font-weight: 600; color: var(--result-fg); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+
+    .compare { background: var(--compare-bg); border: 1.5px solid var(--compare-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; }
+    .compare-label { font-size: 0.8rem; font-weight: 600; color: var(--compare-fg); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
+    .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 600px) { .compare-grid { grid-template-columns: 1fr; } }
+    .compare-col-label { font-size: 0.82rem; font-weight: 600; color: var(--ink); margin-bottom: 4px; }
+
+    .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 1.2em 0; }
+    .summary-card { background: var(--accent-light); border: 1px solid var(--teal-border); border-radius: 8px; padding: 14px 16px; }
+    .summary-card-label { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    .xref { background: var(--accent-light); border: 1px solid var(--teal-border); border-radius: 8px; padding: 12px 18px; margin: 1.4em 0; font-size: 0.92rem; }
+    .xref a { color: var(--accent); font-weight: 600; text-decoration: none; }
+    .xref a:hover { text-decoration: underline; }
+
+    /* dispatch diagram */
+    .dispatch-svg { display: block; margin: 0 auto; overflow: visible; }
+
+    footer { border-top: 1px solid var(--border); padding: 28px 24px; text-align: center; font-size: 0.82rem; color: var(--muted); }
+
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>MoE Parallelism</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#moe-basics">MoE basics</a>
+    <a href="#dispatch">AlltoAll dispatch</a>
+    <a href="#ep">Expert Parallelism</a>
+    <a href="#ep-tradeoffs">EP tradeoffs</a>
+    <a href="#tp-in-moe">TP in MoE</a>
+    <a href="#dp">DP interaction</a>
+    <a href="#worked">Worked example</a>
+    <a href="#ceiling">Throughput ceiling</a>
+    <a href="#summary">Summary</a>
+  </div>
+  <a class="nav-back" href="../index.html">Home</a>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Systems · Parallelism</span>
+  <h1>MoE Parallelism — EP, TP, and Throughput Tradeoffs</h1>
+  <p>Mixture-of-Experts models replace the dense FFN with a data-dependent expert dispatch, demanding a new parallelism axis. This page derives the AlltoAll cost model, the arithmetic-intensity argument for Expert Parallelism over TP on FFN weights, and how to reason about TP × EP × DP degrees for throughput.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="xref">
+    Prerequisites: <a href="../transformer/moe-routing.html">MoE Routing →</a> (gating network, top-K, auxiliary loss),
+    <a href="tensor-parallelism.html">Tensor Parallelism →</a>,
+    <a href="torch-distributed.html">Data Parallelism &amp; ZeRO →</a>,
+    <a href="pipeline-parallelism.html">Pipeline Parallelism →</a>,
+    <a href="sequence-parallelism.html">Sequence Parallelism →</a>,
+    and <a href="collectives.html">Sharding &amp; Collectives →</a> (AlltoAll).
+    For a concrete training step using EP, see <a href="../rl/slime-miles-walkthrough.html">PPO in slime/Miles →</a>.
+  </div>
+
+  <!-- ════════════════════════ MOE BASICS ════════════════════════ -->
+  <h2 id="moe-basics">1 · How MoE changes the compute picture</h2>
+  <p>
+    A standard transformer FFN is a dense two-projection block: every token passes through the same
+    \(W_\text{up}[D, 4D]\) and \(W_\text{down}[4D, D]\). All \(4D^2\) parameters are active for every token.
+  </p>
+  <p>
+    A Mixture-of-Experts FFN replaces this with \(E\) independent expert FFNs plus a learned <em>router</em>.
+    The router maps each input token to a probability distribution over experts and selects the top-\(K\)
+    experts to process that token. Only those \(K\) experts activate; the remaining \(E-K\) are skipped.
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Property</th><th>Dense FFN</th><th>MoE FFN (\(E\) experts, top-\(K\))</th></tr></thead>
+      <tbody>
+        <tr><td>Active params per token</td><td>\(2 \times D \times 4D = 8D^2\)</td><td>\(K \times 2 \times D \times D_e\) (where \(D_e\) is per-expert width)</td></tr>
+        <tr><td>Total params (FFN)</td><td>\(8D^2\)</td><td>\(E \times 2 \times D \times D_e\)</td></tr>
+        <tr><td>FLOPs per token</td><td>\(16D^2\)</td><td>\(K \times 4 \times D \times D_e\)</td></tr>
+        <tr><td>Weight memory</td><td>\(8D^2\) params</td><td>\(E \times 2 \times D \times D_e\) params (much larger)</td></tr>
+        <tr><td>Communication</td><td>AllReduce (with TP)</td><td><strong>AlltoAll dispatch + AlltoAll combine</strong></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    The MoE tradeoff: you multiply total parameters by \(E/K\) relative to a dense FFN of the same activated
+    compute, gaining model capacity at the cost of weight memory and a new communication pattern. Typical
+    values: \(E = 64,\ K = 2\), so weight memory is \(32\times\) a dense equivalent at the same FLOPs/token.
+  </p>
+  <div class="result">
+    <div class="result-label">The MoE constraint</div>
+    Expert weights scale as \(O(E)\). They must either be replicated across GPUs (memory-prohibitive at large \(E\)) or <em>sharded across a new parallelism axis</em> — Expert Parallelism.
+  </div>
+
+  <!-- ════════════════════════ DISPATCH ════════════════════════ -->
+  <h2 id="dispatch">2 · AlltoAll dispatch — the cost model</h2>
+  <p>
+    In a dense model with TP, each GPU applies the same FFN to its local tokens and reduces partial sums with
+    an AllReduce. In MoE, each token must reach the GPU that holds its assigned experts. This requires a
+    <em>data-dependent routing</em> communication step.
+  </p>
+
+  <h3>The dispatch/combine pattern</h3>
+  <div class="step">
+    <div class="step-label">Dispatch (before expert compute)</div>
+    <p style="margin:0; font-size:.92rem">
+      Each rank holds \(B_\text{local}\) tokens. The router assigns each token to \(K\) experts. An AlltoAll
+      redistributes tokens to the ranks that hold their target experts. Each rank receives the tokens
+      assigned to its experts and sends away tokens bound for other ranks.
+    </p>
+  </div>
+  <div class="step">
+    <div class="step-label">Expert compute (local)</div>
+    <p style="margin:0; font-size:.92rem">
+      Each rank runs its \(E/EP\) expert FFNs on the dispatched tokens. Fully local — no communication.
+    </p>
+  </div>
+  <div class="step">
+    <div class="step-label">Combine (after expert compute)</div>
+    <p style="margin:0; font-size:.92rem">
+      A second AlltoAll routes expert outputs back to the ranks that originally held each token, where
+      they are aggregated (typically summed with per-expert learned weights) to produce the layer output.
+    </p>
+  </div>
+
+  <h3>Why AlltoAll, not AllReduce</h3>
+  <p>
+    An AllReduce <em>reduces</em> — it aggregates partial sums from all ranks into a full result. The dense
+    TP AllReduce is needed because every rank computed a partial sum of the same output token, and those
+    partial sums must be added together.
+  </p>
+  <p>
+    Expert dispatch is a <em>permutation</em>, not a reduction: each token goes to exactly one expert
+    (per selection), is processed there, and comes back. There are no partial sums to accumulate across
+    ranks at dispatch time. AlltoAll is exactly the right primitive — it is a full-to-full exchange where
+    each rank sends a distinct chunk to each other rank.
+  </p>
+
+  <div class="result">
+    <div class="result-label">AlltoAll dispatch volume per MoE layer</div>
+    \[
+      V_\text{dispatch} = B \times K \times D \text{ values} \quad (= 2BKD \text{ bytes in bf16})
+    \]
+    where \(B\) = tokens in this batch (not sequences), \(K\) = top-K, \(D\) = hidden dim. Same for combine.
+    <br>Total per-layer: <strong>\(2 \times 2BKD\) bytes</strong> (one AlltoAll each way).
+  </div>
+
+  <p>
+    Compare this to the TP AllReduce for a dense FFN of the same \(D\): volume per AllReduce =
+    \(2BTD\) bytes (for \(T\) tokens in the sequence). They differ in the token count: the AlltoAll
+    sends \(BK\) tokens (total dispatched per layer) vs. the AllReduce's \(BT\) tokens. At \(K \ll T\)
+    the AlltoAll is cheaper; but \(K\) is typically 2 while \(T\) can be 4096+, so the AlltoAll is
+    often over an order of magnitude smaller in volume.
+  </p>
+  <div class="note">
+    The AlltoAll payload is independent of \(E\) and \(EP\). Adding more experts or more EP ranks does
+    not change the total bytes moved — it only changes how many ranks participate in the exchange.
+    (A permutation's total data volume equals the number of elements being permuted.)
+  </div>
+
+  <h3>Fan-out — the term the volume formula misses</h3>
+  <p>
+    Bytes are not the whole cost. What the payload formula hides is <em>how many distinct peers</em> each
+    token's copy must reach: a token routed to \(K\) experts scattered across \(K\) different nodes
+    generates \(K\) separate inter-node messages, each with its own latency and its own place in the
+    slowest-link calculation. Total volume is unchanged; wall-clock is not.
+  </p>
+  <p>
+    This is a mild issue at \(K = 2\) and a serious one for fine-grained MoE, where \(K = 6\) or 8 is normal
+    (see <a href="../transformer/moe-routing.html">MoE Routing §8</a>). DeepSeek-V2's answer is
+    <strong>device-limited routing</strong>: before running top-\(K\), first select the \(M\) devices holding
+    the highest-affinity experts, then run top-\(K\) <em>only among experts on those devices</em>.
+  </p>
+
+  <div class="result">
+    <div class="result-label">Device-limited routing</div>
+    \[
+      \text{devices touched per token} \;\le\; M \quad \text{regardless of } K
+    \]
+    <div style="font-size:0.85rem;color:var(--muted);margin-top:6px">
+      DeepSeek-V2: \(M = 3\) with \(D = 8\) device groups and \(K = 6\). The paper reports that \(M \ge 3\)
+      matches unrestricted top-\(K\) quality — so the constraint is nearly free.
+    </div>
+  </div>
+
+  <p>
+    The effect is to decouple communication fan-out from routing multiplicity: you can keep raising \(K\)
+    for specialization without the message count following it. It also gives a hard bound to build on —
+    each device sends at most \(MT\) hidden states — which is what the <em>communication balance loss</em>
+    on the routing page then complements from the receiving side.
+  </p>
+
+  <!-- ════════════════════════ EP ════════════════════════ -->
+  <h2 id="ep">3 · Expert Parallelism — what it shards and why</h2>
+  <p>
+    Expert Parallelism assigns each EP rank a disjoint subset of the \(E\) experts: rank \(r\) holds
+    experts \([r \times E/EP,\ (r+1) \times E/EP)\). The expert weights for those experts live only on
+    that rank — no replication, no TP sharding within them (in the baseline configuration).
+  </p>
+
+  <div class="compare">
+    <div class="compare-label">TP on expert weights vs. EP — arithmetic intensity argument</div>
+    <div class="compare-grid">
+      <div>
+        <div class="compare-col-label">TP within expert FFN</div>
+        <p style="margin:.3em 0; font-size:.92rem">Each GPU holds half of each expert's weight matrix. After every expert GEMM, an AllReduce sums partial outputs. With \(E\) experts active: \(E\) AllReduces per layer.</p>
+        <p style="margin:.3em 0; font-size:.92rem">The expert GEMMs at training batch sizes are <em>memory-bandwidth-bound</em> (few tokens per expert → low arithmetic intensity). TP adds communication without improving the memory bottleneck — the arithmetic intensity of the GEMM doesn't increase, but AllReduce latency is added on the critical path.</p>
+      </div>
+      <div>
+        <div class="compare-col-label">EP — shard the experts, move the tokens</div>
+        <p style="margin:.3em 0; font-size:.92rem">Each GPU holds \(E/EP\) complete expert weight matrices. Expert GEMMs are fully local. Only two AlltoAll operations per layer (dispatch + combine), total volume \(4BKD\) bytes — independent of \(E\).</p>
+        <p style="margin:.3em 0; font-size:.92rem">EP keeps expert weights local and moves the <em>tokens</em> instead. Tokens are small (\(D\) floats each); weight matrices are large (\(D \times D_e\)). Moving small things to large things is cheaper than moving large things.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="result">
+    <div class="result-label">The EP principle</div>
+    At the batch sizes typical in training, expert FFNs are memory-bandwidth-bound. TP on expert weights adds AllReduce communication without improving arithmetic intensity. EP avoids this by keeping each expert local and routing tokens via AlltoAll — whose volume is proportional to tokens, not parameters.
+  </div>
+
+  <!-- ════════════════════════ EP TRADEOFFS ════════════════════════ -->
+  <h2 id="ep-tradeoffs">4 · EP degree tradeoffs</h2>
+
+  <h3>Memory savings</h3>
+  <p>
+    With EP degree \(EP\), each rank holds \(E/EP\) expert weight matrices. For a 64-expert MoE with each
+    expert having dimension \(D=2048,\ D_e=1024\) in bf16:
+  </p>
+  <div class="result">
+    \[
+      \text{expert weights per rank} = \frac{E}{EP} \times 2 \times D \times D_e \times 2 \text{ bytes}
+      = \frac{64}{EP} \times 2 \times 2048 \times 1024 \times 2 \approx \frac{512 \text{ MB}}{EP}
+    \]
+  </div>
+  <p>
+    Doubling EP halves the per-GPU expert weight memory. This is the main motivation for large EP: the
+    total expert parameter count scales with \(E\), so even moderate \(E\) quickly exceeds single-GPU HBM
+    at reasonable dimensions.
+  </p>
+
+  <h3>Communication volume stays constant</h3>
+  <p>
+    Unlike TP (where AllReduce volume scales with the tensor being reduced), the AlltoAll dispatch volume
+    \(2BKD\) is independent of EP degree. It's a permutation of a fixed number of tokens — more EP ranks
+    just means smaller chunks per rank, not more total bytes. The alltoall <em>latency</em> may increase
+    slightly (more ranks in the collective) but bandwidth is unaffected.
+  </p>
+
+  <h3>Load imbalance is the EP ceiling</h3>
+  <p>
+    The one cost that grows with EP is the exposure of expert load imbalance. If all EP ranks had exactly
+    \(BK/EP\) tokens dispatched to them, all expert GEMMs would finish simultaneously. In practice, the
+    router assigns tokens non-uniformly: one expert might receive \(2\times\) the average. All EP ranks
+    must wait for the slowest one to finish before the combine AlltoAll can proceed.
+  </p>
+  <div class="result">
+    <div class="result-label">Load imbalance effect on throughput</div>
+    \[
+      \text{effective throughput} = \frac{1}{\lambda} \times \text{balanced throughput},
+      \quad \lambda = \frac{\max_r(\text{tokens dispatched to rank } r)}{\text{avg tokens per rank}}
+    \]
+    A 2× load spike (\(\lambda = 2\)) halves expert-layer throughput. More EP ranks → smaller denominator
+    → higher relative variance → larger expected \(\lambda\).
+  </div>
+
+  <p>
+    Training uses an <em>auxiliary load-balancing loss</em> that penalizes routers for concentrating
+    tokens on a few experts. This typically keeps \(\lambda \le 1.3\) in practice. Some implementations
+    also cap the number of tokens a single expert can receive (<em>expert capacity</em>), dropping or
+    buffering excess tokens rather than stalling the pipeline.
+  </p>
+
+  <h3>Practical EP ceiling</h3>
+  <p>
+    Each expert must receive at least one token on average per step; otherwise some ranks compute nothing
+    and the dispatch overhead isn't amortized. This gives:
+  </p>
+  <div class="result">
+    \[
+      EP_\text{max} \le \frac{B \times K}{1} = BK \quad \text{(one token per expert per step on average)}
+    \]
+    In practice: \(EP \le E/K\) ensures each rank handles at least \(E/(EP) \ge K\) experts, giving a
+    meaningful local workload.
+  </div>
+
+  <!-- ════════════════════════ TP IN MOE ════════════════════════ -->
+  <h2 id="tp-in-moe">5 · Where TP applies in MoE models</h2>
+  <p>
+    TP remains the right axis for the <em>attention</em> layers, which are dense. The argument from
+    <a href="tensor-parallelism.html">Tensor Parallelism</a> carries over unchanged: QKV projections and
+    output projections are split column/row-parallel across the TP group (NVLink), and multi-head attention
+    is split across heads. Two AllReduces per layer, volume \(2BTD\).
+  </p>
+  <p>
+    For the <em>expert FFN</em> layers: EP replaces TP as the sharding axis. The two approaches use separate
+    process groups — the TP group contains the GPUs within one node; the EP group contains one GPU
+    (or one TP sub-group) per node.
+  </p>
+
+  <div class="note">
+    TP-within-expert is possible: shard each expert's weight matrix column/row-parallel across the TP
+    group, adding an AllReduce after each expert GEMM. This is only beneficial when a single expert is
+    large enough to be compute-bound at high batch size — rare in standard MoE configurations
+    (\(D_e \approx D/4\)). In practice, use EP for experts and TP for attention.
+  </div>
+
+  <h3>The counterexample: a 236B model with no TP at all</h3>
+  <p>
+    "Attention is dense, so shard it with TP" is the default, not a law. DeepSeek-V2 — 236B total
+    parameters — was trained with <strong>no tensor parallelism anywhere</strong>: 16-way pipeline
+    parallelism, 8-way expert parallelism, and ZeRO-1 data parallelism, with a portion of operators
+    recomputed rather than stored.
+  </p>
+  <p>
+    The reasoning is worth extracting, because it generalizes. TP buys memory relief and pays for it with
+    two AllReduces per layer on the critical path. What makes that trade good is a large <em>activated</em>
+    parameter count that will not otherwise fit. A sparse model inverts the premise: only 21B parameters
+    are activated per token, so the per-layer working set is small, and selective recomputation covers
+    the remaining activation pressure. With the memory problem solved more cheaply elsewhere, TP is
+    left contributing nothing but communication — so it was dropped.
+  </p>
+  <div class="compare">
+    <div class="compare-label">When to suspect you don't need TP</div>
+    <ul style="margin:0">
+      <li>Activated (not total) parameters per token are small relative to device memory.</li>
+      <li>EP is already sharding the bulk of the weights — in a fine-grained MoE the experts <em>are</em> the model.</li>
+      <li>Recomputation is acceptable: you are trading FLOPs for memory more cheaply than TP trades bandwidth for it.</li>
+      <li>Pipeline depth is available and the schedule is good enough to keep the bubble small (DeepSeek-V2 used a zero-bubble schedule — see <a href="pipeline-parallelism.html">Pipeline Parallelism</a>).</li>
+    </ul>
+  </div>
+
+  <h3>Shared experts as free overlap</h3>
+  <p>
+    One more structural detail: architectures with <em>shared</em> always-on experts get a natural
+    latency hiding opportunity. Shared experts run for every token, so they need no dispatch and no
+    combine — their input is already resident on the rank that holds the token. That makes their FLOPs
+    the ideal thing to schedule <em>during</em> the routed experts' AlltoAll, which is exactly what
+    DeepSeek-V2 does. It is the rare overlap that requires no restructuring: the work was already local.
+  </p>
+
+  <!-- ════════════════════════ DP ════════════════════════ -->
+  <h2 id="dp">6 · Data Parallelism interaction</h2>
+  <p>
+    DP is orthogonal to both TP and EP. Each DP replica runs an independent forward and backward pass on
+    a different micro-batch, then synchronizes gradients. For MoE:
+  </p>
+  <ul>
+    <li>
+      <strong>Expert weight gradients</strong> accumulate from the tokens dispatched to each expert. Since
+      each DP replica has different tokens, their expert gradients differ and must be reduced across DP.
+      The reduction (ReduceScatter with ZeRO-3) is identical to the dense case — expert weights are just
+      parameters, and all-parameter gradient sync applies uniformly.
+    </li>
+    <li>
+      <strong>AlltoAll dispatch</strong> happens within each DP replica's EP group independently. The EP
+      communication is <em>not</em> synchronized across DP replicas — each replica dispatches its own
+      tokens to its own EP-rank peers.
+    </li>
+    <li>
+      <strong>ZeRO-3 + EP</strong>: with parameter sharding across DP replicas, each DP rank holds
+      \(1/DP\) of each expert shard's parameters. The ZeRO AllGather before expert GEMMs gathers full
+      expert weights for computation, then shards them back. This stacks with EP: each rank holds
+      \((E/EP)/DP\) worth of expert parameters in its ZeRO partition.
+    </li>
+  </ul>
+  <div class="result">
+    \[
+      \text{global batch} = B_\text{local} \times DP \quad \Rightarrow \quad
+      \text{throughput scales linearly with DP until communication dominates}
+    \]
+  </div>
+
+  <!-- ════════════════════════ WORKED EXAMPLE ════════════════════════ -->
+  <h2 id="worked">7 · Worked example — TP=2, EP=2, DP=2 on 8 GPUs</h2>
+  <p>
+    The <a href="../rl/slime-miles-walkthrough.html">slime/Miles PPO walkthrough</a> uses this configuration for a
+    30B MoE model with 64 experts, top-2 routing, \(D = 2048\), on 2 nodes × 4 GPUs/node. Here we derive
+    <em>why</em> those degrees were chosen.
+  </p>
+
+  <h3>Step 1 — TP for attention (NVLink, intra-node)</h3>
+  <p>
+    TP must stay within one NVLink island. Each node has 4 GPUs. We want TP to cover attention
+    efficiently. TP=2 is chosen (not TP=4) to keep the AllReduce payload small and leave room for the EP
+    axis within the node:
+  </p>
+  <pre><code>Node 0: GPU 0, GPU 1  ← TP group 0 (NVLink, AllReduce for attention)
+         GPU 2, GPU 3  ← TP group 1
+Node 1: GPU 4, GPU 5  ← TP group 2
+         GPU 6, GPU 7  ← TP group 3</code></pre>
+
+  <h3>Step 2 — EP for experts (InfiniBand, inter-node)</h3>
+  <p>
+    EP=2 across the two nodes. Each EP rank is one TP group: GPU 0+1 (node 0) vs. GPU 4+5 (node 1).
+    Each EP rank holds \(64/2 = 32\) experts.
+  </p>
+  <pre><code>EP group A: TP group 0  (GPUs 0,1, node 0) ↔ TP group 2  (GPUs 4,5, node 1)
+EP group B: TP group 1  (GPUs 2,3, node 0) ↔ TP group 3  (GPUs 6,7, node 1)</code></pre>
+  <p>
+    The AlltoAll for expert dispatch crosses InfiniBand (node 0 ↔ node 1). With \(B = 8192\) tokens,
+    \(K = 2\), \(D = 2048\), bf16: AlltoAll volume per GPU ≈ \(8192 \times 2 \times 2048 \times 2 / 2 \approx 32\) MB.
+    (Half the tokens go to the remote EP rank; the other half stay local.)
+  </p>
+
+  <h3>Step 3 — DP fills remaining replicas</h3>
+  <p>
+    With TP=2 and EP=2, each EP group uses 2 GPUs per node × 2 nodes = 4 GPUs. We have 8 GPUs total,
+    so DP=2 replicates the whole (TP=2, EP=2) configuration twice:
+  </p>
+  <pre><code>DP rank 0: EP group A  (GPUs 0,1,4,5)
+DP rank 1: EP group B  (GPUs 2,3,6,7)</code></pre>
+
+  <h3>Per-layer communication breakdown</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Operation</th><th>Primitive</th><th>Volume / GPU</th><th>Fabric</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Attention (fwd)</td>
+          <td>2× AllReduce (TP)</td>
+          <td>\(2 \times 2 \times BT \times D\) bf16 ≈ 2× 34 MB</td>
+          <td>NVLink</td>
+        </tr>
+        <tr>
+          <td>Expert dispatch (fwd)</td>
+          <td>AlltoAll (EP)</td>
+          <td>≈ 32 MB (half tokens cross node)</td>
+          <td>InfiniBand</td>
+        </tr>
+        <tr>
+          <td>Expert combine (fwd)</td>
+          <td>AlltoAll (EP)</td>
+          <td>≈ 32 MB</td>
+          <td>InfiniBand</td>
+        </tr>
+        <tr>
+          <td>Gradient sync (bwd)</td>
+          <td>ReduceScatter + AllGather (DP)</td>
+          <td>Proportional to expert weight size</td>
+          <td>InfiniBand</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    The TP AllReduce uses NVLink (fast, low latency, on the critical path). The EP AlltoAll uses
+    InfiniBand (slower, but its volume — \(\approx 32\) MB at these settings — is small relative to
+    expert GEMM time at this batch size, so it stays mostly hidden).
+  </p>
+
+  <!-- ════════════════════════ CEILING ════════════════════════ -->
+  <h2 id="ceiling">8 · MoE-aware throughput ceiling</h2>
+
+  <h3>FLOPs formula</h3>
+  <p>
+    The <a href="mfu.html">MFU page</a> derives the 6N FLOPs/token rule. For MoE, \(N\) is the
+    <em>activated</em> parameter count per token — not the total. With \(K\) of \(E\) experts active:
+  </p>
+  <div class="result">
+    \[
+      \text{FLOPs/token (MoE)} = 6 \times N_\text{activated} + 12 \times L \times D \times T
+    \]
+    \[
+      N_\text{activated} = N_\text{attn} + \frac{K}{E} \times N_\text{FFN}
+    \]
+    where \(N_\text{attn}\) = attention parameter count (dense, replicated), \(N_\text{FFN}\) = total expert FFN params.
+  </div>
+
+  <h3>When AlltoAll is on the critical path</h3>
+  <p>
+    The expert compute and the AlltoAll dispatch happen sequentially (dispatch must complete before expert
+    GEMMs begin). The effective throughput depends on which is slower.
+  </p>
+  <p>
+    Define:
+  </p>
+  <ul>
+    <li>\(\tau_\text{GEMM}\) = time for expert GEMMs on one EP rank = \(\frac{(B/EP) \times K \times 4 \times D \times D_e}{\text{FLOP/s}_\text{device}}\)</li>
+    <li>\(\tau_\text{A2A}\) = AlltoAll latency = \(\frac{2 \times (B/EP) \times K \times D \times 2}{\text{IB bandwidth}}\)</li>
+  </ul>
+  <p>
+    When \(\tau_\text{A2A} > \tau_\text{GEMM}\), the AlltoAll is on the critical path and EP is the throughput bottleneck. Setting \(\tau_\text{A2A} = \tau_\text{GEMM}\) gives the <strong>cross-over batch size</strong>:
+  </p>
+  <div class="result">
+    \[
+      B^* = \frac{2 \times \text{FLOP/s}_\text{device} \times D_e}{\text{IB bandwidth} \times 2}
+      = \frac{\text{FLOP/s}_\text{device} \times D_e}{\text{IB bandwidth}}
+    \]
+    Below \(B^*\) tokens per EP rank: AlltoAll dominates. Above \(B^*\): expert GEMMs dominate.
+  </div>
+  <p>
+    For an H100 at 1 PFLOP/s (bf16 dense), IB at 50 GB/s, \(D_e = 1024\):
+    \(B^* \approx 1{,}000{,}000 \times 1024 / 50{,}000{,}000{,}000 \approx 20{,}000\) tokens per EP rank.
+    At training batch sizes of 8,192 tokens per rank, most MoE training runs sit <em>below</em> \(B^*\) —
+    the AlltoAll is the bottleneck, not the expert GEMMs. This is why expert GEMMs are memory-bandwidth-bound
+    and why TP (which adds more AllReduce communication) makes things worse.
+  </p>
+  <div class="note">
+    The cross-over batch size \(B^*\) grows with \(D_e\) and device FLOP/s. As models get larger experts
+    or are run at larger batch sizes, compute becomes the bottleneck. But for standard MoE configurations
+    in RL fine-tuning (small rollout batches), AlltoAll latency is almost always the binding constraint.
+  </div>
+
+  <!-- ════════════════════════ SUMMARY ════════════════════════ -->
+  <h2 id="summary">9 · Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">The MoE change</div>
+      <p>Sparse activation: only \(K\) of \(E\) experts fire per token. Expert weights scale as \(O(E)\), demanding a new sharding axis. Per-token compute stays fixed at \(K\) expert FLOPs.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">AlltoAll dispatch</div>
+      <p>Permute tokens to the ranks holding their experts, compute locally, permute back. Volume = \(2BKD\) bytes per AlltoAll — independent of \(E\) and \(EP\). Not a reduction.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Why EP, not TP</div>
+      <p>Expert GEMMs are memory-bandwidth-bound at training batch sizes (low arithmetic intensity). TP adds AllReduce comm without fixing the bottleneck. EP keeps experts local and moves the smaller tokens.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">EP tradeoffs</div>
+      <p>More EP → less weight memory per GPU. AlltoAll volume unchanged. Load imbalance (\(\lambda\)) is the ceiling: throughput ≤ \(1/\lambda\) of balanced. Use auxiliary loss to keep \(\lambda \le 1.3\).</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">TP in MoE</div>
+      <p>TP still handles dense attention layers (unchanged from the dense case). For experts: EP, not TP. TP-within-expert only if a single expert exceeds NVLink capacity — rare.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Throughput ceiling</div>
+      <p>MoE FLOPs use activated params. Cross-over batch size \(B^* = \text{FLOP/s} \times D_e / \text{IB BW}\). Below \(B^*\): AlltoAll-bound. Most training runs fall here.</p>
+    </div>
+  </div>
+
+  <div class="xref">
+    See the <a href="../rl/slime-miles-walkthrough.html">PPO in slime/Miles →</a> for the concrete per-layer
+    AlltoAll volumes from this (TP=2, EP=2, DP=2) configuration on a 30B MoE model, and
+    <a href="mfu.html">MFU →</a> for how to plug activated params into the global throughput formula.
+  </div>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; MoE Parallelism — EP, TP, and throughput tradeoffs
+  &nbsp;·&nbsp; <a href="sequence-parallelism.html" style="color:inherit">← Sequence Parallelism</a>
+  &nbsp;·&nbsp; <a href="../index.html" style="color:inherit">All notes</a>
+</footer>
+
+</body>
+</html>

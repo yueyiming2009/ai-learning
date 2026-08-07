@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>NCCL — How Collectives Actually Run on GPUs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #4f46e5;
+      --accent-light: #eef2ff;
+      --warning-bg: #fffbeb;
+      --warning-border: #f59e0b;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #eef2ff;
+      --boxed-border: #6366f1;
+      --ink: #374151;
+      --code-bg: #f1f5f9;
+      --code-fg: #4338ca;
+      --row-hover: #fafafa;
+      --note-fg: #78350f;
+      --result-fg: #4338ca;
+      --indigo-border: #c7d2fe;
+      --fig-bg: #ffffff;
+      --nav-bg: rgba(255,255,255,0.92);
+      --on-accent: #ffffff;
+      --accent-hover: #4338ca;
+      --btn-disabled: #d1d5db;
+      --pre-bg: #0f172a;
+      --pre-fg: #e2e8f0;
+      --diagram-top: #f9fafb;
+      --diagram-bot: #eef2ff;
+      --green: #16a34a;
+      --red: #dc2626;
+      --amber: #f59e0b;
+      --cyan: #0891b2;
+      --svg-dim: #9ca3af;
+      --svg-sep: #e5e7eb;
+      --ring-line: #e2e8f0;
+      --chunk-stroke: #cbd5e1;
+      --tree-edge: #a5b4fc;
+      --diagram-ink: #4338ca;
+      --node-fill: #4338ca;
+      --node-stroke: #312e81;
+      --node-fg: #ffffff;
+      --leaf-stroke: #818cf8;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #818cf8;
+        --accent-light: #161a2e;
+        --warning-bg: #251c0b;
+        --warning-border: #b45309;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #161a2e;
+        --boxed-border: #4338ca;
+        --ink: #cbd5e1;
+        --code-bg: #1c2531;
+        --code-fg: #818cf8;
+        --row-hover: #191e25;
+        --note-fg: #fcd34d;
+        --result-fg: #818cf8;
+        --indigo-border: #312e81;
+        --fig-bg: #14181e;
+        --nav-bg: rgba(15,17,21,0.9);
+        --on-accent: #0f1115;
+        --accent-hover: #a5b4fc;
+        --btn-disabled: #374151;
+        --pre-bg: #1c2531;
+        --pre-fg: #e2e8f0;
+        --diagram-top: #14181e;
+        --diagram-bot: #161a2e;
+        --green: #4ade80;
+        --red: #f87171;
+        --amber: #fbbf24;
+        --cyan: #22d3ee;
+        --svg-dim: #77808c;
+        --svg-sep: #333a44;
+        --ring-line: #333a44;
+        --chunk-stroke: #3b4453;
+        --tree-edge: #4338ca;
+        --diagram-ink: #818cf8;
+        --node-fill: #4338ca;
+        --node-stroke: #312e81;
+        --node-fg: #ffffff;
+        --leaf-stroke: #818cf8;
+      }
+    }
+
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 0; line-height: 1.75; font-size: 16px; }
+
+    nav { position: sticky; top: 0; z-index: 100; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 52px; }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 0.9rem; color: var(--accent); text-decoration: none; white-space: nowrap; }
+    .nav-links { display: flex; gap: 4px; overflow-x: auto; flex: 1; }
+    .nav-links a { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; white-space: nowrap; transition: color 0.15s, background 0.15s; }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .nav-back { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); white-space: nowrap; transition: color 0.15s; margin-left: auto; flex-shrink: 0; }
+    .nav-back:hover { color: var(--text); }
+
+    .hero { background: linear-gradient(135deg, #3730a3 0%, #4f46e5 100%); color: white; padding: 56px 24px 48px; text-align: center; }
+    .hero h1 { font-size: clamp(1.5rem, 4vw, 2.2rem); font-weight: 600; margin: 0 0 12px; letter-spacing: -0.02em; }
+    .hero p { margin: 0 auto; opacity: 0.85; font-size: 0.97rem; max-width: 580px; }
+    .hero-pill { display: inline-block; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 100px; font-size: 0.78rem; padding: 3px 12px; margin-bottom: 16px; letter-spacing: 0.04em; text-transform: uppercase; }
+
+    .page-wrap { max-width: 820px; margin: 0 auto; padding: 48px 24px 80px; }
+
+    h2 { font-size: 1.15rem; font-weight: 600; margin: 2.8em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); color: var(--text); }
+    h3 { font-size: 0.97rem; font-weight: 600; margin: 1.6em 0 0.4em; color: var(--ink); }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+
+    code { font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace; }
+    p code, li code, td code { background: var(--code-bg); padding: 1px 6px; border-radius: 4px; font-size: 0.88em; color: var(--code-fg); }
+    pre { background: var(--pre-bg); color: var(--pre-fg); border-radius: 8px; padding: 14px 18px; overflow-x: auto; font-size: 0.82rem; line-height: 1.5; margin: 1.2em 0; }
+    pre code { color: inherit; }
+
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
+    th, td { border: 1px solid var(--border); padding: 9px 16px; text-align: left; vertical-align: top; }
+    th { background: var(--surface); font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+    tr:hover td { background: var(--row-hover); }
+    td.ctr, th.ctr { text-align: center; }
+
+    .step { background: var(--step-bg); border: 1px solid var(--step-border); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 1.2em 0; }
+    .step-label { font-weight: 600; font-size: 0.88rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+    .step-label::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+
+    .note { background: var(--warning-bg); border-left: 3px solid var(--warning-border); border-radius: 0 8px 8px 0; padding: 10px 16px; margin: 1em 0; font-size: 0.92em; color: var(--note-fg); }
+    .note::before { content: '⚠ '; }
+
+    .result { background: var(--boxed-bg); border: 1.5px solid var(--boxed-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; text-align: center; }
+    .result-label { font-size: 0.8rem; font-weight: 600; color: var(--result-fg); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+
+    .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 1.2em 0; }
+    .summary-card { background: var(--accent-light); border: 1px solid var(--indigo-border); border-radius: 8px; padding: 14px 16px; }
+    .summary-card-label { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    .xref { background: var(--accent-light); border: 1px solid var(--indigo-border); border-radius: 8px; padding: 12px 18px; margin: 1.4em 0; font-size: 0.92rem; }
+    .xref a { color: var(--accent); font-weight: 600; text-decoration: none; }
+    .xref a:hover { text-decoration: underline; }
+
+    /* layer stack */
+    .stack { display: flex; flex-direction: column; gap: 6px; margin: 1.4em 0; }
+    .layer { display: flex; align-items: center; gap: 14px; background: var(--accent-light); border: 1px solid var(--indigo-border); border-radius: 8px; padding: 10px 16px; }
+    .layer-n { flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--on-accent); font-weight: 600; font-size: 0.82rem; display: flex; align-items: center; justify-content: center; }
+    .layer-t { font-weight: 600; font-size: 0.92rem; }
+    .layer-d { color: var(--muted); font-size: 0.86rem; }
+
+    .diagram { background: linear-gradient(180deg, var(--diagram-top) 0%, var(--diagram-bot) 100%); border: 1px solid var(--indigo-border); border-radius: 12px; padding: 18px 20px; margin: 1.6em 0; }
+    .diagram-title { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+    .diagram-hint { font-size: 0.8rem; color: var(--muted); margin-bottom: 14px; }
+    .diagram-stage { background: var(--fig-bg); border-radius: 8px; padding: 16px; overflow-x: auto; display: flex; justify-content: center; }
+    .anim-controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+    .anim-btn { background: var(--accent); color: var(--on-accent); border: none; border-radius: 6px; padding: 7px 16px; font-family: inherit; font-size: 0.85rem; font-weight: 500; cursor: pointer; transition: background 0.15s, transform 0.1s; }
+    .anim-btn:hover:not(:disabled) { background: var(--accent-hover); }
+    .anim-btn:active:not(:disabled) { transform: scale(0.97); }
+    .anim-btn:disabled { background: var(--btn-disabled); cursor: not-allowed; opacity: 0.7; }
+    .anim-btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+    .anim-step-label { font-size: 0.83rem; color: var(--muted); font-style: italic; margin-left: auto; text-align: right; flex: 1; min-width: 0; }
+    input[type=range] { accent-color: var(--accent); width: 240px; max-width: 60vw; }
+
+    footer { border-top: 1px solid var(--border); padding: 28px 24px; text-align: center; font-size: 0.82rem; color: var(--muted); }
+
+    @media (max-width: 600px) { .hero { padding: 40px 16px 36px; } .page-wrap { padding: 32px 16px 60px; } }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>NCCL</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#stack">The stack</a>
+    <a href="#topology">Topology</a>
+    <a href="#ring">Ring</a>
+    <a href="#tree">Tree</a>
+    <a href="#nvls">NVLS</a>
+    <a href="#protocols">Protocols</a>
+    <a href="#selection">Selection</a>
+    <a href="#practice">In practice</a>
+    <a href="#summary">Summary</a>
+  </div>
+  <a class="nav-back" href="../index.html">Home</a>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Systems · Parallelism</span>
+  <h1>NCCL — How Collectives Actually Run</h1>
+  <p>The library that turns an abstract <code>AllReduce</code> into real GPU-to-GPU transfers that saturate your hardware. The five-layer stack — topology, algorithm, protocol, channels, selection — and where the cost model's ring/tree, busbw, and latency-vs-bandwidth choices actually live.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="xref">
+    This page is the implementation layer beneath <a href="collectives.html">Sharding &amp; Collectives →</a>.
+    That page defines the four primitives and the \(T \approx V/W\) cost; this one is how
+    <strong>NCCL</strong> (NVIDIA Collective Communications Library) realizes them on real GPUs — and where
+    the “ring vs tree” and bus-bandwidth numbers come from.
+  </div>
+
+  <p>
+    When PyTorch calls <code>all_reduce(grad)</code>, nothing about <em>which</em> GPUs talk to which, in what
+    order, over which links, at what message size, is specified. NCCL fills that gap. Its job: take the abstract
+    collective and the discovered hardware graph, and produce a concrete schedule of sends and receives that runs
+    as close as possible to peak link bandwidth. There is no single “NCCL algorithm” — there is a <strong>stack of
+    five decisions</strong>, made fresh for every call.
+  </p>
+
+  <!-- ════════════════════════ STACK ════════════════════════ -->
+  <h2 id="stack">1 · The five-layer stack</h2>
+  <div class="stack">
+    <div class="layer"><div class="layer-n">1</div><div><div class="layer-t">Topology detection</div><div class="layer-d">Discover the hardware graph (NVLink, NVSwitch, PCIe, NIC, IB); build rings &amp; trees over it.</div></div></div>
+    <div class="layer"><div class="layer-n">2</div><div><div class="layer-t">Algorithm — the pattern</div><div class="layer-d">Ring, Tree (double binary), or NVLS/CollNet. Sets the latency vs bandwidth shape.</div></div></div>
+    <div class="layer"><div class="layer-n">3</div><div><div class="layer-t">Protocol — the packing</div><div class="layer-d">Simple, LL, or LL128. How data and synchronization flags are interleaved. Sets the <em>effective</em> bandwidth.</div></div></div>
+    <div class="layer"><div class="layer-n">4</div><div><div class="layer-t">Channels — the parallelism</div><div class="layer-d">Split the collective across many parallel rings/trees on different links + SMs to reach aggregate bandwidth.</div></div></div>
+    <div class="layer"><div class="layer-n">5</div><div><div class="layer-t">Selection — the tuning</div><div class="layer-d">Estimate time = latency + size/bandwidth for each (algo, protocol, #channels); pick the cheapest per message size.</div></div></div>
+  </div>
+  <p>
+    Read those as: <em>where</em> (topology) → <em>what shape</em> (algorithm) → <em>how packed</em> (protocol) →
+    <em>how wide</em> (channels) → <em>which combination</em> (selection). The rest of the page is one section per
+    layer.
+  </p>
+
+  <!-- ════════════════════════ TOPOLOGY ════════════════════════ -->
+  <h2 id="topology">2 · Topology detection &amp; graph search</h2>
+  <p>
+    At communicator init, NCCL probes the machine and builds an internal graph of every GPU and every link —
+    NVLink lanes, NVSwitch, PCIe switches, host bridges, and the NICs out to InfiniBand/Ethernet — annotated with
+    bandwidths. It then runs a <strong>graph search</strong> to lay out one or more <strong>rings</strong> and
+    <strong>trees</strong> that maximize usable bandwidth without oversubscribing any link.
+  </p>
+  <p>
+    This is the step that makes “logical ring” concrete: on a GPU there is no physical ring (the
+    <a href="../hardware/gpu-hardware.html#nvlink">NVSwitch is a crossbar</a>), so NCCL <em>constructs</em> rings as orderings
+    of GPUs and maps each onto a set of links. The same search builds the trees used by the tree algorithm. Its
+    output — the rings, the trees, and how many parallel <strong>channels</strong> to run — is what the later
+    layers schedule onto.
+  </p>
+
+  <!-- ════════════════════════ RING ════════════════════════ -->
+  <h2 id="ring">3 · The ring algorithm</h2>
+  <p>
+    The ring algorithm is <strong>bandwidth-optimal</strong>: it moves the theoretical minimum number of bytes per
+    GPU, at the cost of latency that grows linearly with the GPU count. A ring AllReduce is two passes around the
+    ring, each of \(N-1\) steps:
+  </p>
+  <ol>
+    <li><strong>ReduceScatter</strong> — the array is split into \(N\) chunks. Each step, every GPU sends one chunk
+      to its successor and adds the chunk it receives. After \(N-1\) steps, each GPU owns <em>one</em>
+      fully-summed chunk.</li>
+    <li><strong>AllGather</strong> — circulate those complete chunks around the ring for another \(N-1\) steps, until
+      every GPU has every chunk.</li>
+  </ol>
+  <p>
+    Each GPU sends and receives \(N-1\) chunks of \(V/N\) bytes in each phase, so it moves \(2(N-1)/N \cdot V\)
+    total — exactly the AllReduce multiplier behind <a href="collectives.html#cost">bus bandwidth</a>. Step through
+    it (\(N=4\), so \(2(N{-}1)=6\) steps):
+  </p>
+
+  <div class="diagram">
+    <div class="diagram-title">▸ Ring AllReduce on 4 GPUs</div>
+    <div class="diagram-hint">Each cell = one chunk; darker = more GPUs summed in; green = fully reduced. Arrows show this step's transfer.</div>
+    <div class="diagram-stage">
+      <svg id="ring-svg" viewBox="0 0 480 300" width="480" height="300" role="img" aria-label="Ring AllReduce animation"></svg>
+    </div>
+    <div class="anim-controls">
+      <button class="anim-btn" id="ring-step">Step ▸</button>
+      <button class="anim-btn anim-btn-ghost" id="ring-reset">↻ Reset</button>
+      <span class="anim-step-label" id="ring-status">Each GPU holds its own full array (4 chunks). Press step.</span>
+    </div>
+  </div>
+
+  <p>
+    Because the per-GPU byte movement never exceeds \(2V/N \cdot (N-1)\) regardless of how the GPUs are wired, the
+    ring saturates the slowest link in the path and runs at peak bandwidth. Its weakness is the \(2(N-1)\) serial
+    steps: at large \(N\), or for small messages where each step’s latency can’t be amortized, that hurts — which
+    is what the tree fixes.
+  </p>
+
+  <!-- ════════════════════════ TREE ════════════════════════ -->
+  <h2 id="tree">4 · The tree algorithm</h2>
+  <p>
+    A tree AllReduce <strong>reduces up</strong> to a root and <strong>broadcasts down</strong>, so its latency is
+    \(O(\log N)\) hops instead of \(O(N)\). The catch is that a plain binary tree only uses half its links
+    (interior endpoints relay both children, while the leaves and root sit idle in one phase). NCCL’s fix is the
+    <strong>double binary tree</strong>: build <em>two</em> complementary trees so that an endpoint that is interior in
+    one is a leaf in the other, and split the data between them. Now every link carries traffic in both
+    directions — <strong>full bandwidth and logarithmic latency</strong>.
+  </p>
+  <p>
+    One detail worth pinning down — and it’s a common confusion: NCCL builds this tree <strong>over nodes, not
+    individual GPUs</strong>. The constructor is literally <code>ncclGetDtree(nNodes, …)</code>, and for an odd node
+    count it forms the second tree by <em>shifting ranks by one</em> (mirroring for an even count), exactly as drawn
+    below. <em>Inside</em> a node the GPUs are wired as a <strong>chain</strong> — <code>tree.up</code> is the previous
+    GPU, <code>tree.down</code> the next, over NVLink — and that chain’s head carries the node’s link in the binary
+    tree. So the cost splits in two: a linear intra-node chain, \(2(G\!-\!1)\,\alpha\) for \(G\) GPUs per node, plus the
+    log-depth inter-node tree, \(2\log_2 N\,\alpha\). The tree’s latency win is purely the inter-node term; the figure
+    below shows that level — each circle is a <em>node</em> — with one node’s 8-GPU chain expanded underneath.
+  </p>
+
+  <div class="diagram">
+    <div class="diagram-title">▸ Double binary tree — two complementary trees over 7 nodes (each node a chain of GPUs)</div>
+    <div class="diagram-hint">Each circle is a <em>node</em>. Solid = interior (relays two children, heavy traffic); outline = leaf (one link). A node that's interior in one tree is a leaf in the other, so its links stay busy in <em>both</em> — full bandwidth at ~2·log₂N latency. The loop runs both phases: <span style="color:var(--green);font-weight:600">reduce ↑</span> to the roots, then <span style="color:var(--red);font-weight:600">broadcast ↓</span> to every leaf — both trees at once. Inside one node, the GPU chain is expanded below.</div>
+    <div class="diagram-stage">
+      <svg id="tree-svg" viewBox="0 0 720 384" width="720" height="384" role="img" aria-label="Two complementary binary trees over 7 nodes, with one node's 8-GPU NVLink chain expanded below"></svg>
+    </div>
+  </div>
+
+  <p>
+    The tree wins exactly where the ring struggles: <em>small to medium messages</em> and <em>large node counts</em>,
+    where latency dominates. For the big gradient and activation tensors of training, the ring’s bandwidth edge
+    usually wins; for latency-sensitive collectives the tree does. NCCL keeps both and chooses per call (§7).
+  </p>
+
+  <!-- ════════════════════════ NVLS ════════════════════════ -->
+  <h2 id="nvls">5 · In-network reduction: NVLS and CollNet</h2>
+  <p>
+    The newest algorithms move the <em>arithmetic</em> off the GPUs entirely. With <strong>NVLS</strong> (NVLink
+    SHARP), the <a href="../hardware/gpu-hardware.html#nvlink">NVSwitch</a> itself performs the reduction: GPUs send their
+    data into the switch, the switch sums it and multicasts the result back. Because the switch does the add, each
+    GPU sends its data roughly <em>once</em> instead of the ring’s \(2(N-1)/N\) round-trip — less data movement and
+    fewer steps. <strong>CollNet/SHARP</strong> is the same idea on the InfiniBand switch for cross-node reductions.
+  </p>
+  <div class="note">
+    NVLS needs the hardware (NVSwitch with SHARP, Hopper+). When available it can beat both ring and tree for
+    AllReduce/ReduceScatter, which is why current NCCL adds it as a third algorithm rather than replacing the
+    others — selection (§7) still decides per call.
+  </div>
+
+  <!-- ════════════════════════ PROTOCOLS ════════════════════════ -->
+  <h2 id="protocols">6 · Protocols: how bytes and flags are packed</h2>
+  <p>
+    Orthogonal to the algorithm is the <strong>protocol</strong> — how each chunk is actually written to the peer
+    and how the receiver knows it has arrived. The tension is synchronization overhead vs payload efficiency.
+  </p>
+  <p>
+    Why is synchronization even a cost? Picture the producer GPU writing a chunk into the consumer's receive buffer,
+    then writing a <em>ready</em> flag the consumer is spinning on. The trap: writes don't necessarily become
+    <em>visible</em> to the other GPU in the order they were issued — write-combining buffers, the SM's memory
+    pipeline, and the interconnect can each reorder them. If the flag becomes visible before the last bytes of
+    payload do, the consumer reads <strong>torn, stale data</strong>. Every protocol is a different answer to one
+    question: <em>how do I guarantee the data is visible before the flag is?</em>
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Protocol</th><th>Sync</th><th class="ctr">Line layout</th><th class="ctr">Usable BW</th><th>Best for</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Simple</strong></td><td>memory fences</td><td class="ctr">full payload</td><td class="ctr">~100%</td><td>large messages (bandwidth-bound)</td></tr>
+        <tr><td><strong>LL128</strong></td><td>flag-based, no fence</td><td class="ctr">120 B data + 8 B flag / 128 B</td><td class="ctr">~95%</td><td>NVLink, mid-size messages</td></tr>
+        <tr><td><strong>LL</strong> (low-latency)</td><td>flag-based, no fence</td><td class="ctr">4 B data + 4 B flag / 8 B</td><td class="ctr">~50%</td><td>tiny, latency-critical messages</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    <strong>Simple</strong> answers with an explicit <strong>memory fence</strong>
+    (<code>__threadfence_system()</code>): write the whole payload, fence — which stalls until those writes are
+    globally visible — then post the flag. Correct on any fabric, and it wastes <em>no</em> payload bytes (~100%
+    bandwidth). But the fence is a per-chunk latency tax, so Simple only shines when chunks are large enough to
+    amortize it.
+  </p>
+  <p>
+    <strong>LL</strong> (low-latency) skips the fence by <em>inlining</em> the flag with the data: it writes 8-byte
+    words as 4 bytes payload + 4 bytes flag. A single 8-byte store lands atomically, so if the consumer sees the flag
+    half, the data half is guaranteed there — no fence, almost no latency. The bill is bandwidth: half of every word
+    is flag, capping LL at ~50%, which is why it's reserved for the smallest, most latency-critical messages.
+  </p>
+  <p>
+    <strong>LL128</strong> is the NVLink-tuned middle ground: it amortizes one 8-byte flag over a full 128-byte line
+    (120 B data + 8 B flag → ~94%). It leans on NVLink's guarantee that a 128-byte transfer arrives such that seeing
+    the trailing flag implies the leading 120 bytes are already visible — so it stays fence-free at near-full
+    bandwidth. That ordering guarantee only holds on NVLink/NVSwitch, which is why NCCL restricts LL128 to those
+    links and falls back to Simple on slower fabrics.
+  </p>
+
+  <div class="diagram">
+    <div class="diagram-title">▸ Line layout — where the bandwidth goes</div>
+    <div class="diagram-hint">Each bar is one transfer window. <span style="color:var(--accent);font-weight:600">Indigo</span> = payload, <span style="color:var(--amber);font-weight:600">amber</span> = flag/sync overhead. The amber fraction is the bandwidth tax — Simple pays in latency instead, not bytes.</div>
+    <div class="diagram-stage">
+      <svg viewBox="0 0 560 222" width="560" height="222" role="img" aria-label="Byte layout of the Simple, LL128 and LL protocols">
+        <!-- Simple -->
+        <text x="128" y="57" text-anchor="end" font-family="Inter" font-size="12" font-weight="600" style="fill:var(--diagram-ink)">Simple</text>
+        <rect x="140" y="40" width="330" height="24" rx="3" style="fill:var(--accent)"/>
+        <text x="478" y="57" font-family="ui-monospace" font-size="11" style="fill:var(--green)" font-weight="600">~100%</text>
+        <text x="140" y="80" font-family="Inter" font-size="9.5" style="fill:var(--svg-dim)">full payload — sync is a separate memory fence (costs latency, not bytes)</text>
+        <!-- LL128 -->
+        <text x="128" y="121" text-anchor="end" font-family="Inter" font-size="12" font-weight="600" style="fill:var(--diagram-ink)">LL128</text>
+        <rect x="140" y="104" width="310" height="24" rx="3" style="fill:var(--accent)"/>
+        <rect x="450" y="104" width="20" height="24" rx="3" style="fill:var(--amber)"/>
+        <text x="478" y="121" font-family="ui-monospace" font-size="11" style="fill:var(--cyan)" font-weight="600">~95%</text>
+        <text x="140" y="144" font-family="Inter" font-size="9.5" style="fill:var(--svg-dim)">120 B data + 8 B flag per 128-byte line — fence-free, but NVLink only</text>
+        <!-- LL -->
+        <text x="128" y="185" text-anchor="end" font-family="Inter" font-size="12" font-weight="600" style="fill:var(--diagram-ink)">LL</text>
+        <rect x="140"    y="168" width="41.25" height="24" rx="3" style="fill:var(--accent)"/>
+        <rect x="181.25" y="168" width="41.25" height="24" rx="3" style="fill:var(--amber)"/>
+        <rect x="222.5"  y="168" width="41.25" height="24" rx="3" style="fill:var(--accent)"/>
+        <rect x="263.75" y="168" width="41.25" height="24" rx="3" style="fill:var(--amber)"/>
+        <rect x="305"    y="168" width="41.25" height="24" rx="3" style="fill:var(--accent)"/>
+        <rect x="346.25" y="168" width="41.25" height="24" rx="3" style="fill:var(--amber)"/>
+        <rect x="387.5"  y="168" width="41.25" height="24" rx="3" style="fill:var(--accent)"/>
+        <rect x="428.75" y="168" width="41.25" height="24" rx="3" style="fill:var(--amber)"/>
+        <text x="478" y="185" font-family="ui-monospace" font-size="11" style="fill:var(--red)" font-weight="600">~50%</text>
+        <text x="140" y="208" font-family="Inter" font-size="9.5" style="fill:var(--svg-dim)">4 B data + 4 B flag per 8-byte word — fence-free, but half the bytes are flag</text>
+      </svg>
+    </div>
+  </div>
+  <div class="result">
+    <div class="result-label">Algorithm ⟂ Protocol</div>
+    The algorithm sets the <em>latency shape</em> (ring \(O(N)\) vs tree \(O(\log N)\)); the protocol sets the
+    <em>effective \(W\)</em> (Simple ~100% vs LL ~50%). Any algorithm can run with any protocol.
+  </div>
+
+  <!-- ════════════════════════ SELECTION ════════════════════════ -->
+  <h2 id="selection">7 · Channels and selection</h2>
+  <p>
+    A single ring or tree is <em>one</em> path through the links, and a GPU has several NVLinks — so one ring can't
+    light them all up at once. NCCL's answer is <strong>channels</strong>: it slices the buffer and runs several
+    independent ring/tree instances in parallel, each on its own subset of links. Concretely the collective launches
+    as <em>one CUDA kernel with many thread blocks</em>; each block drives one channel, copying and reducing its slice
+    along that channel's ring or tree.
+  </p>
+  <p>
+    Three things make extra channels pay off: they cover the NVLinks a single ring's path misses; the reduction
+    arithmetic needs SMs, and more channels put more SMs to work; and one channel's network transfer overlaps
+    another's local copy. Aggregate bandwidth climbs roughly linearly —
+    \( B_\text{eff} \approx n_\text{ch}\times B_\text{channel} \) — until you run out of links or SMs, where it
+    flattens (past that, more channels just add scheduling overhead). That \( B_\text{eff} \) <em>is</em> the
+    \( W \) in the \( T \approx V/W \) cost model: channels are how NCCL turns one ring into full fabric bandwidth.
+  </p>
+  <p>
+    Finally, <strong>selection</strong>. NCCL ships <strong>tuned latency and bandwidth tables</strong> measured per
+    GPU architecture (Volta / Ampere / Hopper) and link type, so for a given call the \( L_\text{algo} \) and
+    \( B_\text{proto} \) below are <em>looked up</em>, not modeled from scratch. It estimates the time of every viable
+    (algorithm, protocol, #channels) triple,
+  </p>
+  <div class="result">
+    \[ T_\text{est} \;\approx\; \underbrace{L_\text{algo}}_{\text{latency: ring } \propto N,\ \text{tree} \propto \log N}
+       \;+\; \underbrace{\frac{\text{size}}{B_\text{proto}}}_{\text{transfer at the protocol's effective BW}} \]
+  </div>
+  <p>
+    and picks the minimum — decided <em>per collective, per communicator, even per channel</em>. The result is a
+    clean two-regime crossover: latency-bound at small sizes, bandwidth-bound at large.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Message size</th><th>Bottleneck</th><th class="ctr">Algorithm</th><th class="ctr">Protocol</th></tr></thead>
+      <tbody>
+        <tr><td>tiny (≲ a few KB)</td><td>latency</td><td class="ctr">Tree</td><td class="ctr">LL</td></tr>
+        <tr><td>mid-size, on NVLink</td><td>balanced</td><td class="ctr">Tree / Ring</td><td class="ctr">LL128</td></tr>
+        <tr><td>large (≳ MBs)</td><td>bandwidth</td><td class="ctr">Ring</td><td class="ctr">Simple</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    <strong>Worked crossover (illustrative).</strong> Suppose each serial step costs ~1&nbsp;µs of latency and the
+    transfer term is size ÷ effective-BW. For a <strong>1&nbsp;KB</strong> AllReduce on 16 GPUs the transfer term is
+    negligible, so the tree's \( 2\lceil\log_2 16\rceil = 8 \) steps (~8&nbsp;µs) crush the ring's
+    \( 2(16{-}1) = 30 \) steps (~30&nbsp;µs) — and LL trims the per-step sync further. For a <strong>200&nbsp;MB</strong>
+    AllReduce the transfer term dominates and the ring's extra steps are rounding error, so the ~100%-BW
+    <em>Ring&nbsp;+&nbsp;Simple</em> beats ~50%-BW LL. Drag the GPU count to see the latency half of that trade flip:
+  </p>
+
+  <div class="diagram">
+    <div class="diagram-title">▸ Ring vs tree latency (serial steps)</div>
+    <div class="diagram-hint">Ring AllReduce = 2(N−1) steps; double-tree ≈ 2·⌈log₂N⌉. The gap is why small messages go to the tree.</div>
+    <div class="diagram-stage">
+      <svg id="lat-svg" viewBox="0 0 480 220" width="480" height="220" role="img" aria-label="Ring vs tree latency"></svg>
+    </div>
+    <div class="anim-controls">
+      <label style="font-size:0.9rem">GPUs N = <b id="lat-n" style="font-family:ui-monospace">16</b></label>
+      <input type="range" id="lat-slider" min="2" max="256" value="16">
+    </div>
+  </div>
+
+  <!-- ════════════════════════ PRACTICE ════════════════════════ -->
+  <h2 id="practice">8 · Seeing it in practice</h2>
+  <p>
+    You can watch every one of these decisions. <code>NCCL_DEBUG=INFO</code> prints, at init, the rings and trees
+    it built, the channel count, and the algorithm/protocol it selects:
+  </p>
+  <pre><code>export NCCL_DEBUG=INFO
+# ... in the log:
+# NCCL INFO Channel 00 : 0 1 2 3 4 5 6 7        ← the ring order
+# NCCL INFO Trees [0] 1/-1/-1->0->-1 ...        ← the double binary tree
+# NCCL INFO Connected all rings, all trees
+# NCCL INFO Using network IB ; 8 channels</code></pre>
+  <p>
+    And <code>nccl-tests</code> reports the <strong>bus bandwidth</strong> (busbw) discussed on the
+    <a href="collectives.html#cost">collectives page</a> — the per-GPU byte movement over time, normalized so it
+    approximates peak link bandwidth. When busbw plateaus near your NVLink/NIC number, the chosen
+    algorithm/protocol/channel combination is doing its job. A few knobs to force NCCL’s hand when debugging:
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Env var</th><th>Effect</th></tr></thead>
+      <tbody>
+        <tr><td><code>NCCL_ALGO=Ring|Tree|NVLS</code></td><td>Force the algorithm (skip selection)</td></tr>
+        <tr><td><code>NCCL_PROTO=Simple|LL|LL128</code></td><td>Force the protocol</td></tr>
+        <tr><td><code>NCCL_MAX_NCHANNELS=n</code></td><td>Cap the number of parallel channels</td></tr>
+        <tr><td><code>NCCL_DEBUG=INFO</code></td><td>Print topology, rings/trees, and selections</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note">
+    These are for <em>diagnosis</em>, not production: NCCL’s tuned selection beats hand-forcing in almost all real
+    cases. Reach for them to confirm a hypothesis (“is my AllReduce stuck on LL?”), then remove them.
+  </div>
+
+  <!-- ════════════════════════ SUMMARY ════════════════════════ -->
+  <h2 id="summary">9 · Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">Not one algorithm</div>
+      <p>A stack: topology → algorithm → protocol → channels → selection, decided per call.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Ring vs tree</div>
+      <p>Ring = bandwidth-optimal, \(O(N)\) latency. Double-tree = full bandwidth, \(O(\log N)\) latency. NVLS = the switch does the sum.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Protocols</div>
+      <p>Simple (fences, ~100% BW) / LL128 (120B+8B, ~95%) / LL (4B+4B, ~50%). Sets effective \(W\).</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Ties to the math</div>
+      <p>Ring AllReduce moves \(2(N{-}1)/N\,V\) per GPU — the busbw factor. NCCL is what realizes \(T \approx V/W\).</p>
+    </div>
+  </div>
+
+  <div class="xref">
+    Back to the abstractions: <a href="collectives.html">Sharding &amp; Collectives →</a> for the four primitives
+    and the cost model, and <a href="../hardware/gpu-hardware.html">GPU Hardware →</a> for the NVLink/NVSwitch fabric NCCL
+    schedules onto. Then <a href="tensor-parallelism.html">Tensor Parallelism →</a> spends these AllReduces on a
+    real transformer block.
+  </div>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; NCCL — how collectives actually run
+  &nbsp;·&nbsp; <a href="collectives.html" style="color:inherit">← Sharding &amp; Collectives</a>
+  &nbsp;·&nbsp; <a href="../index.html" style="color:inherit">All notes</a>
+</footer>
+
+<script>
+  // ── Ring AllReduce animation ──────────────────────────────
+  (function () {
+    const svg = document.getElementById('ring-svg');
+    const stepBtn = document.getElementById('ring-step');
+    const resetBtn = document.getElementById('ring-reset');
+    const status = document.getElementById('ring-status');
+    if (!svg) return;
+    const SVGNS = 'http://www.w3.org/2000/svg';
+    const N = 4;
+    const pos = [ {x:90,y:60}, {x:390,y:60}, {x:390,y:240}, {x:90,y:240} ];
+    let t = 0;                       // step 0..2(N-1)
+    const MAX = 2 * (N - 1);
+    let C = [];                      // C[g][c] = Set of source ranks summed into GPU g's chunk c
+
+    function fresh() {
+      C = [];
+      for (let g = 0; g < N; g++) { C[g] = []; for (let c = 0; c < N; c++) C[g][c] = new Set([g]); }
+      t = 0;
+    }
+
+    // returns {sender chunk index} for GPU g at step t, and whether overwrite (AllGather) or union (RS)
+    function sendIndex(g, step) {
+      if (step < N - 1) return (g - step + 2 * N) % N;           // ReduceScatter
+      const i = step - (N - 1);
+      return (g + 1 - i + 2 * N) % N;                            // AllGather
+    }
+
+    function apply(step) {
+      const overwrite = step >= N - 1;
+      const snapshot = C.map(row => row.map(s => new Set(s)));
+      for (let g = 0; g < N; g++) {
+        const s = sendIndex(g, step);
+        const dst = (g + 1) % N;
+        if (overwrite) C[dst][s] = new Set(snapshot[g][s]);
+        else snapshot[g][s].forEach(v => C[dst][s].add(v));
+      }
+    }
+
+    function mk(tag, a, txt) { const e = document.createElementNS(SVGNS, tag); for (const k in a) e.setAttribute(k, a[k]); if (txt != null) e.textContent = txt; svg.appendChild(e); return e; }
+
+    function draw(activeStep) {
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+      // ring arrows
+      for (let g = 0; g < N; g++) {
+        const a = pos[g], b = pos[(g + 1) % N];
+        mk('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, style: 'stroke: var(--ring-line)', 'stroke-width': 2, 'stroke-dasharray': '5 4' });
+      }
+      const slot = 20;
+      for (let g = 0; g < N; g++) {
+        const p = pos[g];
+        mk('text', { x: p.x, y: p.y - 30, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 12, 'font-weight': 600, style: 'fill: var(--ink)' }, 'GPU ' + g);
+        const x0 = p.x - 2 * slot;
+        for (let c = 0; c < N; c++) {
+          const cnt = C[g][c].size, full = cnt === N;
+          const x = x0 + c * slot;
+          mk('rect', { x: x, y: p.y - 12, width: slot - 3, height: 24, rx: 3,
+            style: 'fill: ' + (full ? 'var(--green)' : 'var(--accent)') + '; stroke: ' + ((activeStep != null && sendIndex(g, activeStep) === c) ? 'var(--red)' : 'var(--chunk-stroke)'),
+            opacity: full ? 1 : 0.18 + 0.24 * (cnt - 1),
+            'stroke-width': (activeStep != null && sendIndex(g, activeStep) === c) ? 2.5 : 1 });
+        }
+        // chunk-complete tally
+        const done = C[g].filter(s => s.size === N).length;
+        mk('text', { x: p.x, y: p.y + 30, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 10.5, style: 'fill: var(--muted)' }, done + '/' + N + ' chunks summed');
+      }
+      // center phase label
+      const phase = activeStep == null ? '' : (activeStep < N - 1 ? 'ReduceScatter' : 'AllGather');
+      mk('text', { x: 240, y: 150, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 12.5, 'font-weight': 600, style: 'fill: var(--accent)' }, phase);
+    }
+
+    function step() {
+      if (t >= MAX) return;
+      apply(t);
+      const drawn = t;
+      t++;
+      draw(drawn);
+      const phase = drawn < N - 1 ? 'ReduceScatter' : 'AllGather';
+      if (t < MAX) status.textContent = `Step ${t}/${MAX} (${phase}): each GPU forwarded one chunk to its neighbor` + (drawn < N - 1 ? ' and summed it in.' : ' (already complete).');
+      else status.textContent = `Step ${MAX}/${MAX}: done — every chunk on every GPU is the full sum. Each GPU moved 2(N−1)/N·V bytes.`;
+      stepBtn.disabled = t >= MAX;
+    }
+    function reset() { fresh(); draw(null); stepBtn.disabled = false; status.textContent = 'Each GPU holds its own full array (4 chunks). Press step.'; }
+
+    stepBtn.addEventListener('click', step);
+    resetBtn.addEventListener('click', reset);
+    reset();
+  })();
+
+  // ── Double binary tree diagram ────────────────────────────
+  (function () {
+    const svg = document.getElementById('tree-svg');
+    if (!svg) return;
+    const SVGNS = 'http://www.w3.org/2000/svg';
+    function mk(tag, a, txt) { const e = document.createElementNS(SVGNS, tag); for (const k in a) e.setAttribute(k, a[k]); if (txt != null) e.textContent = txt; svg.appendChild(e); return e; }
+
+    const GREEN = 'var(--green)', RED = 'var(--red)', BASE = 'var(--tree-edge)';
+
+    function drawTree(nodes, edges, interior, title, tx) {
+      mk('text', { x: tx, y: 20, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 12, 'font-weight': 600, style: 'fill: var(--diagram-ink)' }, title);
+      const lines = {};
+      edges.forEach(([a, b]) => {
+        const ln = mk('line', { x1: nodes[a].x, y1: nodes[a].y, x2: nodes[b].x, y2: nodes[b].y, style: 'stroke:' + BASE, 'stroke-width': 2 });
+        lines[a + '-' + b] = ln; lines[b + '-' + a] = ln;
+      });
+      const ns = {};
+      Object.keys(nodes).forEach(k => {
+        const n = nodes[k], isInt = interior.has(+k);
+        mk('circle', { cx: n.x, cy: n.y, r: 15,
+          style: 'fill:' + (isInt ? 'var(--node-fill)' : 'var(--accent-light)') +
+            ';stroke:' + (isInt ? 'var(--node-stroke)' : 'var(--leaf-stroke)'),
+          'stroke-width': isInt ? 0 : 1.5 });
+        mk('text', { x: n.x, y: n.y + 4, 'text-anchor': 'middle', 'font-family': 'ui-monospace', 'font-size': 12,
+          'font-weight': 600, style: 'fill:' + (isInt ? 'var(--node-fg)' : 'var(--diagram-ink)') }, k);
+        ns[k] = { x: n.x, y: n.y };
+      });
+      return { nodes: ns, lines };
+    }
+
+    // Tree A — recursive-bisection tree over ranks 0..6 (root 3)
+    const A = {
+      3: { x: 180, y: 58 },
+      1: { x: 110, y: 132 }, 5: { x: 250, y: 132 },
+      0: { x: 75, y: 206 }, 2: { x: 145, y: 206 }, 4: { x: 215, y: 206 }, 6: { x: 285, y: 206 }
+    };
+    const TA = drawTree(A, [[3,1],[3,5],[1,0],[1,2],[5,4],[5,6]], new Set([3,1,5]), 'Tree A · half the bytes', 180);
+
+    // Tree B — same shape, ranks rotated by 1 so interior/leaf roles flip (root 4)
+    const B = {
+      4: { x: 540, y: 58 },
+      2: { x: 470, y: 132 }, 6: { x: 610, y: 132 },
+      1: { x: 435, y: 206 }, 3: { x: 505, y: 206 }, 5: { x: 575, y: 206 }, 0: { x: 645, y: 206 }
+    };
+    const TB = drawTree(B, [[4,2],[4,6],[2,1],[2,3],[6,5],[6,0]], new Set([4,2,6]), 'Tree B · the other half', 540);
+
+    // the key insight (about nodes — the tree is built over nodes)
+    mk('text', { x: 360, y: 232, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11.5, 'font-weight': 600, style: 'fill: var(--ink)' }, 'Nodes 1·3·5 are interior in A but leaves in B — and 2·4·6 the reverse.');
+    mk('text', { x: 360, y: 250, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11, style: 'fill: var(--muted)' }, 'Each node does heavy interior relaying in exactly one tree → every link stays busy.');
+
+    // ── Inset: one node = a chain of 8 GPUs over NVLink (intra-node) ──
+    mk('line', { x1: 40, y1: 272, x2: 680, y2: 272, style: 'stroke: var(--svg-sep)', 'stroke-width': 1 });
+    mk('text', { x: 360, y: 290, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11.5, 'font-weight': 600, style: 'fill: var(--diagram-ink)' }, 'Zoom into one node — the tree is over nodes; inside a node, GPUs form an NVLink chain');
+    mk('text', { x: 360, y: 306, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 10.5, style: 'fill: var(--muted)' }, 'the head GPU (0) also carries this node’s link in the inter-node tree');
+    const gx = [220, 260, 300, 340, 380, 420, 460, 500], gy = 340;
+    mk('text', { x: 220, y: 324, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 13, 'font-weight': 700, style: 'fill: var(--diagram-ink)' }, '↑');
+    for (let i = 0; i < gx.length - 1; i++) mk('line', { x1: gx[i], y1: gy, x2: gx[i + 1], y2: gy, style: 'stroke: var(--tree-edge)', 'stroke-width': 2 });
+    gx.forEach((x, i) => {
+      const head = i === 0;
+      mk('circle', { cx: x, cy: gy, r: 12, style: 'fill:' + (head ? 'var(--node-fill)' : 'var(--accent-light)') + ';stroke:' + (head ? 'var(--node-stroke)' : 'var(--leaf-stroke)'), 'stroke-width': head ? 0 : 1.5 });
+      mk('text', { x: x, y: gy + 4, 'text-anchor': 'middle', 'font-family': 'ui-monospace', 'font-size': 11, 'font-weight': 600, style: 'fill:' + (head ? 'var(--node-fg)' : 'var(--diagram-ink)') }, i);
+    });
+    mk('text', { x: 360, y: 372, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 10.5, style: 'fill: var(--svg-dim)' }, 'GPUs 0–7 · intra-node chain (cost 2(G−1)·α)   —   between nodes: binary tree (cost 2·log₂N·α)');
+
+    // ── Animate the two phases: reduce up to roots, broadcast back down ──
+    // Each entry is [tree, from, to]; a hop moves a packet from→to and lights that link.
+    const rUp1 = [['A',0,1],['A',2,1],['A',4,5],['A',6,5], ['B',1,2],['B',3,2],['B',5,6],['B',0,6]]; // leaves → mid
+    const rUp2 = [['A',1,3],['A',5,3], ['B',2,4],['B',6,4]];                                         // mid → roots
+    const bDn1 = [['A',3,1],['A',3,5], ['B',4,2],['B',4,6]];                                         // roots → mid
+    const bDn2 = [['A',1,0],['A',1,2],['A',5,4],['A',5,6], ['B',2,1],['B',2,3],['B',6,5],['B',6,0]]; // mid → leaves
+    const STEP = 760, PAUSE = 620;
+    const moves = [
+      { dur: STEP,  color: GREEN, arrow: '↑', label: 'phase 1 · reduce ↑',    edges: rUp1 },
+      { dur: STEP,  color: GREEN, arrow: '↑', label: 'phase 1 · reduce ↑',    edges: rUp2 },
+      { dur: PAUSE, color: GREEN, arrow: '✓', label: 'roots hold the sum',    edges: [] },
+      { dur: STEP,  color: RED,   arrow: '↓', label: 'phase 2 · broadcast ↓', edges: bDn1 },
+      { dur: STEP,  color: RED,   arrow: '↓', label: 'phase 2 · broadcast ↓', edges: bDn2 },
+      { dur: PAUSE, color: RED,   arrow: '✓', label: 'every rank has it',     edges: [] },
+    ];
+    const total = moves.reduce((s, m) => s + m.dur, 0);
+
+    const phaseEl = mk('text', { x: 360, y: 20, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 12, 'font-weight': 700 }, '');
+    const arrowEl = mk('text', { x: 360, y: 142, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 26, 'font-weight': 700 }, '');
+    const gAnim = mk('g', {});
+
+    function pt(tree, r) { return (tree === 'A' ? TA : TB).nodes[r]; }
+    function lineOf(tree, a, b) { return (tree === 'A' ? TA : TB).lines[a + '-' + b]; }
+    function resetLines() {
+      [TA, TB].forEach(T => { const seen = new Set();
+        Object.values(T.lines).forEach(ln => { if (seen.has(ln)) return; seen.add(ln);
+          ln.setAttribute('style', 'stroke:' + BASE); ln.setAttribute('stroke-width', 2); }); });
+    }
+    const ease = t => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+
+    const prefersReduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (prefersReduced) {
+      phaseEl.setAttribute('style', 'fill: var(--muted)');
+      phaseEl.textContent = 'reduce ↑ to roots, then broadcast ↓ to leaves';
+    } else {
+      let t0 = null;
+      function frame(ts) {
+        if (t0 == null) t0 = ts;
+        let e = (ts - t0) % total, mv, local = 0;
+        for (const m of moves) { if (e < m.dur) { mv = m; local = e / m.dur; break; } e -= m.dur; }
+        phaseEl.setAttribute('style', 'fill:' + mv.color); phaseEl.textContent = mv.label;
+        arrowEl.setAttribute('style', 'fill:' + mv.color); arrowEl.textContent = mv.arrow;
+        while (gAnim.firstChild) gAnim.removeChild(gAnim.firstChild);
+        resetLines();
+        const p = ease(local);
+        mv.edges.forEach(([tree, a, b]) => {
+          const from = pt(tree, a), to = pt(tree, b);
+          const ln = lineOf(tree, a, b);
+          if (ln) { ln.setAttribute('style', 'stroke:' + mv.color); ln.setAttribute('stroke-width', 4); }
+          const c = document.createElementNS(SVGNS, 'circle');
+          c.setAttribute('cx', from.x + (to.x - from.x) * p);
+          c.setAttribute('cy', from.y + (to.y - from.y) * p);
+          c.setAttribute('r', 5.5); c.setAttribute('style', 'fill:' + mv.color);
+          gAnim.appendChild(c);
+        });
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    }
+  })();
+
+  // ── Ring vs tree latency explorer ─────────────────────────
+  (function () {
+    const svg = document.getElementById('lat-svg');
+    const slider = document.getElementById('lat-slider');
+    const nOut = document.getElementById('lat-n');
+    if (!svg) return;
+    const SVGNS = 'http://www.w3.org/2000/svg';
+    function mk(tag, a, txt) { const e = document.createElementNS(SVGNS, tag); for (const k in a) e.setAttribute(k, a[k]); if (txt != null) e.textContent = txt; svg.appendChild(e); return e; }
+    function draw() {
+      const N = +slider.value;
+      nOut.textContent = N;
+      const ring = 2 * (N - 1);
+      const tree = 2 * Math.ceil(Math.log2(N));
+      const maxV = 2 * (256 - 1);
+      const X0 = 150, W = 300, scale = v => W * Math.log10(1 + v) / Math.log10(1 + maxV);
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+      const bars = [['Ring  2(N−1)', ring, 'var(--accent)', 50], ['Tree  2·⌈log₂N⌉', tree, 'var(--green)', 120]];
+      bars.forEach(([label, v, col, y]) => {
+        mk('text', { x: X0 - 12, y: y + 22, 'text-anchor': 'end', 'font-family': 'Inter', 'font-size': 12, style: 'fill: var(--ink)', 'font-weight': 600 }, label);
+        mk('rect', { x: X0, y: y, width: Math.max(2, scale(v)), height: 34, rx: 5, style: 'fill:' + col });
+        mk('text', { x: X0 + Math.max(2, scale(v)) + 8, y: y + 23, 'font-family': 'ui-monospace', 'font-size': 13, style: 'fill:' + col, 'font-weight': 600 }, v + ' steps');
+      });
+      const factor = (ring / tree).toFixed(1);
+      mk('text', { x: X0, y: 195, 'font-family': 'Inter', 'font-size': 12, style: 'fill: var(--muted)' }, `At N=${N}, the ring takes ${factor}× as many serial steps — each step's latency is why small messages pick the tree.`);
+    }
+    slider.addEventListener('input', draw);
+    draw();
+  })();
+</script>
+
+</body>
+</html>

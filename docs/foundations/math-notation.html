@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Reading ML Math Notation — A Practical Reference</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #4f46e5;
+      --accent-light: #eef2ff;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --note-fg: #1e40af;
+      --result-fg: #16a34a;
+      --indigo-border: #c7d2fe;
+      --nav-bg: rgba(255,255,255,0.92);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #818cf8;
+        --accent-light: #1a1626;
+        --warning-bg: #101a2b;
+        --warning-border: #1e40af;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --note-fg: #93c5fd;
+        --result-fg: #4ade80;
+        --indigo-border: #3730a3;
+        --nav-bg: rgba(15,17,21,0.9);
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #1e1b4b 0%, #4338ca 60%, #6366f1 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.85;
+      font-size: 0.97rem;
+      max-width: 560px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+    code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+
+    /* ── Step boxes ──────────────────────────── */
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    /* ── Callout / note ──────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+    .note::before { content: '💡 '; }
+
+    /* ── Result / boxed equation ─────────────── */
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Plain-English read box ──────────────── */
+    .read {
+      background: var(--accent-light);
+      border: 1px solid var(--indigo-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      margin: 1.2em 0;
+    }
+    .read-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+    .read p { margin: 0.3em 0; }
+
+    /* ── Summary card ────────────────────────── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .summary-card {
+      background: var(--accent-light);
+      border: 1px solid var(--indigo-border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .summary-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: none;
+      letter-spacing: normal;
+      margin-bottom: 4px;
+    }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    /* ── Footer ──────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    /* ── Responsive ──────────────────────────── */
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Math Notation</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#objects">Objects</a>
+    <a href="#sumprod">Sums &amp; products</a>
+    <a href="#bar">Conditional bar</a>
+    <a href="#dist">Distributions</a>
+    <a href="#sample">Sampling</a>
+    <a href="#expect">Expectation</a>
+    <a href="#optim">Optimization</a>
+    <a href="#kl">KL divergence</a>
+    <a href="#misc">More symbols</a>
+    <a href="#example">Worked example</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Foundations</span>
+  <h1>Reading ML Math Notation</h1>
+  <p>A practical, symbol-by-symbol reference for the probability and optimization notation that shows up across machine-learning papers — with a worked example at the end.</p>
+</div>
+
+<div class="page-wrap">
+
+  <p>Most ML equations reuse the same small vocabulary of symbols. Once you can read each piece on its own, even dense objectives become a sentence you can translate. This page builds that vocabulary one symbol at a time, then applies all of it to a real objective in <a href="#example" style="color:var(--accent);">§9</a>.</p>
+
+  <h2 id="objects">1. The basic objects: scalars, vectors, functions</h2>
+  <p>Before any operation, know <em>what kind of thing</em> a symbol is.</p>
+  <ul>
+    <li><strong>Scalar</strong> — a single number, usually lowercase italic: \(a,\, x,\, \beta\). A lone Greek letter with no parentheses is typically a fixed constant (a hyperparameter knob).</li>
+    <li><strong>Vector</strong> — an ordered list of numbers, often bold or arrowed: \(\mathbf{x}\), \(\vec{x}\). "\(\mathbf{x}\in\mathbb{R}^n\)" reads "\(\mathbf{x}\) is a vector of \(n\) real numbers."</li>
+    <li><strong>Matrix</strong> — a 2-D grid, usually uppercase: \(W \in \mathbb{R}^{m\times n}\) ("\(m\) rows, \(n\) columns").</li>
+    <li><strong>Function</strong> — a rule mapping inputs to an output: \(f(x)\) is "\(f\) applied to \(x\)." It can take several arguments, \(r(x,y)\), and return a scalar, vector, or anything else.</li>
+  </ul>
+  <div class="note">
+    The blackboard-bold \(\mathbb{R}\) means "the real numbers." So \(f:\mathbb{R}^n \to \mathbb{R}\) is shorthand for "\(f\) takes an \(n\)-vector and returns one number." The arrow \(\to\) describes the function's type, not a limit.
+  </div>
+  <div class="note">
+    Letter conventions are just habits, not rules: \(\alpha,\beta,\gamma,\lambda\) tend to be scalar weights; \(\theta,\phi,\mathbf{w}\) tend to be learnable parameters; \(\pi,\,p,\,q\) tend to be distributions; \(\sigma\) is often the sigmoid or a standard deviation. Always confirm from context.
+  </div>
+  <div class="note">
+    \(\pi\) almost always denotes a <strong>policy</strong> — a conditional distribution \(\pi(y\mid x)\) that, given an input \(x\) (a prompt or state), assigns a probability to each possible output \(y\) (a response or action). "Running the policy" means sampling \(y\sim\pi(\cdot\mid x)\). A language model <em>is</em> a policy in this sense, and training (RLHF, DPO, GRPO) reshapes which outputs it makes likely. You'll meet it as \(\pi_\theta\) (the trainable policy), \(\pi_{\text{ref}}\) (a frozen reference), and \(\pi^*\) (the optimal one).
+  </div>
+
+  <h3>Subscripts: parameters vs. indices</h3>
+  <p>A subscript means one of two different things depending on what sits there:</p>
+  <ul>
+    <li><strong>Parameter subscript</strong> (usually a Greek letter): \(f_\theta\) reads "the function \(f\) <em>parameterized by</em> \(\theta\)." Here \(\theta\) is the whole vector of learnable weights, so \(f_\theta\) is typically a neural network and the subscript names what training adjusts. E.g. \(\pi_\theta\) (policy), \(r_\phi\) (reward model), \(V_\psi\) (value network). A word-subscript like \(\pi_{\text{ref}}\) is just a <em>label</em> (the "reference" model), not parameters.</li>
+    <li><strong>Index subscript</strong> (usually a letter or number counter): \(a_i\), \(x_t\), \(r_i\) pick out the \(i\)-th / \(t\)-th element of a collection or sequence. This is the same role the subscript plays under \(\sum\) and \(\prod\) (§2).</li>
+  </ul>
+  <p>The two can coexist without clashing because they look different: in \(r_\phi(x, o_i)\), the Greek \(\phi\) names the reward model's parameters while the running integer \(i\) indexes which output. Likewise \(\mathcal{L}(\theta)\) — parameters in the argument slot — signals "this loss is a function of the weights \(\theta\)," the knobs gradient descent turns.</p>
+
+  <h2 id="sumprod">2. Sums and products: \(\;\sum\;\) and \(\;\prod\;\)</h2>
+  <p>The capital sigma \(\sum\) means "add up"; the capital pi \(\prod\) means "multiply together." The decorations tell you the index variable and its range.</p>
+  \[
+    \sum_{i=1}^{n} a_i \;=\; a_1 + a_2 + \cdots + a_n
+    \qquad\qquad
+    \prod_{i=1}^{n} a_i \;=\; a_1 \cdot a_2 \cdots a_n
+  \]
+  <p>Read the subscript as "start here" and the superscript as "stop here." The body to the right is evaluated once per index value. A subscript with a condition, like \(\sum_{i \,:\, y_i = 1}\), means "sum over every \(i\) that satisfies the condition."</p>
+  <div class="note">
+    Logs turn products into sums: \(\log \prod_i a_i = \sum_i \log a_i\). This is why log-likelihoods (sums) are preferred over raw likelihoods (products) — they avoid numerical underflow and are easier to differentiate.
+  </div>
+
+  <h2 id="bar">3. The conditional bar \(\;\mid\;\)</h2>
+  <p>In a probability like \(p(y \mid x)\), the vertical bar reads "<strong>given</strong>": "the probability of \(y\) given \(x\)." Everything <em>left</em> of the bar is what you're asking about; everything <em>right</em> is treated as fixed, known background.</p>
+  \[
+    \underbrace{p}_{\text{a distribution}}(\,\underbrace{y}_{\text{asked about}} \mid \underbrace{x}_{\text{held fixed}}\,)
+  \]
+  <p>Example: for a language model, \(p(y \mid x)\) is how likely response \(y\) is once the prompt \(x\) is already fixed. The same bar appears inside expectations and divergences to signal conditioning.</p>
+
+  <h2 id="dist">4. Distributions and the \(\;\cdot\;\) placeholder</h2>
+  <p>A <em>probability distribution</em> assigns a probability to every possible outcome. Two notational habits matter:</p>
+
+  <h3>Named distributions (often calligraphic)</h3>
+  <p>A script letter such as \(\mathcal{D}\) names a distribution as a whole — e.g. "the data distribution." You usually don't evaluate \(\mathcal{D}\) at a point; you <em>draw samples</em> from it (§5). Lowercase \(p,\,q\) name distributions you do evaluate, as in \(p(x)\).</p>
+
+  <h3>The dot \(\cdot\) means "the whole distribution"</h3>
+  <ul>
+    <li>\(p(y \mid x)\) — a single <em>number</em>: the probability of one specific \(y\).</li>
+    <li>\(p(\cdot \mid x)\) — the entire <em>distribution</em> over all possible \(y\). The dot is a blank standing for "any value," so this is "the whole probability function, for every \(y\), given \(x\)."</li>
+  </ul>
+  <div class="note">
+    Picture \(p(\cdot \mid x)\) as the full bar chart of probabilities over every outcome, while \(p(y\mid x)\) is the height of one single bar. You need the whole chart whenever you sample from it (§5) or compare it against another chart (§8).
+  </div>
+
+  <h2 id="sample">5. Sampling: the tilde \(\;\sim\;\)</h2>
+  <p>\(x \sim \mathcal{D}\) reads "\(x\) is <strong>drawn from</strong> (distributed according to) \(\mathcal{D}\)." It signals that \(x\) is <em>random</em> and names the distribution governing how often each value appears.</p>
+  <ul>
+    <li>\(x \sim \mathcal{D}\) — pick \(x\) at random from the data distribution.</li>
+    <li>\(y \sim p(\cdot\mid x)\) — having fixed \(x\), draw \(y\) from the conditional distribution (note the dot: you sample from the <em>whole</em> distribution, not a single value).</li>
+  </ul>
+  <p>Whenever you see \(\sim\), ask: "which symbol is the random one, and what's its distribution?" Everything else is, for the moment, held fixed.</p>
+
+  <h2 id="expect">6. Expectation \(\;\mathbb{E}\;\)</h2>
+  <p>\(\mathbb{E}\) (blackboard-bold "E") is the <strong>expected value</strong> — a probability-weighted average. The subscript says <em>what is random</em>; the brackets hold the quantity being averaged.</p>
+  \[
+    \mathbb{E}_{x\sim p}\big[\, f(x) \,\big]
+      \;=\; \sum_{x} \underbrace{p(x)}_{\text{how likely } x \text{ is}} \cdot \underbrace{f(x)}_{\text{value at } x}
+      \qquad\Big(\text{or } \int p(x)\,f(x)\,dx \text{ if continuous}\Big)
+  \]
+  <p>In words: run \(f\) on every possible \(x\), weight each result by how probable that \(x\) is, and add them up. Likely values count more; rare values count less.</p>
+
+  <div class="step">
+    <div class="step-label">Concrete example</div>
+    <p>A fair die, \(f(x)=x\) (the face value). Each face has probability \(1/6\):</p>
+    \[
+      \mathbb{E}[x] = \tfrac16(1) + \tfrac16(2) + \cdots + \tfrac16(6) = 3.5
+    \]
+    <p>The "expected" value 3.5 is the long-run average — even though you can never roll a 3.5. Expectation is an average, not a prediction of any single outcome.</p>
+  </div>
+
+  <p>Subscripts can stack to express several sources of randomness, evaluated as a nested process — draw the first variable, then the next, then average:</p>
+  \[
+    \mathbb{E}_{x\sim\mathcal{D},\; y\sim p(\cdot\mid x)}\big[\, f(x,y) \,\big]
+  \]
+  <div class="note">
+    A subscript is often dropped when "obvious from context," e.g. \(\mathbb{E}[f(x)]\). When in doubt, restore it — naming the distribution removes most ambiguity in a derivation.
+  </div>
+
+  <h2 id="optim">7. Optimization: \(\;\max,\; \min,\; \arg\max\;\)</h2>
+  <p>\(\max_{z}\, g(z)\) is "the largest value \(g\) takes as \(z\) varies"; \(\min_z\) is the smallest. The subscript names <em>what you're allowed to change</em>.</p>
+  <ul>
+    <li>\(\max_z g(z)\) / \(\min_z g(z)\) — return the best <em>value</em> of \(g\).</li>
+    <li>\(\arg\max_z g(z)\) / \(\arg\min_z g(z)\) — return the <em>\(z\) that achieves</em> it (the winner, not the score).</li>
+  </ul>
+  <p>The variable need not be a number. If \(\pi\) is a whole function (e.g. a policy or distribution), \(\max_\pi\) searches over the entire <em>space of functions</em> for the best one.</p>
+  <div class="note">
+    In practice the optimized object is a neural network with parameters \(\theta\), so "vary \(\pi\)" really means "adjust \(\theta\) by gradient steps." The notation states the <em>goal</em>; training is how we approximately reach it.
+  </div>
+
+  <h2 id="kl">8. Comparing distributions: KL divergence \(\;\mathrm{KL}(p \,\|\, q)\;\)</h2>
+  <p>The double bar \(\|\) separates two distributions being compared. \(\mathrm{KL}(p \,\|\, q)\) measures <strong>how different \(p\) is from \(q\)</strong> — a kind of asymmetric "distance."</p>
+  \[
+    \mathrm{KL}(p \,\|\, q) \;=\; \mathbb{E}_{x\sim p}\!\left[\log \frac{p(x)}{q(x)}\right] \;=\; \sum_x p(x)\,\log\frac{p(x)}{q(x)}
+  \]
+  <p>Properties worth memorizing:</p>
+  <ul>
+    <li>\(\mathrm{KL}(p\,\|\,q) \ge 0\) always, and \(= 0\) <em>exactly</em> when \(p\) and \(q\) are identical.</li>
+    <li>It is <em>asymmetric</em>: \(\mathrm{KL}(p\,\|\,q) \neq \mathrm{KL}(q\,\|\,p)\) in general — order matters.</li>
+    <li>It is itself an expectation (§6) of a log-ratio, so it combines several pieces from this page at once.</li>
+  </ul>
+  <div class="note">
+    KL is the standard way to penalize a trained model for straying from a reference, and it underlies cross entropy: minimizing cross entropy between predictions and labels is equivalent to minimizing a KL divergence.
+  </div>
+
+  <h3>Forward vs. reverse KL</h3>
+  <p>Because KL is asymmetric, swapping the arguments gives a genuinely different quantity. When fitting a model \(q_\theta\) to a target \(p\), the two orderings have names and distinct behaviors:</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th></th><th>Forward KL</th><th>Reverse KL</th></tr>
+      <tr><td>Written</td><td>\(\mathrm{KL}(p \,\|\, q_\theta)\)</td><td>\(\mathrm{KL}(q_\theta \,\|\, p)\)</td></tr>
+      <tr><td>Expectation under</td><td>the target \(p\)</td><td>the model \(q_\theta\)</td></tr>
+      <tr><td>Behavior</td><td><em>Mass-covering</em> — \(q\) spreads to cover every mode of \(p\)</td><td><em>Mode-seeking</em> — \(q\) locks onto one mode and ignores the rest</td></tr>
+      <tr><td>Penalizes</td><td>\(q\!\approx\!0\) where \(p\!>\!0\) (missing mass)</td><td>\(q\!>\!0\) where \(p\!\approx\!0\) (spurious mass)</td></tr>
+    </table>
+  </div>
+  <p>The intuition is in <em>which distribution weights the log-ratio</em>. Forward KL averages \(\log\tfrac{p}{q}\) over \(p\), so wherever \(p\) has mass but \(q\) doesn't, the ratio blows up — \(q\) is forced to cover all of \(p\). Reverse KL averages \(\log\tfrac{q}{p}\) over \(q\), so \(q\) is only penalized where <em>it</em> puts mass; it can safely ignore parts of \(p\) by placing no mass there, concentrating on a single high-probability region.</p>
+  <div class="note">
+    Maximum-likelihood / cross-entropy training minimizes the <strong>forward</strong> KL (hence mass-covering, why language models can be over-broad). Variational inference and the RL KL penalties on the <a href="../rl/rlhf.html" style="color:var(--note-fg);">RLHF</a> / <a href="../rl/grpo.html" style="color:var(--note-fg);">GRPO</a> pages use the <strong>reverse</strong> KL \(\mathrm{KL}(\pi_\theta\,\|\,\pi_{\text{ref}})\) — the model's own samples weight the penalty.
+  </div>
+
+  <h2 id="misc">9. A few more symbols you'll meet</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symbol</th><th>Reads as</th><th>Note</th></tr>
+      <tr><td>\(\propto\)</td><td>"is proportional to"</td><td>Equal up to a constant factor (often a normalizer)</td></tr>
+      <tr><td>\(\triangleq\) or \(:=\)</td><td>"is defined as"</td><td>Introduces a definition, not a derived equality</td></tr>
+      <tr><td>\(\in\)</td><td>"is an element of"</td><td>\(x \in \mathbb{R}^n\): \(x\) lives in that set</td></tr>
+      <tr><td>\(\nabla_\theta f\)</td><td>"gradient of \(f\) w.r.t. \(\theta\)"</td><td>Vector of partial derivatives; points uphill</td></tr>
+      <tr><td>\(\|\mathbf{x}\|\)</td><td>"the norm (length) of \(\mathbf{x}\)"</td><td>\(\|\mathbf{x}\|_2 = \sqrt{\sum_i x_i^2}\)</td></tr>
+      <tr><td>\(\mathbf{1}[\,\cdot\,]\)</td><td>"1 if true, else 0"</td><td>Indicator function; turns a condition into a number</td></tr>
+      <tr><td>\(\odot\)</td><td>"elementwise product"</td><td>Multiply matching entries (Hadamard product)</td></tr>
+      <tr><td>\(\hat{x}\)</td><td>"estimate / predicted \(x\)"</td><td>A hat usually marks a model's guess of a true quantity</td></tr>
+      <tr><td>\(x^*\)</td><td>"the optimal \(x\)"</td><td>A star marks the best / solution value, e.g. \(\pi^*\) is the optimal policy</td></tr>
+      <tr><td>\(a \succ b\)</td><td>"\(a\) is preferred over \(b\)"</td><td>Preference ordering; \(y_w \succ y_l\) means the winner beats the loser</td></tr>
+    </table>
+  </div>
+
+  <h2 id="example">10. Worked example: the RLHF objective</h2>
+  <p>Here is a real, dense objective — the KL-constrained RLHF objective from the <a href="../rl/dpo-loss.html" style="color:var(--accent);">DPO page</a>. Nothing in it is new; it is just the pieces above stacked together.</p>
+  \[
+    \underbrace{\max_{\pi}}_{\text{§7}}\;
+    \underbrace{\mathbb{E}_{x\sim\mathcal{D},\, y\sim\pi(\cdot\mid x)}}_{\text{§4,5,6}}
+    \big[\,\underbrace{r(x,y)}_{\text{§1}}\,\big]
+      \;-\; \underbrace{\beta}_{\text{§1}}\,
+      \underbrace{\mathrm{KL}\!\big(\pi(\cdot\mid x)\,\|\,\pi_{\text{ref}}(\cdot\mid x)\big)}_{\text{§3,8}}
+  \]
+
+  <p>Translate left to right:</p>
+  <ul>
+    <li>\(\max_\pi\) — <em>choose the policy \(\pi\)</em> that makes the rest as large as possible (§7).</li>
+    <li>\(\mathbb{E}_{x\sim\mathcal{D},\,y\sim\pi(\cdot\mid x)}[\,r(x,y)\,]\) — the policy's <em>average reward</em>: draw a prompt \(x\) from the data, draw a response \(y\) from the policy given \(x\), score it with \(r\), and average (§4–6).</li>
+    <li>\(-\,\beta\,\mathrm{KL}(\pi(\cdot\mid x)\,\|\,\pi_{\text{ref}}(\cdot\mid x))\) — <em>minus a penalty</em> for how far the policy's distribution has drifted from the reference model's, scaled by the knob \(\beta\) (§1, 3, 8).</li>
+  </ul>
+
+  <div class="read">
+    <div class="read-label">In plain English</div>
+    <p>"Find the policy \(\pi\) that makes its <strong>average reward as large as possible</strong> — over prompts from the data and responses the policy generates — <strong>while not drifting too far</strong> from the reference model, with \(\beta\) controlling how strongly that drift is penalized."</p>
+  </div>
+
+  <p>Two competing forces, traded off by \(\beta\): the expectation term <em>pulls</em> toward high-reward behavior; the KL term <em>tethers</em> the policy to the reference so it stays well-behaved. Read this way, the equation is a sentence — which is the whole point of learning the notation.</p>
+
+  <h2>Cheat sheet</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">\(f(x)\), \(\mathbf{x}\in\mathbb{R}^n\)</div>
+      <p>Function applied to \(x\); \(\mathbf{x}\) is an \(n\)-vector</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">\(\sum\), \(\prod\)</div>
+      <p>Add up / multiply over an index range</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">\(p(y\mid x)\)</div>
+      <p>Probability of \(y\) <em>given</em> \(x\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">\(p(\cdot \mid x)\)</div>
+      <p>The whole distribution, not one value</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">\(x \sim p\)</div>
+      <p>\(x\) is randomly drawn from \(p\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">\(\mathbb{E}_{x\sim p}\bigl[f\bigr]\)</div>
+      <p>Probability-weighted average of \(f\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">\(\max,\,\arg\max\)</div>
+      <p>Best value vs. the winner that achieves it</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">\(\mathrm{KL}(p\,\|\,q)\)</div>
+      <p>How far \(p\) is from \(q\); \(\ge 0\), asymmetric</p>
+    </div>
+  </div>
+
+  <div class="table-wrap" style="margin-top: 2em;">
+    <table>
+      <tr><th>When you see…</th><th>Ask yourself</th></tr>
+      <tr><td>A bold/uppercase letter or \(\mathbb{R}^n\)</td><td>Scalar, vector, or matrix — what shape?</td></tr>
+      <tr><td>A subscript on \(\sum\), \(\prod\), or \(\mathbb{E}\)</td><td>What's the index / what is random — and over what range?</td></tr>
+      <tr><td>A vertical bar \(\mid\)</td><td>What's asked about (left) vs. held fixed (right)?</td></tr>
+      <tr><td>A dot \(\cdot\) in an argument slot</td><td>Whole distribution, or single value?</td></tr>
+      <tr><td>A tilde \(\sim\)</td><td>Which symbol is the random draw, from what?</td></tr>
+      <tr><td>\(\max\) / \(\arg\max\) with a subscript</td><td>What can I vary — and do I want the score or the winner?</td></tr>
+      <tr><td>A double bar \(\|\)</td><td>Two distributions compared; order matters.</td></tr>
+    </table>
+  </div>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; A practical reference for reading ML math notation
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Backpropagation — The Vector–Jacobian Product</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #4f46e5;
+      --accent-light: #eef2ff;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --nav-bg: rgba(255,255,255,0.92);
+      --note-fg: #1e40af;
+      --result-fg: #16a34a;
+      --indigo-border: #c7d2fe;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #818cf8;
+        --accent-light: #151830;
+        --warning-bg: #101a2b;
+        --warning-border: #1e40af;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --nav-bg: rgba(15,17,21,0.9);
+        --note-fg: #93c5fd;
+        --result-fg: #4ade80;
+        --indigo-border: #3730a3;
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #1e1b4b 0%, #4338ca 60%, #6366f1 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.85;
+      font-size: 0.97rem;
+      max-width: 600px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+    .hero em { color: #fff; font-style: italic; }
+    code {
+      font-family: 'SF Mono', SFMono-Regular, ui-monospace, Menlo, monospace;
+      font-size: 0.88em;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+    }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+
+    /* ── Step boxes ──────────────────────────── */
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    /* ── Callout / note ──────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+    .note::before { content: '💡 '; }
+
+    /* ── Result / boxed equation ─────────────── */
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Summary card ────────────────────────── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .summary-card {
+      background: var(--accent-light);
+      border: 1px solid var(--indigo-border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .summary-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    /* ── Footer ──────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    /* ── Responsive ──────────────────────────── */
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Backpropagation</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#notation">Notation</a>
+    <a href="#jacobian">Jacobian</a>
+    <a href="#chain">Chain rule</a>
+    <a href="#vjp">VJP</a>
+    <a href="#why-reverse">Why reverse</a>
+    <a href="#rules">Op rules</a>
+    <a href="#example">Worked example</a>
+    <a href="#engine">The engine</a>
+    <a href="#summary">Summary</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Foundations</span>
+  <h1>Backpropagation</h1>
+  <p>The one mechanism behind every gradient note on this site: the chain rule on a computational graph, run as a backward sweep of <em>vector–Jacobian products</em>. Why a scalar loss makes reverse mode the right choice, and why a framework never builds a Jacobian.</p>
+</div>
+
+<div class="page-wrap">
+
+  <p>Every other derivation in the Math section — <a href="cross-entropy.html" style="color:var(--accent);">cross entropy</a>, the <a href="layernorm-gradient.html" style="color:var(--accent);">norm</a> <a href="rmsnorm-gradient.html" style="color:var(--accent);">gradients</a>, <a href="swiglu.html" style="color:var(--accent);">SwiGLU</a>, <a href="rope-gradient.html" style="color:var(--accent);">RoPE</a> — works out a single op's backward pass. This page is the trunk those leaves hang off: what they are all <em>instances of</em>. The claim is that a whole network's backward pass is nothing but the chain rule, associated in one particular direction, and that this direction is forced by one fact — the loss is a scalar.</p>
+
+  <h2 id="notation">Notation</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symbol</th><th>Description</th></tr>
+      <tr><td>\(f:\mathbb{R}^n \!\to\! \mathbb{R}^m\)</td><td>One node (op) in the graph: takes an input vector, produces an output vector</td></tr>
+      <tr><td>\(\mathbf{x}\in\mathbb{R}^n,\ \mathbf{y}\in\mathbb{R}^m\)</td><td>Input and output of a node, \(\mathbf{y}=f(\mathbf{x})\)</td></tr>
+      <tr><td>\(J = \partial\mathbf{y}/\partial\mathbf{x} \in \mathbb{R}^{m\times n}\)</td><td>The node's <strong>Jacobian</strong>: \(J_{ij} = \partial y_i/\partial x_j\)</td></tr>
+      <tr><td>\(L \in \mathbb{R}\)</td><td>The final scalar loss</td></tr>
+      <tr><td>\(\bar{\mathbf{y}} = \partial L/\partial\mathbf{y}\)</td><td>The <strong>upstream gradient</strong> arriving at a node's output (same shape as \(\mathbf{y}\))</td></tr>
+      <tr><td>\(\bar{\mathbf{x}} = \partial L/\partial\mathbf{x}\)</td><td>The <strong>downstream gradient</strong> the node must produce (same shape as \(\mathbf{x}\))</td></tr>
+    </table>
+  </div>
+  <p>The bar notation \(\bar{\mathbf{v}} \equiv \partial L/\partial\mathbf{v}\) is the <em>adjoint</em> of \(\mathbf{v}\): for every quantity in the forward pass there is a same-shaped gradient in the backward pass. A node's whole job in backprop is to turn \(\bar{\mathbf{y}}\) into \(\bar{\mathbf{x}}\).</p>
+
+  <h2 id="jacobian">1. The Jacobian</h2>
+  <p>A function \(f:\mathbb{R}^n\to\mathbb{R}^m\) has, at each input point, a best linear approximation. The matrix of that linear map is the Jacobian — every output's partial with respect to every input:</p>
+  \[
+    J = \frac{\partial\mathbf{y}}{\partial\mathbf{x}}
+      = \begin{bmatrix}
+          \dfrac{\partial y_1}{\partial x_1} & \cdots & \dfrac{\partial y_1}{\partial x_n} \\[8pt]
+          \vdots & \ddots & \vdots \\[6pt]
+          \dfrac{\partial y_m}{\partial x_1} & \cdots & \dfrac{\partial y_m}{\partial x_n}
+        \end{bmatrix} \in \mathbb{R}^{m\times n}
+  \]
+  <div class="note">
+    Shape convention. This is <em>numerator layout</em>: outputs index the rows, inputs the columns, so \(J\) is \(m\times n\) (output-dim by input-dim). It is the convention that makes the chain rule a plain matrix product, \(J_{\text{outer}}J_{\text{inner}}\), with no transposes — which is why this page uses it. Some texts use the transposed <em>denominator layout</em>; the math is identical, the indices just flip.
+  </div>
+  <p>Three Jacobians you already meet elsewhere on the site, to make it concrete:</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Op</th><th>Forward</th><th>Jacobian \(\partial\mathbf{y}/\partial\mathbf{x}\)</th></tr>
+      <tr><td>Linear</td><td>\(\mathbf{y}=W\mathbf{x}\)</td><td>\(W\) — a dense \(m\times n\) matrix</td></tr>
+      <tr><td>Elementwise</td><td>\(y_i=\phi(x_i)\)</td><td>\(\operatorname{diag}\!\big(\phi'(x_1),\dots,\phi'(x_n)\big)\) — diagonal</td></tr>
+      <tr><td><a href="cross-entropy.html" style="color:var(--accent);">Softmax</a></td><td>\(p_i = e^{z_i}/\textstyle\sum_j e^{z_j}\)</td><td>\(\operatorname{diag}(\mathbf{p}) - \mathbf{p}\mathbf{p}^\top\), i.e. \(p_i(\delta_{ij}-p_j)\) — dense</td></tr>
+    </table>
+  </div>
+  <p>Notice the sizes. A modest transformer feed-forward layer might map \(\mathbb{R}^{4096}\to\mathbb{R}^{16384}\); its Jacobian has \(16384\times4096 \approx 6.7\times10^{7}\) entries — for <em>one</em> token, at <em>one</em> layer. Materializing these matrices is a non-starter. The entire trick of backprop is to get the gradients we need <em>without ever forming \(J\)</em>. Hold that thought.</p>
+
+  <h2 id="chain">2. The chain rule on a computational graph</h2>
+  <p>A neural network is a composition of ops — a directed acyclic graph. Take the simplest shape, a straight chain of \(L\) layers feeding a scalar loss:</p>
+  \[
+    \mathbf{x}_0 \xrightarrow{f_1} \mathbf{x}_1 \xrightarrow{f_2} \mathbf{x}_2 \;\cdots\; \xrightarrow{f_L} \mathbf{x}_L \xrightarrow{\ \ell\ } L
+  \]
+  <p>The multivariate chain rule says the Jacobian of the composition is the <strong>product</strong> of the per-op Jacobians, outer-to-inner:</p>
+  \[
+    \frac{\partial L}{\partial \mathbf{x}_0}
+      = \underbrace{\frac{\partial L}{\partial \mathbf{x}_L}}_{1\times d_L}
+        \underbrace{\frac{\partial \mathbf{x}_L}{\partial \mathbf{x}_{L-1}}}_{d_L\times d_{L-1}}
+        \cdots
+        \underbrace{\frac{\partial \mathbf{x}_1}{\partial \mathbf{x}_0}}_{d_1\times d_0}
+      \;=\; \bar{\mathbf{x}}_L^\top\, J_L\, J_{L-1}\cdots J_1
+  \]
+  <p>That is the whole content of backprop in one line. Everything that follows is about <em>how to evaluate this product</em> — because the order in which you multiply it, even though the answer is the same, changes the cost by orders of magnitude.</p>
+  <div class="note">
+    The loss node contributes the first factor \(\bar{\mathbf{x}}_L^\top = \partial L/\partial\mathbf{x}_L\), a <em>row</em> vector (\(1\times d_L\)). It is the seed of the backward pass. For the cross-entropy loss that seed is the famously clean \(\mathbf{p}-\mathbf{y}\) — derived in full on the <a href="cross-entropy.html" style="color:var(--accent);">cross entropy</a> page.
+  </div>
+
+  <h2 id="vjp">3. Reverse mode = vector–Jacobian products</h2>
+  <p>Matrix multiplication is associative, so we may bracket the product \(\bar{\mathbf{x}}_L^\top J_L J_{L-1}\cdots J_1\) however we like. Reverse-mode autodiff brackets it <strong>right-to-left, starting from the loss</strong>:</p>
+  \[
+    \Big(\big(\,(\bar{\mathbf{x}}_L^\top\, J_L)\, J_{L-1}\big)\cdots\Big) J_1
+  \]
+  <p>Look at the first operation, \(\bar{\mathbf{x}}_L^\top J_L\). It is a <em>row vector times a matrix</em>, which yields another row vector — the gradient at the previous layer, \(\bar{\mathbf{x}}_{L-1}^\top\). Then \(\bar{\mathbf{x}}_{L-1}^\top J_{L-1}\) gives \(\bar{\mathbf{x}}_{L-2}^\top\), and so on. At every step we carry a single vector backward and hit it against the next Jacobian:</p>
+
+  <div class="result">
+    <div class="result-label">The backward rule for every node</div>
+    \[
+      \bar{\mathbf{x}}^\top = \bar{\mathbf{y}}^\top\, J
+      \qquad\Longleftrightarrow\qquad
+      \bar{\mathbf{x}} = J^\top\, \bar{\mathbf{y}}
+    \]
+  </div>
+
+  <p>This operation — a vector times a Jacobian — is the <strong>vector–Jacobian product</strong> (VJP). It is the atom of reverse-mode autodiff. The backward pass is just: seed \(\bar{\mathbf{x}}_L\) at the loss, then VJP, VJP, VJP back to the inputs.</p>
+
+  <p>And here is the payoff promised in §1. To compute \(\bar{\mathbf{y}}^\top J\) you do <strong>not</strong> need \(J\) itself — you only need a function that, given \(\bar{\mathbf{y}}\), returns \(\bar{\mathbf{y}}^\top J\). For the three ops above:</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Op</th><th>Jacobian (never built)</th><th>VJP actually computed, \(\bar{\mathbf{x}} = J^\top\bar{\mathbf{y}}\)</th></tr>
+      <tr><td>Linear \(\mathbf{y}=W\mathbf{x}\)</td><td>\(W\) (dense \(m\times n\))</td><td>\(\bar{\mathbf{x}} = W^\top\bar{\mathbf{y}}\) — one matrix–vector product</td></tr>
+      <tr><td>Elementwise \(y_i=\phi(x_i)\)</td><td>\(\operatorname{diag}(\phi'(\mathbf{x}))\)</td><td>\(\bar{\mathbf{x}} = \phi'(\mathbf{x})\odot\bar{\mathbf{y}}\) — one elementwise product</td></tr>
+      <tr><td>Softmax + CE</td><td>\(\operatorname{diag}(\mathbf{p})-\mathbf{p}\mathbf{p}^\top\)</td><td>\(\bar{\mathbf{z}} = \mathbf{p}-\mathbf{y}\) — the matrix collapses to a subtraction</td></tr>
+    </table>
+  </div>
+  <p>Each VJP costs about the same as the forward op and touches no \(m\times n\) intermediate. The softmax row is the sharpest illustration: the dense Jacobian \(\operatorname{diag}(\mathbf{p})-\mathbf{p}\mathbf{p}^\top\) would be \(V\times V\), but the VJP against the cross-entropy seed collapses to \(\mathbf{p}-\mathbf{y}\). When the <a href="cross-entropy.html" style="color:var(--accent);">cross entropy</a> page says "no intermediate Jacobian matrices remain," <em>this is the statement</em> — it is computing a VJP, not a Jacobian.</p>
+
+  <h2 id="why-reverse">4. Why reverse, not forward</h2>
+  <p>The other bracketing — left-to-right, \(J_L(J_{L-1}(\cdots J_1))\) — is also valid. It is <strong>forward mode</strong>, and it propagates a <em>Jacobian–vector</em> product (JVP), \(J\mathbf{v}\), inward from the inputs. So which way should you sweep? Count the cost of one sweep:</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th></th><th>Forward mode (JVP)</th><th>Reverse mode (VJP)</th></tr>
+      <tr><td>Propagates</td><td>\(J\mathbf{v}\) — a column, inputs → outputs</td><td>\(\mathbf{u}^\top J\) — a row, outputs → inputs</td></tr>
+      <tr><td>One sweep yields</td><td>one <em>column</em> of the full Jacobian (∂all-outputs / ∂one-input)</td><td>one <em>row</em> of the full Jacobian (∂one-output / ∂all-inputs)</td></tr>
+      <tr><td>Sweeps for full grad</td><td>\(n_{\text{inputs}}\)</td><td>\(n_{\text{outputs}}\)</td></tr>
+      <tr><td>Memory</td><td>cheap — no need to store activations</td><td>must keep forward activations until used</td></tr>
+    </table>
+  </div>
+  <p>Now plug in the shape of model training. The inputs are <em>all the parameters</em> — \(n_{\text{inputs}}\) in the billions. The output is <em>one scalar loss</em> — \(n_{\text{outputs}} = 1\). Forward mode would need billions of sweeps; reverse mode needs exactly one. A single backward pass hands you \(\partial L/\partial\theta\) for <em>every</em> parameter at once.</p>
+
+  <div class="result">
+    <div class="result-label">The reason backprop is reverse mode</div>
+    \[
+      \text{many parameters in,}\quad \text{one scalar loss out}\;\;\Longrightarrow\;\; n_{\text{outputs}}=1 \ll n_{\text{inputs}}
+    \]
+  </div>
+
+  <p>That \(n_{\text{outputs}}=1\) is also why the backward pass costs only a small constant times the forward pass rather than scaling with parameter count — the basis for the <strong>2× forward ≈ backward</strong> heuristic behind the <a href="../systems/mfu.html" style="color:var(--accent);">6N FLOPs-per-token</a> rule (one multiply–add forward, roughly two back: one for \(\bar{\mathbf{x}}\), one for \(\bar{W}\)).</p>
+  <div class="note">
+    The cost is paid in memory. Reverse mode must remember the forward activations \(\mathbf{x}\) at each node, because the VJP needs them — e.g. \(\phi'(\mathbf{x})\) for an activation, or \(\mathbf{x}\) itself for the weight gradient \(\bar W = \bar{\mathbf{y}}\mathbf{x}^\top\). Storing every activation is what makes training memory-hungry, and trading some of it back (recompute the forward instead of storing it) is exactly <em>activation checkpointing</em>.
+  </div>
+
+  <h2 id="rules">5. The per-op VJP rules</h2>
+  <p>Reverse mode reduces the whole library of layers to a list of local VJPs. Each row below is one op's backward rule — and each is derived in full, with the activations and weight gradients spelled out, on its own page. Read this table as the index to the rest of the Math section.</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Node</th><th>Forward</th><th>VJP \(\;\bar{\mathbf{x}} = J^\top\bar{\mathbf{y}}\)</th><th>Derived in</th></tr>
+      <tr><td>Linear</td><td>\(\mathbf{y}=\mathbf{x}W\)</td><td>\(\bar{\mathbf{x}} = \bar{\mathbf{y}}W^\top,\quad \bar W = \mathbf{x}^\top\bar{\mathbf{y}}\)</td><td><a href="swiglu.html" style="color:var(--accent);">SwiGLU</a></td></tr>
+      <tr><td>Elementwise act.</td><td>\(\mathbf{y}=\phi(\mathbf{x})\)</td><td>\(\bar{\mathbf{x}} = \phi'(\mathbf{x})\odot\bar{\mathbf{y}}\)</td><td><a href="swiglu.html" style="color:var(--accent);">SwiGLU</a> (Swish)</td></tr>
+      <tr><td>Softmax + CE</td><td>\(L=-\log p_k\)</td><td>\(\bar{\mathbf{z}} = \mathbf{p}-\mathbf{y}\)</td><td><a href="cross-entropy.html" style="color:var(--accent);">Cross entropy</a></td></tr>
+      <tr><td>Orthogonal map</td><td>\(\mathbf{y}=R\mathbf{x}\)</td><td>\(\bar{\mathbf{x}} = R^\top\bar{\mathbf{y}}\) (here a back-rotation)</td><td><a href="rope-gradient.html" style="color:var(--accent);">RoPE</a></td></tr>
+      <tr><td>Reduction (mean/var)</td><td>normalize over a dim</td><td>multi-term \(\bar{\mathbf{x}}\) — the reduction couples every input</td><td><a href="layernorm-gradient.html" style="color:var(--accent);">LayerNorm</a> · <a href="rmsnorm-gradient.html" style="color:var(--accent);">RMSNorm</a> · <a href="batchnorm-gradient.html" style="color:var(--accent);">BatchNorm</a></td></tr>
+    </table>
+  </div>
+  <p>Two structural rules cover how gradients move through the <em>wiring</em> of the graph, independent of any particular op:</p>
+  <ul>
+    <li><strong>Fan-out → sum.</strong> If a value \(\mathbf{x}\) is fed to several nodes (e.g. a residual stream read by both the attention and the MLP branch), its adjoint is the <em>sum</em> of the gradients coming back from each consumer: \(\bar{\mathbf{x}} = \sum_k \bar{\mathbf{x}}^{(k)}\). A used-twice forward becomes an added-twice backward.</li>
+    <li><strong>Add → copy.</strong> An addition node \(\mathbf{z}=\mathbf{a}+\mathbf{b}\) sends the same upstream gradient to both inputs unchanged: \(\bar{\mathbf{a}}=\bar{\mathbf{b}}=\bar{\mathbf{z}}\). This is why a residual connection \(\mathbf{y}=\mathbf{x}+f(\mathbf{x})\) lets gradient flow straight through — the \(+\mathbf{x}\) branch copies \(\bar{\mathbf{y}}\) past the block undiminished.</li>
+  </ul>
+
+  <h2 id="example">6. A worked micro-example</h2>
+  <p>Take a two-step scalar chain so the whole backward sweep fits in a few lines. Let</p>
+  \[
+    a = wx, \qquad h = \operatorname{relu}(a), \qquad L = \tfrac12(h-t)^2
+  \]
+  <p>with input \(x\), weight \(w\), target \(t\). <strong>Forward</strong> (take \(w=2,\,x=3,\,t=5\)): \(a=6\), \(h=6\), \(L=\tfrac12(1)^2=0.5\). Now sweep backward, one VJP per node, seeding at the loss:</p>
+  <div class="step">
+    <div class="step-label">Backward sweep</div>
+    \[
+      \begin{aligned}
+        \bar h &= \frac{\partial L}{\partial h} = (h-t) = 1 \\[4pt]
+        \bar a &= \bar h \cdot \operatorname{relu}'(a) = 1 \cdot \mathbf{1}[a>0] = 1 &&\text{(elementwise VJP)}\\[4pt]
+        \bar w &= \bar a \cdot \frac{\partial a}{\partial w} = \bar a \cdot x = 1\cdot 3 = 3 &&\text{(linear, weight grad)}\\[4pt]
+        \bar x &= \bar a \cdot \frac{\partial a}{\partial x} = \bar a \cdot w = 1\cdot 2 = 2 &&\text{(linear, input grad)}
+      \end{aligned}
+    \]
+  </div>
+  <p>Each line is exactly the rule \(\bar{\text{in}} = \bar{\text{out}}\cdot J_{\text{node}}\), and the carried scalar \(\bar a\) is the VJP being passed down the chain. The optimizer then consumes \(\bar w = 3\): a step of plain SGD does \(w \leftarrow w - \eta\,\bar w\). Where that update goes from here — momentum, Adam's moments, weight decay — is the <a href="optimizers.html" style="color:var(--accent);">optimizers</a> page; backprop's job ends the moment \(\bar w\) exists.</p>
+
+  <h2 id="engine">7. How a framework runs this</h2>
+  <p>The mechanism above is what an autodiff engine automates. During the forward pass, each op does two things: compute its output, and record onto a <em>tape</em> a closure for its VJP — capturing whatever forward values that VJP will need (the \(\mathbf{x}\), the \(\mathbf{p}\), the mask). The graph is built as a side effect of running the forward.</p>
+  <p>Then <code>loss.backward()</code> does three things:</p>
+  <ol>
+    <li>Seed the adjoint of the loss node, \(\bar L = 1\).</li>
+    <li>Walk the tape in reverse topological order, calling each recorded VJP to turn the output adjoint into input adjoints.</li>
+    <li><strong>Accumulate</strong> into each leaf's <code>.grad</code> — the fan-out-sums rule means a parameter used in several places receives <code>+=</code> from each, which is why you must <code>zero_grad()</code> between steps.</li>
+  </ol>
+  <div class="note">
+    This is where backprop meets systems. The tape's captured activations are the dominant training-memory cost, and <em>activation checkpointing</em> drops most of them, re-running a forward segment during the backward pass to regenerate the inputs a VJP needs — spending compute to buy memory. The recompute is the same forward you just saw; it is purely a storage trade, and it is the lever that decides MFU-vs-HFU on the <a href="../systems/mfu.html" style="color:var(--accent);">MFU</a> page.
+  </div>
+
+  <h2 id="summary">8. Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">Jacobian</div>
+      <p>\(J_{ij}=\partial y_i/\partial x_j\), shape \(m\times n\) — never materialized</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Backprop in one line</div>
+      <p>\(\partial L/\partial\mathbf{x}_0 = \bar{\mathbf{x}}_L^\top J_L\cdots J_1\), bracketed right-to-left</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">The atom (VJP)</div>
+      <p>\(\bar{\mathbf{x}} = J^\top\bar{\mathbf{y}}\) — vector in, vector out, per node</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Why reverse</div>
+      <p>scalar loss ⇒ \(n_\text{out}=1\); one sweep does all params</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Wiring rules</div>
+      <p>fan-out sums; an add copies the gradient</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">The cost</div>
+      <p>backward ≈ 2× forward; paid in stored activations</p>
+    </div>
+  </div>
+
+  <div class="table-wrap" style="margin-top: 2em;">
+    <table>
+      <tr><th>Concept</th><th>Statement</th></tr>
+      <tr><td>Jacobian</td><td>\(J = \partial\mathbf{y}/\partial\mathbf{x}\in\mathbb{R}^{m\times n}\), numerator layout</td></tr>
+      <tr><td>Chain rule</td><td>\(\partial L/\partial\mathbf{x}_0 = \bar{\mathbf{x}}_L^\top J_L J_{L-1}\cdots J_1\)</td></tr>
+      <tr><td>Reverse-mode bracketing</td><td>right-to-left from the loss, carrying one vector</td></tr>
+      <tr><td>VJP (the atom)</td><td>\(\bar{\mathbf{x}}^\top = \bar{\mathbf{y}}^\top J\), i.e. \(\bar{\mathbf{x}}=J^\top\bar{\mathbf{y}}\)</td></tr>
+      <tr><td>Forward vs reverse</td><td>JVP \(J\mathbf{v}\) costs \(\propto n_\text{in}\); VJP \(\mathbf{u}^\top J\) costs \(\propto n_\text{out}\)</td></tr>
+      <tr><td>Why reverse for ML</td><td>\(n_\text{out}=1\) (scalar loss) \(\ll n_\text{in}\) (params)</td></tr>
+      <tr><td>Linear VJP</td><td>\(\bar{\mathbf{x}}=\bar{\mathbf{y}}W^\top,\ \bar W=\mathbf{x}^\top\bar{\mathbf{y}}\)</td></tr>
+      <tr><td>Wiring</td><td>fan-out → sum adjoints; add → copy adjoint</td></tr>
+      <tr><td>Cost</td><td>backward ≈ 2× forward FLOPs; memory ∝ stored activations</td></tr>
+    </table>
+  </div>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; Backpropagation as reverse-mode vector–Jacobian products
+</footer>
+
+</body>
+</html>

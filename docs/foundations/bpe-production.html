@@ -1,0 +1,1218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Production BPE — Efficient Training &amp; Encoding</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #0d9488;
+      --accent-light: #f0fdfa;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --code-bg: #0f172a;
+      --code-text: #e2e8f0;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --nav-bg: rgba(255,255,255,0.92);
+      --note-fg: #1e40af;
+      --result-fg: #16a34a;
+      --teal-border: #99f6e4;
+      --anim-bg-top: #f9fafb;
+      --anim-bg-bottom: #f0fdfa;
+      --fig-bg: #ffffff;
+      --tile-border: #cbd5e1;
+      --btn-fg: #ffffff;
+      --btn-hover: #0f766e;
+      --btn-disabled: #d1d5db;
+      --hl-bg: #fef3c7;
+      --hl-border: #f59e0b;
+      --hl-fg: #92400e;
+      --decr-bg: #fee2e2;
+      --decr-border: #ef4444;
+      --decr-fg: #b91c1c;
+      --new-bg: #dcfce7;
+      --new-border: #16a34a;
+      --new-fg: #166534;
+      --removed-fg: #9ca3af;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #2dd4bf;
+        --accent-light: #10201e;
+        --warning-bg: #101a2b;
+        --warning-border: #1e40af;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --code-bg: #1c2531;
+        --code-text: #e5e7eb;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --nav-bg: rgba(15,17,21,0.9);
+        --note-fg: #93c5fd;
+        --result-fg: #4ade80;
+        --teal-border: #134e4a;
+        --anim-bg-top: #171b21;
+        --anim-bg-bottom: #10201e;
+        --fig-bg: #14181e;
+        --tile-border: #334155;
+        --btn-fg: #0f1115;
+        --btn-hover: #5eead4;
+        --btn-disabled: #374151;
+        --hl-bg: #251c0b;
+        --hl-border: #b45309;
+        --hl-fg: #fcd34d;
+        --decr-bg: #2a1214;
+        --decr-border: #b91c1c;
+        --decr-fg: #fca5a5;
+        --new-bg: #0e2016;
+        --new-border: #15803d;
+        --new-fg: #86efac;
+        --removed-fg: #6b7280;
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #134e4a 0%, #0f766e 60%, #14b8a6 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.88;
+      font-size: 0.97rem;
+      max-width: 580px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+    code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+    }
+
+    /* ── Code block ──────────────────────────── */
+    pre {
+      background: var(--code-bg);
+      color: var(--code-text);
+      border-radius: 8px;
+      padding: 16px 20px;
+      overflow-x: auto;
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-size: 0.86rem;
+      line-height: 1.6;
+      margin: 1.2em 0;
+    }
+    pre code {
+      background: transparent;
+      border: none;
+      padding: 0;
+      font-size: inherit;
+      color: inherit;
+    }
+    .kw { color: #f472b6; }
+    .cm { color: #94a3b8; font-style: italic; }
+    .st { color: #a7f3d0; }
+    .fn { color: #93c5fd; }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+
+    /* ── Step boxes ──────────────────────────── */
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    /* ── Callout / note ──────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+    .note::before { content: '💡 '; }
+
+    /* ── Result / boxed equation ─────────────── */
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Plain-English read box ──────────────── */
+    .read {
+      background: var(--accent-light);
+      border: 1px solid var(--teal-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      margin: 1.2em 0;
+    }
+    .read-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+    .read p { margin: 0.3em 0; }
+
+    /* ── Summary card ────────────────────────── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .summary-card {
+      background: var(--accent-light);
+      border: 1px solid var(--teal-border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .summary-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    /* ── Footer ──────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    /* ── Animation widgets ───────────────────── */
+    .anim-widget {
+      background: linear-gradient(180deg, var(--anim-bg-top) 0%, var(--anim-bg-bottom) 100%);
+      border: 1px solid var(--teal-border);
+      border-radius: 12px;
+      padding: 20px 22px 18px;
+      margin: 1.6em 0;
+    }
+    .anim-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .anim-title {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .anim-hint {
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+    .anim-stage {
+      background: var(--fig-bg);
+      border-radius: 8px;
+      padding: 38px 16px 22px;
+      margin-bottom: 14px;
+      overflow-x: auto;
+    }
+    .anim-controls {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .anim-btn {
+      background: var(--accent);
+      color: var(--btn-fg);
+      border: none;
+      border-radius: 6px;
+      padding: 7px 16px;
+      font-family: inherit;
+      font-size: 0.85rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+    }
+    .anim-btn:hover:not(:disabled) { background: var(--btn-hover); }
+    .anim-btn:active:not(:disabled) { transform: scale(0.97); }
+    .anim-btn:disabled { background: var(--btn-disabled); cursor: not-allowed; opacity: 0.7; }
+    .anim-btn-ghost {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--border);
+    }
+    .anim-btn-ghost:hover:not(:disabled) { background: var(--surface); color: var(--text); }
+    .anim-step-label {
+      font-size: 0.83rem;
+      color: var(--muted);
+      margin-left: auto;
+      font-style: italic;
+      text-align: right;
+      flex: 1;
+      min-width: 0;
+    }
+
+    /* Tiles + pair-count badges */
+    .tile-row {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 38px;
+      position: relative;
+    }
+    .tile {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--fig-bg);
+      border: 1.5px solid var(--tile-border);
+      border-radius: 6px;
+      min-width: 36px;
+      height: 36px;
+      padding: 0 10px;
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-size: 0.95rem;
+      font-weight: 500;
+      color: var(--text);
+      transition: background 0.4s, border-color 0.4s, color 0.4s, box-shadow 0.4s, transform 0.4s;
+      margin: 0 2px;
+    }
+    .tile.target {
+      border-color: var(--hl-border);
+      background: var(--hl-bg);
+      color: var(--hl-fg);
+      box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.18);
+    }
+    .tile.merged {
+      background: var(--accent-light);
+      border-color: var(--accent);
+      color: var(--accent);
+      font-weight: 600;
+      box-shadow: 0 2px 8px rgba(13, 148, 136, 0.18);
+    }
+    .tile.just-merged { animation: tilePop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
+    @keyframes tilePop {
+      0%   { transform: scale(0.2); opacity: 0; }
+      60%  { transform: scale(1.12); }
+      100% { transform: scale(1); opacity: 1; }
+    }
+
+    .gap {
+      position: relative;
+      width: 0;
+      height: 36px;
+      display: inline-block;
+    }
+    .badge {
+      position: absolute;
+      top: -26px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--fig-bg);
+      border: 1px solid var(--border);
+      border-radius: 100px;
+      padding: 2px 8px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: var(--muted);
+      white-space: nowrap;
+      transition: opacity 0.4s, transform 0.4s, background 0.4s, border-color 0.4s, color 0.4s;
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+    }
+    .badge.target { background: var(--hl-bg); border-color: var(--hl-border); color: var(--hl-fg); }
+    .badge.decr { background: var(--decr-bg); border-color: var(--decr-border); color: var(--decr-fg); text-decoration: line-through; }
+    .badge.removed { opacity: 0; transform: translateX(-50%) translateY(-8px) scale(0.7); }
+    .badge.new { background: var(--new-bg); border-color: var(--new-border); color: var(--new-fg); }
+    .badge.hidden { opacity: 0; transform: translateX(-50%) translateY(6px); }
+
+    .delta-float {
+      position: absolute;
+      top: -44px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-size: 0.78rem;
+      font-weight: 700;
+      pointer-events: none;
+      opacity: 0;
+    }
+    .delta-float.up   { color: var(--result-fg); animation: floatUp 1s ease-out forwards; }
+    .delta-float.down { color: var(--decr-fg); animation: floatUp 1s ease-out forwards; }
+    @keyframes floatUp {
+      0%   { opacity: 0; transform: translateX(-50%) translateY(4px); }
+      20%  { opacity: 1; }
+      100% { opacity: 0; transform: translateX(-50%) translateY(-26px); }
+    }
+
+    /* Worked-example layout */
+    .we-layout {
+      display: grid;
+      grid-template-columns: 1.5fr 1fr;
+      gap: 22px;
+      align-items: start;
+    }
+    @media (max-width: 640px) {
+      .we-layout { grid-template-columns: 1fr; }
+    }
+    .we-words { display: flex; flex-direction: column; gap: 8px; }
+    .we-word {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: 1.5px solid transparent;
+      transition: background 0.4s, border-color 0.4s, opacity 0.4s;
+    }
+    .we-word.touched { background: var(--accent-light); border-color: var(--teal-border); }
+    .we-word.skipped { opacity: 0.32; }
+    .we-word-label {
+      font-size: 0.8rem;
+      color: var(--muted);
+      min-width: 56px;
+      font-weight: 500;
+    }
+    .we-word-count {
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-size: 0.78rem;
+      color: var(--accent);
+      font-weight: 600;
+      margin-left: auto;
+    }
+    .we-counts {
+      background: var(--fig-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+    .we-counts-title {
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 8px;
+    }
+    .we-count-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 5px 8px;
+      margin: 0 -8px;
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-size: 0.85rem;
+      border-radius: 4px;
+      transition: background 0.4s, color 0.4s, opacity 0.4s;
+    }
+    .we-count-row.target { background: var(--hl-bg); color: var(--hl-fg); }
+    .we-count-row.changed { background: var(--accent-light); color: var(--accent); font-weight: 600; }
+    .we-count-row.removed { text-decoration: line-through; color: var(--removed-fg); opacity: 0.6; }
+    .we-count-row.new { background: var(--new-bg); color: var(--new-fg); font-weight: 600; }
+    .we-count-pair { color: inherit; }
+    .we-count-val { color: inherit; opacity: 0.7; }
+
+    /* ── Responsive ──────────────────────────── */
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Production BPE</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#what">What BPE outputs</a>
+    <a href="#naive">Naive training</a>
+    <a href="#why-slow">Why it's slow</a>
+    <a href="#production">Production training</a>
+    <a href="#update">Merge-update rule</a>
+    <a href="#example">Worked example</a>
+    <a href="#encoding">Encoding</a>
+    <a href="#practical">Pre-tokenization</a>
+    <a href="#summary">Summary</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Algorithm</span>
+  <h1>Production BPE</h1>
+  <p>The same byte-pair encoding idea every textbook describes — but written the way GPT-2, tiktoken, and HuggingFace's <code style="background:rgba(255,255,255,0.12);border-color:rgba(255,255,255,0.2);color:#fff;">tokenizers</code> actually implement it: incremental pair counts, a reverse index from pairs to words, and a priority-queue encoder.</p>
+</div>
+
+<div class="page-wrap">
+
+  <p>BPE training is conceptually four lines: count adjacent symbol pairs, merge the most frequent one, repeat until the vocabulary is full. A textbook implementation following that recipe literally is hundreds of times too slow to train on a real corpus. This page walks through the optimization that makes BPE production-grade — keeping pair counts <em>incremental</em> so a merge only touches the words it actually changes — and then does the same for inference-time encoding.</p>
+
+  <h2 id="what">1. What BPE produces</h2>
+  <p>A trained BPE tokenizer is two artifacts:</p>
+  <ul>
+    <li><strong>Vocabulary</strong> — a list of token IDs. For byte-level BPE this starts as the 256 single bytes (plus any special tokens) and grows by one each merge.</li>
+    <li><strong>Merge table</strong> — an <em>ordered</em> list of merges \((A, B) \to AB\). Order matters: earlier merges have higher priority at encoding time, because they were the most frequent pairs in the training corpus.</li>
+  </ul>
+  <p>Training learns the merge table. Encoding replays it on new text. We tackle them in that order.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symbol</th><th>Description</th></tr>
+      <tr><td>\(V\)</td><td>Target vocabulary size</td></tr>
+      <tr><td>\(N\)</td><td>Number of distinct words (pre-tokens) in the corpus</td></tr>
+      <tr><td>\(L\)</td><td>Average length of a word in symbols</td></tr>
+      <tr><td>\(c_w\)</td><td>Frequency of word \(w\) in the corpus</td></tr>
+      <tr><td>\(P\)</td><td>Number of distinct adjacent pairs currently in play</td></tr>
+      <tr><td>\((A,B) \to AB\)</td><td>A merge: replace the adjacent pair \(AB\) by a new symbol</td></tr>
+    </table>
+  </div>
+
+  <h2 id="naive">2. The naive training algorithm</h2>
+  <p>Start each word as a sequence of bytes. Aggregate identical words with their counts so a 100-million-token corpus becomes a few million unique <em>(word, count)</em> pairs. Then loop:</p>
+
+  <pre><code><span class="cm"># Naive BPE training</span>
+words = {w: (bytes(w), count) <span class="kw">for</span> w, count <span class="kw">in</span> word_counts.items()}
+vocab = set(initial_bytes)
+merges = []
+
+<span class="kw">while</span> len(vocab) &lt; V:
+    <span class="cm"># (a) recount every adjacent pair across the whole corpus</span>
+    pair_counts = defaultdict(int)
+    <span class="kw">for</span> w, (syms, c) <span class="kw">in</span> words.items():
+        <span class="kw">for</span> a, b <span class="kw">in</span> zip(syms, syms[1:]):
+            pair_counts[(a, b)] += c
+
+    <span class="cm"># (b) pick the most frequent pair</span>
+    (A, B), _ = max(pair_counts.items(), key=<span class="kw">lambda</span> kv: kv[1])
+    AB = A + B
+    vocab.add(AB)
+    merges.append((A, B))
+
+    <span class="cm"># (c) rewrite every word, replacing (A,B) with AB everywhere</span>
+    <span class="kw">for</span> w <span class="kw">in</span> words:
+        syms, c = words[w]
+        words[w] = (replace_pair(syms, A, B, AB), c)
+</code></pre>
+
+  <p>That is the recipe in the original Sennrich et al. paper, written almost verbatim. It is correct. It is also unusable on real corpora.</p>
+
+  <h2 id="why-slow">3. Why naive BPE is too slow</h2>
+  <p>Per merge, step (a) walks every adjacent pair in every word: \(\mathcal{O}(N L)\). Step (c) rewrites every word: another \(\mathcal{O}(N L)\). We do \(V\) of these. The total is:</p>
+  \[
+    T_{\text{naive}} \;=\; \mathcal{O}\!\big(V \cdot N \cdot L\big)
+  \]
+  <p>For a realistic run — \(V = 100{,}000\), \(N \approx 10^6\) unique words, \(L \approx 5\) symbols on average — that is \(5 \times 10^{11}\) pair-touches, hours to days on a single machine. The waste is obvious if you stare at the loop: <strong>every iteration recounts pairs in words the merge never touched</strong>. Most words don't contain \((A,B)\). Their pair counts don't change. We shouldn't be visiting them at all.</p>
+
+  <div class="note">
+    The dominant cost is step (a) — recounting from scratch. Even step (c) can be made fast if we know which words contain the pair we're merging. The whole production algorithm follows from making that "which words" lookup cheap.
+  </div>
+
+  <h2 id="production">4. The production algorithm: incremental counts + reverse index</h2>
+  <p>Two extra data structures, maintained as a side effect of every merge:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Structure</th><th>Type</th><th>What it stores</th></tr>
+      <tr><td><code>pair_counts</code></td><td>dict <code>(s1,s2) → int</code></td><td>Current global count of each adjacent pair, weighted by word frequency.</td></tr>
+      <tr><td><code>pair_to_words</code></td><td>dict <code>(s1,s2) → set[word_id]</code></td><td>Reverse index: which words currently contain this pair at least once.</td></tr>
+    </table>
+  </div>
+
+  <p>Both are built once at startup in a single pass over the corpus. After that they are never rebuilt — they are <em>patched</em> as merges happen. The training loop becomes:</p>
+
+  <pre><code><span class="cm"># Production BPE training (sketch)</span>
+build_pair_counts_and_index(words)   <span class="cm"># one-shot O(N·L)</span>
+
+<span class="kw">while</span> len(vocab) &lt; V:
+    (A, B) = argmax(pair_counts)                 <span class="cm"># or pop from max-heap</span>
+    AB = new_symbol(A, B)
+    vocab.add(AB); merges.append((A, B))
+
+    <span class="kw">for</span> w <span class="kw">in</span> pair_to_words[(A, B)]:        <span class="cm"># ONLY the affected words</span>
+        apply_merge_in_place(w, A, B, AB)        <span class="cm"># patches pair_counts + pair_to_words</span>
+
+    <span class="kw">del</span> pair_counts[(A, B)]
+    <span class="kw">del</span> pair_to_words[(A, B)]
+</code></pre>
+
+  <p>Two things to notice. First, the inner <code>for</code> ranges over <em>only</em> the words that actually contain the merge target — typically a small fraction of \(N\), shrinking further as the vocab grows. Second, <code>apply_merge_in_place</code> doesn't just rewrite the word; it surgically updates <code>pair_counts</code> and <code>pair_to_words</code> so the next iteration's <code>argmax</code> is already correct. There is no separate recount step.</p>
+
+  <p>For <code>argmax(pair_counts)</code> over hundreds of thousands of pairs, a linear scan each iteration is the next bottleneck. Production implementations swap it for a max-heap keyed on pair count, with <em>lazy deletion</em>: when we pop a pair whose stored count doesn't match the current <code>pair_counts</code> value, it's a stale entry — discard and pop the next. Stale entries are cheap; they replace the cost of keeping the heap perfectly synchronized.</p>
+
+  <h2 id="update">5. The merge-update rule</h2>
+  <p>This is the only subtle part of the algorithm. When we merge \((A, B) \to AB\) inside a single word's symbol sequence, the only pair counts that change are the ones <em>touching</em> the merged position. Concretely, for each occurrence of \((A, B)\) at position \(i\) in a word with frequency \(c_w\), name the neighbors:</p>
+
+  \[
+    \ldots,\; \underbrace{X}_{i-1},\; \underbrace{A}_{i},\; \underbrace{B}_{i+1},\; \underbrace{Y}_{i+2},\; \ldots
+    \quad\longrightarrow\quad
+    \ldots,\; X,\; \underbrace{AB}_{i},\; Y,\; \ldots
+  \]
+
+  <div class="anim-widget" id="merge-widget">
+    <div class="anim-header">
+      <span class="anim-title">▸ The seam update, animated</span>
+      <span class="anim-hint">Three pairs go down, two come back.</span>
+    </div>
+    <div class="anim-stage">
+      <div class="tile-row" id="merge-tiles">
+        <span class="tile" data-sym="X">X</span>
+        <span class="gap"><span class="badge" data-pair="XA">(X, A)</span></span>
+        <span class="tile" data-sym="A">A</span>
+        <span class="gap"><span class="badge" data-pair="AB">(A, B)</span></span>
+        <span class="tile" data-sym="B">B</span>
+        <span class="gap"><span class="badge" data-pair="BY">(B, Y)</span></span>
+        <span class="tile" data-sym="Y">Y</span>
+      </div>
+    </div>
+    <div class="anim-controls">
+      <button class="anim-btn" id="merge-play">▶ Play merge (A, B) → AB</button>
+      <button class="anim-btn anim-btn-ghost" id="merge-reset">↻ Reset</button>
+      <span class="anim-step-label" id="merge-status">Press play. Watch only the seams change.</span>
+    </div>
+  </div>
+
+  <p>Three pairs disappear and two new pairs appear, each accounting for \(c_w\) of count:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Old pair</th><th>Count change</th><th>New pair</th><th>Count change</th></tr>
+      <tr><td>\((X, A)\)</td><td>\(-c_w\)</td><td>\((X, AB)\)</td><td>\(+c_w\)</td></tr>
+      <tr><td>\((A, B)\)</td><td>\(-c_w\)</td><td>— (consumed)</td><td>—</td></tr>
+      <tr><td>\((B, Y)\)</td><td>\(-c_w\)</td><td>\((AB, Y)\)</td><td>\(+c_w\)</td></tr>
+    </table>
+  </div>
+
+  <p>That's the whole update. Whenever a pair's count drops, also remove the word from <code>pair_to_words[old_pair]</code> if it no longer contains that pair; whenever a new pair appears in this word, add the word to <code>pair_to_words[new_pair]</code>. Edge cases:</p>
+
+  <ul>
+    <li><strong>Word boundary.</strong> If \(A\) is the first symbol, there is no \(X\): skip the \((X, A) \to (X, AB)\) line. Same for \(B\) at the end.</li>
+    <li><strong>Overlapping occurrences.</strong> In a word like <code>A B A B A B</code>, the pair \((A, B)\) appears three times but they overlap with \((B, A)\) at the seams. Scan left-to-right and after each merge skip past the newly created \(AB\) so you don't try to re-merge inside it.</li>
+    <li><strong>Adjacent merges of the same pair.</strong> A word like <code>A A A</code> being merged on \((A, A)\) becomes <code>AA A</code> (not <code>A AA</code> — left-to-right is the convention) and the <em>second</em> \((A, A)\) is gone, not pending.</li>
+  </ul>
+
+  <div class="result">
+    <div class="result-label">Per-merge cost</div>
+    \[
+      \mathcal{O}\!\big(\,|\text{words containing }(A,B)| \;\times\; \text{occurrences per word}\,\big)
+    \]
+  </div>
+
+  <p>In practice this is small and shrinks as training progresses — common pairs get merged early when they appear in many words, but once a pair is rare enough to be picked late it only lives in a handful of words. Empirically the whole training run is closer to \(\mathcal{O}(V \log V + \text{corpus size})\) than to the naive \(\mathcal{O}(V \cdot N \cdot L)\).</p>
+
+  <h2 id="example">6. Worked example</h2>
+  <p>A toy corpus of three words. Step through one merge and watch the algorithm visit only the words it has to.</p>
+
+  <div class="anim-widget" id="we-widget">
+    <div class="anim-header">
+      <span class="anim-title">▸ One BPE merge step on a toy corpus</span>
+      <span class="anim-hint">Pair counts update live as the merge ripples through.</span>
+    </div>
+    <div class="anim-stage">
+      <div class="we-layout">
+        <div class="we-words" id="we-words">
+          <div class="we-word" id="we-word-low">
+            <span class="we-word-label">low</span>
+            <span class="tile-row" id="we-tiles-low">
+              <span class="tile">l</span><span class="tile">o</span><span class="tile">w</span>
+            </span>
+            <span class="we-word-count">×5</span>
+          </div>
+          <div class="we-word" id="we-word-lower">
+            <span class="we-word-label">lower</span>
+            <span class="tile-row" id="we-tiles-lower">
+              <span class="tile">l</span><span class="tile">o</span><span class="tile">w</span><span class="tile">e</span><span class="tile">r</span>
+            </span>
+            <span class="we-word-count">×2</span>
+          </div>
+          <div class="we-word" id="we-word-newer">
+            <span class="we-word-label">newer</span>
+            <span class="tile-row" id="we-tiles-newer">
+              <span class="tile">n</span><span class="tile">e</span><span class="tile">w</span><span class="tile">e</span><span class="tile">r</span>
+            </span>
+            <span class="we-word-count">×6</span>
+          </div>
+        </div>
+        <div class="we-counts" id="we-counts">
+          <div class="we-counts-title">Pair counts</div>
+          <div class="we-count-row" data-pair="lo"><span class="we-count-pair">(l, o)</span><span class="we-count-val">7</span></div>
+          <div class="we-count-row" data-pair="ow"><span class="we-count-pair">(o, w)</span><span class="we-count-val">7</span></div>
+          <div class="we-count-row" data-pair="we"><span class="we-count-pair">(w, e)</span><span class="we-count-val">8</span></div>
+          <div class="we-count-row" data-pair="er"><span class="we-count-pair">(e, r)</span><span class="we-count-val">8</span></div>
+          <div class="we-count-row" data-pair="ne"><span class="we-count-pair">(n, e)</span><span class="we-count-val">6</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="anim-controls">
+      <button class="anim-btn" id="we-step">Step ▸</button>
+      <button class="anim-btn anim-btn-ghost" id="we-reset">↻ Reset</button>
+      <span class="anim-step-label" id="we-status">Step 0/5 — Initial state. Find the max pair.</span>
+    </div>
+  </div>
+
+  <p>The merges in <code>lower</code> and <code>newer</code> follow the seam rule from §5: <em>X=w</em>, no <em>Y</em> (the <code>r</code> is the last symbol), so \((w, e)\) and \((e, r)\) shed \(c_w\) each and \((w, er)\) gains \(c_w\). Tie-break at the first step picks \((e, r)\) over \((w, e)\) by lexicographic order — a common convention.</p>
+
+  <p>Notice nothing happened to \((l,o)\), \((o,w)\), or \((n,e)\): the words containing those pairs were never visited. That is the win the reverse index buys.</p>
+
+  <h2 id="encoding">7. Encoding new text</h2>
+  <p>Training gives us the merge table. Encoding a new piece of text means: pre-tokenize, convert each piece to bytes, then <strong>replay the merges in priority order</strong> until no more apply. Priority is the merge's <em>rank</em> in the table — rank 0 (the first merge learned, the most common pair in the corpus) wins over rank 100.</p>
+
+  <p>The naive encoder is \(\mathcal{O}(L^2)\) per piece: at each step, scan all adjacent pairs, find the one with the lowest rank, merge it, repeat. Fine for short pieces; awful when the regex pre-tokenizer hands you a long URL.</p>
+
+  <p>The production encoder uses a <strong>doubly-linked list of symbols plus a min-heap keyed on (rank, position)</strong>:</p>
+
+  <pre><code><span class="cm"># Production BPE encoding (sketch)</span>
+syms = doubly_linked_list(bytes_of(piece))
+heap = []
+<span class="kw">for</span> node <span class="kw">in</span> syms:
+    rank = merge_rank.get((node.val, node.next.val))
+    <span class="kw">if</span> rank <span class="kw">is not</span> None:
+        heappush(heap, (rank, node.id, node))
+
+<span class="kw">while</span> heap:
+    rank, _, node = heappop(heap)
+    <span class="kw">if</span> node.deleted <span class="kw">or</span> node.next.deleted:
+        <span class="kw">continue</span>                              <span class="cm"># lazy: stale entry</span>
+    <span class="kw">if</span> (node.val, node.next.val) != merge_pair[rank]:
+        <span class="kw">continue</span>                              <span class="cm"># neighbours changed under us</span>
+
+    merge(node, node.next)                    <span class="cm"># node now holds AB; node.next is unlinked</span>
+
+    <span class="cm"># the only new pairs are at the two seams</span>
+    <span class="kw">for</span> seam <span class="kw">in</span> (node.prev, node):
+        <span class="kw">if</span> seam <span class="kw">and</span> seam.next:
+            r = merge_rank.get((seam.val, seam.next.val))
+            <span class="kw">if</span> r <span class="kw">is not</span> None:
+                heappush(heap, (r, seam.id, seam))
+</code></pre>
+
+  <p>The same pattern as training: when something changes, only update what touches the change. Each symbol is merged at most \(\mathcal{O}(\log L)\) times into successively bigger tokens, so the encoder runs in \(\mathcal{O}(L \log L)\) per piece. Pre-tokenizing into short pieces first means \(L\) is small anyway — usually a single word.</p>
+
+  <div class="note">
+    Tiktoken's hot path goes further: for each pre-token it materializes the byte sequence in an array and runs the merges with a tight Rust loop, skipping the linked list entirely because the pieces are short. The asymptotic story is the same; the constants are what tiktoken optimizes.
+  </div>
+
+  <h2 id="practical">8. Pre-tokenization, byte fallback, special tokens</h2>
+
+  <h3>Pre-tokenization</h3>
+  <p>Before BPE ever runs, both training and encoding split text on a regex that forces certain boundaries — between letters and digits, between words and punctuation, and (crucially) between leading whitespace and the next word. GPT-2's regex is the canonical one:</p>
+  <pre><code>'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+</code></pre>
+  <p>BPE then operates inside each piece. Without pre-tokenization, BPE would happily learn merges that span word boundaries (<code>" the"</code> + <code>" of"</code> as one token) which destroys generalization and bloats the vocab with redundant whitespace-prefixed variants. The regex is what makes <code>" world"</code> and <code>"world"</code> two clean alternatives instead of arbitrary surface forms.</p>
+
+  <h3>Byte-level alphabet</h3>
+  <p>Starting from raw bytes (256 initial symbols) guarantees the tokenizer can encode <em>anything</em> — no <code>&lt;UNK&gt;</code>, no out-of-vocabulary character, no SentencePiece-style fallback to character-level for rare Unicode. The cost is that one emoji might span four tokens before any merges are learned for it; the benefit is that the tokenizer is total: every byte string has exactly one encoding.</p>
+
+  <h3>Special tokens</h3>
+  <p>Tokens like <code>&lt;|endoftext|&gt;</code> are <em>not</em> learnable merges. They are reserved IDs added to the vocabulary at the start, and the encoder splits the input on their literal strings <em>before</em> pre-tokenization, so they survive intact. This is why injecting <code>&lt;|endoftext|&gt;</code> from user-controlled text is a real security concern — the tokenizer treats it as a single control token regardless of where it appears.</p>
+
+  <h2 id="summary">9. Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">Outputs</div>
+      <p>Vocabulary + ordered merge table. Order = priority.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Naive cost</div>
+      <p>\(\mathcal{O}(V \cdot N \cdot L)\) — recounts everything each step.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Key insight</div>
+      <p>Merging \((A,B)\) only changes pair counts at the seams \((X,A)\), \((A,B)\), \((B,Y)\).</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Reverse index</div>
+      <p>Pair → set of words containing it, so a merge visits only affected words.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Max-heap</div>
+      <p>Lazy-deletion heap on pair counts replaces the per-step argmax scan.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Encoding</div>
+      <p>Linked list + min-heap on merge rank → \(\mathcal{O}(L \log L)\) per piece.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Pre-tokenize</div>
+      <p>Regex split first so merges never cross word boundaries.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Byte-level</div>
+      <p>256 initial symbols → no UNK, every byte string encodable.</p>
+    </div>
+  </div>
+
+  <div class="table-wrap" style="margin-top: 2em;">
+    <table>
+      <tr><th>When you see…</th><th>Recognize it as</th></tr>
+      <tr><td>"BPE retrains in minutes, not hours"</td><td>Incremental pair counts + reverse index</td></tr>
+      <tr><td>A <code>merges.txt</code> file with one pair per line</td><td>The ordered merge table — line number = rank = priority</td></tr>
+      <tr><td>A heap entry that gets popped and skipped</td><td>Lazy deletion: a count or pair changed since it was queued</td></tr>
+      <tr><td>The GPT-2 regex in a tokenizer's source</td><td>The pre-tokenization step that runs before BPE</td></tr>
+      <tr><td>An emoji that became four tokens</td><td>No merges learned for it yet — byte-level fallback in action</td></tr>
+    </table>
+  </div>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; Production BPE — the algorithm tokenizers actually run
+</footer>
+
+<script>
+  // ── Shared helpers ─────────────────────────
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  function spawnDelta(gapEl, text, dir) {
+    const f = document.createElement('span');
+    f.className = 'delta-float ' + dir;
+    f.textContent = text;
+    gapEl.appendChild(f);
+    setTimeout(() => f.remove(), 1100);
+  }
+
+  // ══════════════════════════════════════════
+  // Merge-update widget (§5)
+  // ══════════════════════════════════════════
+  (function setupMergeWidget() {
+    const widget = document.getElementById('merge-widget');
+    if (!widget) return;
+    const tiles = document.getElementById('merge-tiles');
+    const playBtn = document.getElementById('merge-play');
+    const resetBtn = document.getElementById('merge-reset');
+    const status = document.getElementById('merge-status');
+
+    const INITIAL_HTML = `
+      <span class="tile" data-sym="X">X</span>
+      <span class="gap"><span class="badge" data-pair="XA">(X, A)</span></span>
+      <span class="tile" data-sym="A">A</span>
+      <span class="gap"><span class="badge" data-pair="AB">(A, B)</span></span>
+      <span class="tile" data-sym="B">B</span>
+      <span class="gap"><span class="badge" data-pair="BY">(B, Y)</span></span>
+      <span class="tile" data-sym="Y">Y</span>
+    `;
+
+    function reset() {
+      tiles.innerHTML = INITIAL_HTML;
+      status.textContent = 'Press play. Watch only the seams change.';
+      playBtn.disabled = false;
+      playBtn.textContent = '▶ Play merge (A, B) → AB';
+    }
+
+    async function play() {
+      playBtn.disabled = true;
+
+      // Step 1: target the (A, B) pair
+      status.textContent = 'Step 1 — Target the merge: (A, B) → AB.';
+      tiles.querySelector('[data-sym="A"]').classList.add('target');
+      tiles.querySelector('[data-sym="B"]').classList.add('target');
+      tiles.querySelector('[data-pair="AB"]').classList.add('target');
+      await sleep(1000);
+
+      // Step 2: decrement the three seam pair counts
+      status.textContent = 'Step 2 — Decrement the three seam pair counts by c_w.';
+      ['XA', 'AB', 'BY'].forEach(p => {
+        const badge = tiles.querySelector(`[data-pair="${p}"]`);
+        spawnDelta(badge.parentNode, '−c', 'down');
+        badge.classList.remove('target');
+        badge.classList.add('decr');
+      });
+      await sleep(1000);
+
+      // Step 3: fade out old badges, merge A+B into AB
+      status.textContent = 'Step 3 — Replace A and B with the merged symbol AB.';
+      tiles.querySelectorAll('.badge').forEach(b => b.classList.add('removed'));
+      await sleep(380);
+
+      tiles.innerHTML = `
+        <span class="tile" data-sym="X">X</span>
+        <span class="gap"><span class="badge new hidden" data-pair="XAB">(X, AB)</span></span>
+        <span class="tile merged just-merged" data-sym="AB">AB</span>
+        <span class="gap"><span class="badge new hidden" data-pair="ABY">(AB, Y)</span></span>
+        <span class="tile" data-sym="Y">Y</span>
+      `;
+      await sleep(420);
+
+      // Step 4: increment the two new pair counts
+      status.textContent = 'Step 4 — Increment the two new pair counts (X, AB) and (AB, Y) by c_w.';
+      ['XAB', 'ABY'].forEach(p => {
+        const badge = tiles.querySelector(`[data-pair="${p}"]`);
+        spawnDelta(badge.parentNode, '+c', 'up');
+        badge.classList.remove('hidden');
+      });
+      await sleep(900);
+
+      status.textContent = '✓ Done — five pair-count touches, nothing outside this word changed.';
+      playBtn.textContent = '▶ Replay';
+      playBtn.disabled = false;
+    }
+
+    reset();
+    playBtn.addEventListener('click', () => {
+      if (playBtn.textContent.includes('Replay')) reset();
+      play();
+    });
+    resetBtn.addEventListener('click', reset);
+  })();
+
+  // ══════════════════════════════════════════
+  // Worked-example widget (§6)
+  // ══════════════════════════════════════════
+  (function setupWorkedExample() {
+    const widget = document.getElementById('we-widget');
+    if (!widget) return;
+    const stepBtn = document.getElementById('we-step');
+    const resetBtn = document.getElementById('we-reset');
+    const status = document.getElementById('we-status');
+
+    const STEPS = [
+      'Step 0/5 — Initial state. Pair counts ready; find the max.',
+      'Step 1/5 — (w,e) and (e,r) tie at 8. Tie-break lexicographically → merge (e, r).',
+      'Step 2/5 — Reverse index → only `lower` and `newer` contain (e, r). `low` is skipped.',
+      'Step 3/5 — Merge (e, r) → er inside `newer` (×6). Three seam counts update.',
+      'Step 4/5 — Merge (e, r) → er inside `lower` (×2). Same shape, smaller weight.',
+      'Step 5/5 — Done. (w,er) is the new top pair; (l,o), (o,w), (n,e) were never touched.'
+    ];
+
+    let step = 0;
+
+    const INITIAL_WORDS = {
+      low:   '<span class="tile">l</span><span class="tile">o</span><span class="tile">w</span>',
+      lower: '<span class="tile">l</span><span class="tile">o</span><span class="tile">w</span><span class="tile">e</span><span class="tile">r</span>',
+      newer: '<span class="tile">n</span><span class="tile">e</span><span class="tile">w</span><span class="tile">e</span><span class="tile">r</span>'
+    };
+    const INITIAL_COUNTS = `
+      <div class="we-counts-title">Pair counts</div>
+      <div class="we-count-row" data-pair="lo"><span class="we-count-pair">(l, o)</span><span class="we-count-val">7</span></div>
+      <div class="we-count-row" data-pair="ow"><span class="we-count-pair">(o, w)</span><span class="we-count-val">7</span></div>
+      <div class="we-count-row" data-pair="we"><span class="we-count-pair">(w, e)</span><span class="we-count-val">8</span></div>
+      <div class="we-count-row" data-pair="er"><span class="we-count-pair">(e, r)</span><span class="we-count-val">8</span></div>
+      <div class="we-count-row" data-pair="ne"><span class="we-count-pair">(n, e)</span><span class="we-count-val">6</span></div>
+    `;
+
+    function reset() {
+      step = 0;
+      Object.entries(INITIAL_WORDS).forEach(([k, html]) => {
+        document.getElementById('we-tiles-' + k).innerHTML = html;
+        const wEl = document.getElementById('we-word-' + k);
+        wEl.classList.remove('touched', 'skipped');
+      });
+      document.getElementById('we-counts').innerHTML = INITIAL_COUNTS;
+      status.textContent = STEPS[0];
+      stepBtn.disabled = false;
+      stepBtn.textContent = 'Step ▸';
+    }
+
+    function mergeInWord(wordKey, weight) {
+      // hard-coded: merge (e, r) → er. For both `lower` and `newer`,
+      // the (e, r) pair sits at the end with `w` as the predecessor.
+      const rowEl = document.getElementById('we-tiles-' + wordKey);
+      const tiles = Array.from(rowEl.querySelectorAll('.tile'));
+      // Find the (e, r) occurrence
+      let idx = -1;
+      for (let i = 0; i < tiles.length - 1; i++) {
+        if (tiles[i].textContent === 'e' && tiles[i + 1].textContent === 'r') {
+          idx = i; break;
+        }
+      }
+      if (idx < 0) return;
+
+      const eTile = tiles[idx], rTile = tiles[idx + 1];
+      const prev = idx > 0 ? tiles[idx - 1].textContent : null;
+      const next = idx + 2 < tiles.length ? tiles[idx + 2].textContent : null;
+
+      // Highlight the pair
+      eTile.classList.add('target');
+      rTile.classList.add('target');
+
+      setTimeout(() => {
+        // Replace with merged tile
+        const merged = document.createElement('span');
+        merged.className = 'tile merged just-merged';
+        merged.textContent = 'er';
+        rowEl.insertBefore(merged, eTile);
+        eTile.remove();
+        rTile.remove();
+
+        // Update pair counts
+        if (prev) {
+          decrCount(prev + 'e', weight);
+          incrOrCreate(prev + 'er', `(${prev}, er)`, weight);
+        }
+        decrCount('er', weight);
+        if (next) {
+          decrCount('r' + next, weight);
+          incrOrCreate('er' + next, `(er, ${next})`, weight);
+        }
+      }, 550);
+    }
+
+    function decrCount(pairKey, by) {
+      const row = document.querySelector(`#we-counts .we-count-row[data-pair="${pairKey}"]`);
+      if (!row) return;
+      const valEl = row.querySelector('.we-count-val');
+      const current = parseInt(valEl.textContent, 10);
+      const next = current - by;
+      valEl.textContent = next;
+      row.classList.remove('target');
+      row.classList.add('changed');
+      if (next <= 0) {
+        setTimeout(() => row.classList.add('removed'), 500);
+      }
+    }
+
+    function incrOrCreate(pairKey, label, by) {
+      const countsEl = document.getElementById('we-counts');
+      let row = countsEl.querySelector(`.we-count-row[data-pair="${pairKey}"]`);
+      if (!row) {
+        row = document.createElement('div');
+        row.className = 'we-count-row new';
+        row.dataset.pair = pairKey;
+        row.innerHTML = `<span class="we-count-pair">${label}</span><span class="we-count-val">${by}</span>`;
+        countsEl.appendChild(row);
+      } else {
+        const valEl = row.querySelector('.we-count-val');
+        const current = parseInt(valEl.textContent, 10);
+        valEl.textContent = current + by;
+        row.classList.add('new');
+      }
+    }
+
+    function advance() {
+      step++;
+      if (step >= STEPS.length) return;
+      status.textContent = STEPS[step];
+
+      // clear transient highlight classes (keep .new — that row's the new top)
+      document.querySelectorAll('#we-counts .we-count-row.changed').forEach(r => r.classList.remove('changed'));
+      document.querySelectorAll('#we-counts .we-count-row.target').forEach(r => {
+        if (step > 1) r.classList.remove('target');
+      });
+
+      if (step === 1) {
+        // target (e, r) and (w, e) — both candidates, then settle on (e, r)
+        const we = document.querySelector('#we-counts .we-count-row[data-pair="we"]');
+        const er = document.querySelector('#we-counts .we-count-row[data-pair="er"]');
+        we.classList.add('changed');
+        er.classList.add('target');
+        setTimeout(() => we.classList.remove('changed'), 700);
+      } else if (step === 2) {
+        document.getElementById('we-word-lower').classList.add('touched');
+        document.getElementById('we-word-newer').classList.add('touched');
+        document.getElementById('we-word-low').classList.add('skipped');
+      } else if (step === 3) {
+        mergeInWord('newer', 6);
+      } else if (step === 4) {
+        mergeInWord('lower', 2);
+      } else if (step === 5) {
+        // final cleanup pass: ensure (e,r) row is fully removed
+        const er = document.querySelector('#we-counts .we-count-row[data-pair="er"]');
+        if (er) er.classList.add('removed');
+        const we = document.querySelector('#we-counts .we-count-row[data-pair="we"]');
+        if (we) we.classList.add('removed');
+      }
+
+      if (step >= STEPS.length - 1) {
+        stepBtn.disabled = true;
+        stepBtn.textContent = '✓ Done';
+      }
+    }
+
+    reset();
+    stepBtn.addEventListener('click', advance);
+    resetBtn.addEventListener('click', reset);
+  })();
+</script>
+
+</body>
+</html>

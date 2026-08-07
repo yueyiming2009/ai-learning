@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Layer Normalization — Gradient Derivation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #4f46e5;
+      --accent-light: #eef2ff;
+      --warning-bg: #fffbeb;
+      --warning-border: #f59e0b;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --nav-bg: rgba(255,255,255,0.92);
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --note-fg: #78350f;
+      --result-fg: #16a34a;
+      --indigo-border: #c7d2fe;
+      --red-bg: #fef2f2;
+      --red-border: #dc2626;
+      --red-fg: #7f1d1d;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #818cf8;
+        --accent-light: #14172a;
+        --warning-bg: #251c0b;
+        --warning-border: #b45309;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --nav-bg: rgba(15,17,21,0.9);
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --note-fg: #fcd34d;
+        --result-fg: #4ade80;
+        --indigo-border: #312e81;
+        --red-bg: #2a1214;
+        --red-border: #f87171;
+        --red-fg: #fca5a5;
+      }
+    }
+
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0;
+      opacity: 0.85;
+      font-size: 0.97rem;
+      max-width: 520px;
+      margin: 0 auto;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+
+    /* ── Step boxes ──────────────────────────── */
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    /* ── Callout / note ──────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+    .note::before { content: '⚠ '; }
+
+    /* ── Result / boxed equation ─────────────── */
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Summary card ────────────────────────── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .summary-card {
+      background: var(--accent-light);
+      border: 1px solid var(--indigo-border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .summary-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    /* ── Footer ──────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    /* ── Responsive ──────────────────────────── */
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>LN Gradient</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#notation">Notation</a>
+    <a href="#forward">Forward</a>
+    <a href="#gamma-beta">γ &amp; β</a>
+    <a href="#dx">Input grad</a>
+    <a href="#summary">Summary</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">ML Math</span>
+  <h1>Layer Normalization</h1>
+  <p>Step-by-step derivation of the forward and backward passes, including the full gradient for the input \(\mathbf{x}\).</p>
+</div>
+
+<div class="page-wrap">
+
+  <h2 id="notation">Notation</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symbol</th><th>Description</th></tr>
+      <tr><td>\(\mathbf{x}\)</td><td>Input feature vector of length \(D\) (one token's embedding)</td></tr>
+      <tr><td>\(\mu,\; \sigma^2\)</td><td>Mean and variance computed across the \(D\) features</td></tr>
+      <tr><td>\(\gamma,\; \beta\)</td><td>Learned scale and shift parameters</td></tr>
+      <tr><td>\(\hat{x}_i\)</td><td>Normalized input: \((x_i - \mu)/\sqrt{\sigma^2+\varepsilon}\)</td></tr>
+      <tr><td>\(dy,\; dx\)</td><td>Upstream gradient \(\partial L/\partial y\) and downstream gradient \(\partial L/\partial x\)</td></tr>
+      <tr><td>\(N, L, D\)</td><td>Batch size, sequence length, feature dimension</td></tr>
+    </table>
+  </div>
+
+  <h2 id="forward">1. Forward Pass</h2>
+  <ol>
+    <li>
+      <strong>Mean</strong>
+      \[\mu = \frac{1}{D}\sum_{i=1}^{D} x_i\]
+    </li>
+    <li>
+      <strong>Variance</strong>
+      \[\sigma^2 = \frac{1}{D}\sum_{i=1}^{D}(x_i - \mu)^2\]
+    </li>
+    <li>
+      <strong>Normalize</strong>
+      \[\hat{x}_i = \frac{x_i - \mu}{\sqrt{\sigma^2 + \varepsilon}}\]
+    </li>
+    <li>
+      <strong>Scale and shift</strong>
+      \[y_i = \gamma_i \hat{x}_i + \beta_i\]
+    </li>
+  </ol>
+
+  <h2 id="gamma-beta">2. Backward Pass — Gradients for \(\gamma\) and \(\beta\)</h2>
+
+  <h3>Single token</h3>
+  <p>Since \(y_i = \gamma_i \hat{x}_i + \beta_i\), both gradients follow immediately from the chain rule:</p>
+  \[
+  \frac{\partial L}{\partial \beta_i}
+    = \frac{\partial L}{\partial y_i} \cdot \underbrace{\frac{\partial y_i}{\partial \beta_i}}_{=\,1}
+    = dy_i
+  \]
+  \[
+  \frac{\partial L}{\partial \gamma_i}
+    = \frac{\partial L}{\partial y_i} \cdot \underbrace{\frac{\partial y_i}{\partial \gamma_i}}_{=\,\hat{x}_i}
+    = dy_i \cdot \hat{x}_i
+  \]
+
+  <h3>Accumulated across batch and sequence</h3>
+  \[
+  d\beta_i = \sum_{b=1}^{N}\sum_{s=1}^{L} dy_{b,s,i}
+  \qquad\qquad
+  d\gamma_i = \sum_{b=1}^{N}\sum_{s=1}^{L} dy_{b,s,i}\cdot\hat{x}_{b,s,i}
+  \]
+
+  <h2 id="dx">3. Backward Pass — Gradient for the Input (\(dx\))</h2>
+  <p>This is the trickier part. The input \(x_i\) affects the output through three paths: directly via \(\hat{x}_i\), and indirectly via \(\mu\) and \(\sigma^2\).</p>
+
+  <div class="step">
+    <div class="step-label">Step A — Gradient w.r.t. normalized input \(\hat{x}_i\)</div>
+    \[d\hat{x}_i = dy_i \cdot \gamma_i\]
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step B — Gradient w.r.t. variance \(\sigma^2\)</div>
+    <p>Each \(\hat{x}_j\) depends on \(\sigma^2\), so we sum contributions from all \(j\):</p>
+    \[
+      d\sigma^2
+        = \sum_{j=1}^{D} d\hat{x}_j \cdot \frac{\partial \hat{x}_j}{\partial \sigma^2}
+        = \sum_{j=1}^{D} d\hat{x}_j \cdot (x_j - \mu) \cdot \left(-\tfrac{1}{2}(\sigma^2+\varepsilon)^{-3/2}\right)
+    \]
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step C — Gradient w.r.t. mean \(\mu\)</div>
+    <p><em>Path 1</em> — direct effect on each \(\hat{x}_j\):</p>
+    \[
+      \sum_{j=1}^{D} d\hat{x}_j \cdot \frac{\partial \hat{x}_j}{\partial \mu}
+      = \sum_{j=1}^{D} d\hat{x}_j \cdot \frac{-1}{\sqrt{\sigma^2+\varepsilon}}
+    \]
+    <p><em>Path 2</em> — indirect effect through \(\sigma^2\):</p>
+    \[
+      d\sigma^2 \cdot \frac{\partial \sigma^2}{\partial \mu}
+      = d\sigma^2 \cdot \frac{-2}{D}\sum_{j=1}^{D}(x_j - \mu)
+      = 0
+    \]
+    <div class="note">Path 2 is zero because \(\sum_j (x_j - \mu) = 0\) by definition of the mean.</div>
+    <p>Combined:</p>
+    \[
+      d\mu = \frac{-1}{\sqrt{\sigma^2+\varepsilon}} \sum_{j=1}^{D} d\hat{x}_j
+    \]
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step D — Final gradient for input \(dx_i\)</div>
+    <p>Applying the chain rule through \(\hat{x}_i\), \(\sigma^2\), and \(\mu\), and substituting Steps A–C:</p>
+  </div>
+
+  <div class="result">
+    <div class="result-label">Result (in terms of \(d\hat{x}\))</div>
+    \[
+      dx_i = \frac{1}{\sqrt{\sigma^2+\varepsilon}}
+      \left[
+        d\hat{x}_i
+        - \frac{1}{D}\sum_{j=1}^{D} d\hat{x}_j
+        - \frac{\hat{x}_i}{D}\sum_{j=1}^{D} d\hat{x}_j\,\hat{x}_j
+      \right]
+    \]
+    <p style="margin: 10px 0 0; font-size: 0.9rem;">Substituting \(d\hat{x}_j = dy_j\,\gamma_j\) (Step A) gives the fully expanded form:</p>
+    \[
+      dx_i = \frac{1}{\sqrt{\sigma^2+\varepsilon}}
+      \left[
+        dy_i\,\gamma_i
+        - \frac{1}{D}\sum_{j=1}^{D} dy_j\,\gamma_j
+        - \frac{\hat{x}_i}{D}\sum_{j=1}^{D} dy_j\,\gamma_j\,\hat{x}_j
+      \right]
+    \]
+  </div>
+
+  <div class="note" style="background:var(--red-bg); border-color:var(--red-border); color:var(--red-fg);">
+    A common mistake is to factor \(\gamma_i\) out of the summations, writing \(\gamma_i \sum_j dy_j\) instead of \(\sum_j dy_j\gamma_j\). Because \(\gamma\) is a vector (\(\gamma_j\) varies with \(j\)), it must stay inside the sum. The \(d\hat{x}\) form avoids this pitfall entirely.
+  </div>
+
+  <p>The three bracketed terms each play a distinct role:</p>
+  <ul>
+    <li>\(d\hat{x}_i = dy_i\,\gamma_i\) — direct upstream gradient scaled by this feature's gain</li>
+    <li>\(-\tfrac{1}{D}\sum_j d\hat{x}_j\) — correction from the mean's influence on all \(\hat{x}_j\)</li>
+    <li>\(-\tfrac{\hat{x}_i}{D}\sum_j d\hat{x}_j\,\hat{x}_j\) — correction from the variance's influence (via its dot product with the normalized inputs)</li>
+  </ul>
+
+  <h2 id="summary">4. Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">d&beta;</div>
+      <p>\(\sum_{b,s} dy_{b,s,i}\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">d&gamma;</div>
+      <p>\(\sum_{b,s} dy_{b,s,i}\cdot\hat{x}_{b,s,i}\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">dx<sub>i</sub></div>
+      <p>\(\tfrac{1}{\sqrt{\sigma^2+\varepsilon}}\!\left[d\hat{x}_i - \tfrac{1}{D}\!\sum_j d\hat{x}_j - \tfrac{\hat{x}_i}{D}\!\sum_j d\hat{x}_j\hat{x}_j\right]\)</p>
+    </div>
+  </div>
+  <p style="font-size:0.88rem; color: var(--muted);">where \(d\hat{x}_j = dy_j\,\gamma_j\), and all sums are over the \(D\) feature dimension.</p>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; Layer Normalization gradient derivation
+</footer>
+
+</body>
+</html>

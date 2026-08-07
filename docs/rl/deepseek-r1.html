@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>DeepSeek-R1 — Training Recipe for Reasoning Models</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #7c3aed;
+      --accent-light: #f5f3ff;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --nav-bg: rgba(255,255,255,0.92);
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --note-fg: #1e40af;
+      --violet-border: #ddd6fe;
+      --result-fg: #16a34a;
+      --violet-bg: #fdf4ff;
+      --violet-border-lt: #e9d5ff;
+      --teal-bg: #f0fdfa;
+      --teal-fg: #0d9488;
+      --teal-border: #99f6e4;
+      --amber-bg: #fffbeb;
+      --amber-fg: #b45309;
+      --amber-border: #fde68a;
+      --green-bg: #f0fdf4;
+      --green-border: #86efac;
+      --blue-bg: #eff6ff;
+      --blue-border: #bfdbfe;
+      --blue-fg: #2563eb;
+      --think-bg: #1e1b4b;
+      --think-fg: #e2e8f0;
+      --think-tag: #a78bfa;
+      --think-text: #c4b5fd;
+      --think-aha: #fbbf24;
+      --think-answer-text: #bbf7d0;
+      --orange-fg: #ea580c;
+      --think-answer-tag: #86efac;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #a78bfa;
+        --accent-light: #1a1626;
+        --warning-bg: #101a2b;
+        --warning-border: #1e40af;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --nav-bg: rgba(15,17,21,0.9);
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --note-fg: #93c5fd;
+        --violet-border: #4c1d95;
+        --result-fg: #4ade80;
+        --violet-bg: #1a1626;
+        --violet-border-lt: #4c1d95;
+        --teal-bg: #10201e;
+        --teal-fg: #2dd4bf;
+        --teal-border: #134e4a;
+        --amber-bg: #251c0b;
+        --amber-fg: #fbbf24;
+        --amber-border: #78350f;
+        --green-bg: #0e2016;
+        --green-border: #065f46;
+        --blue-bg: #101a2b;
+        --blue-border: #1e3a8a;
+        --blue-fg: #60a5fa;
+        --think-bg: #221f3d;
+        --think-fg: #e2e8f0;
+        --think-tag: #a78bfa;
+        --think-text: #c4b5fd;
+        --think-aha: #fbbf24;
+        --think-answer-text: #bbf7d0;
+        --orange-fg: #fb923c;
+        --think-answer-tag: #86efac;
+      }
+    }
+
+
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 0; line-height: 1.75; font-size: 16px; }
+
+    nav { position: sticky; top: 0; z-index: 100; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 52px; }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 0.9rem; color: var(--accent); text-decoration: none; white-space: nowrap; }
+    .nav-links { display: flex; gap: 4px; overflow-x: auto; flex: 1; }
+    .nav-links a { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; white-space: nowrap; transition: color 0.15s, background 0.15s; }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    .hero { background: linear-gradient(135deg, #3b0764 0%, #7c3aed 60%, #a855f7 100%); color: white; padding: 56px 24px 48px; text-align: center; }
+    .hero h1 { font-size: clamp(1.5rem, 4vw, 2.2rem); font-weight: 600; margin: 0 0 12px; letter-spacing: -0.02em; }
+    .hero p { margin: 0 auto; opacity: 0.85; font-size: 0.97rem; max-width: 660px; }
+    .hero-pill { display: inline-block; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 100px; font-size: 0.78rem; padding: 3px 12px; margin-bottom: 16px; letter-spacing: 0.04em; text-transform: uppercase; }
+
+    .page-wrap { max-width: 820px; margin: 0 auto; padding: 48px 24px 80px; }
+
+    h2 { font-size: 1.15rem; font-weight: 600; margin: 2.8em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); color: var(--text); }
+    h3 { font-size: 0.97rem; font-weight: 600; margin: 1.6em 0 0.4em; color: var(--ink); }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+    code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-size: 0.88em; font-family: 'Menlo', monospace; }
+
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
+    th, td { border: 1px solid var(--border); padding: 9px 16px; text-align: left; }
+    th { background: var(--surface); font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+    tr:hover td { background: var(--row-hover); }
+
+    .step { background: var(--step-bg); border: 1px solid var(--step-border); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 1.2em 0; }
+    .step-label { font-weight: 600; font-size: 0.88rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+    .step-label::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+
+    .note { background: var(--warning-bg); border-left: 3px solid var(--warning-border); border-radius: 0 8px 8px 0; padding: 10px 16px; margin: 1em 0; font-size: 0.92em; color: var(--note-fg); }
+    .note::before { content: '💡 '; }
+
+    .callout { background: var(--accent-light); border: 1px solid var(--violet-border); border-radius: 8px; padding: 14px 18px; margin: 1.2em 0; }
+    .callout-label { font-size: 0.78rem; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+    .callout p { margin: 0.3em 0; font-size: 0.93rem; }
+
+    .result { background: var(--boxed-bg); border: 1.5px solid var(--boxed-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; text-align: center; }
+    .result-label { font-size: 0.8rem; font-weight: 600; color: var(--result-fg); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+
+    /* Pipeline stages */
+    .pipeline { display: flex; gap: 0; margin: 1.6em 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    @media (max-width: 640px) { .pipeline { flex-direction: column; } }
+    .pipe-stage { flex: 1; padding: 16px 14px; border-right: 1px solid var(--border); }
+    .pipe-stage:last-child { border-right: none; }
+    .pipe-num { font-size: 0.68rem; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 4px; }
+    .pipe-title { font-weight: 600; font-size: 0.9rem; margin-bottom: 6px; }
+    .pipe-desc { font-size: 0.8rem; color: var(--muted); line-height: 1.5; }
+    .pipe-badge { display: inline-block; font-size: 0.68rem; font-weight: 600; padding: 1px 7px; border-radius: 100px; margin-top: 6px; }
+    .badge-rl   { background: var(--violet-bg); color: var(--accent); border: 1px solid var(--violet-border-lt); }
+    .badge-sft  { background: var(--teal-bg); color: var(--teal-fg); border: 1px solid var(--teal-border); }
+    .badge-rs   { background: var(--amber-bg); color: var(--amber-fg); border: 1px solid var(--amber-border); }
+
+    /* Emergent behavior cards */
+    .emerge-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 1.4em 0; }
+    .emerge-card { border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+    .emerge-icon { font-size: 1.3rem; margin-bottom: 6px; }
+    .emerge-title { font-weight: 600; font-size: 0.92rem; margin-bottom: 4px; }
+    .emerge-desc { font-size: 0.83rem; color: var(--muted); margin: 0; line-height: 1.5; }
+
+    /* Reward design */
+    .reward-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin: 1.2em 0; }
+    .reward-card { border-radius: 8px; padding: 14px 16px; }
+    .reward-card.good  { background: var(--green-bg); border: 1px solid var(--green-border); }
+    .reward-card.fmt   { background: var(--blue-bg); border: 1px solid var(--blue-border); }
+    .reward-card.none  { background: var(--surface); border: 1px dashed var(--border); }
+    .reward-card-label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 4px; }
+    .reward-card-label.good { color: var(--result-fg); }
+    .reward-card-label.fmt  { color: var(--blue-fg); }
+    .reward-card-label.none { color: var(--muted); }
+    .reward-card-title { font-weight: 600; margin-bottom: 4px; }
+    .reward-card p { font-size: 0.85rem; color: var(--muted); margin: 0; }
+
+    /* Thinking block example */
+    .think-block { background: var(--think-bg); border-radius: 8px; padding: 20px 24px; margin: 1.2em 0; font-family: 'Menlo', monospace; font-size: 0.83rem; line-height: 1.7; color: var(--think-fg); }
+    .think-tag   { color: var(--think-tag); }
+    .think-text  { color: var(--think-text); }
+    .think-aha   { color: var(--think-aha); font-style: italic; }
+    .answer-tag  { color: var(--think-answer-tag); }
+    .answer-text { color: var(--think-answer-text); }
+
+    /* Two-column compare */
+    .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin: 1.4em 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    @media (max-width: 520px) { .compare-grid { grid-template-columns: 1fr; } }
+    .compare-col { padding: 18px 18px; }
+    .compare-col:first-child { border-right: 1px solid var(--border); }
+    .compare-label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 6px; }
+    .compare-label.zero { color: var(--orange-fg); }
+    .compare-label.full { color: var(--accent); }
+    .compare-col h3 { margin: 0 0 8px; font-size: 0.95rem; }
+    .compare-col ul { font-size: 0.87rem; color: var(--muted); margin: 0.4em 0; padding-left: 1.2em; }
+    .compare-col p  { font-size: 0.87rem; color: var(--muted); margin: 0.3em 0; }
+
+    .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 1.2em 0; }
+    .summary-card { background: var(--accent-light); border: 1px solid var(--violet-border); border-radius: 8px; padding: 14px 16px; }
+    .summary-card-label { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    .next-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 1.2em 0; }
+    .next-card { border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; text-decoration: none; color: inherit; transition: border-color 0.15s, box-shadow 0.15s; display: block; }
+    .next-card:hover { border-color: var(--accent); box-shadow: 0 2px 8px rgba(124,58,237,0.1); }
+    .next-card-label { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+    .next-card-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 4px; }
+    .next-card p { margin: 0; font-size: 0.88rem; color: var(--muted); }
+
+    footer { border-top: 1px solid var(--border); padding: 28px 24px; text-align: center; font-size: 0.82rem; color: var(--muted); }
+    @media (max-width: 600px) { .page-wrap { padding: 32px 16px 60px; } }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>DeepSeek-R1</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right:1px solid var(--border);padding-right:12px;margin-right:4px;">← All notes</a>
+    <a href="#overview">Overview</a>
+    <a href="#r1-zero">R1-Zero</a>
+    <a href="#emergence">Emergence</a>
+    <a href="#pipeline">Full Pipeline</a>
+    <a href="#rewards">Rewards</a>
+    <a href="#rejection">Rejection Sampling</a>
+    <a href="#distillation">Distillation</a>
+    <a href="#lessons">Lessons</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Alignment</span>
+  <h1>DeepSeek-R1</h1>
+  <p>A fully disclosed recipe for training a reasoning model: start from a base LLM, apply GRPO with verifiable rewards, and get spontaneous chain-of-thought — no human-annotated reasoning traces required.</p>
+</div>
+
+<div class="page-wrap">
+
+  <p>OpenAI's o1 demonstrated that scaling test-time compute produces qualitatively better reasoning, but its training recipe remained opaque. DeepSeek-R1 (January 2025) disclosed the full procedure: what data goes in, what rewards are used, how the pipeline is staged, and how reasoning ability transfers to smaller models via distillation. This page traces that recipe step by step and connects it to the RL foundations built across this series.</p>
+
+  <h2 id="overview">1. Two Models, One Paper</h2>
+  <p>The paper introduces two distinct models with the same name family:</p>
+
+  <div class="compare-grid">
+    <div class="compare-col">
+      <div class="compare-label zero">R1-Zero</div>
+      <h3>RL from scratch</h3>
+      <ul>
+        <li>Base model → GRPO with verifiable rewards</li>
+        <li>No supervised CoT data at all</li>
+        <li>Reasoning emerges spontaneously</li>
+        <li>But: language mixing, poor formatting, hard to deploy</li>
+      </ul>
+      <p>The <em>scientific result</em>: proof that chain-of-thought is a latent capability that RL can unlock without demonstrations.</p>
+    </div>
+    <div class="compare-col">
+      <div class="compare-label full">R1</div>
+      <h3>Full 4-stage pipeline</h3>
+      <ul>
+        <li>Cold-start SFT → Reasoning RL → Rejection-sampling SFT → Final RL</li>
+        <li>Small amount of CoT bootstrap data to fix format/language</li>
+        <li>Stronger performance, deployable output</li>
+        <li>Distilled into smaller models (7B–70B)</li>
+      </ul>
+      <p>The <em>engineering result</em>: a production-quality reasoning model with a fully reproducible procedure.</p>
+    </div>
+  </div>
+
+  <h2 id="r1-zero">2. R1-Zero — What Happens When You Just Apply GRPO</h2>
+  <p>R1-Zero starts from DeepSeek-V3-Base (a pretrained LLM with no instruction fine-tuning) and applies <a href="grpo.html" style="color:var(--accent);">GRPO</a> with two simple verifiable reward signals — accuracy and format — and nothing else. No human-labelled reasoning traces, no reward model, no PRM.</p>
+
+  <div class="callout">
+    <div class="callout-label">The prompt template</div>
+    <p>Every training prompt is wrapped in a fixed system message instructing the model to reason step-by-step inside <code>&lt;think&gt;…&lt;/think&gt;</code> tags before giving its final answer inside <code>&lt;answer&gt;…&lt;/answer&gt;</code> tags. The model is not given examples of how to use these tags — it must learn their purpose from the reward signal alone.</p>
+  </div>
+
+  <p>The reward function is purely outcome-based. For math: is the final boxed answer correct? For code: do the unit tests pass? No credit for any particular reasoning style, no bonus for longer thinking, no penalty for repetition. The model receives a binary \(\{0, 1\}\) signal per response.</p>
+
+  <p>Despite this sparse feedback, training converges on measurably better reasoning — and produces behaviors that were never in the training objective.</p>
+
+  <h2 id="emergence">3. Emergent Behaviors</h2>
+  <p>The most striking finding of R1-Zero is that complex reasoning behaviors emerge from a simple binary correctness signal, without being explicitly trained:</p>
+
+  <div class="emerge-grid">
+    <div class="emerge-card">
+      <div class="emerge-icon">📈</div>
+      <div class="emerge-title">Thinking length scales</div>
+      <p class="emerge-desc">Average response length grows monotonically across training. The model spontaneously learns to think longer on hard problems.</p>
+    </div>
+    <div class="emerge-card">
+      <div class="emerge-icon">🔄</div>
+      <div class="emerge-title">Self-correction</div>
+      <p class="emerge-desc">The model learns to backtrack and revise reasoning mid-response when it detects an inconsistency — without being told to.</p>
+    </div>
+    <div class="emerge-card">
+      <div class="emerge-icon">✅</div>
+      <div class="emerge-title">Self-verification</div>
+      <p class="emerge-desc">The model checks its own answer before committing to it — substituting back into equations, running edge-case checks.</p>
+    </div>
+    <div class="emerge-card">
+      <div class="emerge-icon">💡</div>
+      <div class="emerge-title">"Aha moments"</div>
+      <p class="emerge-desc">During training (not just inference), checkpoint outputs show abrupt transitions: the model discovers a new reasoning strategy and begins applying it consistently.</p>
+    </div>
+  </div>
+
+  <p>A representative thinking trace after training:</p>
+
+  <div class="think-block">
+<span class="think-tag">&lt;think&gt;</span>
+<span class="think-text">Let me solve 3x + 7 = 22 step by step.
+Subtract 7 from both sides: 3x = 15.
+Divide by 3: x = 5.
+
+Let me verify: 3(5) + 7 = 15 + 7 = 22. ✓</span>
+
+<span class="think-aha">Wait, I should check if I handled this correctly from the start.
+The equation is 3x + 7 = 22, so 3x = 22 - 7 = 15, giving x = 5.
+Yes, that's correct.</span>
+<span class="think-tag">&lt;/think&gt;</span>
+<span class="answer-tag">&lt;answer&gt;</span><span class="answer-text">x = 5</span><span class="answer-tag">&lt;/answer&gt;</span>
+  </div>
+
+  <p>The self-verification and backtracking are not in the prompt, not in any training example. They emerge because they are instrumentally useful for getting the binary reward — the model found, by RL, that checking its work increases accuracy.</p>
+
+  <div class="step">
+    <div class="step-label">The AlphaZero parallel</div>
+    <p>This is precisely the AlphaZero phenomenon applied to language. AlphaZero learned to sacrifice pieces, plan openings, and evaluate endgames — all without being taught chess strategy — because those behaviors led to more wins. R1-Zero learned to self-verify, backtrack, and think longer because those behaviors led to more correct answers. In both cases: give the model a verifiable signal, give it an optimization algorithm, and it finds strategies humans never encoded. The difference is that chess has a perfect simulator; R1 relies on math/code verifiers as its ground-truth oracle.</p>
+  </div>
+
+  <h3>The limitations of R1-Zero</h3>
+  <p>R1-Zero has three practical failure modes that prevent direct deployment:</p>
+  <ul>
+    <li><strong>Language mixing</strong> — the model sometimes switches between English and Chinese mid-reasoning, especially when trained on a multilingual base.</li>
+    <li><strong>Poor formatting</strong> — the <code>&lt;think&gt;</code>/<code>&lt;answer&gt;</code> structure is learned imperfectly; occasional malformed outputs that downstream applications can't parse.</li>
+    <li><strong>Readability</strong> — thinking traces can be repetitive or circuitous in ways a human wouldn't write, making them hard to verify.</li>
+  </ul>
+  <p>The full R1 pipeline addresses all three with a small amount of cold-start data before RL begins.</p>
+
+  <h2 id="pipeline">4. The Full R1 Pipeline</h2>
+  <p>R1 is a four-stage pipeline. Each stage produces the model that feeds the next:</p>
+
+  <div class="pipeline">
+    <div class="pipe-stage">
+      <div class="pipe-num">Stage 1</div>
+      <div class="pipe-title">Cold-Start SFT</div>
+      <div class="pipe-desc">Fine-tune the base model on a small set of long-form CoT examples with correct <code>&lt;think&gt;</code> / <code>&lt;answer&gt;</code> formatting. Fixes language mixing and format before RL begins.</div>
+      <span class="pipe-badge badge-sft">SFT · ~thousands of examples</span>
+    </div>
+    <div class="pipe-stage">
+      <div class="pipe-num">Stage 2</div>
+      <div class="pipe-title">Reasoning RL</div>
+      <div class="pipe-desc">GRPO on math and code tasks with verifiable outcome rewards + format reward. Model learns to reason deeply. This is where thinking length, self-correction, and verification emerge.</div>
+      <span class="pipe-badge badge-rl">GRPO · no PRM · binary rewards</span>
+    </div>
+    <div class="pipe-stage">
+      <div class="pipe-num">Stage 3</div>
+      <div class="pipe-title">Rejection-Sampling SFT</div>
+      <div class="pipe-desc">Sample many responses from Stage 2 model, keep only correct ones. Mix in general-domain supervised data (QA, writing, etc.). Fine-tune on this combined dataset.</div>
+      <span class="pipe-badge badge-rs">RS · 800K examples · SFT</span>
+    </div>
+    <div class="pipe-stage">
+      <div class="pipe-num">Stage 4</div>
+      <div class="pipe-title">Final RL</div>
+      <div class="pipe-desc">Another round of GRPO, now on the full task mixture — reasoning tasks with verifiable rewards + general tasks with a reward model. Balances reasoning and general helpfulness.</div>
+      <span class="pipe-badge badge-rl">GRPO · mixed rewards</span>
+    </div>
+  </div>
+
+  <p>Stages 1 and 3 are standard SFT — the core learning happens in stages 2 and 4. The alternation of RL and SFT is deliberate: RL discovers new reasoning behaviors; SFT (on verified outputs from RL) stabilizes and generalizes them.</p>
+
+  <div class="note">
+    The cold-start SFT in Stage 1 is tiny — a few thousand examples, all human-written or carefully selected from strong models. Its only job is to give the model a consistent format template and a language anchor before the RL signal kicks in. It is <em>not</em> trying to teach the model how to reason.
+  </div>
+
+  <h2 id="rewards">5. Reward Design</h2>
+  <p>One of the key engineering decisions in R1 is what <em>not</em> to include in the reward signal:</p>
+
+  <div class="reward-grid">
+    <div class="reward-card good">
+      <div class="reward-card-label good">Accuracy reward</div>
+      <div class="reward-card-title">Is the answer correct?</div>
+      <p>Math: final boxed answer matches ground truth exactly. Code: all unit tests pass in a sandboxed executor. Binary \(\{0, 1\}\) — no partial credit.</p>
+    </div>
+    <div class="reward-card fmt">
+      <div class="reward-card-label fmt">Format reward</div>
+      <div class="reward-card-title">Is the structure correct?</div>
+      <p>Checks that <code>&lt;think&gt;…&lt;/think&gt;</code> and <code>&lt;answer&gt;…&lt;/answer&gt;</code> tags are present and correctly ordered. Small reward, prevents malformed outputs.</p>
+    </div>
+    <div class="reward-card none">
+      <div class="reward-card-label none">Not used</div>
+      <div class="reward-card-title">Process reward model</div>
+      <p>No per-step scoring. Every token in a response gets the same advantage signal, derived from the final outcome. A PRM is expensive to train and can be gamed.</p>
+    </div>
+    <div class="reward-card none">
+      <div class="reward-card-label none">Not used</div>
+      <div class="reward-card-title">Length penalty / bonus</div>
+      <p>No explicit reward for thinking length. Length grows naturally because longer thinking produces more correct answers. Adding a length bonus would be Goodhart's law bait.</p>
+    </div>
+    <div class="reward-card none">
+      <div class="reward-card-label none">Not used</div>
+      <div class="reward-card-title">Cosine / style rewards</div>
+      <p>No reward for readability, coherence, or writing style on reasoning tasks. Style rewards add noise and are hard to calibrate without a learned reward model.</p>
+    </div>
+    <div class="reward-card none">
+      <div class="reward-card-label none">Not used (Stage 2)</div>
+      <div class="reward-card-title">Learned reward model</div>
+      <p>Stages 1–3 use only rule-based verifiers. A learned reward model is added only in Stage 4 for general-domain tasks where no verifier exists.</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Why binary rewards work</div>
+    <p>Binary rewards seem like they provide a weak learning signal — either you get it or you don't. But combined with GRPO's group sampling, binary rewards are surprisingly effective. With a group of \(G=8\) samples per prompt, the group-relative advantage \(\hat A_i = (r_i - \bar r)/\sigma_r\) varies continuously even when individual rewards are \(\{0,1\}\) — a prompt where 4/8 responses are correct has \(\hat A = \pm 0.5\) for each response, while a prompt where 7/8 are correct has \(\hat A = -2.65\) for the wrong one and \(+0.38\) for the correct ones. The difficulty gradient is implicit in the group statistics.</p>
+  </div>
+
+  <h2 id="rejection">6. Rejection Sampling — The Bridge Between RL and SFT</h2>
+  <p>After Stage 2 the model reasons well but unevenly — it can solve hard problems it couldn't before, but also produces low-quality outputs that mix reasoning with repetition. Rejection sampling converts the RL model's best outputs into clean SFT training data:</p>
+
+  <ol>
+    <li><strong>Sample</strong> — for each prompt in a large reasoning dataset, generate \(G\) responses from the Stage 2 model (typically \(G \in [4, 64]\) depending on task difficulty).</li>
+    <li><strong>Filter</strong> — keep only responses where the final answer is verifiably correct. Optionally apply readability filters (no language mixing, well-formed tags).</li>
+    <li><strong>Mix</strong> — combine the filtered reasoning data with supervised data for general capabilities: QA, summarization, creative writing, safety. The mix prevents catastrophic forgetting of general language ability.</li>
+    <li><strong>Fine-tune</strong> — standard SFT on the combined dataset.</li>
+  </ol>
+
+  <p>This produces a model that is both a strong reasoner (from the RL phase's training signal) and a coherent, formatted responder (from the SFT phase's stabilisation). Stage 4 RL then further improves both dimensions together.</p>
+
+  <div class="callout">
+    <div class="callout-label">Connection to AlphaZero's self-play loop</div>
+    <p>Rejection sampling + SFT is the LLM equivalent of AlphaZero's self-play training loop: use the current best model to generate training data (stage 2 model generates responses), filter to only high-quality examples (keep correct answers), train the next model on those examples (SFT), repeat. The key difference: AlphaZero generates data via MCTS (expensive search), while R1 generates data via sampling + outcome verification (much cheaper at LLM inference scale).</p>
+  </div>
+
+  <h2 id="distillation">7. Distillation — Reasoning Without RL</h2>
+  <p>The full R1 model (671B MoE) is large. To make reasoning accessible in smaller models, DeepSeek distills R1's capabilities directly via SFT — no RL training required for the student models.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Step</th><th>What happens</th></tr>
+      <tr>
+        <td><strong>Generate</strong></td>
+        <td>Sample 800K (prompt, response) pairs from the full R1 model across math, code, and reasoning tasks</td>
+      </tr>
+      <tr>
+        <td><strong>Filter</strong></td>
+        <td>Keep only correct responses (same rejection-sampling filter as Stage 3)</td>
+      </tr>
+      <tr>
+        <td><strong>Fine-tune</strong></td>
+        <td>SFT a smaller base model (Qwen-7B, Qwen-14B, Llama-8B, Llama-70B, etc.) on these 800K examples</td>
+      </tr>
+      <tr>
+        <td><strong>Result</strong></td>
+        <td>Small model that can produce long reasoning traces, self-corrects, and solves problems far beyond its untuned capability</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>The distilled models outperform previous open-source models at the same parameter count by a large margin on math and code benchmarks — without any RL training. This finding has significant implications:</p>
+
+  <div class="step">
+    <div class="step-label">Why distillation is so effective here</div>
+    <p>Standard knowledge distillation transfers a teacher's output distribution to a student. What makes R1 distillation unusually effective is the <em>nature</em> of the teacher outputs: long, explicit reasoning traces. The student doesn't have to guess how to solve the problem — the teacher shows its work, step by step, verified to be correct. The student SFT is essentially supervised training on a very high-quality, reasoning-dense dataset that couldn't be produced cheaply by humans. This is the same dynamic as process supervision (PRMs) — but the process labels come from the RL-trained model rather than human annotators.</p>
+  </div>
+
+  <div class="note">
+    RL from scratch is harder and less efficient than distillation for small models. A 7B model trained with GRPO from scratch (R1-Zero style) substantially underperforms a 7B model distilled from the full R1 teacher on the same compute budget. Distillation leverages the teacher's search — the 671B model found the reasoning paths through RL; the 7B model just has to learn to produce similar paths via SFT.
+  </div>
+
+  <h2 id="lessons">8. What R1 Tells Us About Reasoning in LLMs</h2>
+
+  <h3>Reasoning is a latent capability, not a trained behavior</h3>
+  <p>R1-Zero demonstrates that a pretrained LLM already has the underlying representations needed for multi-step reasoning — it just doesn't use them unless rewarded to. The base model was trained on vast amounts of text that contains mathematical reasoning; R1-Zero's RL unlocks this latent capability. This reframes alignment: we're not teaching the model <em>how</em> to reason, we're selecting for the behaviors that demonstrate it.</p>
+
+  <h3>Verifiable tasks are the key constraint</h3>
+  <p>Everything in R1 depends on having a <strong>ground-truth verifier</strong> — something that unambiguously tells you whether the model's answer is correct. Math and code are ideal: answers are exact-match, test cases are mechanical. Open-ended tasks (helpfulness, style, nuance, safety) don't have this property, which is why Stage 4 needs a learned reward model for general tasks. The hard problem of alignment is that most of what we care about in LLM behavior can't be verified automatically.</p>
+
+  <h3>The training paradigm, distilled</h3>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Component</th><th>R1's choice</th><th>Why</th></tr>
+      <tr><td>Base algorithm</td><td>GRPO</td><td>No critic needed; group sampling provides the baseline</td></tr>
+      <tr><td>Reward type</td><td>Binary outcome verifier</td><td>No reward hacking risk; perfectly calibrated signal</td></tr>
+      <tr><td>Process reward model</td><td>Not used (Stages 1–3)</td><td>Expensive to train; gamed by RL; not necessary</td></tr>
+      <tr><td>Cold start</td><td>Small SFT on CoT examples</td><td>Fixes format/language before RL; doesn't teach reasoning</td></tr>
+      <tr><td>Post-RL stabilization</td><td>Rejection sampling + SFT</td><td>Converts RL discoveries into clean, stable training signal</td></tr>
+      <tr><td>Small model transfer</td><td>Distillation (SFT only)</td><td>More efficient than RL from scratch at small scale</td></tr>
+    </table>
+  </div>
+
+  <h3>Connection to the RL theory series</h3>
+  <div class="table-wrap">
+    <table>
+      <tr><th>R1 component</th><th>Theory foundation</th></tr>
+      <tr><td>GRPO with group sampling</td><td><a href="grpo.html" style="color:var(--accent);">GRPO</a>: MC baseline from group rewards; advantage = z-score within group</td></tr>
+      <tr><td>Binary outcome reward</td><td><a href="mc-rollouts.html" style="color:var(--accent);">MC Rollouts</a>: one rollout to the end of the episode; outcome is the sole reward signal</td></tr>
+      <tr><td>Thinking length scaling</td><td><a href="tree-search-llm.html" style="color:var(--accent);">Tree Search for LLMs</a>: more test-time compute → better answers; R1 learns this endogenously</td></tr>
+      <tr><td>Self-correction emerging from reward</td><td><a href="alphazero.html" style="color:var(--accent);">AlphaZero</a>: give the agent a verifiable signal, let RL find the strategy — same principle</td></tr>
+      <tr><td>Rejection sampling + SFT loop</td><td><a href="alphazero.html" style="color:var(--accent);">AlphaZero §8</a>: search generates better data → model trains on it → search improves</td></tr>
+      <tr><td>Distillation of reasoning</td><td><a href="tree-search-llm.html" style="color:var(--accent);">Tree Search §8</a>: search-generated data for training; same mechanism, different search algorithm</td></tr>
+    </table>
+  </div>
+
+  <h2>Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">R1-Zero</div>
+      <p>Base LLM + GRPO + binary verifier → spontaneous chain-of-thought. No CoT demonstrations needed.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Cold start</div>
+      <p>Tiny SFT on well-formatted CoT fixes language/format before RL, without teaching reasoning.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Reasoning RL</div>
+      <p>GRPO with accuracy + format rewards. Thinking length, self-correction, verification emerge from the binary signal.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Rejection sampling</div>
+      <p>Sample from RL model, keep correct outputs, mix with general data, SFT. Stabilises RL discoveries.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Distillation</div>
+      <p>800K verified R1 outputs → SFT on smaller models. No RL needed; more efficient than training from scratch.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Key constraint</div>
+      <p>Everything depends on a verifiable outcome signal. Works for math/code; hard for open-ended tasks.</p>
+    </div>
+  </div>
+
+  <h2>What's Next</h2>
+  <div class="next-grid">
+    <a class="next-card" href="grpo.html">
+      <div class="next-card-label">Prerequisite</div>
+      <div class="next-card-title">GRPO</div>
+      <p>The RL algorithm R1 uses: group sampling, z-score advantage, PPO clipped surrogate without a critic.</p>
+    </a>
+    <a class="next-card" href="alphazero.html">
+      <div class="next-card-label">Theory parallel</div>
+      <div class="next-card-title">AlphaZero</div>
+      <p>The game-playing analogue: verifiable signal (win/loss) + self-play → emergent strategy. R1 is AlphaZero for language.</p>
+    </a>
+    <a class="next-card" href="tree-search-llm.html">
+      <div class="next-card-label">Related</div>
+      <div class="next-card-title">Tree Search for LLMs</div>
+      <p>The inference-time counterpart: MCTS and beam search over reasoning steps rather than learning to reason via RL.</p>
+    </a>
+    <a class="next-card" href="rlhf.html">
+      <div class="next-card-label">Contrast</div>
+      <div class="next-card-title">RLHF</div>
+      <p>The human-preference alternative: when you can't verify correctness automatically, you need a learned reward model and human comparisons.</p>
+    </a>
+    <a class="next-card" href="distillation.html">
+      <div class="next-card-label">Deep dive</div>
+      <div class="next-card-title">Distillation</div>
+      <p>Off-policy vs on-policy distillation from first principles — why R1 uses off-policy and when each variant is the right choice.</p>
+    </a>
+    <a class="next-card" href="cascade-rl.html">
+      <div class="next-card-label">Next</div>
+      <div class="next-card-title">Cascade RL</div>
+      <p>What happens when you try to cover more domains than R1: sequential domain stages, cross-stage distillation, and MOPD.</p>
+    </a>
+    <a class="next-card" href="agentic-rl.html">
+      <div class="next-card-label">Next</div>
+      <div class="next-card-title">Agentic RL</div>
+      <p>How RL changes when the model must use tools, modify files, and take actions that have real consequences across many steps.</p>
+    </a>
+  </div>
+
+</div>
+
+<footer>Personal ML notes · <a href="https://github.com/yueyiming2009/ai-learning" style="color:inherit;text-decoration:underline;">source on GitHub</a></footer>
+
+</body>
+</html>

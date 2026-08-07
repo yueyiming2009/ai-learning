@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>The PyTorch Execution Model — Tensors, Autograd, Operators &amp; Eager Dispatch</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #ffffff; --surface: #f8f9fa; --border: #e8eaed;
+      --text: #1a1a2e; --muted: #6b7280;
+      --accent: #b45309; --accent-light: #fef3c7;
+      --warning-bg: #fffbeb; --warning-border: #f59e0b;
+      --step-bg: #f9fafb; --step-border: #d1d5db;
+      --boxed-bg: #fff7ed; --boxed-border: #f97316;
+      --compare-bg: #eff6ff; --compare-border: #3b82f6;
+      --code-bg: #1e1b4b; --code-text: #e2e8f0;
+      --nav-bg: rgba(255,255,255,0.92);
+      --ink: #374151;
+      --icode-bg: #f1f5f9;
+      --kw-fg: #c084fc;
+      --fn-fg: #60a5fa;
+      --cm-fg: #94a3b8;
+      --str-fg: #86efac;
+      --num-fg: #fbbf24;
+      --dec-fg: #f9a8d4;
+      --row-hover: #fafafa;
+      --good-fg: #16a34a;
+      --bad-fg: #dc2626;
+      --compare-fg: #2563eb;
+      --amber-border: #fcd34d;
+      --note-fg: #78350f;
+      --chip-hbm-bg: #fee2e2;
+      --chip-sram-bg: #d1fae5;
+      --chip-sram-fg: #059669;
+      --fig-bg: #fff;
+      --plot-grid: #eceef1;
+      --plot-axis: #cbd5e1;
+      --plot-tick: #9ca3af;
+      --plot-label: #6b7280;
+      --plot-gray: #9ca3af;
+      --plot-amber: #b45309;
+      --plot-orange: #ea580c;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #fbbf24;
+        --accent-light: #251c0b;
+        --warning-bg: #251c0b;
+        --warning-border: #b45309;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #251c0b;
+        --boxed-border: #c2410c;
+        --compare-bg: #101a2b;
+        --compare-border: #1e40af;
+        --code-bg: #221f3d;
+        --code-text: #e2e8f0;
+        --nav-bg: rgba(15,17,21,0.9);
+        --ink: #cbd5e1;
+        --icode-bg: #1c2531;
+        --kw-fg: #c084fc;
+        --fn-fg: #60a5fa;
+        --cm-fg: #94a3b8;
+        --str-fg: #86efac;
+        --num-fg: #fbbf24;
+        --dec-fg: #f9a8d4;
+        --row-hover: #191e25;
+        --good-fg: #4ade80;
+        --bad-fg: #f87171;
+        --compare-fg: #60a5fa;
+        --amber-border: #78350f;
+        --note-fg: #fcd34d;
+        --chip-hbm-bg: #2a1214;
+        --chip-sram-bg: #0e2016;
+        --chip-sram-fg: #34d399;
+        --fig-bg: #14181e;
+        --plot-grid: #232830;
+        --plot-axis: #3a4149;
+        --plot-tick: #6b7280;
+        --plot-label: #9aa1ab;
+        --plot-gray: #6b7280;
+        --plot-amber: #fbbf24;
+        --plot-orange: #fb923c;
+      }
+    }
+
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 0; line-height: 1.75; font-size: 16px; }
+    nav { position: sticky; top: 0; z-index: 100; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 52px; }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 0.9rem; color: var(--accent); text-decoration: none; white-space: nowrap; }
+    .nav-links { display: flex; gap: 4px; overflow-x: auto; flex: 1; }
+    .nav-links a { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; white-space: nowrap; transition: color 0.15s, background 0.15s; }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .nav-back { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); white-space: nowrap; transition: color 0.15s; margin-left: auto; flex-shrink: 0; }
+    .nav-back:hover { color: var(--text); }
+    .hero { background: linear-gradient(135deg, #78350f 0%, #b45309 100%); color: white; padding: 56px 24px 48px; text-align: center; }
+    .hero h1 { font-size: clamp(1.5rem, 4vw, 2.2rem); font-weight: 600; margin: 0 0 12px; letter-spacing: -0.02em; }
+    .hero p { margin: 0 auto; opacity: 0.85; font-size: 0.97rem; max-width: 640px; }
+    .hero-pill { display: inline-block; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 100px; font-size: 0.78rem; padding: 3px 12px; margin-bottom: 16px; letter-spacing: 0.04em; text-transform: uppercase; }
+    .page-wrap { max-width: 820px; margin: 0 auto; padding: 48px 24px 80px; }
+    h2 { font-size: 1.15rem; font-weight: 600; margin: 2.8em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); color: var(--text); }
+    h3 { font-size: 0.97rem; font-weight: 600; margin: 1.6em 0 0.4em; color: var(--ink); }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    code { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
+    p code, li code, td code { background: var(--icode-bg); padding: 1px 6px; border-radius: 4px; font-size: 0.88em; color: var(--accent); }
+    pre { background: var(--code-bg); color: var(--code-text); border-radius: 10px; padding: 20px 24px; overflow-x: auto; font-size: 0.87rem; line-height: 1.6; margin: 1.2em 0; }
+    pre code { background: none; padding: 0; font-size: inherit; color: inherit; }
+    .kw  { color: var(--kw-fg); }
+    .fn  { color: var(--fn-fg); }
+    .cm  { color: var(--cm-fg); font-style: italic; }
+    .str { color: var(--str-fg); }
+    .num { color: var(--num-fg); }
+    .dec { color: var(--dec-fg); }
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
+    th, td { border: 1px solid var(--border); padding: 9px 16px; text-align: left; vertical-align: top; }
+    th { background: var(--surface); font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+    tr:hover td { background: var(--row-hover); }
+    td.good { color: var(--good-fg); font-weight: 600; }
+    td.bad  { color: var(--bad-fg); }
+    td.ctr, th.ctr { text-align: center; }
+    .step { background: var(--step-bg); border: 1px solid var(--step-border); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 1.2em 0; }
+    .step-label { font-weight: 600; font-size: 0.88rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+    .step-label::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+    .note { background: var(--warning-bg); border-left: 3px solid var(--warning-border); border-radius: 0 8px 8px 0; padding: 10px 16px; margin: 1em 0; font-size: 0.92em; color: var(--note-fg); }
+    .result { background: var(--boxed-bg); border: 1.5px solid var(--boxed-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; text-align: center; }
+    .result-label { font-size: 0.8rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+    .compare { background: var(--compare-bg); border: 1.5px solid var(--compare-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; }
+    .compare-label { font-size: 0.8rem; font-weight: 600; color: var(--compare-fg); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
+    .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 1.2em 0; }
+    .summary-card { background: var(--accent-light); border: 1px solid var(--amber-border); border-radius: 8px; padding: 14px 16px; }
+    .summary-card-label { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+    .xref { background: var(--accent-light); border: 1px solid var(--amber-border); border-radius: 8px; padding: 12px 18px; margin: 1.4em 0; font-size: 0.92rem; }
+    .xref a { color: var(--accent); font-weight: 600; text-decoration: none; }
+    .xref a:hover { text-decoration: underline; }
+    /* Memory pass diagram */
+    .pass-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 1.2em 0; }
+    .pass-box { border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+    .pass-box h4 { font-size: 0.85rem; font-weight: 600; margin: 0 0 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .pass-bad  { border-left: 3px solid var(--bad-fg); }
+    .pass-good { border-left: 3px solid var(--good-fg); }
+    .pass-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 0.87rem; }
+    .pass-arrow { color: var(--muted); font-size: 0.8rem; }
+    .mem-chip { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.78rem; font-weight: 600; }
+    .chip-hbm  { background: var(--chip-hbm-bg); color: var(--bad-fg); }
+    .chip-sram { background: var(--chip-sram-bg); color: var(--chip-sram-fg); }
+    /* Figure / interactive plot */
+    .figure { background: var(--fig-bg); border: 1px solid var(--border); border-radius: 10px; padding: 18px 16px 14px; margin: 1.6em 0; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+    .figure canvas { width: 100%; height: 320px; display: block; }
+    .controls { display: flex; flex-wrap: wrap; gap: 18px 28px; margin: 14px 4px 4px; }
+    .control { flex: 1 1 240px; }
+    .control label { display: flex; justify-content: space-between; font-size: 0.82rem; font-weight: 600; color: var(--ink); margin-bottom: 6px; }
+    .control label .val { color: var(--accent); font-variant-numeric: tabular-nums; }
+    .control input[type=range] { width: 100%; accent-color: var(--accent); }
+    .readout { font-size: 0.86rem; color: var(--text); line-height: 1.6; margin: 14px 4px 2px; padding: 12px 14px; background: var(--step-bg); border: 1px solid var(--border); border-radius: 8px; }
+    .readout b { color: var(--accent); }
+    .figure-caption { font-size: 0.85rem; color: var(--muted); line-height: 1.6; margin: 14px 4px 2px; }
+    footer { border-top: 1px solid var(--border); padding: 28px 24px; text-align: center; font-size: 0.82rem; color: var(--muted); }
+    @media (max-width: 600px) { .hero { padding: 40px 16px 36px; } .page-wrap { padding: 32px 16px 60px; } .pass-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>PyTorch</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#what-runs">What runs</a>
+    <a href="#tensors">Tensors</a>
+    <a href="#autograd">Autograd</a>
+    <a href="#eager-vs-graph">Eager vs. graph</a>
+    <a href="#dispatch">Dispatch</a>
+    <a href="#cost">The cost of eager</a>
+    <a href="#fixes">The fix ladder</a>
+  </div>
+  <a class="nav-back" href="../index.html">Home</a>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Systems · PyTorch</span>
+  <h1>The PyTorch Execution Model</h1>
+  <p>What a line of PyTorch actually does — tensors as handles to device memory, the autograd graph recorded as you go, eager vs. graph dispatch, and the ATen operator → dispatcher → CUDA-kernel path. Then the reason eager execution leaves performance on the table, and the ladder that climbs back: CUDA graphs, <code>torch.compile</code>, and hand-written kernels.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="xref">
+    <strong>Where this sits:</strong> this is the layer <em>above</em> the kernel. <a href="../hardware/gpu-hardware.html">GPU Hardware for ML</a> covers the memory hierarchy (HBM → SRAM → registers) and the roofline model that the performance argument here rests on; <a href="triton-kernels.html">GPU Kernels in Triton</a> is where you write the fused kernel this page motivates. Read this one first if the sentence “PyTorch operators leave performance on the table” isn’t yet obvious.
+  </div>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="what-runs">What actually runs when you write a line of PyTorch</h2>
+
+  <p>PyTorch code reads like NumPy. You write</p>
+
+<pre><code>y = x.relu()</code></pre>
+
+  <p>and a tensor comes back. But that one line is not a function call in the NumPy sense — it is an instruction to a runtime. Behind it, three things happen that NumPy never does:</p>
+
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">It drives a device</div>
+      <p><code>x</code> is a handle to a block of memory that may live in GPU HBM. The operation launches a <strong>GPU kernel</strong> that reads and writes that memory — the Python call just enqueues it.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">It records a graph</div>
+      <p>If <code>x</code> needs gradients, the op also appends a node to a <strong>backward graph</strong> so a later <code>.backward()</code> can replay it in reverse.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">It goes through a dispatcher</div>
+      <p>The call is routed through PyTorch’s <strong>operator dispatcher</strong>, which picks the right kernel — CPU vs. CUDA, autograd-aware or not, autocast or not — before any compute happens.</p>
+    </div>
+  </div>
+
+  <p>This page walks down that stack: what a tensor really is (§<a href="#tensors">tensors</a>), the graph autograd records (§<a href="#autograd">autograd</a>), why running one op at a time is a <em>choice</em> called eager mode (§<a href="#eager-vs-graph">eager vs. graph</a>), how a call finds its kernel (§<a href="#dispatch">dispatch</a>), and then the two ways eager leaves performance on the table (§<a href="#cost">cost</a>) and how to win it back (§<a href="#fixes">the fix ladder</a>). The payoff is the sentence the <a href="triton-kernels.html">Triton page</a> opens with — by the end it should read as a consequence, not an assertion.</p>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="tensors">Tensors: storage, views, and strides</h2>
+
+  <p>A PyTorch tensor is not the data. It is a small piece of <strong>metadata</strong> that points <em>at</em> the data:</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Field</th><th>What it holds</th></tr></thead>
+      <tbody>
+        <tr><td><code>storage</code></td><td>A pointer to a flat, 1-D, contiguous block of memory — on CPU it is host RAM, on a CUDA tensor it is a block of <strong>HBM</strong>. This is the only thing that owns bytes.</td></tr>
+        <tr><td><code>dtype</code></td><td>How to interpret each element (<code>float32</code>, <code>bfloat16</code>, <code>int64</code>, …) and therefore its size in bytes.</td></tr>
+        <tr><td><code>shape</code> (sizes)</td><td>The logical \(n\)-dimensional extent, e.g. <code>(M, N)</code>.</td></tr>
+        <tr><td><code>stride</code></td><td>How many <em>elements</em> to step in storage to advance one index along each dimension.</td></tr>
+        <tr><td><code>storage_offset</code></td><td>Where in the storage this tensor’s first element begins (lets a tensor start partway into a shared buffer).</td></tr>
+        <tr><td><code>device</code></td><td>Which device the storage lives on (<code>cpu</code>, <code>cuda:0</code>, …).</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>The key consequence: <strong>a tensor is a handle to device memory.</strong> Remember that — the entire performance argument later is about how many times those bytes cross the bus between HBM and the compute units.</p>
+
+  <h3>Strides make layout explicit</h3>
+
+  <p>For a contiguous (row-major) matrix of shape \((M, N)\), the strides are \((N, 1)\): stepping one row means jumping \(N\) elements; stepping one column means jumping \(1\). Element \((i, j)\) lives at <code>storage_offset + i·stride[0] + j·stride[1]</code>. Strides are why many tensor operations cost <em>nothing</em>:</p>
+
+  <div class="step">
+    <div class="step-label">A view shares storage — no copy, no kernel</div>
+    <p style="margin:0 0 8px;">These operations return a new tensor that points at the <em>same</em> storage, with different metadata:</p>
+    <ul style="margin:0;">
+      <li><code>x.T</code> / <code>x.transpose(0,1)</code> — swaps the sizes and strides. A \((M,N)\) tensor with strides \((N,1)\) becomes \((N,M)\) with strides \((1,N)\). Zero bytes move.</li>
+      <li><code>x[2:5]</code>, <code>x.unsqueeze(0)</code>, <code>x.expand(...)</code>, <code>x.view(...)</code> — all just rewrite shape/stride/offset.</li>
+    </ul>
+  </div>
+
+  <p>After a transpose the tensor is <strong>non-contiguous</strong>: walking it in row-major order no longer walks memory in order. That is fine for math, but a GPU kernel that assumes a contiguous, coalesced layout cannot run on it directly. So PyTorch exposes <code>x.contiguous()</code>, which <em>does</em> launch a copy kernel to materialize a fresh row-major buffer. Operations that need contiguity either call it for you or raise. The lesson: <strong>some ops are pure metadata (free); others move bytes (a kernel).</strong> Telling them apart is the first half of reasoning about PyTorch performance.</p>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="autograd">Autograd: the graph PyTorch records as you go</h2>
+
+  <p>PyTorch builds its backward graph <strong>define-by-run</strong>: there is no separate “compile” step where you declare the network. The graph is constructed as a side effect of running the forward pass. Whenever an operation consumes a tensor with <code>requires_grad=True</code>, autograd does three things:</p>
+
+  <ol>
+    <li>Runs the forward op normally, producing the output tensor.</li>
+    <li>Creates a <strong>backward node</strong> — a <code>grad_fn</code> such as <code>ReluBackward0</code> or <code>MmBackward0</code> — that knows how to turn an upstream gradient into gradients for this op’s inputs.</li>
+    <li>Sets the output’s <code>.grad_fn</code> to that node and wires its <code>.next_functions</code> to the inputs’ nodes, extending the graph by one edge.</li>
+  </ol>
+
+  <p>The result is a DAG whose leaves are the parameters (<code>requires_grad=True</code> tensors you created) and whose root is the loss. Calling <code>loss.backward()</code> walks this DAG in reverse topological order, and at each node applies the <strong>vector–Jacobian product</strong> — multiplying the incoming gradient by that op’s local Jacobian without ever forming the Jacobian. That mechanism is the subject of its own page; here we only care about its <em>systems</em> footprint.</p>
+
+  <div class="xref">
+    <strong>The math of each <code>grad_fn</code>:</strong> see <a href="../foundations/backprop.html">Backpropagation — The Vector–Jacobian Product</a> for why the backward node multiplies by a Jacobian-transpose and how the per-op rules are derived. This page treats those nodes as black boxes with a known cost.
+  </div>
+
+  <h3>Two costs autograd imposes</h3>
+
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">Backward replays operators</div>
+      <p>Every forward op spawns a backward op. A model is therefore (roughly) <strong>two sweeps of operators</strong> per step — so launch overhead and HBM traffic count at least twice.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Saved tensors cost memory</div>
+      <p>A node stashes the forward values its backward needs (inputs, or the output). These <strong>saved activations</strong> are why training memory dwarfs inference, and what activation checkpointing trades away.</p>
+    </div>
+  </div>
+
+  <p>So “run a model” is never a single pass. It is a forward sweep that <em>also</em> builds and feeds a graph, followed by a backward sweep that replays it. Every cost discussed below — the per-op launch, the round-trip to HBM — is paid on both.</p>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="eager-vs-graph">Eager vs. graph execution</h2>
+
+  <p>That PyTorch runs one operator at a time, immediately, is a deliberate design called <strong>eager execution</strong> — and it is the source of both PyTorch’s ergonomics and its performance gaps.</p>
+
+  <div class="compare">
+    <div class="compare-label">The two execution models</div>
+    <table style="margin:0;">
+      <thead><tr><th></th><th>Eager (default)</th><th>Graph mode</th></tr></thead>
+      <tbody>
+        <tr><td><strong>When ops run</strong></td><td>Immediately, as the Python line executes.</td><td>The whole computation is captured first, then run.</td></tr>
+        <tr><td><strong>What the framework sees</strong></td><td>One operator at a time. No knowledge of what comes next.</td><td>The entire graph — so it can optimize globally.</td></tr>
+        <tr><td><strong>Optimization possible</strong></td><td>None across ops: every intermediate is materialized.</td><td>Fuse ops, pick layouts, plan memory, remove dead nodes.</td></tr>
+        <tr><td><strong>Debugging</strong></td><td>Trivial — set a breakpoint, <code>print(x)</code>, use Python control flow.</td><td>Harder — you debug a captured IR, not your Python.</td></tr>
+        <tr><td><strong>Python on the hot path</strong></td><td>Yes — the interpreter dispatches every op.</td><td>No — after capture, replay skips Python.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Eager won the framework wars because define-by-run makes models feel like ordinary programs: dynamic shapes, data-dependent branches, and <code>pdb</code> all just work. The price is that the runtime has no lookahead. It cannot fuse <code>a + b</code> with the <code>* c</code> that follows, because when it runs <code>a + b</code> it does not yet know <code>* c</code> exists. <strong>Graph mode</strong> recovers that lookahead by capturing a representation of the computation before running it — which is exactly what <code>torch.compile</code> does under the hood (§<a href="#fixes">the fix ladder</a>). Everything in between here explains why that lookahead is worth recovering.</p>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="dispatch">Operators and the dispatcher</h2>
+
+  <p>What you call a “PyTorch operation” is, underneath, an <strong>operator</strong> in PyTorch’s C++ tensor library, <strong>ATen</strong>. There are a couple of thousand of them — <code>aten::add</code>, <code>aten::mm</code>, <code>aten::relu</code>, <code>aten::native_layer_norm</code>, <code>aten::_softmax</code>. Every tensor method, every <code>torch.*</code> function, and every infix operator (<code>+</code>, <code>@</code>) bottoms out in one of these.</p>
+
+  <p>A given operator is not a single function — it has <strong>many implementations</strong>, one per situation: a CPU kernel, a CUDA kernel, an autograd wrapper that records the backward node, an autocast wrapper that inserts a cast, and more. Choosing the right one for a particular call is the job of the <strong>dispatcher</strong>.</p>
+
+  <h3>Dispatch keys</h3>
+
+  <p>From the inputs, PyTorch computes a <strong>dispatch key set</strong> — a bitset of properties: which <em>device</em> (CPU / CUDA), whether <em>autograd</em> is required, whether <em>autocast</em> is active, the layout, and so on. The dispatcher processes these keys in priority order, each key’s handler doing its bit and then <em>redispatching</em> to the next. For <code>y = x.relu()</code> on a CUDA tensor that requires grad:</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>#</th><th>Layer</th><th>What happens</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Python binding</td><td><code>x.relu()</code> calls the C++ entry point for the <code>aten::relu</code> operator.</td></tr>
+        <tr><td>2</td><td>Dispatcher</td><td>Computes the key set from <code>x</code>: <code>{Autograd, AutocastCUDA?, CUDA}</code>. Highest-priority key first.</td></tr>
+        <tr><td>3</td><td><strong>Autograd</strong> key</td><td>Records a <code>ReluBackward0</code> node, saves what backward needs, then redispatches to the next key.</td></tr>
+        <tr><td>4</td><td><strong>CUDA</strong> key</td><td>The actual CUDA implementation enqueues <code>relu_kernel&lt;&lt;&lt;grid, block&gt;&gt;&gt;</code> on the stream.</td></tr>
+        <tr><td>5</td><td>GPU</td><td>The kernel reads <code>x</code> from HBM, computes <code>max(x, 0)</code>, writes <code>y</code> to HBM.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>So one innocuous Python call traverses several handlers before any arithmetic happens, and the backend op ultimately <strong>launches at least one GPU kernel</strong>. That layered indirection is flexible and clean — it is how the same <code>relu</code> serves CPU, CUDA, autograd, autocast, and meta tensors without any of them knowing about the others. It is also the source of the per-op overhead we turn to next.</p>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="cost">The cost of eager execution</h2>
+
+  <p>Per operator, PyTorch is fast: each ATen kernel is hand-tuned C++/CUDA. The performance that leaks is not <em>inside</em> an op — it is <strong>between</strong> ops, and it has two distinct causes. Which one bites depends on how big your tensors are.</p>
+
+  <h3>Cost 1 — kernel-launch overhead (the CPU can’t keep up)</h3>
+
+  <p>Launching a kernel is not free. Each op pays, on the CPU, for the Python interpreter, the dispatcher walk above, and the driver call (<code>cudaLaunchKernel</code>) — together on the order of a few microseconds. CUDA launches are <em>asynchronous</em>: the CPU enqueues kernels onto a stream and the GPU pulls from that queue. As long as each kernel runs longer than it takes the CPU to queue the next one, the GPU stays saturated and the launch cost hides. But when kernels are <strong>tiny</strong> — small tensors, or a long chain of cheap elementwise ops — the CPU cannot enqueue fast enough, the queue drains, and the GPU sits idle between kernels. The workload is <strong>launch-bound</strong> (a.k.a. CPU-bound): in a profiler you see gaps between kernels and GPU utilization well below 100%.</p>
+
+  <h3>Cost 2 — HBM round-trips (the bytes move too many times)</h3>
+
+  <p>Even with launch cost fully hidden, eager pays a second tax. Each operator reads its inputs from HBM and writes its output back to HBM, because the next operator is a <em>separate</em> kernel that can only communicate through memory. Chain several ops and every intermediate makes a full round-trip. For memory-bound ops (elementwise, normalization, softmax) where there is almost no arithmetic per byte, <strong>HBM bandwidth is the wall</strong> — and you hit it once per op instead of once for the whole chain. This is precisely the claim the <a href="triton-kernels.html">Triton page</a> opens with.</p>
+
+  <h3>A worked example: quick-GELU as three ops</h3>
+
+  <p>Take \(y = x \cdot \sigma(1.702\,x)\) — the “quick GELU” approximation — over a tensor of \(N\) elements in <code>bf16</code> (2 bytes each). In eager mode this is three operators, each a kernel, each round-tripping HBM:</p>
+
+  <div class="pass-grid">
+    <div class="pass-box pass-bad">
+      <h4 style="color:var(--bad-fg);">Eager: 3 kernels, 3 HBM round-trips</h4>
+      <div class="pass-row"><span class="mem-chip chip-hbm">read x</span> <span class="pass-arrow">→</span> <code>t1 = 1.702*x</code> <span class="pass-arrow">→</span> <span class="mem-chip chip-hbm">write t1</span></div>
+      <div class="pass-row"><span class="mem-chip chip-hbm">read t1</span> <span class="pass-arrow">→</span> <code>t2 = sigmoid(t1)</code> <span class="pass-arrow">→</span> <span class="mem-chip chip-hbm">write t2</span></div>
+      <div class="pass-row"><span class="mem-chip chip-hbm">read x, t2</span> <span class="pass-arrow">→</span> <code>y = x*t2</code> <span class="pass-arrow">→</span> <span class="mem-chip chip-hbm">write y</span></div>
+      <p style="font-size:0.85rem;color:var(--bad-fg);margin:8px 0 0;">≈ 7N elements move through HBM · 3 kernel launches.</p>
+    </div>
+    <div class="pass-box pass-good">
+      <h4 style="color:var(--good-fg);">Fused: 1 kernel, 1 HBM round-trip</h4>
+      <div class="pass-row"><span class="mem-chip chip-hbm">read x once</span> <span class="pass-arrow">→</span> keep in <span class="mem-chip chip-sram">registers</span></div>
+      <div class="pass-row"><span class="mem-chip chip-sram">registers</span> <span class="pass-arrow">→</span> compute <code>1.702·x</code>, <code>σ</code>, multiply in place</div>
+      <div class="pass-row"><span class="mem-chip chip-sram">registers</span> <span class="pass-arrow">→</span> <span class="mem-chip chip-hbm">write y once</span></div>
+      <p style="font-size:0.85rem;color:var(--good-fg);margin:8px 0 0;">≈ 2N elements move through HBM · 1 kernel launch.</p>
+    </div>
+  </div>
+
+  <p>The fused version moves <strong>~3.5× fewer bytes</strong> and pays <strong>one launch instead of three</strong>. The arithmetic — a scalar multiply and a sigmoid — is identical and trivially cheap; nothing about the math got faster. The win is entirely in <em>not</em> shipping <code>t1</code> and <code>t2</code> out to HBM and back. For a bandwidth-bound op, fewer bytes <em>is</em> less time. (This generalizes the fused-softmax result on the <a href="triton-kernels.html">Triton page</a>: there, four passes collapse to two.)</p>
+
+  <h3>One picture: which regime are you in?</h3>
+
+  <p>Model one elementwise op as costing <code>max(launch_overhead, bytes / bandwidth)</code> — the CPU floor or the memory ramp, whichever is larger. Below a crossover size the launch floor dominates (launch-bound); above it the bandwidth ramp dominates (bandwidth-bound). Drag the tensor size to see where a single op lands, and the chain length to see what fusing the chain saves.</p>
+
+  <div class="figure">
+    <canvas id="plot-regime" aria-label="Per-operation time versus tensor size, showing a flat launch-overhead floor on the left and a rising bandwidth ramp on the right, meeting at a crossover point"></canvas>
+    <div class="controls">
+      <div class="control">
+        <label for="ctl-n">Tensor size <span class="val" id="val-n">1.0 M elements</span></label>
+        <input type="range" id="ctl-n" min="10" max="26" step="0.25" value="20">
+      </div>
+      <div class="control">
+        <label for="ctl-k">Chained elementwise ops <span class="val" id="val-k">4</span></label>
+        <input type="range" id="ctl-k" min="1" max="8" step="1" value="4">
+      </div>
+    </div>
+    <div class="readout" id="regime-readout"></div>
+    <p class="figure-caption">
+      <strong>Assumptions (illustrative):</strong> <code>bf16</code> (2 B/element), one read + one write per op, ~2 TB/s HBM bandwidth, ~5 µs fixed launch overhead per kernel. The crossover sits near 2.5 M elements: smaller and you are launch-bound (the CPU can’t feed the GPU); larger and you are bandwidth-bound (the bytes are the wall). <strong>Fusion wins in both regimes</strong> — it turns <em>k</em> launches and <em>k</em> round-trips into one of each.
+    </p>
+  </div>
+
+  <p class="note">Numbers are illustrative — exact launch overhead depends on the CPU, Python, and CUDA version, and bandwidth on the GPU. The shape is what matters: a flat floor, a linear ramp, and a crossover whose existence is the whole point.</p>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="fixes">Closing the gap: the fix ladder</h2>
+
+  <p>The two costs have a shared cure — stop treating each op as an isolated kernel — but three rungs of increasing effort and control. Climb only as far as you need.</p>
+
+  <div class="step">
+    <div class="step-label">Rung 1 — CUDA graphs: kill the launch overhead</div>
+    <p style="margin:0;">If the bottleneck is launch-bound (many small kernels), <strong>capture</strong> the exact sequence of kernel launches once and <strong>replay</strong> it as a single unit. The CPU-side dispatch and per-launch driver cost vanish; the same kernels run, but with no gaps. This is what inference servers mean by disabling eager mode (e.g. vLLM’s <code>enforce_eager=False</code> captures CUDA graphs for the decode step). It removes Cost 1 but not Cost 2 — the bytes still round-trip — and it needs static shapes, since a captured graph is fixed.</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Rung 2 — torch.compile: fuse automatically</div>
+    <p style="margin:0;"><code>torch.compile(model)</code> recovers the graph-mode lookahead from §<a href="#eager-vs-graph">eager vs. graph</a>. <strong>TorchDynamo</strong> traces your Python into an FX graph; <strong>TorchInductor</strong> then fuses elementwise and reduction ops and <em>codegens a single kernel</em> for each fused group — in fact it generates <strong>Triton</strong> kernels for the GPU. The quick-GELU chain above becomes one kernel automatically. This attacks <em>both</em> costs at once (one launch, one round-trip) and is the right default: a one-line change that captures most of the available win.</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Rung 3 — hand-written kernels: when the compiler can’t</div>
+    <p style="margin:0;">Sometimes the fusion you need crosses a boundary the compiler won’t — a matmul fused with a softmax and a second matmul, kept entirely in SRAM, as in <a href="../inference/flash-attention.html">FlashAttention</a> — or the algorithm is novel enough that no pattern matches. Then you drop down and write the kernel yourself in <strong>Triton</strong> (or CUDA). You give up <code>torch.compile</code>’s automation and take full control of the memory-access pattern. <strong>This is the handoff to the <a href="triton-kernels.html">Triton page</a></strong>, which builds exactly this kind of fused kernel from a blank file.</p>
+  </div>
+
+  <div class="result">
+    <div class="result-label">The sentence, earned</div>
+    <p style="margin:0;">PyTorch operators are fast per-op — but eager runs each as an isolated kernel, so a chain pays <em>k</em> launches and round-trips HBM <em>k</em> times. That is the performance left on the table. The ladder picks it back up: <strong>CUDA graphs</strong> for launch overhead, <strong>torch.compile</strong> for automatic fusion, and a <strong>hand-written Triton kernel</strong> when you need the last word.</p>
+  </div>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="where-next">Where this leads</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>If you want…</th><th>Go to</th></tr></thead>
+      <tbody>
+        <tr><td>To write the fused kernel this page motivates, by hand</td><td><a href="triton-kernels.html">GPU Kernels in Triton →</a></td></tr>
+        <tr><td>The memory hierarchy and roofline behind “bandwidth-bound”</td><td><a href="../hardware/gpu-hardware.html">GPU Hardware for ML →</a></td></tr>
+        <tr><td>Fusion taken to its limit (matmul + softmax + matmul in SRAM)</td><td><a href="../inference/flash-attention.html">FlashAttention →</a></td></tr>
+        <tr><td>The math inside each <code>grad_fn</code> backward node</td><td><a href="../foundations/backprop.html">Backpropagation (VJP) →</a></td></tr>
+        <tr><td>What happens when operators span many GPUs</td><td><a href="torch-distributed.html">Data Parallelism &amp; FSDP →</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+<footer>Personal ML notes · <a href="https://github.com/yueyiming2009/ai-learning" style="color:inherit;text-decoration:underline;">source on GitHub</a></footer>
+
+<script>
+(function () {
+  // ── Cost model (illustrative) ──────────────────────────
+  const DBYTES = 2;           // bf16
+  const BW     = 2.0e12;      // ~2 TB/s HBM bandwidth, bytes/s
+  const TLAUNCH = 5e-6;       // ~5 µs fixed launch overhead, seconds
+  const bytesPerOp = n => 2 * n * DBYTES;          // one read + one write
+  const tBW  = n => bytesPerOp(n) / BW;            // seconds (bandwidth term)
+  const tOp  = n => Math.max(TLAUNCH, tBW(n));     // seconds (per op)
+  const nStar = TLAUNCH * BW / (2 * DBYTES);       // crossover size (elements)
+
+  const fmtN = n => n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + ' M'
+                  : n >= 1e3 ? (n / 1e3).toFixed(0) + ' K' : n.toFixed(0);
+  const fmtUs = s => { const us = s * 1e6;
+    return us >= 100 ? us.toFixed(0) : us >= 10 ? us.toFixed(1) : us.toFixed(2); };
+
+  // ── Plot ───────────────────────────────────────────────
+  const canvas   = document.getElementById('plot-regime');
+  const nSlider  = document.getElementById('ctl-n');
+  const kSlider  = document.getElementById('ctl-k');
+  const nLabel   = document.getElementById('val-n');
+  const kLabel   = document.getElementById('val-k');
+  const readout  = document.getElementById('regime-readout');
+
+  const X_MIN = 10, X_MAX = 26;        // log2(elements)
+  const Y_MIN = 0,  Y_MAX = 3;         // log10(microseconds): 1 µs … 1000 µs
+
+  // resolve colors at draw time so the plot follows the OS light/dark scheme
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+  function draw() {
+    if (!canvas) return;
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const mL = 52, mR = 16, mT = 16, mB = 46;
+    const pw = cssW - mL - mR, ph = cssH - mT - mB;
+    const X = lx => mL + (lx - X_MIN) / (X_MAX - X_MIN) * pw;          // lx = log2(n)
+    const Y = ly => mT + (Y_MAX - ly) / (Y_MAX - Y_MIN) * ph;          // ly = log10(µs)
+    const toLY = s => Math.log10(s * 1e6);                              // seconds → log10 µs
+
+    // gridlines + ticks
+    ctx.font = '11px Inter, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    const xt = [[10,'1K'],[14,'16K'],[18,'256K'],[22,'4M'],[26,'64M']];
+    xt.forEach(([lx, lab]) => { const px = X(lx);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.fillText(lab, px, mT + ph + 6); });
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    [[0,'1 µs'],[1,'10 µs'],[2,'100 µs'],[3,'1 ms']].forEach(([ly, lab]) => {
+      const py = Y(ly);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+      ctx.fillText(lab, mL - 8, py); });
+
+    // axis titles
+    ctx.fillStyle = cssVar('--plot-label'); ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.fillText('tensor size (elements, log scale)', mL + pw / 2, mT + ph + 24);
+
+    // launch-overhead floor (dashed)
+    const floorLY = toLY(TLAUNCH);
+    ctx.save();
+    ctx.strokeStyle = cssVar('--plot-gray'); ctx.lineWidth = 1.5; ctx.setLineDash([5, 4]);
+    ctx.beginPath(); ctx.moveTo(mL, Y(floorLY)); ctx.lineTo(mL + pw, Y(floorLY)); ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = cssVar('--plot-tick'); ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+    ctx.fillText('launch floor (~5 µs)', mL + 6, Y(floorLY) - 4);
+
+    // crossover vertical
+    const lxStar = Math.log2(nStar);
+    ctx.save();
+    ctx.strokeStyle = cssVar('--plot-axis'); ctx.lineWidth = 1.25; ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(X(lxStar), mT); ctx.lineTo(X(lxStar), mT + ph); ctx.stroke();
+    ctx.restore();
+
+    // tOp curve (clipped)
+    ctx.save();
+    ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    ctx.beginPath(); ctx.lineWidth = 2.75; ctx.strokeStyle = cssVar('--plot-amber'); ctx.lineJoin = 'round';
+    const STEPS = 240;
+    for (let i = 0; i <= STEPS; i++) {
+      const lx = X_MIN + (X_MAX - X_MIN) * i / STEPS;
+      const n = Math.pow(2, lx);
+      const px = X(lx), py = Y(toLY(tOp(n)));
+      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+    ctx.restore();
+
+    // current-n marker
+    const lxNow = parseFloat(nSlider.value);
+    const nNow = Math.pow(2, lxNow);
+    const launchBound = tBW(nNow) < TLAUNCH;
+    ctx.save();
+    ctx.strokeStyle = cssVar('--plot-orange'); ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(X(lxNow), mT); ctx.lineTo(X(lxNow), mT + ph); ctx.stroke();
+    ctx.restore();
+    const pyNow = Y(toLY(tOp(nNow)));
+    ctx.beginPath(); ctx.fillStyle = cssVar('--plot-amber');
+    ctx.arc(X(lxNow), pyNow, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = cssVar('--fig-bg'); ctx.lineWidth = 1.5; ctx.stroke();
+
+    // regime tag near the dot
+    ctx.font = '600 11px Inter, sans-serif';
+    ctx.fillStyle = cssVar(launchBound ? '--bad-fg' : '--good-fg');
+    const tag = launchBound ? 'launch-bound' : 'bandwidth-bound';
+    const onLeft = X(lxNow) > mL + pw * 0.55;
+    ctx.textAlign = onLeft ? 'right' : 'left';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(tag, X(lxNow) + (onLeft ? -10 : 10), pyNow - 8);
+  }
+
+  function update() {
+    const lxNow = parseFloat(nSlider.value);
+    const k = parseInt(kSlider.value, 10);
+    const n = Math.pow(2, lxNow);
+    nLabel.textContent = fmtN(n) + ' elements';
+    kLabel.textContent = k;
+
+    const perOp = tOp(n);
+    const launchBound = tBW(n) < TLAUNCH;
+    const eager = k * perOp;     // k launches, k round-trips
+    const fused = perOp;         // 1 launch, 1 round-trip
+    const speedup = eager / fused;
+
+    readout.innerHTML =
+      'At <b>' + fmtN(n) + '</b> elements, one elementwise op is <b>' +
+      (launchBound ? 'launch-bound' : 'bandwidth-bound') + '</b> (~<b>' + fmtUs(perOp) +
+      ' µs</b>). A chain of <b>k = ' + k + '</b> such ops — eager ≈ <b>' + fmtUs(eager) +
+      ' µs</b> (' + k + ' launches, ' + k + '× HBM passes) vs. fused ≈ <b>' + fmtUs(fused) +
+      ' µs</b> (1 launch, 1 HBM pass). Fusion speedup ≈ <b>' + speedup.toFixed(1) + '×</b>.';
+
+    draw();
+  }
+
+  if (canvas) {
+    nSlider.addEventListener('input', update);
+    kSlider.addEventListener('input', update);
+    let raf;
+    window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(draw); });
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    if (mq.addEventListener) mq.addEventListener('change', draw);
+    update();
+  }
+})();
+</script>
+
+</body>
+</html>

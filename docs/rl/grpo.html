@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>GRPO — Group Relative Policy Optimization</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #0891b2;
+      --accent-light: #ecfeff;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --nav-bg: rgba(255,255,255,0.92);
+      --note-fg: #1e40af;
+      --result-fg: #16a34a;
+      --cyan-border: #a5f3fc;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #22d3ee;
+        --accent-light: #0c2226;
+        --warning-bg: #101a2b;
+        --warning-border: #1e40af;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --nav-bg: rgba(15,17,21,0.9);
+        --note-fg: #93c5fd;
+        --result-fg: #4ade80;
+        --cyan-border: #155e75;
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #164e63 0%, #0891b2 60%, #06b6d4 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.9;
+      font-size: 0.97rem;
+      max-width: 560px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+    code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+    pre { background: var(--step-bg); border: 1px solid var(--step-border); border-radius: 8px; padding: 14px 18px; overflow-x: auto; font-size: 0.85rem; line-height: 1.55; margin: 1.2em 0; }
+    pre code { background: none; border: none; padding: 0; color: var(--text); }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+
+    /* ── Step boxes ──────────────────────────── */
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    /* ── Callout / note ──────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+    .note::before { content: '💡 '; }
+
+    /* ── Result / boxed equation ─────────────── */
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Group diagram ───────────────────────── */
+    .group {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: stretch;
+      gap: 10px;
+      margin: 1.4em 0;
+    }
+    .group-prompt {
+      flex: 1 1 130px;
+      background: var(--accent-light);
+      border: 1px solid var(--cyan-border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .group-outs {
+      flex: 2 1 320px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 8px;
+    }
+    .group-out {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 0.84rem;
+    }
+    .group-out b { color: var(--accent); }
+    .group-label {
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    /* ── Summary card ────────────────────────── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .summary-card {
+      background: var(--accent-light);
+      border: 1px solid var(--cyan-border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .summary-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    /* ── Footer ──────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    /* ── Responsive ──────────────────────────── */
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>GRPO</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#notation">Notation</a>
+    <a href="#motivation">Motivation</a>
+    <a href="#group">Group sampling</a>
+    <a href="#advantage">Advantage</a>
+    <a href="#objective">Objective</a>
+    <a href="#kl">KL estimator</a>
+    <a href="#gradient">Gradient</a>
+    <a href="#loop">Loop</a>
+    <a href="#vs">vs. PPO</a>
+    <a href="#summary">Summary</a>
+    <a href="#drgrpo">Dr.GRPO</a>
+    <a href="#gspo">GSPO</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Alignment</span>
+  <h1>GRPO — Group Relative Policy Optimization</h1>
+  <p>The RL algorithm behind DeepSeek-R1: drop PPO's value network and use a <em>group</em> of sampled answers as the baseline, scoring each one relative to its peers.</p>
+</div>
+
+<div class="page-wrap">
+
+  <h2 id="notation">Notation</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symbol</th><th>Description</th></tr>
+      <tr><td>\(q\)</td><td>Prompt / question (the same role as \(x\) elsewhere)</td></tr>
+      <tr><td>\(o_i\)</td><td>The \(i\)-th sampled output (completion) in the group; \(|o_i|\) its token length</td></tr>
+      <tr><td>\(o_{i,t}\)</td><td>Token \(t\) of output \(i\); \(o_{i,&lt;t}\) the tokens before it</td></tr>
+      <tr><td>\(G\)</td><td>Group size — number of outputs sampled per prompt</td></tr>
+      <tr><td>\(\pi_\theta\)</td><td>Policy being trained; \(\pi_{\theta_{\text{old}}}\) the policy that generated the group; \(\pi_{\text{ref}}\) frozen reference</td></tr>
+      <tr><td>\(r_i\)</td><td>Reward of output \(o_i\) (from a reward model or a verifier)</td></tr>
+      <tr><td>\(\hat A_{i,t}\)</td><td>Advantage assigned to token \(t\) of output \(i\)</td></tr>
+      <tr><td>\(\rho_{i,t}(\theta)\)</td><td>Importance ratio \(\pi_\theta(o_{i,t}\mid\cdot)/\pi_{\theta_{\text{old}}}(o_{i,t}\mid\cdot)\)</td></tr>
+      <tr><td>\(\epsilon,\;\beta\)</td><td>Clip range and KL penalty coefficient</td></tr>
+    </table>
+  </div>
+  <div class="note">
+    New to \(\mathbb{E}\), \(\sim\), \(\mathrm{KL}\), or \(\nabla\)? See the <a href="../foundations/math-notation.html" style="color:var(--note-fg);">math notation reference</a>. GRPO assumes the <a href="rlhf.html" style="color:var(--note-fg);">RLHF</a> setup — read that first for PPO, advantages, and the clipped surrogate.
+  </div>
+
+  <h2 id="motivation">1. Why GRPO? Killing the critic</h2>
+  <p><a href="rlhf.html" style="color:var(--accent);">PPO</a> needs a learned <em>value function</em> \(V_\psi(s)\) — the critic — to compute advantages \(\hat A_t = \big(\text{return}\big) - V_\psi(s_t)\). For LLMs the critic is typically another model as large as the policy, which doubles memory and adds a second hard-to-train objective.</p>
+  <p>GRPO's insight: the only thing the critic provides is a <em>baseline</em> to subtract from the reward (to reduce gradient variance). For a fixed prompt you can estimate that baseline directly — just sample several answers and use their <strong>average reward</strong>. No value network required.</p>
+
+  <div class="note">
+    Subtracting any baseline that doesn't depend on the action leaves the policy gradient unbiased but lowers its variance. PPO learns the baseline; GRPO estimates it on the fly from a group of samples — a Monte-Carlo baseline.
+  </div>
+
+  <h2 id="group">2. Group Sampling</h2>
+  <p>For each prompt \(q\), sample a <em>group</em> of \(G\) outputs from the current policy, then score each with the reward model (or a rule-based verifier, as in math/code RL). This is <a href="mc-rollouts.html" style="color:var(--accent);">Monte Carlo value estimation</a> at the response level: each completion is one rollout to the end of an episode, and the group mean is an MC estimate of the expected reward baseline.</p>
+
+  <div class="group">
+    <div class="group-prompt">
+      <span class="group-label">Prompt</span>
+      <div>\(q\)</div>
+    </div>
+    <div class="group-outs">
+      <div class="group-out"><span class="group-label">Output 1</span><br>\(o_1\) → <b>\(r_1\)</b></div>
+      <div class="group-out"><span class="group-label">Output 2</span><br>\(o_2\) → <b>\(r_2\)</b></div>
+      <div class="group-out"><span class="group-label">…</span><br>\(\vdots\)</div>
+      <div class="group-out"><span class="group-label">Output G</span><br>\(o_G\) → <b>\(r_G\)</b></div>
+    </div>
+  </div>
+
+  \[
+    \{o_1, o_2, \ldots, o_G\} \sim \pi_{\theta_{\text{old}}}(\,\cdot \mid q\,),
+    \qquad r_i = \text{reward}(q, o_i)
+  \]
+
+  <h2 id="advantage">3. Group-Relative Advantage</h2>
+  <p>Instead of a learned baseline, GRPO standardizes each reward against its own group — a <em>z-score</em>. The <a href="value-functions.html" style="color:var(--accent);">advantage</a> \(A(s,a) = Q(s,a) - V(s)\) measures how much better an action performed than average from its state; GRPO estimates this by treating the group mean as \(V(s)\) and each response's reward as \(Q(s,a_i)\). With outcome supervision (one reward per whole output), every token of output \(i\) receives the same advantage:</p>
+
+  <div class="result">
+    <div class="result-label">Group-relative advantage (outcome supervision)</div>
+    \[
+      \hat A_{i,t} = \tilde r_i = \frac{r_i - \operatorname{mean}(\{r_1,\ldots,r_G\})}{\operatorname{std}(\{r_1,\ldots,r_G\})}
+      \qquad \text{for all } t
+    \]
+  </div>
+
+  <p>Subtracting the group mean is the baseline; dividing by the group standard deviation normalizes scale, so prompts of differing difficulty contribute comparable gradients. An answer better than its peers gets \(\hat A_{i,t} > 0\) (reinforce it); a below-average answer gets \(\hat A_{i,t} &lt; 0\) (suppress it).</p>
+
+  <div class="note">
+    This matches how reward models are trained — on <em>comparisons</em> between outputs of the same prompt. GRPO's group-relative scoring uses the reward model in exactly the comparative regime it was fit on.
+  </div>
+
+  <h3>Process supervision</h3>
+  <p>If rewards are available at the end of each reasoning step (not just the final answer), normalize every step reward across the group, then set a token's advantage to the sum of normalized rewards from all steps ending at or after it:</p>
+  \[
+    \hat A_{i,t} = \sum_{\text{step } j \,:\, \text{index}(j)\, \ge\, t} \tilde r_{i,j}
+  \]
+  <p>This credits each token with the (normalized) reward of every step it helped produce.</p>
+
+  <h2 id="objective">4. The GRPO Objective</h2>
+  <p>GRPO keeps PPO's clipped surrogate but plugs in the group-relative advantage and adds the KL penalty <em>directly to the loss</em> (rather than folding it into the reward, as PPO does). The <a href="../foundations/importance-sampling.html" style="color:var(--accent);">importance ratio</a> — reweighting the old policy's samples toward the new policy — is per-token:</p>
+  \[
+    \rho_{i,t}(\theta) = \frac{\pi_\theta(o_{i,t}\mid q, o_{i,&lt;t})}{\pi_{\theta_{\text{old}}}(o_{i,t}\mid q, o_{i,&lt;t})}
+  \]
+
+  <div class="result">
+    <div class="result-label">GRPO objective</div>
+    \[
+      \mathcal{J}_{\text{GRPO}}(\theta) = \mathbb{E}_{\,q,\,\{o_i\}_{i=1}^{G}}
+      \left[ \frac{1}{G}\sum_{i=1}^{G} \frac{1}{|o_i|} \sum_{t=1}^{|o_i|}
+        \Big\{\, \mathcal{C}_{i,t}(\theta) \;-\; \beta\, \mathbb{D}_{\mathrm{KL}}\!\big[\pi_\theta \,\|\, \pi_{\text{ref}}\big]_{i,t} \,\Big\}
+      \right]
+    \]
+    \[
+      \mathcal{C}_{i,t}(\theta) = \min\!\Big( \rho_{i,t}(\theta)\,\hat A_{i,t},\;\;
+        \mathrm{clip}\big(\rho_{i,t}(\theta),\, 1-\epsilon,\, 1+\epsilon\big)\,\hat A_{i,t} \Big)
+    \]
+  </div>
+
+<pre><code>import torch
+
+def grpo_loss(logprobs, old_logprobs, ref_logprobs, rewards, eps=0.2, beta=0.04):
+    """
+    logprobs:     [G, T] — log π_θ(o_t | ...)     current policy (being trained)
+    old_logprobs: [G, T] — log π_θ_old(o_t | ...) frozen snapshot that generated outputs
+    ref_logprobs: [G, T] — log π_ref(o_t | ...)   frozen reference policy
+    rewards:      [G]    — one scalar reward per output in the group
+    """
+    # group-relative advantage: z-score the G rewards for this prompt
+    adv = (rewards - rewards.mean()) / (rewards.std() + 1e-8)  # [G]
+    adv = adv[:, None]   # [G, 1] → broadcast over token dimension
+
+    # importance ratio ρ_{i,t} = π_θ / π_θ_old
+    ratio   = torch.exp(logprobs - old_logprobs)          # [G, T]
+
+    # PPO clipped surrogate C_{i,t}
+    clipped = torch.clamp(ratio, 1 - eps, 1 + eps)
+    pg      = torch.min(ratio * adv, clipped * adv)       # [G, T]
+
+    # KL penalty: k3 estimator u − log u − 1 where u = π_ref / π_θ, always ≥ 0
+    u  = torch.exp(ref_logprobs - logprobs)
+    kl = u - torch.log(u) - 1                             # [G, T]
+
+    return -(pg - beta * kl).mean()   # minimize negative objective
+</code></pre>
+
+  <p>Reading it: average over the group \((\tfrac1G\sum_i)\), average over tokens \((\tfrac{1}{|o_i|}\sum_t)\), and at each token take the PPO clipped term \(\mathcal{C}_{i,t}\) minus a per-token KL penalty toward the reference. Maximizing \(\mathcal{J}_{\text{GRPO}}\) raises the probability of tokens in better-than-average answers while clipping bounds the step size and the KL term keeps the policy near \(\pi_{\text{ref}}\).</p>
+
+  <div class="note">
+    Notice there is no entropy-bonus term: GRPO inherits PPO's clipped surrogate but typically leans on the reference KL — and, in verifiable-reward setups with a weak or zero KL, on nothing — to hold up entropy. That makes <em>entropy collapse</em> the characteristic GRPO failure mode (the policy converges onto one template that games the reward). See <a href="ppo.html#entropy" style="color:var(--note-fg);">PPO §6</a> for the entropy coefficient \(c_2\) and why it is often \(0\) here, and <a href="async-rl-monitoring.html#entropy" style="color:var(--note-fg);">async-RL monitoring</a> for the collapse diagnostics.
+  </div>
+
+  <h2 id="kl">5. The Unbiased KL Estimator</h2>
+  <p>The KL term uses a low-variance, <em>always-positive</em> single-sample estimator (the "k3" estimator), evaluated per token on the sampled \(o_{i,t}\):</p>
+
+  <div class="result">
+    <div class="result-label">KL estimator</div>
+    \[
+      \mathbb{D}_{\mathrm{KL}}\!\big[\pi_\theta \,\|\, \pi_{\text{ref}}\big]_{i,t}
+        = \frac{\pi_{\text{ref}}(o_{i,t}\mid q, o_{i,&lt;t})}{\pi_\theta(o_{i,t}\mid q, o_{i,&lt;t})}
+        - \log\frac{\pi_{\text{ref}}(o_{i,t}\mid q, o_{i,&lt;t})}{\pi_\theta(o_{i,t}\mid q, o_{i,&lt;t})}
+        - 1
+    \]
+  </div>
+
+  <p>Writing \(u = \pi_{\text{ref}}/\pi_\theta\), this is \(u - \log u - 1\), which is \(\ge 0\) for all \(u>0\) and zero only at \(u=1\) (where the policies agree). Its expectation over \(o\sim\pi_\theta\) equals the true \(\mathrm{KL}(\pi_\theta\,\|\,\pi_{\text{ref}})\), so it is an unbiased estimate that never goes negative — unlike the raw log-ratio.</p>
+
+  <div class="note">
+    Two contrasts with PPO-style RLHF: the baseline comes from the group, not a critic; and the KL appears as an explicit loss term with this estimator, rather than as a per-token penalty mixed into the reward signal.
+  </div>
+
+  <h2 id="gradient">6. Gradient</h2>
+  <p>Differentiating (in the unclipped region, \(\rho_{i,t}=1\) at the start of each update since \(\pi_\theta=\pi_{\theta_{\text{old}}}\)) gives a clean policy-gradient form. The KL estimator contributes the extra \(\beta\big(\tfrac{\pi_{\text{ref}}}{\pi_\theta}-1\big)\) term:</p>
+  \[
+    \nabla_\theta \mathcal{J}_{\text{GRPO}}
+      = \mathbb{E}\!\left[ \frac{1}{G}\sum_{i=1}^{G}\frac{1}{|o_i|}\sum_{t=1}^{|o_i|}
+        \left( \hat A_{i,t} + \beta\Big(\frac{\pi_{\text{ref}}(o_{i,t}\mid\cdot)}{\pi_\theta(o_{i,t}\mid\cdot)} - 1\Big) \right)
+        \nabla_\theta \log \pi_\theta(o_{i,t}\mid q, o_{i,&lt;t}) \right]
+  \]
+  <p>The coefficient on each token's score-function gradient \(\nabla_\theta\log\pi_\theta\) is its advantage, nudged by the KL pull toward the reference. The familiar \(\nabla\log\pi_\theta\) factor is the same log-derivative trick derived on the <a href="policy-gradient.html" style="color:var(--accent);">Policy Gradient page</a>, and each per-token \(\log\pi_\theta(o_{i,t}\mid\cdot)\) — and the ratio \(\rho_{i,t}\) above — is a <code>log_softmax</code> gather over the policy logits (<a href="../foundations/log-probs.html" style="color:var(--accent);">computing log-probabilities from logits</a>).</p>
+
+  <h2 id="loop">7. The GRPO Loop</h2>
+  <ol>
+    <li><strong>Sample a group</strong> — for each prompt \(q\), draw \(G\) outputs from \(\pi_{\theta_{\text{old}}}\).</li>
+    <li><strong>Score</strong> — reward each output: a reward model, or a rule-based verifier (exact-match for math, unit tests for code).</li>
+    <li><strong>Normalize</strong> — compute group-relative advantages \(\hat A_{i,t}\) by z-scoring the rewards within the group (§3).</li>
+    <li><strong>Optimize</strong> — take several epochs of minibatch updates on \(\mathcal{J}_{\text{GRPO}}\) (§4), then refresh \(\pi_{\theta_{\text{old}}}\).</li>
+  </ol>
+  <div class="note">
+    Models in memory: policy \(\pi_\theta\), reference \(\pi_{\text{ref}}\), and a reward model <em>if</em> used — but <strong>no critic</strong>. With a rule-based verifier (DeepSeek-R1-Zero), even the reward model disappears, leaving just the policy and reference.
+  </div>
+
+  <h2 id="vs">8. GRPO vs. PPO vs. DPO</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th></th><th>PPO (RLHF)</th><th>GRPO</th><th>DPO</th></tr>
+      <tr><td>Baseline / advantage</td><td>Learned critic \(V_\psi\)</td><td>Group mean reward (z-score)</td><td>—</td></tr>
+      <tr><td>Critic network</td><td>Yes (policy-sized)</td><td>No</td><td>No</td></tr>
+      <tr><td>Reward signal</td><td>Reward model</td><td>Reward model or verifier</td><td>Implicit (preference pairs)</td></tr>
+      <tr><td>KL handling</td><td>Folded into reward</td><td>Explicit loss term (k3)</td><td>Baked into closed form</td></tr>
+      <tr><td>Online sampling</td><td>Yes</td><td>Yes (a group per prompt)</td><td>No (offline)</td></tr>
+      <tr><td>Notable use</td><td>InstructGPT, ChatGPT</td><td>DeepSeekMath, DeepSeek-V2, DeepSeek-R1</td><td>Lightweight alignment</td></tr>
+    </table>
+  </div>
+  <p>GRPO sits between the two: it keeps online RL and a reward signal like <a href="rlhf.html" style="color:var(--accent);">PPO</a>, but removes the critic for a sampling-based baseline — much of <a href="dpo-loss.html" style="color:var(--accent);">DPO</a>'s simplicity without giving up on-policy exploration.</p>
+
+  <h3>The lineage — and the step that usually gets skipped</h3>
+  <p>GRPO is generally told as a two-point story: DeepSeekMath introduced it for math, DeepSeek-R1 scaled it on verifiable rewards. The missing middle is <strong>DeepSeek-V2</strong> (2024), which is where it was first run at frontier scale as a <em>general preference</em> algorithm — against learned reward models, not verifiers. That matters because it separates two claims that R1 tends to fuse: "the critic is unnecessary" and "the reward should be a verifier." GRPO only requires the first.</p>
+  <p>V2's recipe also introduces the staging that R1 later inherits:</p>
+  <ul>
+    <li><strong>Stage 1 — reasoning alignment.</strong> A dedicated \(RM_{\text{reasoning}}\) for code and math. The stated motivation is empirical: reasoning ability keeps improving over far more RL steps than general ability does, so mixing the two wastes the tail.</li>
+    <li><strong>Stage 2 — human preference.</strong> A multi-reward mix \(r_i = c_1 RM_{\text{helpful}}(o_i) + c_2 RM_{\text{safety}}(o_i) + c_3 RM_{\text{rule}}(o_i)\), combining two learned models with a rule-based one.</li>
+  </ul>
+  <p>Note that the reward models themselves were built from compiler feedback (code) and ground-truth labels (math) — verifiable signal used to <em>train the reward model</em> rather than to replace it. The rollout infrastructure is recognizable too: a hybrid engine running different parallel strategies for training and inference, vLLM as the generation backend, and scheduled CPU offload to fit both on the same GPUs — the shape that <a href="rl-frameworks-landscape.html" style="color:var(--accent);">modern RL frameworks</a> formalized later.</p>
+
+  <h2 id="summary">9. Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">Core idea</div>
+      <p>Group of samples replaces the critic baseline</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Advantage</div>
+      <p>\(\hat A_{i,t} = \frac{r_i - \operatorname{mean}(r)}{\operatorname{std}(r)}\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Surrogate</div>
+      <p>\(\min(\rho_{i,t}\hat A_{i,t},\,\mathrm{clip}(\rho_{i,t})\hat A_{i,t})\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">KL term</div>
+      <p>\(u - \log u - 1,\; u=\frac{\pi_{\text{ref}}}{\pi_\theta}\) — always \(\ge 0\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">No critic</div>
+      <p>Halves model memory vs. PPO</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Works with</div>
+      <p>Reward models <em>or</em> rule-based verifiers</p>
+    </div>
+  </div>
+
+  <div class="table-wrap" style="margin-top: 2em;">
+    <table>
+      <tr><th>Quantity</th><th>Formula</th></tr>
+      <tr><td>Group</td><td>\(\{o_i\}_{i=1}^{G} \sim \pi_{\theta_{\text{old}}}(\cdot\mid q)\)</td></tr>
+      <tr><td>Advantage</td><td>\(\hat A_{i,t} = (r_i - \operatorname{mean}(r))/\operatorname{std}(r)\)</td></tr>
+      <tr><td>Ratio</td><td>\(\rho_{i,t} = \pi_\theta(o_{i,t}\mid\cdot)/\pi_{\theta_{\text{old}}}(o_{i,t}\mid\cdot)\)</td></tr>
+      <tr><td>Objective</td><td>\(\mathbb{E}\big[\tfrac1G\sum_i\tfrac{1}{|o_i|}\sum_t (\mathcal{C}_{i,t} - \beta\,\mathbb{D}_{\mathrm{KL}})\big]\)</td></tr>
+      <tr><td>KL estimator</td><td>\(\tfrac{\pi_{\text{ref}}}{\pi_\theta} - \log\tfrac{\pi_{\text{ref}}}{\pi_\theta} - 1\)</td></tr>
+    </table>
+  </div>
+
+  <h2 id="drgrpo">10. Dr.GRPO — Eliminating Length Bias</h2>
+  <p>Standard GRPO averages the clipped surrogate over tokens within each output (\(\tfrac{1}{|o_i|}\sum_t\)). This means a long correct answer contributes more total gradient than a short correct answer with the same reward — a <em>length bias</em> that can push the policy to prefer verbosity. Dr.GRPO (Demystifying Long Chain-of-Thought Reasoning, 2025) fixes this with two changes:</p>
+
+  <ol>
+    <li><strong>Constant loss divisor</strong> — divide by a fixed constant \(D\) rather than \(|o_i|\), so all outputs contribute equal gradient mass regardless of length. The absolute gradient scale depends on \(D\); common choices are the mean sequence length at training start or a round number (e.g., 1000).</li>
+    <li><strong>Disable std normalization</strong> — drop the \(\operatorname{std}(r)\) denominator in the advantage formula, using \(\hat A_{i,t} = r_i - \operatorname{mean}(r)\) instead of the z-score. This makes the advantage magnitude proportional to reward gap rather than reward spread, allowing the trainer to tell a 0.1-gap batch from a 0.9-gap batch.</li>
+  </ol>
+
+  <div class="note">
+    With std-norm on, the fraction-positive metric is always exactly 50/50 by construction. Turning std-norm off makes it diagnostic again: fraction positive &lt; 50% means most prompts are beyond the policy's current capability.
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Setting</th><th>Standard GRPO</th><th>Dr.GRPO</th></tr>
+      <tr>
+        <td>Std normalization</td>
+        <td>\(\hat A_i = (r_i - \mu)/\sigma\)</td>
+        <td>\(\hat A_i = r_i - \mu\) &nbsp; (no division by \(\sigma\))</td>
+      </tr>
+      <tr>
+        <td>Loss aggregation</td>
+        <td>Average over tokens per output</td>
+        <td>Sum over tokens per output, then divide by constant \(D\)</td>
+      </tr>
+      <tr>
+        <td>Length bias</td>
+        <td>Present (longer outputs dominate)</td>
+        <td>Eliminated (each output has equal gradient mass)</td>
+      </tr>
+      <tr>
+        <td>verl config</td>
+        <td><code>norm_adv_by_std_in_grpo: true</code><br><code>loss_agg_mode: token-mean</code></td>
+        <td><code>norm_adv_by_std_in_grpo: false</code><br><code>loss_agg_mode: seq-mean-token-sum-norm</code></td>
+      </tr>
+      <tr>
+        <td>Miles config</td>
+        <td>default (std-norm on)</td>
+        <td><code>--disable-grpo-std-normalization</code><br>+ <code>--custom-pg-loss-reducer-function-path examples.DrGRPO.custom_reducer:get_pg_loss_reducer</code></td>
+      </tr>
+    </table>
+  </div>
+
+  <h2 id="gspo">11. GSPO — Sequence-Level Importance Weighting</h2>
+  <p>Dr.GRPO fixes <em>how the loss is aggregated</em>; GSPO (Group Sequence Policy Optimization, <a href="https://arxiv.org/abs/2507.18071" style="color:var(--accent);">Qwen, 2025</a>) fixes a deeper inconsistency in <em>where the importance ratio lives</em>. GRPO rewards a whole sequence (one scalar \(\hat A_i\) per output) but reweights it with <strong>per-token</strong> ratios \(\rho_{i,t}\) — the unit of the reward and the unit of the correction don't match.</p>
+
+  <p>Each per-token ratio is an independent random variable; multiplying the implied corrections across hundreds of tokens compounds variance, and per-token clipping is applied to quantities whose product is what actually matters. The damage is worst in <a href="../transformer/moe-routing.html" style="color:var(--accent);">MoE</a> models: a tiny weight update can flip a token's expert routing, making its ratio swing wildly even when the sequence as a whole barely moved. GRPO needs hacks like <em>Routing Replay</em> (force training to reuse the rollout's expert assignments) to stay stable.</p>
+
+  <h3>The fix: ratio at the sequence level</h3>
+  <p>GSPO defines a single <strong>sequence-level</strong> importance ratio — the geometric mean of the per-token ratios, i.e. length-normalized so sequences of any length land on the same scale:</p>
+
+  <div class="result">
+    <div class="result-label">Sequence-level importance ratio</div>
+    \[
+      s_i(\theta) = \left( \frac{\pi_\theta(o_i \mid q)}{\pi_{\theta_{\text{old}}}(o_i \mid q)} \right)^{1/|o_i|}
+        = \exp\!\left( \frac{1}{|o_i|} \sum_{t=1}^{|o_i|} \log \frac{\pi_\theta(o_{i,t}\mid q, o_{i,&lt;t})}{\pi_{\theta_{\text{old}}}(o_{i,t}\mid q, o_{i,&lt;t})} \right)
+    \]
+  </div>
+
+  <p>The length normalization (the \(1/|o_i|\) exponent) is essential: it keeps \(s_i\) concentrated near 1 regardless of \(|o_i|\), so one clip range works for short and long outputs alike. The objective then mirrors GRPO's clipped surrogate, but the ratio, the clip, and the advantage all act on the <strong>whole sequence</strong>:</p>
+
+  <div class="result">
+    <div class="result-label">GSPO objective</div>
+    \[
+      \mathcal{J}_{\text{GSPO}}(\theta) = \mathbb{E}_{\,q,\,\{o_i\}_{i=1}^{G}}
+      \left[ \frac{1}{G}\sum_{i=1}^{G} \min\!\Big( s_i(\theta)\,\hat A_i,\;\;
+        \mathrm{clip}\big(s_i(\theta),\, 1-\epsilon,\, 1+\epsilon\big)\,\hat A_i \Big) \right]
+    \]
+    \[
+      \hat A_i = \frac{r_i - \operatorname{mean}(\{r_1,\ldots,r_G\})}{\operatorname{std}(\{r_1,\ldots,r_G\})}
+    \]
+  </div>
+
+  <p>The advantage is the same group z-score as GRPO, but now a single scalar \(\hat A_i\) per output rather than broadcast over tokens. Because \(s_i\) sits so tightly around 1, the clip range \(\epsilon\) is far tighter than GRPO's \(\approx 0.2\) — the paper uses values on the order of \(10^{-3}\text{–}10^{-4}\). As written there is no explicit KL term; a reference-KL penalty can be appended exactly as in <a href="#kl" style="color:var(--accent);">§5</a> if desired.</p>
+
+<pre><code>import torch
+
+def gspo_loss(logprobs, old_logprobs, rewards, lengths, eps=3e-4):
+    """
+    logprobs:     [G, T] — log π_θ(o_t | ...)     current policy (being trained)
+    old_logprobs: [G, T] — log π_θ_old(o_t | ...) snapshot that generated outputs
+    rewards:      [G]    — one scalar reward per output in the group
+    lengths:      [G]    — token length |o_i| of each output
+    (padding positions assumed 0 in both logprob tensors)
+    """
+    # group-relative advantage: ONE scalar per sequence (same z-score as GRPO)
+    adv = (rewards - rewards.mean()) / (rewards.std() + 1e-8)        # [G]
+
+    # sequence-level ratio s_i = geometric mean of per-token ratios
+    #   = exp( (1/|o_i|) Σ_t [log π_θ − log π_θ_old] )
+    seq_logratio = (logprobs - old_logprobs).sum(dim=1) / lengths    # [G]
+    s = torch.exp(seq_logratio)                                      # [G]
+
+    # clipped surrogate — clipping now acts on the whole sequence
+    clipped = torch.clamp(s, 1 - eps, 1 + eps)
+    pg = torch.min(s * adv, clipped * adv)                           # [G]
+
+    return -pg.mean()
+</code></pre>
+
+  <div class="note">
+    This is the <em>training</em> view of the same sequence-level importance correction the <a href="async-rl.html#is" style="color:var(--note-fg);">off-policy correction page</a> derives from the lag angle (\(w_{seq}\), the same geometric-mean weight): unbiased under policy lag and — crucially — immune to MoE expert-activation volatility, so GSPO trains MoE stably <em>without</em> Routing Replay.
+  </div>
+
+  <h3>GSPO-token: per-token advantages, sequence-level weight</h3>
+  <p>Multi-turn or fine-grained-credit settings sometimes want a different advantage per token. GSPO-token keeps the sequence-level importance weight but restores a per-token gradient with a stop-gradient trick (\(\mathrm{sg}[\cdot]\) detaches its argument from the backward pass):</p>
+  \[
+    s_{i,t}(\theta) = \mathrm{sg}\!\big[s_i(\theta)\big]\cdot
+      \frac{\pi_\theta(o_{i,t}\mid q, o_{i,&lt;t})}{\mathrm{sg}\big[\pi_\theta(o_{i,t}\mid q, o_{i,&lt;t})\big]}
+  \]
+  <p>Numerically \(s_{i,t}=s_i\) on the forward pass (the fraction is 1), so the loss value is unchanged — but the gradient now flows token-by-token, letting you weight each token by its own \(\hat A_{i,t}\). When every token shares the sequence advantage (\(\hat A_{i,t}=\hat A_i\)), GSPO-token reduces exactly to GSPO.</p>
+
+  <h3>GRPO vs. GSPO</h3>
+  <div class="table-wrap">
+    <table>
+      <tr><th></th><th>GRPO</th><th>GSPO</th></tr>
+      <tr><td>Importance ratio</td><td>Per-token \(\rho_{i,t}\)</td><td>Per-sequence \(s_i\) (length-normalized)</td></tr>
+      <tr><td>Clipping</td><td>Per-token, \(\epsilon\approx0.2\)</td><td>Per-sequence, \(\epsilon\sim10^{-3}\text{–}10^{-4}\)</td></tr>
+      <tr><td>Advantage applied</td><td>Broadcast to every token</td><td>One scalar over the sequence</td></tr>
+      <tr><td>Reward vs. ratio unit</td><td>Mismatched (seq reward, token ratio)</td><td>Matched (both at sequence)</td></tr>
+      <tr><td>MoE stability</td><td>Needs Routing Replay</td><td>Robust without it</td></tr>
+      <tr><td>Notable use</td><td>DeepSeekMath, DeepSeek-R1</td><td>Qwen3</td></tr>
+    </table>
+  </div>
+
+  <h2>What's Next</h2>
+  <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; margin:1.2em 0;">
+    <a href="rlhf.html" style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;text-decoration:none;color:inherit;display:block;">
+      <div style="font-size:0.78rem;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Prerequisite</div>
+      <div style="font-weight:600;font-size:0.95rem;margin-bottom:4px;">RLHF &amp; PPO</div>
+      <p style="margin:0;font-size:0.88rem;color:var(--muted);">The full three-stage pipeline, reward model, and PPO derivation that GRPO simplifies.</p>
+    </a>
+    <a href="deepseek-r1.html" style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;text-decoration:none;color:inherit;display:block;">
+      <div style="font-size:0.78rem;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Next</div>
+      <div style="font-weight:600;font-size:0.95rem;margin-bottom:4px;">DeepSeek-R1</div>
+      <p style="margin:0;font-size:0.88rem;color:var(--muted);">GRPO in production: the full 4-stage recipe that produced R1 — binary verifiers, cold start, rejection sampling, distillation.</p>
+    </a>
+    <a href="mc-rollouts.html" style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;text-decoration:none;color:inherit;display:block;">
+      <div style="font-size:0.78rem;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Theory</div>
+      <div style="font-weight:600;font-size:0.95rem;margin-bottom:4px;">Monte Carlo Rollouts</div>
+      <p style="margin:0;font-size:0.88rem;color:var(--muted);">Why the group average is a valid unbiased baseline — baseline subtraction and why it leaves the gradient unchanged.</p>
+    </a>
+    <a href="dpo-loss.html" style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;text-decoration:none;color:inherit;display:block;">
+      <div style="font-size:0.78rem;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Related</div>
+      <div style="font-weight:600;font-size:0.95rem;margin-bottom:4px;">DPO</div>
+      <p style="margin:0;font-size:0.88rem;color:var(--muted);">The fully offline alternative: preference pairs, no rollouts, no reward model required.</p>
+    </a>
+    <a href="async-rl-monitoring.html" style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;text-decoration:none;color:inherit;display:block;">
+      <div style="font-size:0.78rem;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Diagnostics</div>
+      <div style="font-weight:600;font-size:0.95rem;margin-bottom:4px;">Monitoring &amp; Diagnosis</div>
+      <p style="margin:0;font-size:0.88rem;color:var(--muted);">What to log and how to read it: pg_clipfrac, Pearson correlation, entropy collapse, IS ratios — plus GRPO-specific dead-batch detection via within-group reward diversity.</p>
+    </a>
+    <a href="grpo-training-walkthrough.html" style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;text-decoration:none;color:inherit;display:block;">
+      <div style="font-size:0.78rem;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Systems</div>
+      <div style="font-weight:600;font-size:0.95rem;margin-bottom:4px;">GRPO Training Walkthrough</div>
+      <p style="margin:0;font-size:0.88rem;color:var(--muted);">Concrete step-by-step trace in VeRL: tensor shapes, group rollout batching, the z-score reshape, actor loss with k3 KL, and what disappears versus PPO.</p>
+    </a>
+  </div>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; Group Relative Policy Optimization (GRPO)
+</footer>
+
+</body>
+</html>

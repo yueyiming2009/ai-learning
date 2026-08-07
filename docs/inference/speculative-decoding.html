@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Speculative Decoding — Draft, Verify, and Accelerate</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #ffffff; --surface: #f8f9fa; --border: #e8eaed;
+      --text: #1a1a2e; --muted: #6b7280;
+      --accent: #0f766e; --accent-light: #f0fdfa;
+      --warning-bg: #fffbeb; --warning-border: #f59e0b;
+      --step-bg: #f9fafb; --step-border: #d1d5db;
+      --boxed-bg: #f0fdfa; --boxed-border: #0d9488;
+      --compare-bg: #faf5ff; --compare-border: #8b5cf6;
+      --nav-bg: rgba(255,255,255,0.92);
+      --fig-bg: #ffffff;
+      --ink: #374151;
+      --code-bg: #f1f5f9;
+      --row-hover: #fafafa;
+      --good-fg: #16a34a;
+      --bad-fg: #dc2626;
+      --note-fg: #78350f;
+      --compare-fg: #6d28d9;
+      --teal-border: #99f6e4;
+      --spec-bg: #0f172a;
+      --spec-fg: #e2e8f0;
+      --spec-num: #5eead4;
+      --spec-key: #94a3b8;
+      --tok-accept-bg: #d1fae5;
+      --tok-accept-fg: #065f46;
+      --tok-accept-border: #6ee7b7;
+      --tok-reject-bg: #fee2e2;
+      --tok-reject-fg: #7f1d1d;
+      --tok-reject-border: #fca5a5;
+      --tok-resample-bg: #fffbeb;
+      --tok-resample-border: #fde68a;
+      --tok-prompt-bg: #eff6ff;
+      --tok-prompt-fg: #1e40af;
+      --tok-prompt-border: #bfdbfe;
+      --panel-bg: #f9fafb;
+      --diagram-bg2: #f0fdfa;
+      --red-bg: #fff5f5;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #2dd4bf;
+        --accent-light: #10201e;
+        --warning-bg: #251c0b;
+        --warning-border: #b45309;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #10201e;
+        --boxed-border: #0d9488;
+        --compare-bg: #1a1626;
+        --compare-border: #6d28d9;
+        --nav-bg: rgba(15,17,21,0.9);
+        --fig-bg: #14181e;
+        --ink: #cbd5e1;
+        --code-bg: #1c2531;
+        --row-hover: #191e25;
+        --good-fg: #4ade80;
+        --bad-fg: #f87171;
+        --note-fg: #fcd34d;
+        --compare-fg: #a78bfa;
+        --teal-border: #134e4a;
+        --spec-bg: #1c2531;
+        --spec-fg: #e2e8f0;
+        --spec-num: #5eead4;
+        --spec-key: #94a3b8;
+        --tok-accept-bg: #0e2016;
+        --tok-accept-fg: #6ee7b7;
+        --tok-accept-border: #065f46;
+        --tok-reject-bg: #2a1214;
+        --tok-reject-fg: #fca5a5;
+        --tok-reject-border: #7f1d1d;
+        --tok-resample-bg: #251c0b;
+        --tok-resample-border: #78350f;
+        --tok-prompt-bg: #101a2b;
+        --tok-prompt-fg: #93c5fd;
+        --tok-prompt-border: #1e3a8a;
+        --panel-bg: #14181e;
+        --diagram-bg2: #10201e;
+        --red-bg: #2a1214;
+      }
+    }
+
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 0; line-height: 1.75; font-size: 16px; }
+    nav { position: sticky; top: 0; z-index: 100; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 52px; }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 0.9rem; color: var(--accent); text-decoration: none; white-space: nowrap; }
+    .nav-links { display: flex; gap: 4px; overflow-x: auto; flex: 1; }
+    .nav-links a { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; white-space: nowrap; transition: color 0.15s, background 0.15s; }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .nav-back { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); white-space: nowrap; transition: color 0.15s; margin-left: auto; flex-shrink: 0; }
+    .nav-back:hover { color: var(--text); }
+    .hero { background: linear-gradient(135deg, #134e4a 0%, #0f766e 100%); color: white; padding: 56px 24px 48px; text-align: center; }
+    .hero h1 { font-size: clamp(1.5rem, 4vw, 2.2rem); font-weight: 600; margin: 0 0 12px; letter-spacing: -0.02em; }
+    .hero p { margin: 0 auto; opacity: 0.85; font-size: 0.97rem; max-width: 580px; }
+    .hero-pill { display: inline-block; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 100px; font-size: 0.78rem; padding: 3px 12px; margin-bottom: 16px; letter-spacing: 0.04em; text-transform: uppercase; }
+    .page-wrap { max-width: 820px; margin: 0 auto; padding: 48px 24px 80px; }
+    h2 { font-size: 1.15rem; font-weight: 600; margin: 2.8em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); color: var(--text); }
+    h3 { font-size: 0.97rem; font-weight: 600; margin: 1.6em 0 0.4em; color: var(--ink); }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    code { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
+    p code, li code, td code { background: var(--code-bg); padding: 1px 6px; border-radius: 4px; font-size: 0.88em; color: var(--accent); }
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
+    th, td { border: 1px solid var(--border); padding: 9px 16px; text-align: left; vertical-align: top; }
+    th { background: var(--surface); font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+    tr:hover td { background: var(--row-hover); }
+    td.ctr, th.ctr { text-align: center; }
+    td.good { color: var(--good-fg); font-weight: 600; }
+    td.bad  { color: var(--bad-fg); }
+    .step { background: var(--step-bg); border: 1px solid var(--step-border); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 1.2em 0; }
+    .step-label { font-weight: 600; font-size: 0.88rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+    .step-label::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+    .note { background: var(--warning-bg); border-left: 3px solid var(--warning-border); border-radius: 0 8px 8px 0; padding: 10px 16px; margin: 1em 0; font-size: 0.92em; color: var(--note-fg); }
+    .note::before { content: '⚠ '; }
+    .result { background: var(--boxed-bg); border: 1.5px solid var(--boxed-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; text-align: center; }
+    .result-label { font-size: 0.8rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+    .compare { background: var(--compare-bg); border: 1.5px solid var(--compare-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; }
+    .compare-label { font-size: 0.8rem; font-weight: 600; color: var(--compare-fg); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
+    .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 1.2em 0; }
+    .summary-card { background: var(--accent-light); border: 1px solid var(--teal-border); border-radius: 8px; padding: 14px 16px; }
+    .summary-card-label { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+    .xref { background: var(--accent-light); border: 1px solid var(--teal-border); border-radius: 8px; padding: 12px 18px; margin: 1.4em 0; font-size: 0.92rem; }
+    .xref a { color: var(--accent); font-weight: 600; text-decoration: none; }
+    .xref a:hover { text-decoration: underline; }
+    .spec-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 1.2em 0; }
+    .spec { background: var(--spec-bg); color: var(--spec-fg); border-radius: 10px; padding: 12px 14px; }
+    .spec-num { font-size: 1.25rem; font-weight: 600; color: var(--spec-num); font-family: ui-monospace, monospace; }
+    .spec-key { font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--spec-key); margin-top: 2px; }
+    /* Token stream diagram */
+    .token-row { display: flex; align-items: center; gap: 3px; margin: 6px 0; flex-wrap: wrap; }
+    .tok { padding: 3px 8px; border-radius: 4px; font-size: 0.78rem; font-family: ui-monospace, monospace; font-weight: 600; }
+    .tok-accept { background: var(--tok-accept-bg); color: var(--tok-accept-fg); border: 1px solid var(--tok-accept-border); }
+    .tok-reject { background: var(--tok-reject-bg); color: var(--tok-reject-fg); border: 1px solid var(--tok-reject-border); }
+    .tok-resample { background: var(--tok-resample-bg); color: var(--note-fg); border: 1px solid var(--tok-resample-border); }
+    .tok-prompt { background: var(--tok-prompt-bg); color: var(--tok-prompt-fg); border: 1px solid var(--tok-prompt-border); }
+    .diagram { background: linear-gradient(180deg, var(--panel-bg) 0%, var(--diagram-bg2) 100%); border: 1px solid var(--teal-border); border-radius: 12px; padding: 18px 20px; margin: 1.6em 0; }
+    .diagram-title { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+    .diagram-hint { font-size: 0.8rem; color: var(--muted); margin-bottom: 14px; }
+    .diagram-stage { background: var(--fig-bg); border-radius: 8px; padding: 16px; overflow-x: auto; }
+    .calc-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 10px; }
+    .calc-row label { font-size: 0.88rem; min-width: 200px; color: var(--ink); }
+    .calc-row b { font-family: ui-monospace, monospace; color: var(--accent); }
+    input[type=range] { accent-color: var(--accent); width: 200px; max-width: 50vw; }
+    footer { border-top: 1px solid var(--border); padding: 28px 24px; text-align: center; font-size: 0.82rem; color: var(--muted); }
+    @media (max-width: 600px) { .hero { padding: 40px 16px 36px; } .page-wrap { padding: 32px 16px 60px; } }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Speculative Decoding</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#bottleneck">The bottleneck</a>
+    <a href="#idea">Draft + verify</a>
+    <a href="#acceptance">Acceptance proof</a>
+    <a href="#speedup">Speedup formula</a>
+    <a href="#drafts">Draft model choices</a>
+    <a href="#when">When it wins</a>
+    <a href="#summary">Summary</a>
+  </div>
+  <a class="nav-back" href="../index.html">Home</a>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Systems · Inference · Latency</span>
+  <h1>Speculative Decoding — Draft, Verify, and Accelerate</h1>
+  <p>The memory bandwidth wall forces one target model forward pass per output token — but a fast draft model can propose several tokens in one pass. Speculative decoding verifies all draft proposals in a single target forward pass using rejection sampling, producing exactly the target distribution while generating multiple tokens per verification step.</p>
+</div>
+
+<div class="page-wrap">
+
+<p>
+  Decode throughput is capped by how fast the model's weights can be loaded from HBM. Making the target model smaller is not always an option. Speculative decoding instead exploits an asymmetry: a small draft model is much cheaper to run than the target, and the target model can verify many positions simultaneously in a single forward pass (just as prefill processes the full prompt in parallel). The result: \(\gamma\) tokens can be generated per target model call, rather than 1.
+</p>
+
+<!-- ═══════════════════════════════════════════ BOTTLENECK -->
+<h2 id="bottleneck">1 · The single-token-per-step bottleneck</h2>
+
+<p>
+  As derived in <a href="inference-compute-model.html">Prefill &amp; Decode</a>, each decode step loads \(\approx 2N\) bytes of model weights to compute one token. At batch size 1:
+</p>
+
+<div class="result">
+  <div class="result-label">Decode throughput ceiling (batch = 1)</div>
+  \[ \text{tokens/s} = \frac{\text{peak HBM bandwidth}}{2N} \]
+  <div style="font-size:0.85rem;color:var(--muted);margin-top:6px">
+    No software optimization can exceed this without reducing bytes loaded per step or increasing the tokens produced per step.
+  </div>
+</div>
+
+<p>
+  Batching multiple requests raises the effective batch size \(B\) and improves throughput. But for a single user (or in latency-constrained settings where large batches are not available), the memory bandwidth wall is absolute. The only way to produce more tokens per unit time is to produce more tokens per model call.
+</p>
+
+<!-- ═══════════════════════════════════════════ THE IDEA -->
+<h2 id="idea">2 · The draft-then-verify idea</h2>
+
+<p>
+  Autoregressive generation forces serial execution — each token depends on the previous one. But <em>verification</em> is parallel: given a candidate sequence, the target model can score all positions simultaneously in a single forward pass, just like prefill.
+</p>
+
+<div class="step">
+  <div class="step-label">One speculative decoding step</div>
+  <ol style="margin-bottom:0">
+    <li><strong>Draft:</strong> run the small draft model autoregressively for \(\gamma\) steps, producing candidate tokens \(\hat{x}_1, \hat{x}_2, \ldots, \hat{x}_\gamma\) along with their probabilities \(q(\hat{x}_t \mid \ldots)\).</li>
+    <li><strong>Verify:</strong> run the target model on the concatenation [context, \(\hat{x}_1, \ldots, \hat{x}_\gamma\)] — one forward pass that processes all \(\gamma\) positions in parallel. Obtain target probabilities \(p(x \mid \ldots)\) at each position.</li>
+    <li><strong>Accept or reject:</strong> for each draft token \(\hat{x}_t\) (in order), accept it with probability \(\min(1,\, p(\hat{x}_t) / q(\hat{x}_t))\); reject and resample from a corrected distribution on the first rejection.</li>
+    <li><strong>Bonus token:</strong> if all \(\gamma\) draft tokens are accepted, the target model's prediction at position \(\gamma + 1\) is also available for free — so at best we get \(\gamma + 1\) tokens per target model call.</li>
+  </ol>
+</div>
+
+<p>
+  Visualizing a step with \(\gamma = 4\) draft tokens, 3 accepted and 1 rejected:
+</p>
+
+<div style="background:var(--panel-bg);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin:1.2em 0">
+  <div style="font-size:0.78rem;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px">Example step: context + 4 draft tokens</div>
+  <div class="token-row">
+    <span class="tok tok-prompt">The</span>
+    <span class="tok tok-prompt">quick</span>
+    <span class="tok tok-prompt">brown</span>
+    <span style="font-size:0.9rem;color:var(--muted);margin:0 2px">→</span>
+    <span class="tok tok-accept">fox</span>
+    <span class="tok tok-accept">jumps</span>
+    <span class="tok tok-accept">over</span>
+    <span class="tok tok-reject">a</span>
+    <span style="font-size:0.9rem;color:var(--muted);margin:0 2px">→</span>
+    <span class="tok tok-resample">the</span>
+  </div>
+  <div style="font-size:0.78rem;color:var(--muted);margin-top:8px">
+    <span style="color:var(--tok-accept-fg)">■</span> Accepted &nbsp;
+    <span style="color:var(--tok-reject-fg)">■</span> Rejected (draft token discarded) &nbsp;
+    <span style="color:var(--note-fg)">■</span> Resampled from corrected target distribution
+  </div>
+  <div style="font-size:0.78rem;color:var(--muted);margin-top:4px">This step produces 4 tokens (fox, jumps, over, the) in one target forward pass instead of 1.</div>
+</div>
+
+<!-- ═══════════════════════════════════════════ ACCEPTANCE PROOF -->
+<h2 id="acceptance">3 · The acceptance criterion — exact distribution, no quality loss</h2>
+
+<p>
+  The key correctness claim: the rejection sampling procedure produces tokens drawn exactly from the target distribution \(p\), regardless of the draft distribution \(q\). This is non-obvious — we are using a different model to propose tokens and then modifying its output. The proof is a classical result in rejection sampling:
+</p>
+
+<div class="step">
+  <div class="step-label">Why the output distribution is exactly p</div>
+  <p style="margin-top:0">
+    Consider a single position with target distribution \(p\) and draft distribution \(q\). The draft proposes token \(x\) with probability \(q(x)\). We accept it with probability \(\min(1, p(x)/q(x))\). The probability of outputting token \(x\) is:
+  </p>
+  <ul>
+    <li>Via acceptance: \(q(x) \cdot \min(1, p(x)/q(x)) = \min(q(x), p(x))\).</li>
+    <li>Via rejection + resample: the resample probability for \(x\) is proportional to \(\max(0, p(x) - q(x))\), normalized by the total rejection probability \(\sum_y \max(0, p(y) - q(y))\).</li>
+  </ul>
+  <p style="margin-bottom:0">
+    Combining these two paths recovers exactly \(p(x)\) for every token \(x\). The draft model affects <em>efficiency</em> (what fraction of proposals are accepted) but not <em>quality</em> (the marginal distribution of each output token). Speculative decoding has no accuracy loss relative to the target model.
+  </p>
+</div>
+
+<div class="result">
+  <div class="result-label">Correctness guarantee</div>
+  The output distribution of speculative decoding equals exactly the target model's distribution \(p\). The draft model is an implementation detail that affects speed, not quality.
+</div>
+
+<!-- ═══════════════════════════════════════════ SPEEDUP FORMULA -->
+<h2 id="speedup">4 · Expected speedup formula</h2>
+
+<p>
+  Let \(\alpha\) be the per-token acceptance rate: \(\alpha = \Pr[\hat{x} \text{ accepted}]\). The expected number of output tokens per target model call:
+</p>
+
+<div class="result">
+  <div class="result-label">Expected tokens per target call</div>
+  \[
+    \mathbb{E}[\text{tokens per step}] = \frac{1 - \alpha^{\gamma+1}}{1 - \alpha}
+  \]
+  <div style="font-size:0.85rem;color:var(--muted);margin-top:6px">
+    This counts the expected number of accepted draft tokens plus one token from the target model itself (the first rejection position or the bonus token at position \(\gamma+1\) if all are accepted).
+  </div>
+</div>
+
+<p>
+  The wall-clock speedup also depends on the relative cost of draft vs. target model calls. Let \(c\) be the cost of one draft step as a fraction of one target step:
+</p>
+
+<div class="result">
+  <div class="result-label">Wall-clock speedup</div>
+  \[
+    \text{speedup} = \frac{\mathbb{E}[\text{tokens per step}]}{\gamma c + 1}
+    = \frac{1 - \alpha^{\gamma+1}}{(1 - \alpha)(\gamma c + 1)}
+  \]
+</div>
+
+<p>
+  Breakeven condition: speculative decoding is worthwhile when the speedup &gt; 1, i.e., when:
+  \(\mathbb{E}[\text{tokens per step}] &gt; \gamma c + 1\), i.e., when
+  \(\frac{1 - \alpha^{\gamma+1}}{1 - \alpha} &gt; \gamma c + 1\).
+</p>
+
+<div class="diagram">
+  <div class="diagram-title">▸ Expected speedup calculator</div>
+  <div class="diagram-hint">Adjust acceptance rate α and draft overhead c to see when speculative decoding helps.</div>
+  <div class="diagram-stage">
+    <div class="calc-row">
+      <label>Acceptance rate \(\alpha\): <b id="sd-a-val">0.80</b></label>
+      <input type="range" id="sd-a" min="0" max="100" value="80">
+    </div>
+    <div class="calc-row">
+      <label>Draft tokens \(\gamma\): <b id="sd-g-val">4</b></label>
+      <input type="range" id="sd-g" min="1" max="10" value="4">
+    </div>
+    <div class="calc-row">
+      <label>Draft cost \(c\) (fraction of target): <b id="sd-c-val">0.10</b></label>
+      <input type="range" id="sd-c" min="1" max="50" value="10">
+    </div>
+    <div style="margin-top:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">
+      <div class="spec"><div class="spec-num" id="sd-etok">3.36</div><div class="spec-key">E[tokens per step]</div></div>
+      <div class="spec"><div class="spec-num" id="sd-speedup">2.37×</div><div class="spec-key">Expected speedup</div></div>
+      <div class="spec"><div class="spec-num" id="sd-tpot">1.7 ms</div><div class="spec-key">TPOT at 4ms baseline</div></div>
+    </div>
+    <p style="margin-top:10px;font-size:0.85rem;color:var(--muted);margin-bottom:0" id="sd-verdict"></p>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ DRAFT CHOICES -->
+<h2 id="drafts">5 · Draft model choices</h2>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>Draft type</th><th>Description</th><th>Acceptance rate</th><th>Draft cost \(c\)</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Small separate model</strong></td>
+        <td>A smaller model from the same family (e.g., Llama-3 8B drafts for Llama-3 70B)</td>
+        <td class="good">High (0.7–0.9) — same training distribution</td>
+        <td>~0.1–0.2</td>
+      </tr>
+      <tr>
+        <td><strong>Medusa draft heads</strong></td>
+        <td>Lightweight MLP heads attached to the target model, each predicting token at offset +k. All heads run in the target model's forward pass.</td>
+        <td>Medium (0.5–0.8)</td>
+        <td class="good">~0.05 (almost free, runs inside target forward pass)</td>
+      </tr>
+      <tr>
+        <td><strong>Eagle / tree-based draft</strong></td>
+        <td>Draft model uses target model's hidden states (passed through) for more accurate proposals; generates a tree of candidates rather than a single sequence.</td>
+        <td class="good">High (0.8–0.95 with tree verification)</td>
+        <td>~0.1–0.2</td>
+      </tr>
+      <tr>
+        <td><strong>Parallel / semi-autoregressive (DFlash, DSpark)</strong></td>
+        <td>Emit the whole \(\gamma\)-token block in <em>one</em> draft forward pass (anchor + \(\gamma\) mask positions, conditioned on injected target hidden states). DSpark adds a lightweight sequential head so later positions condition on earlier sampled tokens.</td>
+        <td>High at position 1, decays along the block (pure-parallel); semi-AR head restores later positions</td>
+        <td class="good">~0.1–0.2, but nearly <em>independent of \(\gamma\)</em></td>
+      </tr>
+      <tr>
+        <td><strong>N-gram / retrieval draft</strong></td>
+        <td>Propose tokens from a static lookup (prompt n-gram completion or retrieval from a corpus). Zero model cost.</td>
+        <td>Variable (0.3–0.7 for repetitive text)</td>
+        <td class="good">≈0 (hash lookup)</td>
+      </tr>
+      <tr>
+        <td><strong>Self-speculative / layer skipping</strong></td>
+        <td>Use early exit layers of the target model as the draft. No second model needed.</td>
+        <td>Medium (0.5–0.75)</td>
+        <td>~0.2–0.4</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>Parallel and semi-autoregressive drafters</h3>
+
+<p>The variants above draft <em>autoregressively</em> — each of the \(\gamma\) draft steps waits on the previous one, so draft latency grows with \(\gamma\) and forces short blocks and shallow networks. <strong>Parallel drafters</strong> (<a href="https://arxiv.org/abs/2401.10774">Medusa</a>'s independent heads, and the diffusion-inspired PARD, DART, and DeepSeek's <a href="https://arxiv.org/abs/2602.06036"><strong>DFlash</strong></a>) instead emit the entire block in a <em>single</em> forward pass, making draft cost nearly independent of \(\gamma\) — like a prefill over the block. The price is <strong>suffix decay</strong>: because positions are predicted independently, each one marginalizes over all possible predecessors rather than conditioning on the token actually sampled, so the drafter proposes incoherent combinations ("of&nbsp;problem", "no&nbsp;course") and acceptance falls off at later positions. The modern recipe (DFlash → <a href="https://github.com/deepseek-ai/DeepSpec"><strong>DSpark</strong></a>) layers four techniques to keep single-pass speed while clawing back acceptance:</p>
+
+<div class="step">
+  <div class="step-label">1 · Feature injection — condition the draft on the target's hidden states</div>
+  <p>Rather than run an independent small model, the drafter reuses the target's own representations. DFlash takes hidden states from several target layers \(\{l_1,\dots,l_m\}\), concatenates and projects them into the draft's hidden space, then injects the result into <em>every</em> draft layer by appending it to the keys and values:</p>
+  \[ H_{\text{ctx}} = \text{RMSNorm}\!\big(W_c\,[\,H^{(l_1)};\dots;H^{(l_m)}\,]\big), \qquad K_i = [\,W^K_i H_{\text{ctx}};\ W^K_i H_d\,],\ \ V_i = [\,W^V_i H_{\text{ctx}};\ W^V_i H_d\,] \]
+  <p>The draft shares the target's <em>frozen</em> embedding and LM head, so training updates only a thin backbone. This generalizes <a href="https://arxiv.org/abs/2503.01840">Eagle</a>'s hidden-state passthrough into a multi-layer KV injection.</p>
+</div>
+
+<div class="step">
+  <div class="step-label">2 · Single-pass block generation — mask tokens + bidirectional attention</div>
+  <p>The input is one anchor token (the target's last accepted token) followed by \(\gamma\!-\!1\) learnable <em>mask</em> embeddings. All \(\gamma\) positions attend bidirectionally to each other and to \(H_{\text{ctx}}\), and a single forward pass emits all base logits \(U_1,\dots,U_\gamma\). Since cost no longer scales with \(\gamma\), the backbone can be deeper and the block longer (e.g. \(\gamma=16\) vs the \(\gamma\le4\) typical of autoregressive drafters) under the same latency budget.</p>
+</div>
+
+<div class="step">
+  <div class="step-label">3 · Semi-autoregressive head — restore intra-block dependency</div>
+  <p>The parallel backbone's logits \(U_k\) are independent per position. A <em>lightweight</em> sequential head adds a learned, prefix-dependent bias \(B_k\), turning the block into a proper autoregressive factorization without a second heavy pass:</p>
+  \[ p_k(v \mid x_0, x_{&lt;k}) = \frac{\exp\!\big(U_k(v) + B_k(x_0, x_{&lt;k}, v)\big)}{\sum_{u}\exp\!\big(U_k(u) + B_k(x_0, x_{&lt;k}, u)\big)} \]
+  <ul style="margin:0.4em 0">
+    <li><strong>Markov head:</strong> \(B\) depends only on the previous token. The full \(V\!\times\!V\) transition is approximated by a low-rank factorization \(B(x_{k-1},\cdot) = W_1[x_{k-1}]\,W_2\) (rank \(r=256\)) — cheap even for large vocabularies.</li>
+    <li><strong>RNN head:</strong> a gated recurrent state \(s_k\) carries the <em>full</em> in-block prefix, capturing dependencies beyond the immediately preceding token.</li>
+  </ul>
+  <p>Sampling here is sequential, so the head is kept tiny (\(T_{\text{seq}} \ll T_{\text{parallel}}\)) — it injects dependency modeling without bringing back the \(O(\gamma)\) autoregressive latency wall.</p>
+</div>
+
+<div class="step">
+  <div class="step-label">4 · Confidence-scheduled verification — verify a load-aware number of tokens</div>
+  <p>A fixed \(\gamma\) is wasteful under load: verifying a low-acceptance suffix token is <em>not</em> free — it occupies target-model batch capacity that could serve another request. A light confidence head predicts each position's survival probability \(c_k=\sigma\!\big(w^\top[h_k;\,W_1[x_{k-1}]]\big)\), trained against the analytic per-step acceptance \(1-\tfrac12\lVert p^d_k - p^t_k\rVert_1\) and post-hoc calibrated. The prefix survival probability is the cumulative product \(a_j=\prod_{i\le j} c_i\), and a scheduler chooses each request's verify length \(\ell_r\) to maximize aggregate throughput:</p>
+  \[ \Theta = \tau \cdot \text{SPS}(B), \qquad \tau = \sum_r \Big(1 + \!\!\sum_{j\le \ell_r}\! a_{r,j}\Big), \qquad B = \sum_r (1+\ell_r) \]
+  <p>where \(\text{SPS}(B)\) is the engine's steps-per-second at batch \(B\), read from a once-profiled cost curve. Tokens are admitted greedily in descending survival order; an early-stop rule keeps the procedure lossless (non-anticipating). Net effect: long verification under light load, short under heavy load.</p>
+</div>
+
+<div class="xref">
+  <strong>Sources:</strong> the equations and mechanisms above follow
+  <a href="https://github.com/deepseek-ai/DeepSpec">DSpark / DeepSpec</a> (semi-autoregressive head, confidence-scheduled verification) and
+  <a href="https://arxiv.org/abs/2602.06036">DFlash</a> (block-diffusion parallel drafting, feature injection); the autoregressive and multi-head baselines are
+  <a href="https://arxiv.org/abs/2503.01840">EAGLE-3</a> and
+  <a href="https://arxiv.org/abs/2401.10774">Medusa</a>.
+</div>
+
+<!-- ═══════════════════════════════════════════ WHEN IT WINS -->
+<h2 id="when">6 · When speculative decoding wins — and when it doesn't</h2>
+
+<div class="compare">
+  <div class="compare-label">Conditions for a large speedup</div>
+  <ul style="margin:0">
+    <li><strong>High acceptance rate \(\alpha\):</strong> the draft model's distribution closely matches the target's. This happens when temperature is low (greedy-like sampling), task is predictable (code with repetitive patterns, templated text), or the draft model is closely related to the target.</li>
+    <li><strong>Low draft cost \(c\):</strong> the draft model is much smaller or shares computation with the target. A 7B draft for a 70B target: each draft step is ~10× cheaper, so \(c \approx 0.1\).</li>
+    <li><strong>Low to medium batch size:</strong> at batch size 1–16, the target model is memory-bound — speculative decoding parallelizes output generation against the fixed memory load. At very large batches, the model is compute-bound and adding more tokens per step may not save time.</li>
+  </ul>
+</div>
+
+<div class="compare" style="background:var(--red-bg);border-color:var(--tok-reject-border)">
+  <div class="compare-label" style="color:var(--bad-fg)">Conditions where speculative decoding hurts or is neutral</div>
+  <ul style="margin:0">
+    <li><strong>High temperature / diverse outputs:</strong> at temperature 1.0 with a diverse vocabulary, \(\alpha\) drops toward 0.3–0.5. Expected tokens per step approaches 1.5–2, providing modest speedup that may not justify the draft overhead.</li>
+    <li><strong>Very large batch sizes:</strong> above the GPU ridge point, the bottleneck is compute, not memory bandwidth. Adding draft tokens increases the compute load without improving time-per-token.</li>
+    <li><strong>Expensive draft model:</strong> if the draft model costs \(c = 0.5\) of the target, the denominator \(\gamma c + 1 = 3\) for \(\gamma = 4\), requiring \(\mathbb{E}[\text{tokens}] &gt; 3\) — only achievable at very high \(\alpha\).</li>
+  </ul>
+</div>
+
+<div class="note">
+  Speculative decoding optimizes for <em>latency</em> (TPOT at small batch), not throughput (tokens/s at large batch). For batch offline inference where batch size is large and latency is irrelevant, it typically provides no benefit or is mildly harmful. It is most impactful for low-latency online serving and single-user interactive applications.
+</div>
+
+<!-- ═══════════════════════════════════════════ SUMMARY -->
+<h2 id="summary">7 · Summary</h2>
+
+<div class="summary-grid">
+  <div class="summary-card">
+    <div class="summary-card-label">The insight</div>
+    <p>A fast draft model proposes \(\gamma\) tokens; the target verifies all \(\gamma+1\) positions in one parallel forward pass. More tokens per target model call = lower effective TPOT.</p>
+  </div>
+  <div class="summary-card">
+    <div class="summary-card-label">No quality loss</div>
+    <p>Rejection sampling proves the output distribution is exactly the target's \(p\). The draft model changes speed, not quality.</p>
+  </div>
+  <div class="summary-card">
+    <div class="summary-card-label">Expected speedup</div>
+    <p>\(\frac{1 - \alpha^{\gamma+1}}{(1-\alpha)(\gamma c + 1)}\). High \(\alpha\), low \(c\), and moderate \(\gamma\) (4–8) give 2–3× speedups on suitable workloads.</p>
+  </div>
+  <div class="summary-card">
+    <div class="summary-card-label">Best case</div>
+    <p>Low temperature, predictable text (code, templated output), small draft model (7B for 70B target), small to medium batch size.</p>
+  </div>
+  <div class="summary-card">
+    <div class="summary-card-label">Worst case</div>
+    <p>High temperature, diverse outputs, large batch sizes (compute-bound), or draft model too expensive. Reverts toward no speedup.</p>
+  </div>
+  <div class="summary-card">
+    <div class="summary-card-label">Draft variants</div>
+    <p>Separate small model (best \(\alpha\)), Medusa heads (nearly free), Eagle tree drafts (highest \(\alpha\) via tree verification), n-gram lookup (zero cost), parallel/semi-AR drafters (DFlash, DSpark) — whole block in one pass with \(\gamma\)-independent cost.</p>
+  </div>
+</div>
+
+<div class="xref">
+  <strong>Prerequisites:</strong>
+  <a href="inference-compute-model.html">Prefill &amp; Decode →</a> — why TPOT has a memory-bandwidth floor that speculative decoding targets.
+  <br>
+  <a href="../transformer/multi-token-prediction.html">Multi-Token Prediction →</a> — training the draft heads <em>into</em> the model as a pretraining objective, rather than distilling a drafter afterward.
+  <br><br>
+  <strong>Applied in:</strong>
+  <a href="online-inference.html">Online Inference →</a> — speculative decoding as a TPOT optimization for low-latency serving.
+</div>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; Speculative Decoding — Draft, Verify, and Accelerate
+  &nbsp;·&nbsp; <a href="../index.html" style="color:inherit">← All notes</a>
+</footer>
+
+<script>
+(function () {
+  const $ = id => document.getElementById(id);
+  function update() {
+    const alpha = parseInt($('sd-a').value) / 100;
+    const gamma = parseInt($('sd-g').value);
+    const c     = parseInt($('sd-c').value) / 100;
+
+    $('sd-a-val').textContent = alpha.toFixed(2);
+    $('sd-g-val').textContent = gamma;
+    $('sd-c-val').textContent = c.toFixed(2);
+
+    const etok = (1 - Math.pow(alpha, gamma + 1)) / (1 - alpha);
+    const speedup = etok / (gamma * c + 1);
+    const baseline_tpot = 4; // ms, assume 7B H100 baseline
+    const new_tpot = baseline_tpot / speedup;
+
+    $('sd-etok').textContent = etok.toFixed(2);
+    $('sd-speedup').textContent = speedup.toFixed(2) + '×';
+    $('sd-tpot').textContent = new_tpot.toFixed(1) + ' ms';
+
+    let verdict;
+    if (speedup >= 2.5) verdict = 'Strong speedup — high acceptance rate and low draft cost combine well.';
+    else if (speedup >= 1.5) verdict = 'Moderate speedup — worthwhile for latency-sensitive workloads.';
+    else if (speedup >= 1.05) verdict = 'Marginal gain — only beneficial if draft model fits for free.';
+    else verdict = 'No benefit or overhead — consider larger γ, better draft, or lower temperature.';
+    $('sd-verdict').textContent = verdict;
+  }
+  ['sd-a', 'sd-g', 'sd-c'].forEach(id => $(`${id}`).addEventListener('input', update));
+  update();
+})();
+</script>
+
+</body>
+</html>

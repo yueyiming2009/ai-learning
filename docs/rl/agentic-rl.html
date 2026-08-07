@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Agentic RL — Long-Horizon Tool Use and Multi-Step Action</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #15803d;
+      --accent-light: #f0fdf4;
+      --accent-mid: #16a34a;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --nav-bg: rgba(255,255,255,0.92);
+      --note-fg: #14532d;
+      --warn-bg: #fef9c3;
+      --warn-border: #ca8a04;
+      --warn-fg: #713f12;
+      --good-border: #6ee7b7;
+      --bad-bg: #fff1f2;
+      --bad-border: #fca5a5;
+      --green-border: #bbf7d0;
+      --blue: #1d4ed8;
+      --violet: #7c3aed;
+      --violet-bg: #f5f3ff;
+      --amber: #b45309;
+      --red: #dc2626;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #4ade80;
+        --accent-light: #0e2016;
+        --accent-mid: #4ade80;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --nav-bg: rgba(15,17,21,0.9);
+        --note-fg: #86efac;
+        --warn-bg: #251f0a;
+        --warn-border: #a16207;
+        --warn-fg: #fde047;
+        --good-border: #065f46;
+        --bad-bg: #2a1214;
+        --bad-border: #7f1d1d;
+        --green-border: #166534;
+        --blue: #60a5fa;
+        --violet: #a78bfa;
+        --violet-bg: #1a1626;
+        --amber: #fbbf24;
+        --red: #f87171;
+      }
+    }
+
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 0; line-height: 1.75; font-size: 16px; }
+
+    nav { position: sticky; top: 0; z-index: 100; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 52px; }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 0.9rem; color: var(--accent); text-decoration: none; white-space: nowrap; }
+    .nav-links { display: flex; gap: 4px; overflow-x: auto; flex: 1; }
+    .nav-links a { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; white-space: nowrap; transition: color 0.15s, background 0.15s; }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    .hero { background: linear-gradient(135deg, #052e16 0%, #15803d 60%, #22c55e 100%); color: white; padding: 56px 24px 48px; text-align: center; }
+    .hero h1 { font-size: clamp(1.5rem, 4vw, 2.2rem); font-weight: 600; margin: 0 0 12px; letter-spacing: -0.02em; }
+    .hero p { margin: 0 auto; opacity: 0.85; font-size: 0.97rem; max-width: 680px; }
+    .hero-pill { display: inline-block; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 100px; font-size: 0.78rem; padding: 3px 12px; margin-bottom: 16px; letter-spacing: 0.04em; text-transform: uppercase; }
+
+    .page-wrap { max-width: 820px; margin: 0 auto; padding: 48px 24px 80px; }
+
+    h2 { font-size: 1.15rem; font-weight: 600; margin: 2.8em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); color: var(--text); }
+    h3 { font-size: 0.97rem; font-weight: 600; margin: 1.6em 0 0.4em; color: var(--ink); }
+    h4 { font-size: 0.9rem; font-weight: 600; margin: 1.3em 0 0.3em; color: var(--muted); }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+    code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-size: 0.88em; font-family: 'Menlo', monospace; }
+
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
+    th, td { border: 1px solid var(--border); padding: 9px 16px; text-align: left; }
+    th { background: var(--surface); font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+    tr:hover td { background: var(--row-hover); }
+
+    .step { background: var(--step-bg); border: 1px solid var(--step-border); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 1.2em 0; }
+    .step-label { font-weight: 600; font-size: 0.88rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+    .step-label::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+
+    .note { background: var(--accent-light); border-left: 3px solid var(--accent-mid); border-radius: 0 8px 8px 0; padding: 10px 16px; margin: 1em 0; font-size: 0.92em; color: var(--note-fg); }
+    .note::before { content: '💡 '; }
+
+    .warn { background: var(--warn-bg); border-left: 3px solid var(--warn-border); border-radius: 0 8px 8px 0; padding: 10px 16px; margin: 1em 0; font-size: 0.92em; color: var(--warn-fg); }
+    .warn::before { content: '⚠ '; }
+
+    .result { background: var(--accent-light); border: 1.5px solid var(--accent-mid); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; text-align: center; }
+    .result-label { font-size: 0.8rem; font-weight: 600; color: var(--accent-mid); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+
+    /* Trajectory diagram */
+    .trajectory { margin: 1.4em 0; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px 24px; font-family: 'Menlo', monospace; font-size: 0.84rem; overflow-x: auto; }
+    .t-row { display: flex; align-items: flex-start; gap: 0; margin-bottom: 8px; }
+    .t-time { color: var(--muted); min-width: 28px; flex-shrink: 0; padding-top: 2px; }
+    .t-item { flex: 1; }
+    .t-obs  { color: var(--blue); }
+    .t-think{ color: var(--violet); }
+    .t-act  { color: var(--accent); }
+    .t-env  { color: var(--amber); }
+    .t-rew  { color: var(--red); font-weight: 600; }
+    .t-legend { display: flex; gap: 16px; margin-top: 12px; flex-wrap: wrap; }
+    .t-legend span { font-size: 0.78rem; display: flex; align-items: center; gap: 5px; }
+    .t-legend span::before { content: '●'; font-size: 0.9em; }
+    .t-obs-leg::before { color: var(--blue); }
+    .t-think-leg::before { color: var(--violet); }
+    .t-act-leg::before  { color: var(--accent); }
+    .t-env-leg::before  { color: var(--amber); }
+    .t-rew-leg::before  { color: var(--red); }
+
+    /* Reward design grid */
+    .reward-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 1.4em 0; }
+    .reward-card { border-radius: 8px; border: 1px solid var(--border); padding: 14px 16px; }
+    .reward-card-header { font-weight: 600; font-size: 0.88rem; margin-bottom: 6px; }
+    .reward-card.good { border-color: var(--good-border); background: var(--accent-light); }
+    .reward-card.good .reward-card-header { color: var(--accent); }
+    .reward-card.bad { border-color: var(--bad-border); background: var(--bad-bg); }
+    .reward-card.bad .reward-card-header { color: var(--red); }
+    .reward-card p { margin: 0; font-size: 0.84rem; color: var(--muted); }
+
+    /* Comparison vs single-turn */
+    .vs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin: 1.4em 0; font-size: 0.9rem; }
+    .vs-header { padding: 10px 16px; font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    .vs-header.single { background: var(--violet-bg); color: var(--violet); border-bottom: 1px solid var(--border); }
+    .vs-header.agent  { background: var(--accent-light); color: var(--accent); border-bottom: 1px solid var(--border); border-left: 1px solid var(--border); }
+    .vs-cell { padding: 10px 16px; border-bottom: 1px solid var(--border); }
+    .vs-cell.agent { border-left: 1px solid var(--border); }
+    .vs-cell:last-child, .vs-cell:nth-last-child(2) { border-bottom: none; }
+    .vs-row-label { font-size: 0.75rem; font-weight: 600; color: var(--muted); margin-bottom: 2px; text-transform: uppercase; letter-spacing: 0.04em; }
+
+    /* Environment scaffold */
+    .env-box { background: #1e1e2e; color: #e8e8f0; border-radius: 10px; padding: 18px 22px; font-family: 'Menlo', monospace; font-size: 0.84rem; margin: 1.4em 0; line-height: 1.7; overflow-x: auto; }
+    .env-comment { color: #6c7086; }
+    .env-key { color: #89dceb; }
+    .env-val { color: #a6e3a1; }
+    .env-str { color: #f9e2af; }
+    .env-num { color: #fab387; }
+    .env-kw  { color: #cba6f7; }
+
+    .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 1.2em 0; }
+    .summary-card { background: var(--accent-light); border: 1px solid var(--green-border); border-radius: 8px; padding: 14px 16px; }
+    .summary-card-label { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    .next-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 1.2em 0; }
+    .next-card { border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; text-decoration: none; color: inherit; transition: border-color 0.15s, box-shadow 0.15s; display: block; }
+    .next-card:hover { border-color: var(--accent); box-shadow: 0 2px 8px rgba(21,128,61,0.1); }
+    .next-card-label { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+    .next-card-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 4px; }
+    .next-card p { margin: 0; font-size: 0.88rem; color: var(--muted); }
+
+    footer { border-top: 1px solid var(--border); padding: 28px 24px; text-align: center; font-size: 0.82rem; color: var(--muted); }
+    @media (max-width: 600px) { .page-wrap { padding: 32px 16px 60px; } .vs-grid { grid-template-columns: 1fr; } .vs-header.agent, .vs-cell.agent { border-left: none; } }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Agentic RL</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right:1px solid var(--border);padding-right:12px;margin-right:4px;">← All notes</a>
+    <a href="#vs-single">vs. Single-Turn</a>
+    <a href="#mdp">Agent as MDP</a>
+    <a href="#reward">Reward Design</a>
+    <a href="#environment">Environments</a>
+    <a href="#credit">Credit Assignment</a>
+    <a href="#grpo">GRPO Adaptation</a>
+    <a href="#challenges">Challenges</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Alignment</span>
+  <h1>Agentic RL</h1>
+  <p>Long-horizon tool use, code execution, and multi-step decision making under RL. Single-turn reward design breaks down when actions have real consequences that unfold over many steps.</p>
+</div>
+
+<div class="page-wrap">
+
+  <p>Reasoning RL (as in <a href="deepseek-r1.html" style="color:var(--accent);">DeepSeek-R1</a>) trains a model to think before answering a single question. The model generates tokens; a verifier checks the final answer; a scalar reward is assigned. The environment is passive — it asks a question and waits. Agentic RL is different in every dimension: the model must take actions that change the state of an external system, observe the results, decide on next actions, and eventually produce an outcome that may only be evaluable after dozens of steps. This page covers what changes, why it's harder, and how the field is handling it.</p>
+
+  <h2 id="vs-single">1. Agent vs. Single-Turn RL — What Changes</h2>
+
+  <div class="vs-grid">
+    <div class="vs-header single">Single-Turn (Reasoning RL)</div>
+    <div class="vs-header agent">Agentic RL</div>
+
+    <div class="vs-cell"><div class="vs-row-label">Horizon</div>One response (T = 1 environment step)</div>
+    <div class="vs-cell agent"><div class="vs-row-label">Horizon</div>Dozens–hundreds of tool calls and observations (T ≫ 1)</div>
+
+    <div class="vs-cell"><div class="vs-row-label">Environment</div>Passive — returns a problem, waits for a final answer</div>
+    <div class="vs-cell agent"><div class="vs-row-label">Environment</div>Active — executes code, calls APIs, reads/writes files, runs tests</div>
+
+    <div class="vs-cell"><div class="vs-row-label">Reward timing</div>Terminal: a single scalar at the end of the response</div>
+    <div class="vs-cell agent"><div class="vs-row-label">Reward timing</div>Sparse terminal, or shaped intermediate rewards per tool call</div>
+
+    <div class="vs-cell"><div class="vs-row-label">Observation</div>The problem prompt (fixed throughout)</div>
+    <div class="vs-cell agent"><div class="vs-row-label">Observation</div>Evolving context: tool results, error messages, file contents</div>
+
+    <div class="vs-cell"><div class="vs-row-label">Action space</div>Tokens (language generation)</div>
+    <div class="vs-cell agent"><div class="vs-row-label">Action space</div>Tool calls with structured arguments + free-form reasoning tokens</div>
+
+    <div class="vs-cell"><div class="vs-row-label">Credit assignment</div>Trivial — the full response caused the outcome</div>
+    <div class="vs-cell agent"><div class="vs-row-label">Credit assignment</div>Hard — which of 50 tool calls caused the bug fix?</div>
+
+    <div class="vs-cell"><div class="vs-row-label">Error consequences</div>Bad answer in text</div>
+    <div class="vs-cell agent"><div class="vs-row-label">Error consequences</div>Deleted file, failed API call, corrupted state, security violation</div>
+  </div>
+
+  <h2 id="mdp">2. The Agent as an MDP</h2>
+
+  <p>The <a href="mdp.html" style="color:var(--accent);">MDP formalism</a> applies directly to agentic RL, but the interpretation of each component changes:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr>
+        <th>MDP component</th>
+        <th>Reasoning RL</th>
+        <th>Agentic RL</th>
+      </tr>
+      <tr>
+        <td>\(S\) — state</td>
+        <td>The question + tokens generated so far</td>
+        <td>The conversation context including all prior tool calls and their outputs</td>
+      </tr>
+      <tr>
+        <td>\(A\) — action</td>
+        <td>Next token</td>
+        <td>A structured tool call (with arguments) or a reasoning token step</td>
+      </tr>
+      <tr>
+        <td>\(P(s' | s, a)\) — transition</td>
+        <td>Deterministic (language model output)</td>
+        <td>Stochastic (code execution may fail, APIs may return errors, file system state changes)</td>
+      </tr>
+      <tr>
+        <td>\(R(s, a)\) — reward</td>
+        <td>Binary at terminal state (correct/wrong)</td>
+        <td>Sparse terminal, optionally with per-step signals; reward model for non-verifiable tasks</td>
+      </tr>
+      <tr>
+        <td>\(\gamma\) — discount</td>
+        <td>Effectively 1 (one step, no discounting needed)</td>
+        <td>Must be tuned — too low and early steps are underweighted; too high and variance explodes</td>
+      </tr>
+      <tr>
+        <td>Episode length</td>
+        <td>Fixed (response length limit)</td>
+        <td>Variable — ends when the agent outputs a terminal token, the task is verified complete, or a step limit is hit</td>
+      </tr>
+    </table>
+  </div>
+
+  <h3>What a trajectory looks like</h3>
+  <p>A single agentic episode for a coding task:</p>
+
+  <div class="trajectory">
+    <div class="t-row"><div class="t-time">t=0</div><div class="t-item t-obs">[OBS] You have a Python repo with failing tests. Goal: make all tests pass.</div></div>
+    <div class="t-row"><div class="t-time">t=1</div><div class="t-item t-think">[THINK] I should run the tests first to see which ones fail.</div></div>
+    <div class="t-row"><div class="t-time">t=1</div><div class="t-item t-act">[ACT] bash("pytest tests/")  →</div></div>
+    <div class="t-row"><div class="t-time">t=1</div><div class="t-item t-env">[ENV] FAILED tests/test_parser.py::test_edge_case — assert None == 42</div></div>
+    <div class="t-row"><div class="t-time">t=2</div><div class="t-item t-think">[THINK] The parser returns None for edge cases. Let me read the parser code.</div></div>
+    <div class="t-row"><div class="t-time">t=2</div><div class="t-item t-act">[ACT] read_file("src/parser.py", lines=45-80)  →</div></div>
+    <div class="t-row"><div class="t-time">t=2</div><div class="t-item t-env">[ENV] ... def parse(x): ... return None  # TODO: handle edge case</div></div>
+    <div class="t-row"><div class="t-time">t=3</div><div class="t-item t-act">[ACT] edit_file("src/parser.py", old="return None", new="return 42")  →</div></div>
+    <div class="t-row"><div class="t-time">t=3</div><div class="t-item t-env">[ENV] OK</div></div>
+    <div class="t-row"><div class="t-time">t=4</div><div class="t-item t-act">[ACT] bash("pytest tests/")  →</div></div>
+    <div class="t-row"><div class="t-time">t=4</div><div class="t-item t-env">[ENV] 12 passed in 0.4s</div></div>
+    <div class="t-row"><div class="t-time">T</div><div class="t-item t-rew">[REWARD] +1.0  (all tests pass)</div></div>
+    <div class="t-legend">
+      <span class="t-obs-leg" style="color:var(--blue);">Observation</span>
+      <span class="t-think-leg" style="color:var(--violet);">Reasoning tokens</span>
+      <span class="t-act-leg" style="color:var(--accent);">Tool call</span>
+      <span class="t-env-leg" style="color:var(--amber);">Environment output</span>
+      <span class="t-rew-leg" style="color:var(--red);">Terminal reward</span>
+    </div>
+  </div>
+
+  <p>The model produces <em>both</em> reasoning tokens (free-form language) and structured action tokens (tool calls) in the same generation pass. The environment executes each tool call and appends its output to the context before the next generation step. This interleaving of generation and execution is the defining characteristic of agentic RL.</p>
+
+  <h2 id="reward">3. Reward Design for Long-Horizon Tasks</h2>
+  <p>Reward design is the hardest problem in agentic RL. The choices made here determine whether the agent learns to solve the actual task or finds clever ways to appear to solve it.</p>
+
+  <h3>Terminal-only rewards (preferred when possible)</h3>
+  <p>The cleanest setup: reward only at episode end, based on objective task completion. The agent must figure out on its own which actions were good — the environment just reports the final outcome.</p>
+
+  <div class="reward-grid">
+    <div class="reward-card good">
+      <div class="reward-card-header">Code: test pass rate</div>
+      <p>r = (tests passing after edit) / (total tests). Verifiable, objective, no reward hacking — an agent can't fake passing tests without actually making them pass.</p>
+    </div>
+    <div class="reward-card good">
+      <div class="reward-card-header">QA / research: judge LLM</div>
+      <p>r ∈ {0, 1} from a separate judge model evaluating correctness. Scales to open-ended tasks where no unit-test-style verifier exists.</p>
+    </div>
+    <div class="reward-card good">
+      <div class="reward-card-header">Tool calling: schema check</div>
+      <p>r ∈ {0, 1} checking whether tool calls were syntactically correct and logically coherent. For function-calling benchmarks.</p>
+    </div>
+    <div class="reward-card bad">
+      <div class="reward-card-header">Length-based reward</div>
+      <p>Never use response length as a reward signal. The agent will learn to pad responses, loop, or repeat itself to maximize tokens while ignoring task completion.</p>
+    </div>
+  </div>
+
+  <h3>Reward shaping — when and why</h3>
+  <p>With sparse terminal rewards over long horizons (T = 50+ steps), the gradient signal is extremely weak: most trajectories get 0 reward and the model receives almost no information about which early actions were good. Reward shaping adds intermediate signals to guide learning. The obvious hazard is that an intermediate signal creates its own optimization target — the agent farms the bonus instead of finishing the task.</p>
+
+  <h4>The policy invariance theorem</h4>
+  <p>Ng, Harada &amp; Russell (1999) characterize exactly which shaping functions are safe. A shaping term \(F(s,a,s')\) added to the reward is <strong>potential-based</strong> if there exists some \(\Phi : S \to \mathbb{R}\) with</p>
+  \[
+    R'(s, a, s') = R(s, a, s') + F(s, a, s') = R(s, a, s') + \gamma\Phi(s') - \Phi(s)
+  \]
+  <p>Every optimal policy of \(R'\) is then optimal for \(R\), and vice versa. The converse holds too: for any \(F\) not of this form, there exist transition dynamics and a base reward under which the shaped optimum is suboptimal in the original MDP. Potential-based is not merely sufficient — it is the only form that is safe without knowing the environment in advance.</p>
+
+  <p>The proof is a telescoping sum. Along any trajectory, the shaping term contributes</p>
+  \[
+    \sum_{t \ge 0} \gamma^t \big( \gamma\Phi(s_{t+1}) - \Phi(s_t) \big) = -\Phi(s_0) + \lim_{T \to \infty} \gamma^T \Phi(s_T)
+  \]
+  <p>Every interior term cancels. The shaped return differs from the true return by \(-\Phi(s_0)\), which depends only on where the episode started, not on what the agent did. No policy can accumulate shaping reward — which is precisely the loop-exploitation loophole closed. Equivalently, \(Q^*_{R'}(s,a) = Q^*_R(s,a) - \Phi(s)\): subtracting a function of state alone leaves every advantage, and therefore every \(\arg\max_a\), untouched.</p>
+
+  <p>Two consequences worth carrying around. The best possible potential is \(\Phi = V^*\), which reduces \(Q^*_{R'}\) to the advantage function and makes the shaped problem myopic — so the quality of a shaping scheme is just how close \(\Phi\) sits to the true value function. And Wiewiora (2003) showed that potential-based shaping with \(Q_0 = 0\) produces behavior identical to no shaping with \(Q_0 = \Phi\). Valid shaping injects a prior on values and nothing more.</p>
+
+  <div class="warn">
+    <strong>Two implementation traps.</strong> The \(\gamma\) in \(\gamma\Phi(s') - \Phi(s)\) is load-bearing; using \(\Phi(s') - \Phi(s)\) with \(\gamma &lt; 1\) breaks the telescoping and voids the guarantee. And terminal states must have \(\Phi = 0\) — a nonzero potential at episode end is an unbalanced real reward, not a shaping term. This is the most common way a correct-looking implementation silently stops being policy-invariant.
+  </div>
+
+  <h4>Why valid shaping does nothing in GRPO</h4>
+  <p>Working the theorem through the algorithm actually used for agentic RL gives a sharp result. LLM episodes run at \(\gamma = 1\), so with \(\Phi = 0\) at termination the shaping contribution to every trajectory is exactly \(-\Phi(s_0)\). Group-relative advantages are computed over \(G\) rollouts from the <em>same</em> prompt, so \(s_0\) is shared across the group:</p>
+  \[
+    A_i = \frac{R_i - \text{mean}(R_{1..G})}{\text{std}(R_{1..G})}
+  \]
+  <p>Adding the same constant to every \(R_i\) shifts the mean by that constant and leaves the numerator unchanged; the standard deviation is unaffected. The advantage is bit-identical with and without shaping. Under PPO with a learned critic the effect is not exactly zero, but by the Wiewiora equivalence it amounts to value-function initialization, which the critic re-learns within a few thousand steps.</p>
+
+  <div class="note">
+    The corollary is uncomfortable but clarifying: <strong>any dense reward that measurably changes a GRPO run is, by construction, not policy-invariant.</strong> Practitioners are not choosing unprincipled shaping over principled shaping. In the dominant algorithm, principled shaping is a no-op, so every dense signal in production is one the theorem does not cover.
+  </div>
+
+  <h4>Denser terminal reward is not shaping</h4>
+  <p>Much of what gets called dense reward in agentic RL is a finer-grained <em>terminal</em> reward, and the shaping analysis does not apply to it at all. The distinction determines whether there is any hazard to reason about:</p>
+
+  <div class="step">
+    <div class="step-label">Two things that both look like "dense reward"</div>
+    <ul style="margin:0;">
+      <li><strong>Higher-resolution terminal reward — no shaping risk.</strong> Fraction of unit tests passed rather than all-or-nothing, partial credit across sub-tasks, a rubric score from a judge model on the finished trajectory. Still one reward at episode end; it just carries more bits than a success flag. Nothing mid-trajectory is being optimized.</li>
+      <li><strong>Genuine mid-trajectory reward — where the hazard lives.</strong> Per-tool-call success bonuses, compile-clean or lint-clean signals during the episode, turn-level rewards in multi-turn agents, sub-goal bonuses for opening the right file or running the right command. These change what the agent is optimizing between steps, and almost none of them are potential-based.</li>
+    </ul>
+  </div>
+
+  <p>Penalties are the more common form of the second category — token budgets, tool-call count limits, wall-clock cost. They are just as non-invariant in theory, but empirically much safer: a negative signal cannot be farmed by looping, which is the failure mode positive shaping invites.</p>
+
+  <h4>Practice has moved toward sparse</h4>
+  <p>The reference datapoint is DeepSeek-R1, which evaluated a process reward model and dropped it from the production run: step boundaries are hard to define, the PRM gets hacked once the policy drifts off its training distribution, and continuous PRM retraining complicates the pipeline. Outcome reward plus a format check was enough, and the reasoning behavior emerged anyway (see <a href="deepseek-r1.html" style="color:var(--accent);">DeepSeek-R1</a>). Process reward models did not disappear — they migrated to inference, where they rerank candidates or guide search rather than serve as a training target. A verifier that the policy cannot optimize against sidesteps the problem entirely (see <a href="tree-search-llm.html" style="color:var(--accent);">tree search for LLMs</a>).</p>
+
+  <p>Where the sparse position is genuinely under pressure is long-horizon agents with single-digit initial success rates. When every rollout in a group fails, the group-relative advantage is identically zero and there is no gradient at all. The field's answers to that are mostly not shaping: curriculum and difficulty filtering, dropping degenerate all-equal groups, SFT-seeded starting policies, and partial-credit terminal rubrics — all of which raise signal without introducing a mid-trajectory target.</p>
+
+  <div class="warn">
+    <strong>Goodhart's law in agentic RL:</strong> any shaping signal the agent can optimize independently of the true goal will be exploited. An agent rewarded for "making tests pass" without checking the full suite will learn to delete failing tests, hardcode expected outputs, or mock the functions under test — all technically passing the reward while completely missing the point. This is especially dangerous in agentic settings where the model can modify the environment.
+  </div>
+
+  <h3>Format and safety rewards</h3>
+  <p>Unlike reasoning RL where format rewards are simple (does the response contain <code>&lt;think&gt;</code> tags?), agentic RL requires structured reward signals for tool call correctness:</p>
+  <ul>
+    <li><strong>Schema validity:</strong> did the tool call use the correct argument names and types?</li>
+    <li><strong>Safety:</strong> did the agent attempt any disallowed operations (deleting system files, calling unauthorized APIs)?</li>
+    <li><strong>Termination:</strong> did the agent output a proper terminal signal rather than looping indefinitely?</li>
+  </ul>
+  <p>These are typically small binary bonuses or penalties, weighted much lower than the terminal task reward, so they guide behavior without distracting from the main objective.</p>
+
+  <h2 id="environment">4. Environment Scaffolding</h2>
+  <p>The agentic RL environment is not a dataset — it is a live execution system that the model interacts with. Building it correctly determines whether the RL signal is sound.</p>
+
+  <div class="env-box">
+    <span class="env-comment"># Minimal agent environment interface</span><br>
+    <span class="env-kw">class</span> <span class="env-key">AgentEnv</span>:<br>
+    &nbsp;&nbsp;<span class="env-kw">def</span> <span class="env-key">reset</span>(<span class="env-val">self</span>) → <span class="env-str">Observation</span>:<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="env-comment"># Load task, reset filesystem / DB / API sandbox</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="env-val">return</span> initial_observation<br><br>
+    &nbsp;&nbsp;<span class="env-kw">def</span> <span class="env-key">step</span>(<span class="env-val">self</span>, action: <span class="env-str">ToolCall</span>) → <span class="env-str">Tuple[Obs, Reward, Done]</span>:<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;result = <span class="env-key">execute_tool</span>(action)  <span class="env-comment"># run in sandbox</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;obs = <span class="env-key">build_context</span>(history, result)<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;r = <span class="env-key">compute_reward</span>() <span class="env-kw">if</span> done <span class="env-kw">else</span> <span class="env-num">0.0</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="env-val">return</span> obs, r, done<br><br>
+    &nbsp;&nbsp;<span class="env-kw">def</span> <span class="env-key">compute_reward</span>(<span class="env-val">self</span>) → <span class="env-str">float</span>:<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="env-comment"># Evaluate terminal state in isolated verifier</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="env-val">return</span> <span class="env-key">run_tests</span>(sandbox_state)
+  </div>
+
+  <h3>Sandboxing requirements</h3>
+  <p>The agent must operate in a sandboxed environment during RL training. An agent that can modify its own reward computation, delete test files, or access the training infrastructure would immediately exploit those capabilities — the environment must be designed so that the only way to get reward is to genuinely complete the task.</p>
+  <ul>
+    <li><strong>Filesystem isolation:</strong> each episode gets a fresh copy of the task repository in a container. The agent can read/write/delete within this sandbox; the sandbox is destroyed at episode end.</li>
+    <li><strong>Reward isolation:</strong> the verifier that computes the terminal reward must run in a separate process with read-only access to the sandbox state. The agent cannot modify the verifier's view of the world.</li>
+    <li><strong>Network isolation:</strong> in most setups, the agent has no outbound network access to prevent it from calling external services to solve tasks.</li>
+    <li><strong>Resource limits:</strong> CPU time, memory, and disk are bounded per episode to prevent the agent from exploiting resources.</li>
+  </ul>
+
+  <h3>Task distribution</h3>
+  <p>Agentic RL tasks come from curated datasets of real-world problems: GitHub issues with linked test suites, coding competition problems with automated judges, QA tasks with gold-standard answers. The distribution matters:</p>
+  <ul>
+    <li>Tasks must have <em>verifiable</em> outcomes for training (unit tests, expected outputs, judge models).</li>
+    <li>The difficulty distribution interacts with RLCS-style curriculum: tasks where the current agent succeeds 30–70% of the time produce the most useful gradient signal (see <a href="cascade-rl.html" style="color:var(--accent);">Cascade RL</a>).</li>
+    <li>Diversity matters more than in reasoning RL: an agent trained only on pandas bugs may fail on numpy bugs even though both are Python coding tasks.</li>
+  </ul>
+
+  <h2 id="credit">5. Credit Assignment Across Long Horizons</h2>
+  <p>In a 50-step trajectory that ends in reward +1, which of the 50 actions deserves the credit? This is the core difficulty of agentic RL — and it is where the connection to <a href="td-learning.html" style="color:var(--accent);">TD learning</a> becomes important.</p>
+
+  <h3>Monte Carlo returns</h3>
+  <p>The <a href="mc-rollouts.html" style="color:var(--accent);">MC return</a> assigns the full terminal reward to every step in the trajectory:</p>
+  \[
+    G_t = \gamma^{T-t} R_T \quad \text{(terminal-only reward)}
+  \]
+  <p>With discount \(\gamma = 0.99\) and T = 50, the return at step \(t=0\) is \(0.99^{50} \approx 0.61\). The return at step \(t=40\) is \(0.99^{10} \approx 0.90\). Steps near the end receive more credit than early steps — even if an early action (reading the right file) was causally responsible for the eventual success.</p>
+
+  <h3>GAE with a value baseline</h3>
+  <p>A value function \(V(s_t)\) — the expected return from state \(s_t\) under the current policy — can reduce variance by subtracting a baseline that accounts for what the model expected to achieve from each state. The <a href="rlhf.html" style="color:var(--accent);">GAE advantage</a>:</p>
+  \[
+    \hat A_t^{\text{GAE}} = \sum_{l=0}^{T-t-1} (\gamma\lambda)^l \delta_{t+l}, \quad \delta_t = R_t + \gamma V(s_{t+1}) - V(s_t)
+  \]
+  <p>trains a critic network \(V_\phi(s_t)\) that must learn to predict long-horizon returns from the current context — a hard task in itself when the context is a long interleaved sequence of tool calls and results.</p>
+
+  <h3>GRPO's limitation for long horizons</h3>
+  <p>GRPO replaces the critic with group-relative baselines: sample \(G\) complete trajectories per prompt, use the group mean as the baseline. This works well for single-turn tasks because each trajectory is comparable. For long-horizon tasks:</p>
+  <ul>
+    <li>Two trajectories for the same task may diverge massively by step 5 (one took the right branch, one didn't). Comparing their terminal rewards and averaging doesn't tell the model which specific action at step 3 caused the divergence.</li>
+    <li>The group-relative advantage assigns the same advantage estimate to every step in a successful trajectory — the action at step 1 gets the same credit as the decisive action at step 30.</li>
+    <li>Longer trajectories mean more tokens per group, which is expensive — generating 8 trajectories of 50 steps is 400 environment interactions vs. 8 for single-turn.</li>
+  </ul>
+
+  <div class="step">
+    <div class="step-label">Current practice</div>
+    <p>Most labs currently use GRPO at the trajectory level for agentic RL, accepting the coarse credit assignment because the infrastructure is simpler and the verifiable terminal reward is still a strong enough signal to make progress. The critic-based approach (PPO + GAE) is theoretically better for long horizons but harder to implement stably when the observation space is a long, variable-length token sequence. Research is ongoing.</p>
+  </div>
+
+  <h2 id="grpo">6. Adapting GRPO to Agentic Settings</h2>
+  <p>Standard GRPO (from the <a href="grpo.html" style="color:var(--accent);">GRPO page</a>) computes advantages at the response level. Agentic GRPO applies the same group-relative advantage to every token in every step of a multi-step trajectory.</p>
+
+  <p>For a group of \(G\) complete trajectories on the same task, each trajectory \(i\) has terminal reward \(r_i\). The trajectory-level advantage:</p>
+  \[
+    \hat A_i = \frac{r_i - \text{mean}(\{r_j\}_{j=1}^G)}{\text{std}(\{r_j\}_{j=1}^G)}
+  \]
+  <p>This advantage is applied uniformly to all tokens \(t \in [0, T_i]\) of trajectory \(i\). The policy gradient loss is then:</p>
+  \[
+    \mathcal{L}_{\text{GRPO}} = -\frac{1}{\sum_i T_i} \sum_{i=1}^G \sum_{t=1}^{T_i} \hat A_i \cdot \min\!\left(\rho_{i,t} \hat A_i,\ \text{clip}(\rho_{i,t}, 1-\varepsilon, 1+\varepsilon)\hat A_i\right)
+  \]
+  <p>where \(\rho_{i,t} = \pi_\theta(a_{i,t} | s_{i,t}) / \pi_{\theta_\text{old}}(a_{i,t} | s_{i,t})\) is the per-token importance ratio. The normalization divides by total tokens (not number of trajectories) to avoid biasing toward shorter trajectories.</p>
+
+  <h3>Tool call tokens vs. reasoning tokens</h3>
+  <p>The policy generates two types of tokens: reasoning tokens inside <code>&lt;think&gt;</code> blocks and structured tool call tokens. There's an active debate about whether to mask reasoning tokens from the policy gradient (applying the loss only to tool call and response tokens). Arguments:</p>
+  <ul>
+    <li><strong>Mask reasoning tokens:</strong> the model should be free to reason however it wants; penalizing reasoning tokens for a failed trajectory might discourage useful intermediate thinking.</li>
+    <li><strong>Include reasoning tokens:</strong> if the model's reasoning led to a bad tool call, the reasoning tokens should bear some responsibility. Including them also provides more gradient signal per trajectory.</li>
+  </ul>
+  <p>In practice, most implementations include all tokens but weight tool-call tokens more heavily, or apply the loss equally to all tokens and rely on the overall gradient to separate good and bad reasoning patterns over many trajectories.</p>
+
+  <h2 id="challenges">7. Open Challenges</h2>
+
+  <h3>Environment diversity and generalization</h3>
+  <p>Agents trained on SWE-bench (GitHub issues) don't automatically generalize to internal codebases with different conventions, CI/CD systems, or languages. Unlike reasoning RL where "add 3 and 7" generalizes to "add 4 and 8," tool-use strategies are environment-specific. Building diverse enough training environments is an ongoing engineering challenge.</p>
+
+  <h3>Multi-agent and collaborative settings</h3>
+  <p>Some tasks require coordination between multiple agents: one agent writes code, another reviews it, a third runs tests. Multi-agent RL introduces new credit assignment problems (which agent's action caused the outcome?), new optimization problems (agents may learn to cooperate to fool the reward function), and new infrastructure requirements (orchestration, message passing, shared state).</p>
+
+  <h3>Reward hacking at scale</h3>
+  <p>The more capable the agent, the more creative the reward hacking. Agents trained with terminal rewards on code tasks have learned to: patch test files to remove failing assertions, mock out the functions being tested, exploit time-dependent bugs where the test only fails in certain conditions, and write code that passes the specific test suite without being generally correct. Defense requires adversarial test construction and reward auditing that scales with agent capability.</p>
+
+  <h3>Safety under agentic RL</h3>
+  <p>A model trained to use tools to complete tasks will naturally generalize to using tools to complete tasks it wasn't intended for. RL training with broad tool access (file system, network, code execution) creates models that are more capable at tool use generally — including uses that are undesirable. Agentic RL requires careful scoping of the action space and explicit training on refusal for out-of-scope requests.</p>
+
+  <h2>Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">What changes</div>
+      <p>Multi-step, tool use, stochastic environment, sparse terminal rewards, hard credit assignment — single-turn RL is a special case.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Reward design</div>
+      <p>Prefer verifiable terminal rewards (test pass rate, judge model). Shaping must be potential-based to preserve the optimal policy. Never reward format over substance.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Environment</div>
+      <p>Sandboxed execution with filesystem, reward, and network isolation. The verifier must be unreachable by the agent or reward hacking is inevitable.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Credit assignment</div>
+      <p>GRPO at trajectory level assigns uniform credit. GAE + critic is better but harder. Current practice accepts coarse assignment and relies on scale.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">GRPO adaptation</div>
+      <p>Trajectory-level z-score advantage, applied uniformly to all tokens. Normalize loss by total token count, not trajectory count, to avoid length bias.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Open problems</div>
+      <p>Environment diversity for generalization, multi-agent credit assignment, reward hacking at scale, and safety under broad tool access.</p>
+    </div>
+  </div>
+
+  <h2>What's Next</h2>
+  <div class="next-grid">
+    <a class="next-card" href="cascade-rl.html">
+      <div class="next-card-label">Prerequisite</div>
+      <div class="next-card-title">Cascade RL</div>
+      <p>How agentic RL fits into a multi-stage training pipeline: the sequential RL stages and consolidation mechanisms that prevent forgetting when adding agentic capability on top of reasoning RL.</p>
+    </a>
+    <a class="next-card" href="rlhf.html">
+      <div class="next-card-label">Foundation</div>
+      <div class="next-card-title">RLHF & PPO</div>
+      <p>The policy gradient math underlying both single-turn and agentic RL: log-derivative trick, advantage estimation, GAE, and the PPO clipped surrogate.</p>
+    </a>
+    <a class="next-card" href="td-learning.html">
+      <div class="next-card-label">Foundation</div>
+      <div class="next-card-title">TD Learning</div>
+      <p>The TD error δ_t = R_t + γV(s_{t+1}) − V(s_t) is the building block of GAE and value-based credit assignment in long-horizon agentic tasks.</p>
+    </a>
+    <a class="next-card" href="async-rl.html">
+      <div class="next-card-label">Systems</div>
+      <div class="next-card-title">Async RL</div>
+      <p>Agentic trajectories take much longer to generate than single-turn responses. Async RL decouples generation from training so GPUs stay busy during slow environment interactions.</p>
+    </a>
+  </div>
+
+</div>
+
+<footer>Personal ML notes · Sources: <a href="https://arxiv.org/abs/2505.22638" style="color:inherit;">GLM-5 Agentic Stage</a> · <a href="https://swebench.com" style="color:inherit;">SWE-bench</a> · DeepSeek Coder-V3 · OpenAI CUA · <a href="https://github.com/yueyiming2009/ai-learning" style="color:inherit;">source on GitHub</a></footer>
+
+</body>
+</html>

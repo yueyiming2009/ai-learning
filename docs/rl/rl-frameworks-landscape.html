@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>RL Frameworks Landscape — verl, TRL, OpenRLHF, NeMo-Aligner, slime</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #0d9488;
+      --accent-light: #f0fdfa;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --note-fg: #1e40af;
+      --result-fg: #16a34a;
+      --nav-bg: rgba(255,255,255,0.92);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #2dd4bf;
+        --accent-light: #10201e;
+        --warning-bg: #101a2b;
+        --warning-border: #1e40af;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --note-fg: #93c5fd;
+        --result-fg: #4ade80;
+        --nav-bg: rgba(15,17,21,0.9);
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    .hero {
+      background: linear-gradient(135deg, #064e3b 0%, #065f46 55%, #0d9488 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.9;
+      font-size: 0.97rem;
+      max-width: 640px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .page-wrap {
+      max-width: 880px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    h4 {
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin: 1.3em 0 0.3em;
+      color: var(--accent);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+    a { color: var(--accent); }
+    code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+    pre {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      line-height: 1.55;
+      margin: 1.2em 0;
+    }
+    pre code { background: none; padding: 0; border: none; color: var(--text); }
+
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.9rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 14px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+    td strong { color: var(--text); }
+
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* framework profile cards */
+    .fw {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 14px 18px;
+      margin: 1em 0;
+    }
+    .fw h3 { margin: 0 0 4px; color: var(--accent); }
+    .fw .who { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+    .fw p { margin: 0.4em 0; font-size: 0.92rem; }
+
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>RL Frameworks Landscape</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#axes">Design axes</a>
+    <a href="#profiles">The frameworks</a>
+    <a href="#table">Comparison</a>
+    <a href="#choose">How to choose</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">RL Frameworks · Landscape</span>
+  <h1>RL Frameworks Landscape</h1>
+  <p>The map of the open LLM-RL stack — the handful of design axes that actually separate the
+  frameworks, short profiles of verl, TRL, OpenRLHF, NeMo-Aligner, and slime, and a decision guide
+  for picking one.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="note">
+    Read this first as the map, then go deep: <a href="verl-architecture.html">verl Architecture</a>
+    and <a href="trl.html">TRL</a> are the two anchor write-ups; the
+    <a href="slime-miles-walkthrough.html">slime / Miles walkthrough</a> traces a third design
+    step-by-step. Everything here builds on the algorithm pages (<a href="ppo.html">PPO</a>,
+    <a href="grpo.html">GRPO</a>) and the systems pages (<a href="async-rl.html">Async RL</a>,
+    <a href="resource-pool-placement.html">Placement</a>).
+  </div>
+
+  <!-- ── §1 Design axes ─────────────────────────── -->
+  <h2 id="axes">1. The Axes That Actually Separate Them</h2>
+
+  <p>Every online-RL framework solves the same loop — generate, score, compute advantage, update,
+  sync weights. They differ on a small number of architectural choices. Learn these axes and any new
+  framework slots in immediately:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Axis</th><th>The question</th><th>The options</th></tr>
+      <tr><td><strong>Controller model</strong></td><td>Who orchestrates the dataflow between stages?</td><td>SPMD Trainer · <a href="verl-architecture.html#hybrid">hybrid single/multi-controller</a> · server-centric</td></tr>
+      <tr><td><strong>Training backend</strong></td><td>How are weights/optimizer sharded?</td><td>DeepSpeed ZeRO · FSDP · Megatron (TP/PP/EP/CP)</td></tr>
+      <tr><td><strong>Rollout engine</strong></td><td>What generates the responses?</td><td>HF <code>generate</code> · vLLM · SGLang</td></tr>
+      <tr><td><strong>Generation placement</strong></td><td>Do training and rollout share GPUs?</td><td><a href="resource-pool-placement.html">Colocated · disaggregated sync · disaggregated async</a></td></tr>
+      <tr><td><strong>Sync vs async</strong></td><td>Are rollouts on-policy?</td><td>On-policy (sync) · <a href="async-rl.html">off-policy + IS correction</a></td></tr>
+      <tr><td><strong>Method breadth</strong></td><td>How many algorithms ship?</td><td>RL-focused · full preference + RL menu</td></tr>
+      <tr><td><strong>Target scale</strong></td><td>Where is it happiest?</td><td>1 GPU → modest · multi-node large dense/MoE</td></tr>
+    </table>
+  </div>
+
+  <p>The deepest split is the <strong>controller model</strong>, because it drives everything else.
+  An SPMD <code>Trainer</code> keeps all roles in one process (simple, bounded scale); a hybrid
+  controller separates roles into pools the driver orchestrates (complex, scales to 4-D parallel +
+  disaggregated rollout). The full reasoning is on the
+  <a href="verl-architecture.html#problem">verl page</a>.</p>
+
+  <!-- ── §2 Profiles ────────────────────────────── -->
+  <h2 id="profiles">2. The Frameworks</h2>
+
+  <div class="fw">
+    <h3>verl</h3>
+    <div class="who">ByteDance · Ray · open source</div>
+    <p>The reference implementation of <a href="verl-architecture.html">HybridFlow</a>'s hybrid
+    single/multi-controller model. Both FSDP and Megatron training backends; vLLM and SGLang rollout;
+    colocated HybridEngine plus first-class disaggregated <a href="async-rl.html">async</a>. The most
+    complete and most scalable of the open frameworks, at the cost of the most concepts to learn.</p>
+  </div>
+
+  <div class="fw">
+    <h3>TRL</h3>
+    <div class="who">HuggingFace · Trainer / accelerate · open source</div>
+    <p>The widest method menu (SFT, reward modeling, DPO/KTO/ORPO/CPO, PPO/GRPO/RLOO/online-DPO, GKD)
+    behind one <code>Trainer</code> API, deeply wired into the HF ecosystem (Hub, PEFT/LoRA,
+    quantization). SPMD launch with DeepSpeed/FSDP; vLLM colocate or server generation. The fastest
+    on-ramp; best for 1–8 GPUs and algorithm iteration. <a href="trl.html">Full write-up →</a></p>
+  </div>
+
+  <div class="fw">
+    <h3>OpenRLHF</h3>
+    <div class="who">Community · Ray + DeepSpeed + vLLM · open source</div>
+    <p>The pragmatic middle ground: Ray-based role distribution with DeepSpeed ZeRO-3 training and
+    vLLM generation, supporting PPO, GRPO, REINFORCE++, and the DPO/KTO family. Simpler than verl (no
+    Megatron — DeepSpeed only), but more scalable and disaggregation-friendly than a single Trainer.
+    A common choice when verl is more than you need but TRL is less.</p>
+  </div>
+
+  <div class="fw">
+    <h3>NeMo-Aligner / NeMo-RL</h3>
+    <div class="who">NVIDIA · Megatron-Core · open source</div>
+    <p>The maximum-scale, NVIDIA-stack option: built on Megatron-Core/NeMo with full TP/PP/EP/SP and
+    TensorRT-LLM-class generation, targeting the largest dense and MoE models on NVIDIA clusters.
+    Heaviest setup; enterprise-grade scale. (NeMo-RL is the newer, more modular successor to
+    NeMo-Aligner.)</p>
+  </div>
+
+  <div class="fw">
+    <h3>slime (&amp; Miles)</h3>
+    <div class="who">Zhipu AI / Tsinghua · SGLang + Megatron · open source</div>
+    <p>An <strong>SGLang-native</strong> design: rollout runs as a standing SGLang HTTP server, training on
+    Megatron-LM with expert parallelism for MoE, and async by construction. It leans on
+    <a href="async-rl.html">TIM-style</a> elimination of training–inference mismatch rather than IS
+    correction. The <a href="slime-miles-walkthrough.html">slime / Miles walkthrough</a> traces one
+    PPO step on a 30B MoE through it.</p>
+  </div>
+
+  <div class="note">
+    The field moves fast — <strong>AReaL</strong> (Ant, fully-async RL), <strong>ROLL</strong>
+    (Alibaba), and others share these same axes. You do not need to track every name; place any new
+    framework on the §1 axes and you know what it is.
+  </div>
+
+  <!-- ── §3 Comparison ──────────────────────────── -->
+  <h2 id="table">3. Side-by-Side</h2>
+
+  <div class="table-wrap">
+    <table>
+      <tr>
+        <th>Framework</th>
+        <th>Controller</th>
+        <th>Train backend</th>
+        <th>Rollout</th>
+        <th>Async</th>
+        <th>Methods</th>
+        <th>Sweet spot</th>
+      </tr>
+      <tr>
+        <td><strong>verl</strong></td>
+        <td>Hybrid single/multi</td>
+        <td>FSDP + Megatron</td>
+        <td>vLLM, SGLang</td>
+        <td>First-class</td>
+        <td>PPO/GRPO family</td>
+        <td>Multi-node, large dense/MoE, production</td>
+      </tr>
+      <tr>
+        <td><strong>TRL</strong></td>
+        <td>SPMD Trainer</td>
+        <td>DeepSpeed, FSDP</td>
+        <td>HF, vLLM</td>
+        <td>On-policy</td>
+        <td>Full menu (SFT→DPO→GRPO→GKD)</td>
+        <td>1–8 GPUs, algorithm iteration</td>
+      </tr>
+      <tr>
+        <td><strong>OpenRLHF</strong></td>
+        <td>Ray role actors</td>
+        <td>DeepSpeed ZeRO</td>
+        <td>vLLM</td>
+        <td>Supported</td>
+        <td>PPO, GRPO, REINFORCE++, DPO/KTO</td>
+        <td>Mid-scale, simpler than verl</td>
+      </tr>
+      <tr>
+        <td><strong>NeMo-Aligner / RL</strong></td>
+        <td>Megatron SPMD</td>
+        <td>Megatron-Core</td>
+        <td>TRT-LLM, vLLM</td>
+        <td>Supported</td>
+        <td>PPO, DPO, SteerLM, RLHF</td>
+        <td>Largest models on NVIDIA stack</td>
+      </tr>
+      <tr>
+        <td><strong>slime / Miles</strong></td>
+        <td>Server-centric</td>
+        <td>Megatron-LM</td>
+        <td>SGLang (server)</td>
+        <td>By construction</td>
+        <td>PPO/GRPO (MoE-focused)</td>
+        <td>Async MoE RL, SGLang shops</td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- ── §4 How to choose ───────────────────────── -->
+  <h2 id="choose">4. How to Choose</h2>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Your situation</th><th>Start with</th></tr>
+      <tr><td>Prototyping an algorithm or reward on 1–8 GPUs; you live in HuggingFace</td><td><strong>TRL</strong></td></tr>
+      <tr><td>Need a preference method (DPO/KTO/ORPO) more than online RL</td><td><strong>TRL</strong></td></tr>
+      <tr><td>Mid-scale online RLHF, want Ray + vLLM without Megatron complexity</td><td><strong>OpenRLHF</strong></td></tr>
+      <tr><td>Large dense or MoE model needing Megatron 4-D parallelism + disaggregated async</td><td><strong>verl</strong></td></tr>
+      <tr><td>Rollout-dominated runs needing fine-grained <a href="resource-pool-placement.html">placement</a> and async throughput</td><td><strong>verl</strong></td></tr>
+      <tr><td>All-NVIDIA cluster, maximum-scale, enterprise support</td><td><strong>NeMo-Aligner / NeMo-RL</strong></td></tr>
+      <tr><td>SGLang-centric stack; async MoE RL with TIM-style mismatch handling</td><td><strong>slime</strong></td></tr>
+    </table>
+  </div>
+
+  <div class="result">
+    <div class="result-label">The short version</div>
+    <p style="margin:0;">Sort by <strong>scale and controller model</strong>. One Trainer on a few
+    GPUs → <strong>TRL</strong>. Ray + vLLM at mid-scale without Megatron → <strong>OpenRLHF</strong>.
+    Hybrid controller, every backend, async at production scale → <strong>verl</strong>. NVIDIA
+    Megatron stack at the frontier → <strong>NeMo</strong>. SGLang-native async → <strong>slime</strong>.
+    The <a href="#axes">axes</a> matter more than the names — frameworks come and go, the design
+    trade-offs persist.</p>
+  </div>
+
+  <!-- ── References ─────────────────────────────── -->
+  <h2>References</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><td><a href="https://github.com/volcengine/verl">verl</a> · <a href="https://arxiv.org/abs/2409.19256">HybridFlow paper</a></td><td>Hybrid-controller framework — see <a href="verl-architecture.html">verl Architecture</a></td></tr>
+      <tr><td><a href="https://github.com/huggingface/trl">TRL</a></td><td>HuggingFace post-training — see <a href="trl.html">TRL write-up</a></td></tr>
+      <tr><td><a href="https://github.com/OpenRLHF/OpenRLHF">OpenRLHF</a></td><td>Ray + DeepSpeed + vLLM RLHF</td></tr>
+      <tr><td><a href="https://github.com/NVIDIA/NeMo-RL">NeMo-RL</a> · <a href="https://github.com/NVIDIA/NeMo-Aligner">NeMo-Aligner</a></td><td>NVIDIA Megatron-Core alignment</td></tr>
+      <tr><td><a href="https://github.com/THUDM/slime">slime</a></td><td>SGLang-native RL — see <a href="slime-miles-walkthrough.html">walkthrough</a></td></tr>
+    </table>
+  </div>
+
+</div>
+</body>
+</html>

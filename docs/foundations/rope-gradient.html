@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>RoPE — Gradient Derivation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #b45309;
+      --accent-light: #fffbeb;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --nav-bg: rgba(255,255,255,0.92);
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --note-fg: #1e40af;
+      --result-fg: #16a34a;
+      --amber-border: #fde68a;
+      --fig-bg: #fff;
+      --plot-grid: #eceef1;
+      --plot-tick: #9ca3af;
+      --plot-label: #6b7280;
+      --plot-gray: #9ca3af;
+      --plot-amber: #b45309;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #fbbf24;
+        --accent-light: #251c0b;
+        --warning-bg: #101a2b;
+        --warning-border: #1e40af;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --nav-bg: rgba(15,17,21,0.9);
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --note-fg: #93c5fd;
+        --result-fg: #4ade80;
+        --amber-border: #78350f;
+        --fig-bg: #14181e;
+        --plot-grid: #232830;
+        --plot-tick: #6b7280;
+        --plot-label: #9aa1ab;
+        --plot-gray: #6b7280;
+        --plot-amber: #fbbf24;
+      }
+    }
+
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #92400e 0%, #b45309 50%, #d97706 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.85;
+      font-size: 0.97rem;
+      max-width: 560px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+
+    /* ── Step boxes ──────────────────────────── */
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    /* ── Callout / note ──────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+    .note::before { content: '💡 '; }
+
+    /* ── Code ────────────────────────────────── */
+    code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-size: 0.88em; }
+    pre { background: var(--step-bg); border: 1px solid var(--step-border); border-radius: 8px; padding: 14px 18px; overflow-x: auto; font-size: 0.85rem; line-height: 1.55; margin: 1.2em 0; }
+    pre code { background: none; border: none; padding: 0; color: var(--text); }
+
+    /* ── Result / boxed equation ─────────────── */
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Summary card ────────────────────────── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .summary-card {
+      background: var(--accent-light);
+      border: 1px solid var(--amber-border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .summary-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    /* ── Figure ──────────────────────────────── */
+    .figure {
+      background: var(--fig-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 16px 14px;
+      margin: 1.6em 0;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .figure canvas {
+      width: 100%;
+      height: 300px;
+      display: block;
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      justify-content: center;
+      margin-top: 12px;
+      font-size: 0.82rem;
+      color: var(--text);
+    }
+    .legend-item { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, var(--plot-gray) 0 5px, transparent 5px 9px); }
+    .figure-caption {
+      font-size: 0.85rem;
+      color: var(--muted);
+      line-height: 1.6;
+      margin: 14px 4px 2px;
+    }
+
+    /* ── Footer ──────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    /* ── Responsive ──────────────────────────── */
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>RoPE Gradient</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#idea">Idea</a>
+    <a href="#notation">Notation</a>
+    <a href="#angles">Angles</a>
+    <a href="#forward">Forward</a>
+    <a href="#property">Property</a>
+    <a href="#backward">Gradient</a>
+    <a href="#code">Code</a>
+    <a href="#summary">Summary</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">ML Math</span>
+  <h1>Rotary Position Embedding (RoPE)</h1>
+  <p>Forward and backward pass derivation. Rotation matrices, the relative-position dot-product property, and the elegant symmetry between forward and backward.</p>
+</div>
+
+<div class="page-wrap">
+
+  <h2 id="idea">The Basic Idea</h2>
+  <p>Self-attention is <em>permutation-invariant</em>: on its own it sees an unordered bag of tokens. Something has to inject <em>position</em>. The classic fix — sinusoidal or learned position embeddings — <strong>adds</strong> a position vector to each token. RoPE takes a different route: it <strong>rotates</strong> each token's query and key vector by an angle proportional to its position.</p>
+
+  <p>Chop the \(d\)-dimensional vector into \(d/2\) consecutive coordinate pairs and treat each pair as a point in a 2D plane. To encode position \(m\), spin pair \(k\) by the angle \(\varphi_{m,k} = m\,\theta_k\) — a token twice as far along gets twice the rotation. Each pair turns at its own rate \(\theta_k\) (the geometric schedule in §1), so the pairs behave like the hands of a bank of clocks ticking at different speeds: fast hands resolve nearby offsets, slow hands carry position over long ranges.</p>
+
+  <p>The payoff appears in the attention dot product. A rotation by \(m\) followed by the transpose of a rotation by \(n\) is a single rotation by \(n-m\), so the score between a query at position \(m\) and a key at position \(n\) depends only on their <strong>relative distance</strong> \(n-m\) — never on the absolute positions themselves:</p>
+  \[
+    (R_m\mathbf{q})^\top (R_n\mathbf{k}) \;=\; \mathbf{q}^\top R_m^\top R_n\, \mathbf{k} \;=\; \mathbf{q}^\top R_{n-m}\, \mathbf{k}
+  \]
+
+  <div class="note">
+    That one identity is the whole point: relative position falls out of the geometry for free — no relative-bias tables, no learned position parameters. Rotations also preserve norms, so RoPE encodes order without disturbing the magnitude of any query or key.
+  </div>
+
+  <p>The rest of this page makes that precise: the frequency schedule \(\theta_k\) (§1), the forward rotation (§2), the relative-distance property (§3), and the pleasingly symmetric backward pass (§4).</p>
+
+  <h2 id="notation">Notation</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symbol</th><th>Description</th></tr>
+      <tr><td>\(\mathbf{x} \in \mathbb{R}^d\)</td><td>Input vector (query or key) at some position; \(d\) must be even</td></tr>
+      <tr><td>\(m\)</td><td>Token position index (integer)</td></tr>
+      <tr><td>\(\theta_k\)</td><td>Frequency for dimension pair \(k\): \(\theta_k = \mathrm{base}^{-2k/d}\), \(k = 0,\ldots,\tfrac{d}{2}-1\)</td></tr>
+      <tr><td>\(\varphi_{m,k}\)</td><td>Rotation angle for pair \(k\) at position \(m\): \(\varphi_{m,k} = m\,\theta_k\)</td></tr>
+      <tr><td>\(R_m\)</td><td>Block-diagonal rotation matrix for position \(m\)</td></tr>
+      <tr><td>\(\mathbf{y}\)</td><td>RoPE output: \(\mathbf{y} = R_m\,\mathbf{x}\)</td></tr>
+      <tr><td>\(d\mathbf{y},\; d\mathbf{x}\)</td><td>Upstream gradient \(\partial L/\partial \mathbf{y}\) and target gradient \(\partial L/\partial \mathbf{x}\)</td></tr>
+      <tr><td>\(\mathbf{c}_m,\; \mathbf{s}_m\)</td><td>Element-wise cosine/sine vectors (each frequency repeated twice, shape \(d\))</td></tr>
+      <tr><td>\(J(\cdot)\)</td><td>Pair-rotation operator: \(J(\mathbf{v})_{2k} = -v_{2k+1},\; J(\mathbf{v})_{2k+1} = v_{2k}\)</td></tr>
+    </table>
+  </div>
+
+  <h2 id="angles">1. Angle Schedule</h2>
+  <p>RoPE uses a geometric sequence of frequencies, one per dimension pair:</p>
+  \[
+    \theta_k = \mathrm{base}^{-2k/d}, \qquad k = 0, 1, \ldots, \tfrac{d}{2}-1
+  \]
+  <p>With \(\mathrm{base}=10000\), this gives wavelengths ranging from \(2\pi\) (pair 0, high frequency) to \(2\pi \cdot 10000\) (last pair, low frequency). The rotation angle applied to pair \(k\) at position \(m\) is simply:</p>
+  \[
+    \varphi_{m,k} = m\,\theta_k
+  \]
+  <div class="figure">
+    <canvas id="plot-rope-freq" aria-label="Per-pair RoPE frequencies theta_k on a log axis: geometric spacing forms a straight line spanning four decades, while an arithmetic schedule clusters at high frequency"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-amber)"></span> geometric \(\theta_k=\mathrm{base}^{-2k/d}\)</span>
+      <span class="legend-item"><span class="lg dash"></span> arithmetic (evenly-spaced \(\theta\))</span>
+    </div>
+    <p class="figure-caption">
+      <strong>The frequencies form a geometric sequence — a straight line on a log axis.</strong>
+      With \(d=128,\ \mathrm{base}=10{,}000\), the \(d/2=64\) pairs each step down by a constant
+      ratio, spreading evenly across every scale from \(\theta_0=1\) (wavelength \(2\pi\), rotates
+      fast → resolves local offsets) down to \(\theta_{63}\approx10^{-4}\) (wavelength
+      \(2\pi\cdot\mathrm{base}\), barely rotates → carries global position). An arithmetic schedule
+      (dashed) would jam nearly every pair at high frequency and only reach long wavelengths in the
+      last handful of dimensions.
+    </p>
+  </div>
+
+  <p>The two broadcast vectors used throughout are:</p>
+  \[
+    \mathbf{c}_m = \bigl[\cos\varphi_{m,0},\;\cos\varphi_{m,0},\;\cos\varphi_{m,1},\;\cos\varphi_{m,1},\;\ldots\bigr]
+  \]
+  \[
+    \mathbf{s}_m = \bigl[\sin\varphi_{m,0},\;\sin\varphi_{m,0},\;\sin\varphi_{m,1},\;\sin\varphi_{m,1},\;\ldots\bigr]
+  \]
+
+  <h2 id="forward">2. Forward Pass</h2>
+
+  <h3>Per-pair rotation</h3>
+  <p>Each consecutive pair of dimensions \((x_{2k},\, x_{2k+1})\) is rotated by angle \(\varphi_{m,k}\):</p>
+  \[
+    \begin{pmatrix} y_{2k} \\ y_{2k+1} \end{pmatrix}
+    =
+    \begin{pmatrix} \cos\varphi_{m,k} & -\sin\varphi_{m,k} \\ \sin\varphi_{m,k} & \phantom{-}\cos\varphi_{m,k} \end{pmatrix}
+    \begin{pmatrix} x_{2k} \\ x_{2k+1} \end{pmatrix}
+  \]
+  <p>Expanding:</p>
+  \[
+    y_{2k}   = x_{2k}\cos\varphi_{m,k} - x_{2k+1}\sin\varphi_{m,k}
+  \]
+  \[
+    y_{2k+1} = x_{2k}\sin\varphi_{m,k} + x_{2k+1}\cos\varphi_{m,k}
+  \]
+
+  <h3>Matrix form</h3>
+  <p>Stacking all pairs, \(R_m\) is block-diagonal:</p>
+  \[
+    R_m = \mathrm{diag}\!\Bigl(
+      \underbrace{\begin{pmatrix}\cos\varphi_{m,0} & -\sin\varphi_{m,0} \\ \sin\varphi_{m,0} & \cos\varphi_{m,0}\end{pmatrix}}_{k=0},\;
+      \underbrace{\begin{pmatrix}\cos\varphi_{m,1} & -\sin\varphi_{m,1} \\ \sin\varphi_{m,1} & \cos\varphi_{m,1}\end{pmatrix}}_{k=1},\;
+      \ldots
+    \Bigr)
+  \]
+  \[
+    \mathbf{y} = R_m\,\mathbf{x}
+  \]
+
+  <h3>Vectorized form</h3>
+  <p>Define the <em>pair-rotation operator</em> \(J\), which rotates each pair 90° counterclockwise:</p>
+  \[
+    J(\mathbf{v})_{2k} = -v_{2k+1}, \qquad J(\mathbf{v})_{2k+1} = v_{2k}
+  \]
+  <p>Then the forward pass collapses to two element-wise operations:</p>
+
+  <div class="result">
+    <div class="result-label">Forward Pass (vectorized)</div>
+    \[
+      \mathbf{y} = \mathbf{x} \odot \mathbf{c}_m \;+\; J(\mathbf{x}) \odot \mathbf{s}_m
+    \]
+  </div>
+
+  <p>Verification for pair \(k\):</p>
+  <ul>
+    <li>Index \(2k\): \(\;x_{2k}\cos\varphi_{m,k} + (-x_{2k+1})\sin\varphi_{m,k}\) ✓</li>
+    <li>Index \(2k+1\): \(\;x_{2k+1}\cos\varphi_{m,k} + x_{2k}\sin\varphi_{m,k}\) ✓</li>
+  </ul>
+
+  <h2 id="property">3. Relative-Position Property</h2>
+  <p>The key motivation for RoPE: the inner product of a rotated query and key depends only on their <em>relative</em> position \(n-m\), not on absolute positions.</p>
+
+  <p>Because each \(2{\times}2\) rotation block is orthogonal, so is the full \(R_m\). This gives \(R_m^\top R_m = I\) and:</p>
+  \[
+    (R_m\,\mathbf{q})^\top (R_n\,\mathbf{k})
+    = \mathbf{q}^\top R_m^\top R_n\,\mathbf{k}
+    = \mathbf{q}^\top R_{n-m}\,\mathbf{k}
+  \]
+
+  <div class="note">
+    The last equality uses the homomorphism \(R_m^\top R_n = R_{-m} R_n = R_{n-m}\), which holds because rotation matrices compose by adding angles.
+    This lets the model learn relative distances without explicit relative-position bias tables.
+  </div>
+
+  <h2 id="backward">4. Backward Pass — Gradient for \(\mathbf{x}\)</h2>
+
+  <div class="step">
+    <div class="step-label">Step A — Jacobian is an orthogonal matrix</div>
+    <p>The forward pass is a linear map: \(\mathbf{y} = R_m\,\mathbf{x}\). The Jacobian \(\partial \mathbf{y}/\partial \mathbf{x} = R_m\). By the chain rule:</p>
+    \[
+      \frac{\partial L}{\partial \mathbf{x}} = R_m^\top\,\frac{\partial L}{\partial \mathbf{y}} = R_m^\top\,d\mathbf{y}
+    \]
+    <p>Because \(R_m\) is orthogonal, \(R_m^\top = R_m^{-1} = R_{-m}\). The backward pass is just rotating the upstream gradient by \(-m\,\theta_k\) per pair.</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step B — Per-pair gradient</div>
+    <p>Applying \(R_{-m}\) to \(d\mathbf{y}\) pair by pair (rotation by \(-\varphi_{m,k}\)):</p>
+    \[
+      dx_{2k}   = dy_{2k}\cos\varphi_{m,k} + dy_{2k+1}\sin\varphi_{m,k}
+    \]
+    \[
+      dx_{2k+1} = -dy_{2k}\sin\varphi_{m,k} + dy_{2k+1}\cos\varphi_{m,k}
+    \]
+    <p>Compare with the forward: the only change is the sign on \(\sin\). This is exactly what negating the angle does — \(\cos(-\varphi)=\cos\varphi\), \(\sin(-\varphi)=-\sin\varphi\).</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step C — Vectorized result</div>
+    <p>Define the <em>inverse pair-rotation</em> \(J^\top\), which is \(J\) transposed (clockwise 90°):</p>
+    \[
+      J^\top(\mathbf{v})_{2k} = v_{2k+1}, \qquad J^\top(\mathbf{v})_{2k+1} = -v_{2k}
+    \]
+    <p>Verification: \(J^\top(d\mathbf{y})_{2k} = dy_{2k+1}\) and \(J^\top(d\mathbf{y})_{2k+1} = -dy_{2k}\), which matches Step B above.</p>
+  </div>
+
+  <div class="result">
+    <div class="result-label">Backward Pass (vectorized)</div>
+    \[
+      d\mathbf{x} = d\mathbf{y} \odot \mathbf{c}_m \;+\; J^\top(d\mathbf{y}) \odot \mathbf{s}_m
+    \]
+  </div>
+
+  <p>The structure is identical to the forward pass with two substitutions:</p>
+  <ul>
+    <li>\(\mathbf{x} \to d\mathbf{y}\) (gradient takes the place of input)</li>
+    <li>\(J \to J^\top\) (clockwise instead of counterclockwise pair-rotation)</li>
+  </ul>
+
+  <div class="note">
+    Implementation shortcut: because \(J\) is linear and skew-symmetric, \(J^\top = -J\), so \(J^\top(\mathbf{v}) = -J(\mathbf{v})\). In code, if <code>rotate_every_two</code> computes \(J(\cdot)\), the backward component is <code>-rotate_every_two(dy)</code> (equivalently <code>rotate_every_two(-dy)</code>). Many frameworks implement this by negating \(\mathbf{s}_m\) instead of the rotated vector — both produce the same result.
+  </div>
+
+  <h2 id="code">Reference Implementation</h2>
+  <p>The whole thing is a few lines of PyTorch. Precompute the cosine/sine tables once, then <code>apply_rope</code> is an element-wise multiply plus the pair-rotation <code>rotate_every_two</code>\(\,=J(\cdot)\). Forward and backward differ only in the sign of the sine term — exactly the \(R_m^\top = R_{-m}\) symmetry from §4.</p>
+  <pre><code>import torch
+
+def rope_tables(seq_len, d, base=10000.0, device=None):
+    # θ_k = base^(-2k/d): one frequency per dimension pair
+    k     = torch.arange(0, d, 2, device=device).float()   # 0, 2, …, d-2
+    theta = base ** (-k / d)                                # (d/2,)
+    m     = torch.arange(seq_len, device=device).float()   # positions 0 … L-1
+    ang   = torch.outer(m, theta)                          # φ = m·θ_k, shape (L, d/2)
+    cos   = ang.cos().repeat_interleave(2, dim=-1)         # c_m: cosφ₀,cosφ₀,cosφ₁,… (L, d)
+    sin   = ang.sin().repeat_interleave(2, dim=-1)         # s_m, same layout
+    return cos, sin
+
+def rotate_every_two(x):
+    # J(·): each adjacent pair (x_2k, x_2k+1) → (-x_2k+1, x_2k)
+    x = x.unflatten(-1, (-1, 2))                           # (..., d/2, 2)
+    x1, x2 = x[..., 0], x[..., 1]
+    return torch.stack((-x2, x1), dim=-1).flatten(-2)      # (..., d)
+
+def apply_rope(x, cos, sin):
+    # forward:  y = R_m x = x ⊙ c_m + J(x) ⊙ s_m
+    return x * cos + rotate_every_two(x) * sin
+
+def apply_rope_backward(dy, cos, sin):
+    # backward: dx = R_mᵀ dy = R_{-m} dy — the same map with sin negated
+    return dy * cos - rotate_every_two(dy) * sin</code></pre>
+  <h3>Two channel-pairing conventions</h3>
+  <p>Which two channels get grouped into a rotated pair is a free choice. Two conventions dominate real code; they look different but are mathematically equivalent:</p>
+  <ul>
+    <li><strong>Interleaved (GPT-J style)</strong> — what this page derives. Pair \(k\) is the <em>adjacent</em> pair \((x_{2k}, x_{2k+1})\); the rotation helper is <code>rotate_every_two</code> and the tables repeat each frequency in place (<code>repeat_interleave(2)</code>), giving \(\mathbf{c}_m = [\cos\varphi_0, \cos\varphi_0, \cos\varphi_1, \ldots]\). This is the original RoPE paper's form.</li>
+    <li><strong>Half-split (HF-LLaMA style)</strong> — pair channel \(i\) with channel \(i + d/2\). The helper is <code>rotate_half(x) = cat([-x[d/2:], x[:d/2]])</code> and the tables are built with <code>cat([freqs, freqs])</code>. Slicing two contiguous halves avoids the interleave, so it is a touch simpler and faster on GPU.</li>
+  </ul>
+  <p>The two are related by a fixed permutation of the channel axis, so with correspondingly permuted \(q\)/\(k\) weights they yield <em>identical</em> attention scores. That permutation is the catch: a checkpoint trained under one convention must have its query/key projections reshuffled to run under the other.</p>
+  <div class="note">
+    Naming trap: the <em>original Meta LLaMA</em> code is actually interleaved — it rotates adjacent pairs via <code>torch.view_as_complex</code>. HuggingFace's port switched to the half-split <code>rotate_half</code> and permutes <code>q_proj</code>/<code>k_proj</code> at conversion time so the results still match. So "the LLaMA convention" is interleaved or half-split depending on <em>which</em> implementation you mean — always check the <code>rotate_*</code> helper and how the cos/sin table is tiled before trusting a snippet.
+  </div>
+
+  <h2 id="summary">5. Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">Angle schedule</div>
+      <p>\(\varphi_{m,k} = m \cdot \mathrm{base}^{-2k/d}\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Forward</div>
+      <p>\(\mathbf{y} = \mathbf{x}\odot\mathbf{c}_m + J(\mathbf{x})\odot\mathbf{s}_m\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Key property</div>
+      <p>\((R_m\mathbf{q})^\top(R_n\mathbf{k}) = \mathbf{q}^\top R_{n-m}\,\mathbf{k}\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Backward</div>
+      <p>\(d\mathbf{x} = d\mathbf{y}\odot\mathbf{c}_m + J^\top(d\mathbf{y})\odot\mathbf{s}_m\)</p>
+    </div>
+  </div>
+
+  <div class="table-wrap" style="margin-top: 2em;">
+    <table>
+      <tr><th>Pass</th><th>Operation on pairs</th><th>Vectorized</th></tr>
+      <tr>
+        <td>Forward</td>
+        <td>
+          \(y_{2k} = x_{2k}\cos\varphi - x_{2k+1}\sin\varphi\)<br>
+          \(y_{2k+1} = x_{2k}\sin\varphi + x_{2k+1}\cos\varphi\)
+        </td>
+        <td>\(\mathbf{x}\odot\mathbf{c}_m + J(\mathbf{x})\odot\mathbf{s}_m\)</td>
+      </tr>
+      <tr>
+        <td>Backward</td>
+        <td>
+          \(dx_{2k} = dy_{2k}\cos\varphi + dy_{2k+1}\sin\varphi\)<br>
+          \(dx_{2k+1} = -dy_{2k}\sin\varphi + dy_{2k+1}\cos\varphi\)
+        </td>
+        <td>\(d\mathbf{y}\odot\mathbf{c}_m + J^\top(d\mathbf{y})\odot\mathbf{s}_m\)</td>
+      </tr>
+    </table>
+  </div>
+
+  <p style="margin-top:2em;color:var(--muted);font-size:0.9rem;"><strong>Used in:</strong> the transformer's <a href="../transformer/attention.html" style="color:var(--accent);">self-attention</a> rotates the query and key vectors by this map — which is exactly what gives attention its relative-position sense — and the rotated attention then slots into <a href="../transformer/transformer-block.html" style="color:var(--accent);">the transformer block</a>.</p>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; Rotary Position Embedding gradient derivation
+</footer>
+
+<script>
+(function () {
+  const d = 128, base = 10000, nPairs = d / 2;                // 64 frequency pairs
+  const log10 = Math.log10 || (x => Math.log(x) / Math.LN10);
+  const kMax = nPairs - 1;                                    // last pair index = 63
+  const thetaMin = Math.pow(base, -2 * kMax / d);             // frequency of the last pair
+
+  // log10 of the frequency for each schedule, as a function of pair index k
+  const geoLog = k => (-2 * k / d) * log10(base);             // geometric: a straight line
+  const ariLog = k => log10(1 + (k / kMax) * (thetaMin - 1)); // arithmetic: evenly-spaced θ
+
+  function powTen(t) {                                        // -2  ->  "10⁻²"
+    if (t === 0) return '1';
+    const sup = String(Math.round(t))
+      .replace('-', '⁻')
+      .replace(/[0-9]/g, c => '⁰¹²³⁴⁵⁶⁷⁸⁹'[+c]);
+    return '10' + sup;
+  }
+
+  // resolve colors at draw time so the plot follows the OS light/dark scheme
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+  function drawPlot(canvas, cfg) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const mL = 48, mR = 14, mT = 14, mB = 30;
+    const pw = cssW - mL - mR, ph = cssH - mT - mB;
+    const { xMin, xMax, yMin, yMax } = cfg;
+    const xf = cfg.xFmt || String, yf = cfg.yFmt || String;
+    const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
+    const Y = y => mT + (yMax - y) / (yMax - yMin) * ph;
+
+    // gridlines + tick labels
+    ctx.font = '11px Inter, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(t => {
+      const px = X(t);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.fillText(xf(t), px, mT + ph + 6);
+    });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(t => {
+      const py = Y(t);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+      ctx.fillText(yf(t), mL - 8, py);
+    });
+
+    // curves (clipped to plot area)
+    ctx.save();
+    ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    ctx.lineJoin = 'round';
+    cfg.series.forEach(s => {
+      ctx.beginPath();
+      ctx.lineWidth = s.width || 2;
+      ctx.strokeStyle = cssVar(s.color);
+      ctx.setLineDash(s.dash || []);
+      const N = 260;
+      for (let i = 0; i <= N; i++) {
+        const x = xMin + (xMax - xMin) * i / N;
+        const px = X(x), py = Y(s.fn(x));
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    ctx.restore();
+
+    // axis labels
+    ctx.fillStyle = cssVar('--plot-label');
+    ctx.font = '11px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText('pair index  k', mL + pw / 2, cssH - 2);
+  }
+
+  const plots = [];
+  const c = document.getElementById('plot-rope-freq');
+  if (c) plots.push([c, {
+    xMin: 0, xMax: kMax, yMin: -4.1, yMax: 0.15,
+    xTicks: [0, 16, 32, 48, 63],
+    yTicks: [0, -1, -2, -3, -4],
+    yFmt: powTen,
+    series: [
+      { fn: ariLog, color: '--plot-gray', width: 1.75, dash: [5, 4] },
+      { fn: geoLog, color: '--plot-amber', width: 2.75 }
+    ]
+  }]);
+
+  function renderAll() { plots.forEach(([cv, cfg]) => drawPlot(cv, cfg)); }
+  renderAll();
+  let raf;
+  window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(renderAll); });
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq.addEventListener) mq.addEventListener('change', renderAll);
+})();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Log-Probabilities from Logits — the log_softmax Gather Behind Every Policy Gradient</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #4f46e5;
+      --accent-light: #eef2ff;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --note-fg: #1e40af;
+      --result-fg: #16a34a;
+      --indigo-border: #c7d2fe;
+      --nav-bg: rgba(255,255,255,0.92);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #818cf8;
+        --accent-light: #1a1626;
+        --warning-bg: #101a2b;
+        --warning-border: #1e40af;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --note-fg: #93c5fd;
+        --result-fg: #4ade80;
+        --indigo-border: #3730a3;
+        --nav-bg: rgba(15,17,21,0.9);
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #1e1b4b 0%, #4338ca 60%, #6366f1 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.85;
+      font-size: 0.97rem;
+      max-width: 580px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+    code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+    pre { background: var(--step-bg); border: 1px solid var(--step-border); border-radius: 8px; padding: 14px 18px; overflow-x: auto; font-size: 0.85rem; line-height: 1.55; margin: 1.2em 0; }
+    pre code { background: none; border: none; padding: 0; color: var(--text); }
+    .hero code { background: rgba(255,255,255,0.18); border-color: rgba(255,255,255,0.35); color: #fff; }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+
+    /* ── Step boxes ──────────────────────────── */
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    /* ── Callout / note ──────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+    .note::before { content: '💡 '; }
+
+    /* ── Result / boxed equation ─────────────── */
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Plain-English read box ──────────────── */
+    .read {
+      background: var(--accent-light);
+      border: 1px solid var(--indigo-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      margin: 1.2em 0;
+    }
+    .read-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+    .read p { margin: 0.3em 0; }
+
+    /* ── Summary card ────────────────────────── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .summary-card {
+      background: var(--accent-light);
+      border: 1px solid var(--indigo-border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .summary-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    /* ── Footer ──────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    /* ── Responsive ──────────────────────────── */
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Log-Probabilities from Logits</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#notation">Notation</a>
+    <a href="#logsoftmax">From logits</a>
+    <a href="#readings">Loss vs. policy</a>
+    <a href="#sequence">Sequence sum</a>
+    <a href="#example">Worked example</a>
+    <a href="#rl">In RL</a>
+    <a href="#summary">Summary</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Foundations</span>
+  <h1>Log-Probabilities from Logits</h1>
+  <p>Every policy-gradient, PPO, GRPO, and RLHF objective is built on \(\log\pi_\theta(a_t\mid s_t)\) — the log-probability the model assigns to a token it generated — and each treats that number as already computed. This is the forward-pass step underneath: how one log-probability falls out of the output logits as a <code>log_softmax</code> gather, and how per-token logs sum into a sequence log-prob.</p>
+</div>
+
+<div class="page-wrap">
+
+  <p>The same vector of logits a language model emits at each position can be read two ways. Pick the index of the <em>target</em> token and negate, and you have the <a href="cross-entropy.html" style="color:var(--accent);">cross-entropy</a> training loss. Pick the index of the token the model actually <em>sampled</em>, keep the sign, and you have the \(\log\pi\) that the RL pages consume. This page derives that second reading from scratch — the operator, the numerically stable form, the gather, and the sum over a sequence — then shows exactly where each downstream method picks it up.</p>
+
+  <h2 id="notation">Notation</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symbol</th><th>Description</th></tr>
+      <tr><td>\(\mathbf{z} \in \mathbb{R}^V\)</td><td>Logits (raw pre-softmax scores) at one position; \(V\) is the vocabulary size</td></tr>
+      <tr><td>\(p_i = e^{z_i}/S\)</td><td>Softmax probability of token \(i\)</td></tr>
+      <tr><td>\(S = \sum_j e^{z_j}\)</td><td>Partition function (softmax denominator)</td></tr>
+      <tr><td>\(\operatorname{logsumexp}(\mathbf{z}) = \log\sum_j e^{z_j}\)</td><td>Log-partition — the \(\log S\) term</td></tr>
+      <tr><td>\(a\)</td><td>Index of the <strong>sampled</strong> / chosen token</td></tr>
+      <tr><td>\(\log p_a\)</td><td>Log-probability the model assigned to that token</td></tr>
+      <tr><td>\(\pi_\theta(a_t\mid s_t)\)</td><td>Policy probability of action \(a_t\) in state \(s_t\) (one decoding step)</td></tr>
+      <tr><td>\(y = (a_1,\dots,a_T)\)</td><td>A full sampled sequence of \(T\) tokens given a prompt \(x\)</td></tr>
+    </table>
+  </div>
+
+  <h2 id="logsoftmax">1. From logits to a log-probability</h2>
+  <p>A model scores the vocabulary with logits \(\mathbf{z}\), turned into a distribution by <strong>softmax</strong>:</p>
+  \[
+    p_i = \frac{e^{z_i}}{S}, \qquad S = \sum_{j=1}^{V} e^{z_j}
+  \]
+  <p>(The <a href="cross-entropy.html#forward" style="color:var(--accent);">cross-entropy page</a> covers softmax and its gradient in full.) We want the log-probability of a single chosen token \(a\). Rather than form \(\mathbf{p}\) and then take a log, take the log of softmax <em>directly</em> — the division becomes a subtraction:</p>
+  \[
+    \log p_a
+      = \log \operatorname{softmax}(\mathbf{z})_a
+      = \log \frac{e^{z_a}}{S}
+      = z_a - \log \sum_{j=1}^{V} e^{z_j}
+      = z_a - \operatorname{logsumexp}(\mathbf{z})
+  \]
+  <p>The chosen logit minus the log-partition: that is the whole computation. The \(\log\sum_j e^{z_j}\) term overflows if any logit is large, so in practice it is stabilized exactly as softmax is — subtract the max logit \(m=\max_j z_j\) before exponentiating (the \(e^{-m}\) factors cancel):</p>
+  \[
+    \log p_a = (z_a - m) - \log \sum_{j=1}^{V} e^{z_j - m}
+  \]
+
+  <div class="result">
+    <div class="result-label">Log-probability of one token</div>
+    \[
+      \log p_a \;=\; \log \operatorname{softmax}(\mathbf{z})_a \;=\; z_a - \operatorname{logsumexp}(\mathbf{z})
+    \]
+  </div>
+
+  <div class="read">
+    <div class="read-label">In plain English</div>
+    <p>"To score a token the model produced: take its own logit, and subtract the log of the summed exponentials of <em>all</em> logits. The subtraction is the normalization — it is how much probability mass the rest of the vocabulary claimed, in log space."</p>
+  </div>
+
+  <div class="note">
+    Computing it this way — as <code>log_softmax</code> followed by a <em>gather</em> of index \(a\), never materializing \(\mathbf{p}\) — is what every framework does (PyTorch <code>F.log_softmax(z).gather(-1, a)</code>, or <code>Categorical(logits=z).log_prob(a)</code>). It sidesteps both the overflow of large \(e^{z}\) and the underflow of \(\log\) on a tiny \(p\).
+  </div>
+
+  <h2 id="readings">2. Loss vs. policy — only the gathered index differs</h2>
+  <p>The forward pass produces the whole vector \(\log\operatorname{softmax}(\mathbf{z}) \in \mathbb{R}^V\) regardless of what you do with it. Which single entry you pull out, and its sign, is the <em>only</em> difference between training a classifier and scoring an action:</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Reading</th><th>Gathered index</th><th>Quantity</th><th>Role</th></tr>
+      <tr><td>Cross entropy (loss)</td><td>target class \(k\)</td><td>\(-\log\operatorname{softmax}(\mathbf{z})_k\)</td><td>minimize</td></tr>
+      <tr><td>Policy log-prob</td><td>sampled token \(a\)</td><td>\(+\log\operatorname{softmax}(\mathbf{z})_a\)</td><td>score \(\nabla_\theta \log\pi\)</td></tr>
+    </table>
+  </div>
+  <p>So cross entropy is just the negative log-prob at the token you <em>wanted</em>; the RL log-prob is the (positive) log-prob at the token you <em>got</em>. Same <code>gather</code>, different index — which is why the gradient machinery the loss page derives (\(\partial L/\partial\mathbf{z} = \mathbf{p} - \mathbf{y}\), the clean <a href="cross-entropy.html#backward" style="color:var(--accent);">\(p-y\) residual</a>) carries straight over, now applied at the sampled index.</p>
+
+  <h2 id="sequence">3. Gather, then sum over the sequence</h2>
+  <p>A language model emits one logit vector \(\mathbf{z}^{(t)}\) per position. Generation is autoregressive, so the probability of a whole sequence factorizes into a product of per-step conditionals — and the log turns that product into a sum:</p>
+  \[
+    \log \pi_\theta(y \mid x)
+      = \log \prod_{t=1}^{T} \pi_\theta(a_t \mid s_t)
+      = \sum_{t=1}^{T} \log \operatorname{softmax}\!\big(\mathbf{z}^{(t)}\big)_{a_t}
+  \]
+
+  <div class="result">
+    <div class="result-label">Sequence log-probability</div>
+    \[
+      \log \pi_\theta(y \mid x) = \sum_{t=1}^{T} \Big( z^{(t)}_{a_t} - \operatorname{logsumexp}\big(\mathbf{z}^{(t)}\big) \Big)
+    \]
+  </div>
+
+  <p>Each term is one gather from one position's log-softmax row; the sequence log-prob is their sum. (This is the same "fold the sequence into the batch" move the loss uses — a per-token quantity summed along the time axis — except the gathered index at each step is the token the policy <em>sampled</em>, not a fixed label.)</p>
+
+  <p>In code the whole computation is four lines — and the bugs live in the three practical details the math glosses over: the <strong>teacher-forcing shift</strong> (position \(t\)'s logits score token \(t{+}1\)), the <strong>gather dimension</strong>, and <strong>masking</strong> out prompt and padding tokens before the sum:</p>
+<pre><code>import torch.nn.functional as F
+
+def sequence_logprobs(logits, tokens, mask):
+    # logits: (B, T, V) model outputs;  tokens: (B, T) sampled/target ids
+    # mask:   (B, T) 1 for tokens that count (response, non-pad), else 0
+    logp = F.log_softmax(logits[:, :-1], dim=-1)        # z - logsumexp(z), stable; t predicts t+1
+    tok  = tokens[:, 1:]
+    tok_logp = logp.gather(-1, tok.unsqueeze(-1)).squeeze(-1)  # gather the sampled index a_t
+    return (tok_logp * mask[:, 1:]).sum(-1)             # sum per-token logs over the sequence
+</code></pre>
+  <div class="note">
+    Each line maps to a step above — <code>log_softmax</code> is §1, <code>gather</code> is §2, <code>* mask).sum</code> is §3. This is essentially what verl's <code>compute_log_probs</code> and TRL's log-prob helpers run on every rollout to score \(\pi_\theta\) and \(\pi_{\theta_{\text{old}}}\).
+  </div>
+
+  <h2 id="example">4. A worked example</h2>
+  <p>Take a two-token generation over a tiny vocabulary, and compute its sequence log-prob.</p>
+
+  <div class="step">
+    <div class="step-label">Position 1 — logits [2.0, 1.0, 0.1], sampled token 0</div>
+    <p>With \(m = 2.0\):</p>
+    \[
+      \operatorname{logsumexp} = 2.0 + \log\!\big(e^{0} + e^{-1} + e^{-1.9}\big) = 2.0 + \log(1.5174) = 2.4170
+    \]
+    <p>The three log-probs are \(z_a - 2.4170 = [-0.417,\ -1.417,\ -2.317]\), i.e. probabilities \([0.659,\ 0.242,\ 0.099]\) (they sum to 1, as they must). The sampled token 0 contributes \(\log p^{(1)} = 2.0 - 2.4170 = -0.417\).</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Position 2 — logits [0.5, 2.0, 1.0], sampled token 1</div>
+    <p>With \(m = 2.0\):</p>
+    \[
+      \operatorname{logsumexp} = 2.0 + \log\!\big(e^{-1.5} + e^{0} + e^{-1.0}\big) = 2.0 + \log(1.5910) = 2.4644
+    \]
+    <p>The sampled token 1 contributes \(\log p^{(2)} = 2.0 - 2.4644 = -0.464\).</p>
+  </div>
+
+  <p>The sequence log-probability is the sum, and exponentiating recovers the sequence probability:</p>
+  \[
+    \log \pi_\theta(y\mid x) = -0.417 + (-0.464) = -0.881,
+    \qquad \pi_\theta(y\mid x) = e^{-0.881} \approx 0.414
+  \]
+  <p>From here the optimizer pushes each sampled logit up or down through the cross-entropy gradient \(p - y\), now evaluated at the sampled index and weighted by that token's advantage — which is precisely what the RL objectives below do.</p>
+
+  <h2 id="rl">5. Where this lands in RL</h2>
+  <p>Every LLM RL method is some arrangement of these per-token log-probs. The forward pass is identical; only how the numbers are combined changes:</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Method</th><th>Uses the log-prob as…</th></tr>
+      <tr><td><a href="../rl/policy-gradient.html" style="color:var(--accent);">Policy gradient</a></td><td>differentiates it: \(\nabla_\theta \log\pi_\theta(a_t\mid s_t)\), the score function, weighted by return</td></tr>
+      <tr><td><a href="../rl/ppo.html" style="color:var(--accent);">PPO</a> / <a href="../rl/grpo.html" style="color:var(--accent);">GRPO</a></td><td>a <em>difference</em> of two gathers, exponentiated: \(\rho_t = \exp\!\big(\log\pi_\theta(a_t\mid s_t) - \log\pi_{\theta_{\text{old}}}(a_t\mid s_t)\big)\) — the <a href="importance-sampling.html" style="color:var(--accent);">importance ratio</a></td></tr>
+      <tr><td><a href="../rl/rlhf.html" style="color:var(--accent);">RLHF</a> KL penalty</td><td>a per-token difference \(\log\pi_\theta(a_t\mid s_t) - \log\pi_{\text{ref}}(a_t\mid s_t)\), summed over the sequence</td></tr>
+    </table>
+  </div>
+  <p>In every case the atom is the same \(z_a - \operatorname{logsumexp}(\mathbf{z})\) computed here. Computing ratios and KL in log space — subtract, then <code>exp</code> only if you need the ratio itself — is what keeps them numerically stable.</p>
+
+  <h2 id="summary">6. Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">The operator</div>
+      <p>\(\log p_a = z_a - \operatorname{logsumexp}(\mathbf{z})\) — chosen logit minus log-partition</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Stable form</div>
+      <p>\((z_a - m) - \log\sum_j e^{z_j - m}\), \(m=\max_j z_j\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">In code</div>
+      <p><code>log_softmax(z)</code> then <code>gather</code> index \(a\); never materialize \(\mathbf{p}\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Sequence</div>
+      <p>\(\log\pi_\theta(y\mid x) = \sum_t \big(z^{(t)}_{a_t} - \operatorname{logsumexp}(\mathbf{z}^{(t)})\big)\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Loss vs. policy</div>
+      <p>Same gather; target index \(k\) (negated) → CE loss, sampled index \(a\) → \(\log\pi\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Downstream</div>
+      <p>Differentiated (PG), subtracted+exp'd (PPO/GRPO ratio), or differenced (RLHF KL)</p>
+    </div>
+  </div>
+
+  <div class="table-wrap" style="margin-top: 2em;">
+    <table>
+      <tr><th>When you see…</th><th>Recognize it as</th></tr>
+      <tr><td>\(\log\pi_\theta(a_t\mid s_t)\) in an RL objective</td><td>One <code>log_softmax</code> gather at the sampled token</td></tr>
+      <tr><td>\(\log\pi_\theta(y\mid x)\) for a whole response</td><td>A sum of per-token log-probs along the sequence</td></tr>
+      <tr><td>A ratio \(\pi_\theta/\pi_{\theta_{\text{old}}}\)</td><td>\(\exp(\log\pi_\theta - \log\pi_{\theta_{\text{old}}})\), computed in log space</td></tr>
+      <tr><td>The cross-entropy loss \(-\log p_k\)</td><td>The same operator at the <em>target</em> index, negated</td></tr>
+    </table>
+  </div>
+
+  <p style="margin-top:2em;color:var(--muted);font-size:0.9rem;"><strong>See also:</strong> <a href="cross-entropy.html" style="color:var(--accent);">cross entropy</a> for the softmax forward pass and the \(p-y\) gradient this shares; <a href="importance-sampling.html" style="color:var(--accent);">importance sampling</a> for what the ratio of two log-probs is doing; and <a href="../rl/policy-gradient.html" style="color:var(--accent);">policy gradient</a> → <a href="../rl/ppo.html" style="color:var(--accent);">PPO</a> → <a href="../rl/grpo.html" style="color:var(--accent);">GRPO</a> → <a href="../rl/rlhf.html" style="color:var(--accent);">RLHF</a> for the objectives that consume it.</p>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; Log-probabilities — the log_softmax gather behind every policy gradient
+</footer>
+
+</body>
+</html>

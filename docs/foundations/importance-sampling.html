@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Importance Sampling — Reweighting One Distribution's Samples for Another's Average</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #4f46e5;
+      --accent-light: #eef2ff;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --nav-bg: rgba(255,255,255,0.92);
+      --note-fg: #1e40af;
+      --result-fg: #16a34a;
+      --indigo-border: #c7d2fe;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #818cf8;
+        --accent-light: #14182b;
+        --warning-bg: #101a2b;
+        --warning-border: #1e40af;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --nav-bg: rgba(15,17,21,0.9);
+        --note-fg: #93c5fd;
+        --result-fg: #4ade80;
+        --indigo-border: #3730a3;
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #1e1b4b 0%, #4338ca 60%, #6366f1 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.85;
+      font-size: 0.97rem;
+      max-width: 580px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+    code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+
+    /* ── Step boxes ──────────────────────────── */
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    /* ── Callout / note ──────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+    .note::before { content: '💡 '; }
+
+    /* ── Result / boxed equation ─────────────── */
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Plain-English read box ──────────────── */
+    .read {
+      background: var(--accent-light);
+      border: 1px solid var(--indigo-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      margin: 1.2em 0;
+    }
+    .read-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+    .read p { margin: 0.3em 0; }
+
+    /* ── Summary card ────────────────────────── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .summary-card {
+      background: var(--accent-light);
+      border: 1px solid var(--indigo-border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .summary-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    /* ── Footer ──────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    /* ── Responsive ──────────────────────────── */
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Importance Sampling</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#notation">Notation</a>
+    <a href="#identity">The identity</a>
+    <a href="#estimator">Estimator</a>
+    <a href="#variance">Variance</a>
+    <a href="#rl">Off-policy RL</a>
+    <a href="#clip">Why PPO clips</a>
+    <a href="#summary">Summary</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Foundations</span>
+  <h1>Importance Sampling</h1>
+  <p>You want the average of \(f\) under a distribution \(p\) you can't sample from, but you can sample from another one, \(q\). Reweight each sample by how much more likely it was under \(p\) than \(q\), and the reweighted average is exactly the average under \(p\). This is the machinery that lets PPO and GRPO reuse one batch of rollouts for several gradient steps.</p>
+</div>
+
+<div class="page-wrap">
+
+  <p>Across RL fine-tuning the same object keeps appearing: the policy ratio \(\rho_t = \pi_\theta(a_t\mid s_t)/\pi_{\theta_{\text{old}}}(a_t\mid s_t)\). The <a href="../rl/ppo.html#clip" style="color:var(--accent);">PPO</a> and <a href="../rl/grpo.html#objective" style="color:var(--accent);">GRPO</a> pages introduce it as a "clipped importance ratio" and move on. This page is the missing foundation underneath it: where that ratio comes from, why it is an unbiased estimator, why its variance explodes when the two policies drift apart, and why <em>that</em> is precisely what PPO's clipping is fighting.</p>
+
+  <h2 id="notation">Notation</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symbol</th><th>Description</th></tr>
+      <tr><td>\(p(x)\)</td><td><strong>Target</strong> distribution — the one we want an average under</td></tr>
+      <tr><td>\(q(x)\)</td><td><strong>Proposal</strong> / behavior distribution — the one we can actually sample from</td></tr>
+      <tr><td>\(f(x)\)</td><td>The function whose expectation we want (a reward, an advantage, an indicator…)</td></tr>
+      <tr><td>\(w(x)=\dfrac{p(x)}{q(x)}\)</td><td><strong>Importance weight</strong> — how much more probable \(x\) is under \(p\) than under \(q\)</td></tr>
+      <tr><td>\(\mu = \mathbb{E}_{x\sim p}[f(x)]\)</td><td>The quantity we are trying to estimate</td></tr>
+      <tr><td>\(\hat\mu\)</td><td>The Monte-Carlo importance-sampling estimator of \(\mu\)</td></tr>
+      <tr><td>\(N\)</td><td>Number of samples drawn from \(q\)</td></tr>
+      <tr><td>\(\pi_\theta,\ \pi_{\theta_{\text{old}}}\)</td><td>New / behavior policy — the RL instance of \(p\) and \(q\)</td></tr>
+    </table>
+  </div>
+
+  <h2 id="identity">1. The reweighting identity</h2>
+  <p>We want \(\mu = \mathbb{E}_{x\sim p}[f(x)]\), but every sample we have was drawn from \(q\), not \(p\). The fix is one line of algebra: multiply and divide by \(q(x)\) inside the sum that defines the expectation.</p>
+  \[
+    \mathbb{E}_{x\sim p}\![f(x)]
+      = \sum_x p(x)\,f(x)
+      = \sum_x q(x)\,\frac{p(x)}{q(x)}\,f(x)
+      = \mathbb{E}_{x\sim q}\!\left[\frac{p(x)}{q(x)}\,f(x)\right]
+  \]
+
+  <div class="result">
+    <div class="result-label">Importance-sampling identity</div>
+    \[
+      \mathbb{E}_{x\sim p}\![f(x)] \;=\; \mathbb{E}_{x\sim q}\!\big[\,w(x)\,f(x)\,\big],
+      \qquad w(x)=\frac{p(x)}{q(x)}
+    \]
+  </div>
+
+  <div class="read">
+    <div class="read-label">In plain English</div>
+    <p>"To get the average under \(p\) from samples of \(q\): for each sample, scale its value \(f(x)\) by the importance weight \(w(x)=p(x)/q(x)\) — up-weighting outcomes \(p\) likes more than \(q\) and down-weighting ones it likes less — then average. The reweighting exactly undoes having drawn from the wrong distribution."</p>
+  </div>
+
+  <p>The same step works for continuous variables with densities — replace the sum by an integral, \(\int q(x)\frac{p(x)}{q(x)}f(x)\,dx\). Nothing else changes.</p>
+
+  <div class="note">
+    <strong>Support condition.</strong> The division demands \(q(x) > 0\) everywhere \(p(x)f(x)\neq 0\): \(q\) must be able to reach every outcome that contributes to the answer. If \(q\) assigns zero probability to a region where \(p\) puts mass, those samples never appear yet the identity still divides by \(q\) — the estimate is silently biased. "Sample where it matters" is the one hard rule.
+  </div>
+
+  <h2 id="estimator">2. The Monte-Carlo estimator</h2>
+  <p>The identity is an expectation over \(q\), so we estimate it the usual way: draw \(N\) samples \(x_1,\dots,x_N \sim q\) and average the reweighted values.</p>
+
+  <div class="result">
+    <div class="result-label">IS estimator</div>
+    \[
+      \hat\mu \;=\; \frac{1}{N}\sum_{i=1}^{N} w(x_i)\,f(x_i),
+      \qquad x_i \sim q
+    \]
+  </div>
+
+  <p>It is <strong>unbiased</strong> by construction — one line confirms it:</p>
+  \[
+    \mathbb{E}_{x_i\sim q}\!\big[\hat\mu\big]
+      = \mathbb{E}_{x\sim q}\!\big[w(x)f(x)\big]
+      = \sum_x q(x)\frac{p(x)}{q(x)}f(x)
+      = \sum_x p(x)f(x)
+      = \mu
+  \]
+  <p>So <em>on average</em> the estimator is correct for any valid proposal \(q\). Unbiasedness is free; the price is paid entirely in variance (§3).</p>
+
+  <div class="note">
+    <strong>Self-normalized IS.</strong> Often \(p\) or \(q\) is known only up to a normalizing constant (energy models, posteriors, un-normalized rewards). Then use the ratio estimator \(\tilde\mu = \big(\sum_i w_i f(x_i)\big)/\big(\sum_i w_i\big)\), which needs the weights only up to a common scale because the constant cancels top and bottom. It is slightly biased but consistent, and usually <em>lower</em> variance — the normalization keeps a few huge weights from dominating.
+  </div>
+
+  <h2 id="variance">3. Variance — the catch</h2>
+  <p>The estimator is always unbiased, but "unbiased" says nothing about how far a <em>single</em> estimate lands from \(\mu\). That is variance, and for IS it is governed by how well \(q\) matches \(p\):</p>
+  \[
+    \operatorname{Var}_q\!\big[\hat\mu\big]
+      = \frac{1}{N}\Big(\mathbb{E}_q\!\big[w^2 f^2\big] - \mu^2\Big),
+    \qquad
+    \mathbb{E}_q\!\big[w^2 f^2\big]
+      = \mathbb{E}_{x\sim p}\!\left[\frac{p(x)}{q(x)}\,f(x)^2\right]
+  \]
+  <p>Look at the \(p/q\) factor left over inside the second expectation. Wherever \(q\) is much smaller than \(p\) — \(q\) rarely visits a region that \(p\), and \(f\), care about — that ratio is large, and it enters <em>squared</em>. The proposal's thin tails, not the target's, set the variance. In the worst case \(\mathbb{E}_p[(p/q)f^2]\) is unbounded: the estimator is unbiased but practically useless because any finite sample is dominated by a handful of enormous weights.</p>
+
+  <p>A blunt diagnostic for "how many of my \(N\) samples are actually pulling weight" is the <strong>effective sample size</strong>:</p>
+  \[
+    N_{\text{eff}} = \frac{\big(\sum_{i} w_i\big)^2}{\sum_{i} w_i^2}
+  \]
+  <p>If all weights are equal, \(N_{\text{eff}} = N\). If one weight dwarfs the rest, \(N_{\text{eff}} \to 1\) — you paid for \(N\) samples but have the precision of one.</p>
+
+  <h3>A tiny worked example</h3>
+  <p>Two outcomes, \(\{A, B\}\), with target \(p=[0.8,\,0.2]\) and a payoff that only fires on the rare outcome: \(f(A)=0,\ f(B)=10\). The true average is \(\mu = 0.8\cdot 0 + 0.2\cdot 10 = 2\).</p>
+
+  <div class="step">
+    <div class="step-label">A well-matched proposal</div>
+    <p>Sample from \(q=[0.5,\,0.5]\). Weights: \(w(A)=0.8/0.5=1.6\), \(w(B)=0.2/0.5=0.4\). Check the identity:</p>
+    \[
+      \mathbb{E}_q[w f] = 0.5\,(1.6\cdot 0) + 0.5\,(0.4\cdot 10) = 0.5\cdot 4 = 2 \;=\; \mu \;\checkmark
+    \]
+    <p>Half the draws are the informative \(B\); the single-draw estimate is \(0\) or \(4\), straddling \(2\) tightly.</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">A mismatched proposal</div>
+    <p>Now \(q=[0.99,\,0.01]\) — it almost never samples \(B\), the only outcome that matters. Then \(w(B)=0.2/0.01=20\). The identity still holds in expectation:</p>
+    \[
+      \mathbb{E}_q[w f] = 0.99\,(\cdot\,0) + 0.01\,(20\cdot 10) = 0.01\cdot 200 = 2 \;=\; \mu \;\checkmark
+    \]
+    <p>But a single draw is \(0\) with probability \(99\%\) and \(200\) with probability \(1\%\). Same correct mean, wildly larger variance: most batches report \(\approx 0\), then one rare batch slams in a \(200\). The estimator is right "on average" over runs you will never actually average over.</p>
+  </div>
+
+  <div class="note">
+    The lesson that carries straight into RL: IS is trustworthy only while \(q\) stays close to \(p\) <em>in the regions \(f\) weights</em>. Push them apart and the math stays unbiased while the estimates turn to noise.
+  </div>
+
+  <h2 id="rl">4. Why RL needs it: off-policy policy gradients</h2>
+  <p>Here is the payoff. A policy-gradient method wants to improve \(J(\theta) = \mathbb{E}_{a\sim\pi_\theta}\![A(s,a)]\) — the expected advantage of actions drawn from the <em>current</em> policy \(\pi_\theta\). But the rollouts in the buffer were generated by an <em>older</em> policy \(\pi_{\theta_{\text{old}}}\): the moment we take one gradient step, \(\pi_\theta\) changes and the data is stale. Strictly on-policy methods must then throw the batch away after a single update.</p>
+
+  <p>Importance sampling is exactly the bridge. With target \(p=\pi_\theta\) and proposal \(q=\pi_{\theta_{\text{old}}}\):</p>
+  <div class="result">
+    <div class="result-label">Off-policy surrogate objective</div>
+    \[
+      J(\theta) = \mathbb{E}_{a\sim\pi_\theta}\!\big[A(s,a)\big]
+      = \mathbb{E}_{a\sim\pi_{\theta_{\text{old}}}}\!\Big[\;\underbrace{\tfrac{\pi_\theta(a\mid s)}{\pi_{\theta_{\text{old}}}(a\mid s)}}_{\textstyle \rho(\theta)\,=\,w(a)}\;A(s,a)\Big]
+    \]
+  </div>
+  <p>The policy ratio \(\rho\) <em>is</em> the importance weight \(w=p/q\). That is the whole reason it appears in PPO and GRPO — it reweights advantages computed on the old policy's samples back to what the new policy would have done.</p>
+
+  <p>Two properties make this surrogate the right thing to differentiate:</p>
+  <ol>
+    <li><strong>Its gradient matches the true policy gradient at the sampling point.</strong> Since \(\nabla_\theta \rho = \rho\,\nabla_\theta \log\pi_\theta\) and \(\rho = 1\) when \(\theta=\theta_{\text{old}}\),
+      \[
+        \nabla_\theta J\big|_{\theta=\theta_{\text{old}}}
+          = \mathbb{E}_{\pi_{\theta_{\text{old}}}}\!\big[\nabla_\theta \log\pi_\theta(a\mid s)\;A(s,a)\big]
+      \]
+      which is exactly the REINFORCE / score-function <a href="../rl/policy-gradient.html" style="color:var(--accent);">policy gradient</a>. The reweighting costs nothing at the current parameters.</li>
+    <li><strong>It stays a well-defined function of \(\theta\) away from \(\theta_{\text{old}}\).</strong> Because \(\rho(\theta)\) is written in terms of \(\theta\), we can keep evaluating and differentiating the surrogate as \(\theta\) moves — taking <em>several</em> gradient epochs over minibatches of the same rollout. That reuse, which on-policy methods cannot do, is the practical prize importance sampling buys.</li>
+  </ol>
+
+  <h2 id="clip">5. Why PPO clips the ratio</h2>
+  <p>Property 2 is also a trap, and §3 already named it. Each gradient epoch pushes \(\pi_\theta\) further from the \(\pi_{\theta_{\text{old}}}\) that collected the data — exactly the \(q\)-drifts-from-\(p\) situation that makes importance weights explode. The ratio \(\rho\) is a <em>single-sample</em> importance weight per token, so as the policies diverge a few tokens acquire enormous \(\rho\) and dominate the gradient: the estimate stays unbiased and becomes unusable.</p>
+
+  <p><a href="../rl/ppo.html#clip" style="color:var(--accent);">PPO</a> answers this by refusing to trust the importance weight past a small window. Its clipped surrogate caps how far \(\rho\) is allowed to move the objective:</p>
+  \[
+    \mathcal{L}^{\text{CLIP}}(\theta) = \mathbb{E}_t\!\left[
+      \min\!\Big(\rho_t(\theta)\,\hat A_t,\;\;
+      \mathrm{clip}\big(\rho_t(\theta),\,1-\epsilon,\,1+\epsilon\big)\,\hat A_t \Big)
+    \right]
+  \]
+  <p>Once \(\rho_t\) leaves \([1-\epsilon,\,1+\epsilon]\) in the helpful direction, the objective flattens and its gradient vanishes — a cheap, first-order trust region that keeps importance sampling inside the regime where it is still accurate. <a href="../rl/grpo.html#objective" style="color:var(--accent);">GRPO</a> keeps the identical per-token ratio and the identical clip; it only swaps in a group-relative advantage and moves the KL term into the loss.</p>
+
+  <div class="note">
+    This also explains the standard knob \(E=1\) epoch for LLM RL: each extra epoch widens the \(\pi_\theta\)–\(\pi_{\theta_{\text{old}}}\) gap, so the importance weights drift out of the clip window and the later updates are mostly clipped away anyway. The <a href="https://github.com/yueyiming2009/ai-learning/blob/main/rl/ppo_training_walkthrough.md" style="color:var(--accent);">PPO walkthrough</a> traces this through one real training step.
+  </div>
+
+  <h2 id="summary">6. Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">The identity</div>
+      <p>\(\mathbb{E}_{p}[f]=\mathbb{E}_{q}\!\left[\tfrac{p}{q}f\right]\) — sample \(q\), reweight by \(w=p/q\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Estimator</div>
+      <p>\(\hat\mu=\tfrac1N\sum_i w(x_i)f(x_i)\), \(x_i\sim q\) — unbiased for any valid \(q\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">The catch</div>
+      <p>Variance \(\propto \mathbb{E}_p[\tfrac{p}{q}f^2]\) — blows up when \(q\) misses \(p\)'s mass</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Diagnostic</div>
+      <p>\(N_{\text{eff}}=(\sum w_i)^2/\sum w_i^2\) — drops toward 1 as weights skew</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">RL instance</div>
+      <p>\(p=\pi_\theta,\ q=\pi_{\theta_{\text{old}}}\); the ratio \(\rho=\pi_\theta/\pi_{\theta_{\text{old}}}\) is the weight</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Why clip</div>
+      <p>Drift inflates \(\rho\); PPO/GRPO clip to keep IS in its accurate regime</p>
+    </div>
+  </div>
+
+  <div class="table-wrap" style="margin-top: 2em;">
+    <table>
+      <tr><th>When you see…</th><th>Recognize it as</th></tr>
+      <tr><td>A ratio \(\pi_\theta/\pi_{\theta_{\text{old}}}\) multiplying an advantage</td><td>An importance weight correcting off-policy data</td></tr>
+      <tr><td>"Reuse the rollout for several epochs"</td><td>Importance sampling licensing off-policy updates</td></tr>
+      <tr><td>Clipping the ratio to \([1-\epsilon,1+\epsilon]\)</td><td>A trust region bounding IS variance</td></tr>
+      <tr><td>Weights known only up to a constant</td><td>Self-normalized IS (the ratio estimator)</td></tr>
+      <tr><td>Effective sample size \(N_{\text{eff}}\)</td><td>How badly the proposal mismatches the target</td></tr>
+    </table>
+  </div>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; Importance sampling — the off-policy reweighting behind the PPO/GRPO ratio
+</footer>
+
+</body>
+</html>

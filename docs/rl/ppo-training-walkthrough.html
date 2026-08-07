@@ -1,0 +1,1373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>PPO Training Walkthrough in VeRL</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #1d4ed8;
+      --accent-light: #eff6ff;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --nccl-bg: #fef3c7;
+      --nccl-border: #d97706;
+      --phase-bg: #f5f3ff;
+      --phase-border: #7c3aed;
+      --ink: #374151;
+      --ink-soft: #4b5563;
+      --row-hover: #fafafa;
+      --note-fg: #1e40af;
+      --result-fg: #16a34a;
+      --nccl-fg: #92400e;
+      --phase-heading: #1e1b4b;
+      --nav-bg: rgba(255,255,255,0.92);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #60a5fa;
+        --accent-light: #101a2b;
+        --warning-bg: #101a2b;
+        --warning-border: #1e40af;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --nccl-bg: #251c0b;
+        --nccl-border: #b45309;
+        --phase-bg: #1a1626;
+        --phase-border: #a78bfa;
+        --ink: #cbd5e1;
+        --ink-soft: #9ca3af;
+        --row-hover: #191e25;
+        --note-fg: #93c5fd;
+        --result-fg: #4ade80;
+        --nccl-fg: #fcd34d;
+        --phase-heading: #c7d2fe;
+        --nav-bg: rgba(15,17,21,0.9);
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #0f172a 0%, #1e40af 60%, #3b82f6 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.4rem, 3.5vw, 2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.9;
+      font-size: 0.95rem;
+      max-width: 620px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    h4 {
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin: 1.2em 0 0.3em;
+      color: var(--ink-soft);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    a { color: var(--accent); }
+    code {
+      font-family: 'JetBrains Mono', monospace;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.85em;
+    }
+    pre {
+      font-family: 'JetBrains Mono', monospace;
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      overflow-x: auto;
+      font-size: 0.83rem;
+      line-height: 1.6;
+      margin: 1.2em 0;
+    }
+    pre code { background: none; padding: 0; border: none; color: var(--text); font-size: inherit; }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.9rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 8px 14px;
+      text-align: left;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+    td code { font-size: 0.8em; }
+
+    /* ── Phase header ────────────────────────── */
+    .phase {
+      background: var(--phase-bg);
+      border: 1px solid var(--phase-border);
+      border-radius: 10px;
+      padding: 18px 22px;
+      margin: 2em 0 1em;
+    }
+    .phase-label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--phase-border);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 4px;
+    }
+    .phase h3 {
+      margin: 0;
+      font-size: 1rem;
+      color: var(--phase-heading);
+    }
+    .phase p {
+      margin: 8px 0 0;
+      font-size: 0.9rem;
+      color: var(--ink);
+    }
+
+    /* ── NCCL callout ────────────────────────── */
+    .nccl {
+      background: var(--nccl-bg);
+      border: 1px solid var(--nccl-border);
+      border-left: 3px solid var(--nccl-border);
+      border-radius: 0 8px 8px 0;
+      padding: 12px 16px;
+      margin: 1em 0;
+      font-size: 0.9rem;
+    }
+    .nccl-label {
+      font-weight: 600;
+      font-size: 0.8rem;
+      color: var(--nccl-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Note ────────────────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+
+    /* ── Result ──────────────────────────────── */
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 14px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Tensor row ──────────────────────────── */
+    .tensor-table td:nth-child(2),
+    .tensor-table td:nth-child(3) {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8em;
+      color: var(--ink);
+    }
+
+    /* ── Responsive ──────────────────────────── */
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>PPO Walkthrough</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#config">Config</a>
+    <a href="#parallelism">Parallelism</a>
+    <a href="#memory">Memory</a>
+    <a href="#phases">Phases</a>
+    <a href="#comms">Comms</a>
+    <a href="#tensors">Tensors</a>
+    <a href="#code">Code</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">RL Systems</span>
+  <h1>PPO Training Walkthrough in VeRL</h1>
+  <p>One complete PPO step on LLaMA-7B across 8 GPUs — every tensor has an explicit shape,
+  every NCCL call is named, and every parallelism strategy is explained.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="note">
+    Prerequisites: <a href="rlhf.html">RLHF</a> (PPO, advantages, KL penalty),
+    <a href="../systems/tensor-parallelism.html">Tensor Parallelism</a> (column/row-parallel, AllReduce per block),
+    <a href="../systems/torch-distributed.html">Data Parallelism / FSDP</a> (AllGather/ReduceScatter lifecycle).
+    For the async extension of this pipeline, see <a href="async-rl.html">Async RL</a>.
+    For the SGLang + Megatron + MoE approach, see <a href="slime-miles-walkthrough.html">PPO Walkthrough in slime/Miles</a>.
+  </div>
+
+  <!-- ── §1 Config ──────────────────────────── -->
+  <h2 id="config">1. Concrete Configuration</h2>
+
+  <h3>1.1 Model — LLaMA-7B</h3>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symbol</th><th>Name</th><th>Value</th></tr>
+      <tr><td>\(H\)</td><td>Hidden size</td><td>4096</td></tr>
+      <tr><td>\(A\)</td><td>Number of attention heads</td><td>32</td></tr>
+      <tr><td>\(d\)</td><td>Head dimension (\(H/A\))</td><td>128</td></tr>
+      <tr><td>\(F\)</td><td>FFN intermediate size (SwiGLU)</td><td>11008</td></tr>
+      <tr><td>\(L\)</td><td>Number of transformer layers</td><td>32</td></tr>
+      <tr><td>\(V\)</td><td>Vocabulary size</td><td>32 000</td></tr>
+    </table>
+  </div>
+
+  <h3>1.2 Hardware and Parallelism</h3>
+  <pre><code>Total GPUs: 8  (2 nodes × 4 GPUs per node, NVLink intra-node, InfiniBand cross-node)
+
+Training strategy :  TP=2, DP=4, PP=1  (FSDP-based data parallelism)
+Rollout strategy  :  TP=2, DP=4, PP=1  (hybrid engine — same physical GPUs)</code></pre>
+
+  <p><strong>GPU layout</strong> (DP rank × TP rank):</p>
+  <pre><code>Node 0:
+  GPU 0  →  DP=0, TP=0
+  GPU 1  →  DP=0, TP=1
+  GPU 2  →  DP=1, TP=0
+  GPU 3  →  DP=1, TP=1
+Node 1:
+  GPU 4  →  DP=2, TP=0
+  GPU 5  →  DP=2, TP=1
+  GPU 6  →  DP=3, TP=0
+  GPU 7  →  DP=3, TP=1</code></pre>
+
+  <h3>1.3 Batch Sizes and Sequence Lengths</h3>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symbol</th><th>Name</th><th>Value</th></tr>
+      <tr><td>\(B\)</td><td>Prompts per step (global)</td><td>16</td></tr>
+      <tr><td>\(n\)</td><td>Rollouts per prompt</td><td>4</td></tr>
+      <tr><td>\(B_{seq}\)</td><td>Total sequences \(= B \times n\)</td><td>64</td></tr>
+      <tr><td>\(P\)</td><td>Prompt length (tokens)</td><td>512</td></tr>
+      <tr><td>\(R\)</td><td>Response length (tokens)</td><td>512</td></tr>
+      <tr><td>\(S\)</td><td>Full sequence length \(= P + R\)</td><td>1024</td></tr>
+      <tr><td>\(M\)</td><td>PPO mini-batch size (global)</td><td>16</td></tr>
+      <tr><td>\(E\)</td><td>PPO epochs</td><td>1</td></tr>
+    </table>
+  </div>
+
+  <div class="note">
+    <strong>Why mini-batches?</strong> Rollout is ~100× more expensive than a training step. Mini-batches amortize that cost: collect 64 sequences once, then extract 4 gradient updates cheaply (M=16, E=1). Multiple updates on the same batch let the policy climb further up the advantage landscape — the same intuition as running multiple SGD steps on a fixed dataset.
+  </div>
+
+  <!-- ── §2 Parallelism ─────────────────────── -->
+  <h2 id="parallelism">2. Parallelism Strategies</h2>
+
+  <h3>2.1 Tensor Parallelism (TP=2)</h3>
+
+  <p>Model weights inside each transformer layer are split across the two GPUs of a DP rank using Megatron-LM column/row-parallel conventions — designed so each sub-layer needs only <strong>one AllReduce</strong>.</p>
+
+  <ul>
+    <li><strong>Column-parallel</strong> — split \(W\) along the output dimension; each TP rank holds \((H,\, K/TP)\) and produces a partial output. No communication.</li>
+    <li><strong>Row-parallel</strong> — split \(W\) along the input dimension; each TP rank produces a partial sum; <strong>AllReduce (sum)</strong> across the TP group combines them.</li>
+  </ul>
+
+  <p>Column-parallel and row-parallel are always paired: column feeds directly into row, so only one AllReduce is needed at the end of each pair.</p>
+
+  <h4>Attention (TP=2, per DP rank)</h4>
+  <pre><code>x : (16, 512, H=4096)   — same on both TP ranks
+
+# Column-parallel: split heads across TP ranks, no comm
+W_Q_local : (4096, 2048)    Q_local = x @ W_Q_local  → (16, 512, 2048)
+W_K_local : (4096, 2048)    K_local = x @ W_K_local  → (16, 512, 2048)
+W_V_local : (4096, 2048)    V_local = x @ W_V_local  → (16, 512, 2048)
+
+# Local flash attention over 16 heads, no comm
+attn_out : (16, 512, 2048)
+
+# Row-parallel: AllReduce to reconstruct full hidden
+W_O_local : (2048, 4096)    partial = attn_out @ W_O_local  → (16, 512, 4096)
+                             ► AllReduce (SUM) across TP group
+out : (16, 512, 4096)       — full hidden, same on both ranks</code></pre>
+
+  <h4>FFN — SwiGLU (TP=2)</h4>
+  <pre><code>SwiGLU(x) = (x @ W_up) * Swish(x @ W_gate)
+          = (x @ W_up) * (x @ W_gate * sigmoid(x @ W_gate))
+
+# Column-parallel gate + up, no comm
+W_gate_local : (4096, 5504)   gate = x @ W_gate_local  → (16, 512, 5504)
+W_up_local   : (4096, 5504)   up   = x @ W_up_local    → (16, 512, 5504)
+hidden = SiLU(gate) * up                               → (16, 512, 5504)
+
+# Row-parallel down: AllReduce
+W_down_local : (5504, 4096)   partial = hidden @ W_down_local  → (16, 512, 4096)
+                               ► AllReduce (SUM) across TP group
+out : (16, 512, 4096)</code></pre>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Weight</th><th>Full shape</th><th>Per TP rank</th><th>Type</th></tr>
+      <tr><td>\(W_Q, W_K, W_V\)</td><td>(4096, 4096)</td><td>(4096, 2048)</td><td>column</td></tr>
+      <tr><td>\(W_O\)</td><td>(4096, 4096)</td><td>(2048, 4096)</td><td>row → AllReduce</td></tr>
+      <tr><td>\(W_{gate}, W_{up}\)</td><td>(4096, 11008)</td><td>(4096, 5504)</td><td>column</td></tr>
+      <tr><td>\(W_{down}\)</td><td>(11008, 4096)</td><td>(5504, 4096)</td><td>row → AllReduce</td></tr>
+    </table>
+  </div>
+
+  <p>Each transformer layer requires exactly <strong>2 AllReduce calls per forward pass</strong> (one after \(W_O\), one after \(W_{down}\)), and 2 more in the backward — <strong>4 AllReduce per layer per forward-backward</strong>.</p>
+
+  <h3>2.2 Data Parallelism (DP=4, FSDP)</h3>
+
+  <p>The global batch is split evenly across 4 DP ranks. FSDP (ZeRO-3 equivalent) shards every weight across DP ranks — each GPU holds only \(1/DP\) of each tensor.</p>
+
+  <pre><code># Forward — AllGather to reconstruct weights before compute:
+Each GPU holds shard:  W_shard : (rows/DP, cols)
+AllGather across DP →  W_full  : (rows,    cols)   ← used for compute, then discarded
+
+# Backward — ReduceScatter to sync and re-shard gradients:
+Each GPU computes:      dW_full  : (rows,    cols)
+ReduceScatter across DP → dW_shard : (rows/DP, cols)   ← sum-reduced + sharded
+
+# Optimizer step — local, no communication:
+W_shard -= lr * AdamW(dW_shard, m_shard, v_shard)</code></pre>
+
+  <p>Memory footprint per GPU:</p>
+  <pre><code>Parameters  : 7B × 2 bytes / (TP=2 × DP=4) ≈ 437 MB
+Optimizer   : 7B × 8 bytes / (TP=2 × DP=4) ≈ 875 MB   (Adam m + v in float32)</code></pre>
+
+  <h3>2.3 Hybrid Engine</h3>
+
+  <p>VeRL's hybrid engine time-multiplexes all four RL models (actor, reference, critic, reward) on the same 8 GPUs rather than dedicating separate hardware to each.</p>
+
+  <p><strong>Actor = Reference + LoRA:</strong> the base model weights are frozen and shared. The reference policy runs with LoRA disabled; the actor runs with LoRA enabled. Only the LoRA adapter weights are trained — roughly \(2 \times r \times H \times L \approx 4M\) params vs 7B base. If LoRA is disabled (full fine-tuning), a separate frozen reference copy must be kept, doubling weight memory.</p>
+
+  <h3>2.4 Flash Attention</h3>
+
+  <p>Standard attention writes the full \((seq, seq)\) score matrix to HBM — O(seq²) memory. Flash attention (Dao et al. 2022) is an IO-aware rewrite: tiles Q, K, V into blocks that fit in SRAM, fuses softmax + matmul into one kernel using the <strong>online softmax trick</strong>, and never writes the score matrix to HBM.</p>
+
+  <pre><code># Online softmax update (per tile of K, V):
+m_new = max(m_old, m_tile)
+l_new = l_old * exp(m_old - m_new) + sum(exp(s_tile - m_new))
+out   = (out_old * l_old * exp(m_old - m_new) + exp(s_tile - m_new) @ V_tile) / l_new
+
+# Kernel structure:
+for each block of Q (fits in SRAM):
+    m = -inf,  l = 0,  out = 0
+    for each block of K, V (streamed from HBM):
+        s = Q_block @ K_block.T    ← stays in SRAM
+        m, l, out = update(m, l, out, s, V_block)
+    write out_block to HBM         ← only output written to HBM</code></pre>
+
+  <p>Memory: O(seq) instead of O(seq²). The backward pass recomputes tiles on the fly from saved Q/K/V rather than storing the score matrix.</p>
+
+  <!-- ── §3 Memory ───────────────────────────── -->
+  <h2 id="memory">3. Model Parameter Memory Layout (per GPU)</h2>
+
+  <p>Each GPU holds one row of the DP × TP grid.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Context</th><th>Fraction held</th><th>Example: \(W_{down}\) (one layer)</th></tr>
+      <tr>
+        <td>Training (FSDP active)</td>
+        <td>\(1/(TP \times DP) = 1/8\)</td>
+        <td>(5504 × 4096) / 4 rows ≈ 11 MB</td>
+      </tr>
+      <tr>
+        <td>Rollout (FSDP AllGathered)</td>
+        <td>\(1/TP = 1/2\)</td>
+        <td>(5504, 4096) per GPU ≈ 45 MB</td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- ── §4 Phases ──────────────────────────── -->
+  <h2 id="phases">4. Phase-by-Phase Walkthrough</h2>
+
+  <!-- Phase 1 -->
+  <div class="phase">
+    <div class="phase-label">Phase 1</div>
+    <h3>Data Loading and Scatter</h3>
+    <p>Ray controller (CPU process) samples a mini-batch and broadcasts to DP ranks.</p>
+  </div>
+
+  <div class="table-wrap">
+    <table class="tensor-table">
+      <tr><th>Tensor</th><th>Shape</th><th>Dtype</th><th>Placement</th></tr>
+      <tr><td><code>prompts</code> (global)</td><td>(16, 512)</td><td>int64</td><td>CPU, controller</td></tr>
+      <tr><td><code>attention_mask</code> (global)</td><td>(16, 512)</td><td>bool</td><td>CPU, controller</td></tr>
+    </table>
+  </div>
+
+  <p>Controller sends <code>prompts[dp_rank*4 : (dp_rank+1)*4]</code> to each DP rank via Ray object store. Before rollout, prompts are repeated \(n=4\) times: <code>prompts_repeated : (16, 512)</code> per DP rank. The only host-to-device transfer: worker receives on CPU then calls <code>.to(device)</code>.</p>
+
+  <!-- Phase 2 -->
+  <div class="phase">
+    <div class="phase-label">Phase 2</div>
+    <h3>Rollout — Autoregressive Generation</h3>
+    <p>Each DP rank (pair of TP-parallel GPUs) generates R=512 new tokens token-by-token using KV cache.</p>
+  </div>
+
+  <h4>2a. Prefill (process the full prompt)</h4>
+
+  <p>For each of the L=32 transformer layers, one forward pass over the full 512-token prompt.</p>
+
+  <p><strong>Attention — column-parallel QKV, flash attention, row-parallel O + AllReduce:</strong></p>
+  <pre><code>Q_local = x @ W_Q_local  →  (16, 512, 2048)   no comm
+K_local = x @ W_K_local  →  (16, 512, 2048)
+V_local = x @ W_V_local  →  (16, 512, 2048)
+
+# KV cache stored per TP rank, per layer:
+K_cache, V_cache :  (16, 16 heads, 512, 128)   bfloat16   ~64 MB each
+
+attn_out :  (16, 512, 2048)
+
+partial = attn_out @ W_O_local  →  (16, 512, 4096)</code></pre>
+
+  <div class="nccl">
+    <div class="nccl-label">NCCL — AllReduce (SUM) · TP group (intra-node NVLink)</div>
+    Tensor: (16, 512, 4096) bfloat16 &nbsp;·&nbsp; Volume: 64 MB per direction
+  </div>
+
+  <p><strong>FFN — SwiGLU + AllReduce:</strong></p>
+  <pre><code>gate = x @ W_gate  →  (16, 512, 5504)   no comm
+up   = x @ W_up    →  (16, 512, 5504)
+hidden = SiLU(gate) * up
+partial = hidden @ W_down  →  (16, 512, 4096)</code></pre>
+
+  <div class="nccl">
+    <div class="nccl-label">NCCL — AllReduce (SUM) · TP group (intra-node NVLink)</div>
+    Tensor: (16, 512, 4096) bfloat16 &nbsp;·&nbsp; Volume: 64 MB per direction
+  </div>
+
+  <p><strong>Per-layer total:</strong> 2 AllReduce × 64 MB = 128 MB.
+  <strong>Prefill total (32 layers):</strong> 64 AllReduce calls, ~4 GB.</p>
+
+  <h4>2b. Decode (generate R=512 tokens one at a time)</h4>
+
+  <p>At each decode step \(t\), only the new token is processed: <code>x : (16, 1, 4096)</code>.</p>
+  <pre><code>Q = x @ W_Q_local  →  (16, 1, 2048)       per TP rank
+K = x @ W_K_local  →  (16, 1, 2048)
+V = x @ W_V_local  →  (16, 1, 2048)
+
+# Append to KV cache (grows each step)
+K_cache :  (16, 16, P+t, 128)
+
+# Query against full prefix
+attn : (16, 1, 2048)
+partial = attn @ W_O_local  →  (16, 1, 4096)</code></pre>
+
+  <div class="nccl">
+    <div class="nccl-label">NCCL — AllReduce (SUM) × 2 per layer · TP group</div>
+    Tensor: (16, 1, 4096) bfloat16 &nbsp;·&nbsp; Volume: 128 KB each (tiny at decode time)
+    <br><strong>Decode total:</strong> 512 steps × 32 layers × 2 × 128 KB = ~4 GB
+  </div>
+
+  <h4>2c. Log-prob collection during generation</h4>
+  <pre><code>logit_local :  (16, 1, V/TP=16000)   per TP rank
+
+# 3-step distributed log-prob (no full-vocab materialization):
+m_global  = AllReduce(max(logits_local, dim=-1), op=MAX)     # (16, 1)
+sum_global = AllReduce(exp(logits_local - m_global).sum(-1), op=SUM)  # (16, 1)
+log_prob_t = AllReduce(log_prob_in_local_slice, op=SUM)       # (16,)</code></pre>
+
+  <h4>Rollout phase output (per DP rank → controller)</h4>
+  <div class="table-wrap">
+    <table class="tensor-table">
+      <tr><th>Tensor</th><th>Shape (global)</th><th>Dtype</th></tr>
+      <tr><td><code>sequences</code></td><td>(64, 1024)</td><td>int64</td></tr>
+      <tr><td><code>rollout_log_probs</code></td><td>(64, 512)</td><td>float32</td></tr>
+    </table>
+  </div>
+
+  <!-- Phase 3 -->
+  <div class="phase">
+    <div class="phase-label">Phase 3</div>
+    <h3>Reward Computation</h3>
+    <p>Rule-based verifier (math/code) or learned reward model forward pass. Output: <code>token_level_rewards : (64, 512)</code> — zero everywhere except the final response token.</p>
+  </div>
+
+  <!-- Phase 4 -->
+  <div class="phase">
+    <div class="phase-label">Phase 4</div>
+    <h3>Old Log-Prob Recomputation</h3>
+    <p>Non-autoregressive forward pass over full sequences for numerical stability (the same GPU ops as prefill, on micro-batches of 4 sequences).</p>
+  </div>
+
+  <p>3-step distributed log-prob per token (no V=32000 vocab materialization):</p>
+  <pre><code># Per micro-batch of 4 sequences:
+m_global   = AllReduce(max(logits_local, dim=-1), op=MAX)   # (4, 512)
+sum_global = AllReduce(exp(logits_local - m_global).sum(-1), op=SUM)  # (4, 512)
+log_prob   = AllReduce(log_prob_of_target, op=SUM)          # (4, 512)</code></pre>
+
+  <div class="nccl">
+    <div class="nccl-label">NCCL — AllReduce × 2 per layer (TP) + 3 × AllReduce per token (log-prob)</div>
+    Per-layer AllReduce: (4, 1024, 4096) bfloat16 · 32 MB each &nbsp;·&nbsp; 32 layers: ~2 GB
+  </div>
+
+  <p>Output on controller: <code>old_log_probs : (64, 512) float32</code></p>
+
+  <!-- Phase 5 -->
+  <div class="phase">
+    <div class="phase-label">Phase 5</div>
+    <h3>Reference Policy Log-Probs</h3>
+    <p>Identical computation to Phase 4 with frozen reference weights. Output: <code>ref_log_probs : (64, 512) float32</code></p>
+  </div>
+
+  <!-- Phase 6 -->
+  <div class="phase">
+    <div class="phase-label">Phase 6</div>
+    <h3>Value Estimation (Critic)</h3>
+    <p>LLaMA-7B with a linear value head; same forward pass as Phase 4 plus <code>values = hidden_last_layer @ W_value → (16, 1024)</code>. Output: <code>values : (64, 1024) float32</code></p>
+  </div>
+
+  <!-- Phase 7 -->
+  <div class="phase">
+    <div class="phase-label">Phase 7</div>
+    <h3>Advantage Estimation (GAE)</h3>
+    <p>Controller CPU — no GPU, no NCCL. Pure scalar operations.</p>
+  </div>
+
+  <h4>KL penalty</h4>
+  <pre><code>kl = old_log_probs - ref_log_probs                    # (64, 512)
+penalized_rewards = token_level_rewards - beta * kl   # (64, 512)</code></pre>
+
+  <h4>GAE backward pass</h4>
+
+  <p>GAE interpolates between one-step TD (low variance, high bias) and Monte Carlo (low bias, high variance) via \(\lambda\):</p>
+  \[
+    A_t^{GAE} = \delta_t + (\gamma\lambda)\,A_{t+1}^{GAE}, \qquad
+    \delta_t = r_t + \gamma\,V(t+1) - V(t)
+  \]
+
+  <pre><code>nextvalues = 0
+lastgaelam = 0
+advantages = []
+
+for t in reversed(range(R=512)):
+    delta       = penalized_rewards[:, t] + gamma * nextvalues - values[:, t]  # (64,)
+    lastgaelam  = delta + gamma * lam * lastgaelam * response_mask[:, t]       # (64,)
+    nextvalues  = values[:, t] * response_mask[:, t]
+    advantages.append(lastgaelam)
+
+advantages = stack(reversed(advantages))   # (64, 512)
+returns    = advantages + values           # (64, 512)
+advantages = whiten(advantages, response_mask)   # zero mean, unit variance</code></pre>
+
+  <p style="font-size:0.88rem;color:var(--muted);">▸ Real source (and a note on the exact masking): <a href="#code">§8.2</a>.</p>
+
+  <div class="note">
+    <code>response_mask</code> zeros the recurrence at padding positions and after EOS so advantages don't leak across sequence boundaries. Typical: \(\gamma=1.0\), \(\lambda=0.95\).
+  </div>
+
+  <h4>Whitening</h4>
+
+  <p><code>whiten</code> standardises the advantages to zero mean and unit variance across all
+  valid (non-masked) tokens in the batch:</p>
+
+  <pre><code>valid = response_mask.bool()                            # (64, 512)
+mean  = advantages[valid].mean()                        # scalar
+var   = advantages[valid].var(unbiased=False)           # scalar
+advantages = (advantages - mean) / (var + eps).sqrt()  # (64, 512)
+advantages = advantages * valid                         # re-zero padding positions</code></pre>
+
+  <p><strong>Why it's needed — the clip threshold problem.</strong>
+  The PPO surrogate clips the importance ratio at \(1 \pm \epsilon\) (\(\epsilon = 0.2\)).
+  Whether a token's gradient is clipped depends on both the ratio and the advantage: the
+  effective gradient is \(\min(\rho,\, \text{clip}) \times A_t\). If raw advantages are on the
+  order of 10–50 (typical cumulative reward scales), then even a ratio of 1.0 produces a large
+  update, and the clip threshold of 1.2 barely constrains it. Whitening brings advantages to unit
+  scale so that \(\epsilon = 0.2\) is calibrated to a meaningful signal range — the clip then
+  consistently limits updates regardless of the reward magnitude in this particular batch.</p>
+
+  <p><strong>Why <code>returns</code> is not whitened.</strong>
+  <code>returns</code> is the regression target for the critic
+  (\(\mathcal{L}_v = (V_\theta - \text{returns})^2\)). Whitening the returns would rescale the
+  target, corrupting the value predictions used to compute future advantages — the circular
+  dependency between critic and advantage would break. The actor loss is scale-invariant (the
+  clipped ratio removes magnitude from the gradient direction); the critic loss is not.</p>
+
+  <p><strong>Why the mask matters.</strong>
+  Padding tokens have \(A_t = 0\) by construction. Including them in the mean/variance estimate
+  would deflate the variance and distort the normalisation. The mask restricts statistics to
+  tokens that actually carry signal.</p>
+
+  <!-- Phase 8 -->
+  <div class="phase">
+    <div class="phase-label">Phase 8</div>
+    <h3>Actor Update (PPO)</h3>
+    <p>All 8 GPUs. PPO epochs=1, mini-batch per DP rank = 4 sequences.</p>
+  </div>
+
+  <h4>8a. FSDP AllGather (per layer)</h4>
+  <div class="nccl">
+    <div class="nccl-label">NCCL — AllGather (DP group, cross-node InfiniBand)</div>
+    Each rank holds shard: ~2 MB (e.g., W_Q shard). Gathered result: ~8 MB per TP rank.
+    <br>7 weight matrices per layer × ~16 MB (full size / TP) ≈ 56 MB AllGathered per layer.
+    <br><strong>Total 32 layers:</strong> ~1.8 GB AllGather per forward pass.
+  </div>
+
+  <h4>8b. Forward pass (TP AllReduce, same as Phase 4)</h4>
+  <div class="nccl">
+    <div class="nccl-label">NCCL — AllReduce (TP group, intra-node NVLink)</div>
+    (4, 1024, 4096) bfloat16 · 32 MB each · 32 layers × 2 = <strong>~2 GB</strong>
+  </div>
+
+  <h4>8c. PPO loss (local)</h4>
+  <pre><code>log_ratio = new_log_probs - old_log_probs   # (4, 512) float32
+ratio     = exp(log_ratio)                  # (4, 512)
+
+surr1 = ratio * advantages                          # (4, 512)
+surr2 = clamp(ratio, 1-eps, 1+eps) * advantages     # (4, 512)  eps=0.2
+
+actor_loss = -mean(min(surr1, surr2) * response_mask)   # scalar</code></pre>
+
+  <p style="font-size:0.88rem;color:var(--muted);">▸ Real source (with asymmetric + dual clip): <a href="#code">§8.3</a>.</p>
+
+  <h4>8d. Backward pass</h4>
+  <div class="nccl">
+    <div class="nccl-label">NCCL — AllReduce (TP) + ReduceScatter (DP) per layer</div>
+    TP AllReduce: (4, 1024, 4096) bf16 · 32 MB each · 32 layers × 2 = ~2 GB<br>
+    DP ReduceScatter: ~56 MB per layer (FSDP re-shards gradients) · 32 layers = ~1.8 GB
+  </div>
+
+  <h4>8e–8f. Loss AllReduce + metrics AllGather (negligible volume)</h4>
+  <pre><code># from verl/workers/engine_workers.py:198
+torch.distributed.all_reduce(loss, op=ReduceOp.AVG, group=dp_group)
+
+# from verl/workers/engine_workers.py:290
+torch.distributed.all_gather_object(global_token_num_output, global_token_num, dp_group)</code></pre>
+
+  <h4>8g. Optimizer step (local, no NCCL)</h4>
+  <pre><code>params_shard    :  ~437 MB per GPU (bfloat16)
+grad_shard      :  ~437 MB per GPU (bfloat16)
+m_shard (mean)  :  ~875 MB per GPU (float32)
+v_shard (var)   :  ~875 MB per GPU (float32)
+# Total optimizer state per GPU: ~2.2 GB</code></pre>
+
+  <!-- Phase 9 -->
+  <div class="phase">
+    <div class="phase-label">Phase 9</div>
+    <h3>Critic Update</h3>
+    <p>Same structure as Phase 8, using the value regression loss:</p>
+  </div>
+  <pre><code>value_clipped = clip(value_pred, old_values - eps_v, old_values + eps_v)
+value_loss    = 0.5 * mean((value_clipped - returns)^2 * response_mask)</code></pre>
+
+  <p style="font-size:0.88rem;color:var(--muted);">▸ Real source: <a href="#code">§8.4</a>.</p>
+
+  <!-- Phase 10 -->
+  <div class="phase">
+    <div class="phase-label">Phase 10</div>
+    <h3>Weight Synchronization (Hybrid Engine)</h3>
+    <p>After training, the rollout model is updated with new weights.</p>
+  </div>
+
+  <pre><code>1. sleep_replicas()  — pause rollout workers
+2. FSDP AllGather   — reconstruct full TP-sharded model from FSDP shards
+3. Rollout workers have up-to-date weights
+4. wake_up()</code></pre>
+
+  <div class="nccl">
+    <div class="nccl-label">NCCL — AllGather (DP group, cross-node InfiniBand)</div>
+    Input per GPU: ~875 MB FSDP shard (bfloat16) &nbsp;·&nbsp; Output: ~3.5 GB full TP copy &nbsp;·&nbsp; Volume: ~3.5 GB
+  </div>
+
+  <!-- ── §5 Comms ────────────────────────────── -->
+  <h2 id="comms">5. Communication Summary</h2>
+
+  <div class="table-wrap">
+    <table>
+      <tr>
+        <th>Phase</th><th>Primitive</th><th>Group</th><th>Tensor</th><th>Volume</th>
+      </tr>
+      <tr>
+        <td>Rollout prefill (per layer)</td>
+        <td>AllReduce × 2</td>
+        <td>TP (intra-node)</td>
+        <td>(16,512,4096) bf16</td>
+        <td>64 MB × 2</td>
+      </tr>
+      <tr>
+        <td>Rollout decode (per layer, per step)</td>
+        <td>AllReduce × 2</td>
+        <td>TP (intra-node)</td>
+        <td>(16,1,4096) bf16</td>
+        <td>128 KB × 2</td>
+      </tr>
+      <tr>
+        <td>Log-prob (per step)</td>
+        <td>AllReduce × 3</td>
+        <td>TP (intra-node)</td>
+        <td>(16,1) float32</td>
+        <td>~1 MB</td>
+      </tr>
+      <tr>
+        <td>FSDP forward (per layer)</td>
+        <td>AllGather</td>
+        <td>DP (cross-node)</td>
+        <td>~56 MB weights</td>
+        <td>56 MB</td>
+      </tr>
+      <tr>
+        <td>FSDP backward (per layer)</td>
+        <td>ReduceScatter</td>
+        <td>DP (cross-node)</td>
+        <td>~56 MB grads</td>
+        <td>56 MB</td>
+      </tr>
+      <tr>
+        <td>TP backward (per layer)</td>
+        <td>AllReduce × 2</td>
+        <td>TP (intra-node)</td>
+        <td>(4,1024,4096) bf16</td>
+        <td>32 MB × 2</td>
+      </tr>
+      <tr>
+        <td>Weight sync (post-training)</td>
+        <td>AllGather</td>
+        <td>DP (cross-node)</td>
+        <td>875 MB shard</td>
+        <td>875 MB</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="result">
+    <div class="result-label">Per-iteration budget (rough)</div>
+    <div class="table-wrap" style="margin:0;">
+      <table>
+        <tr><th>Type</th><th>Approx. total</th></tr>
+        <tr><td>TP AllReduce (rollout + log-prob + training)</td><td>~15 GB</td></tr>
+        <tr><td>FSDP AllGather (fwd) × 2 models</td><td>~3.5 GB</td></tr>
+        <tr><td>FSDP ReduceScatter (bwd) × 2 models</td><td>~3.5 GB</td></tr>
+        <tr><td>Weight sync (AllGather)</td><td>~3.5 GB</td></tr>
+        <tr><td><strong>Total</strong></td><td><strong>~26 GB</strong></td></tr>
+      </table>
+    </div>
+    <p style="font-size:0.85rem;color:var(--ink);margin-top:8px;">TP = NVLink (~600 GB/s bidirectional) &nbsp;·&nbsp; DP/weight sync = InfiniBand (~200 GB/s)</p>
+  </div>
+
+  <!-- ── §6 Tensors ──────────────────────────── -->
+  <h2 id="tensors">6. Full Tensor Inventory (on controller CPU unless noted)</h2>
+
+  <div class="table-wrap">
+    <table class="tensor-table">
+      <tr><th>Tensor</th><th>Shape</th><th>Dtype</th><th>Bytes</th></tr>
+      <tr><td><code>prompts</code></td><td>(16, 512)</td><td>int64</td><td>64 KB</td></tr>
+      <tr><td><code>sequences</code></td><td>(64, 1024)</td><td>int64</td><td>512 KB</td></tr>
+      <tr><td><code>rollout_log_probs</code></td><td>(64, 512)</td><td>float32</td><td>128 KB</td></tr>
+      <tr><td><code>ref_log_probs</code></td><td>(64, 512)</td><td>float32</td><td>128 KB</td></tr>
+      <tr><td><code>old_log_probs</code></td><td>(64, 512)</td><td>float32</td><td>128 KB</td></tr>
+      <tr><td><code>rewards</code></td><td>(64, 512)</td><td>float32</td><td>128 KB</td></tr>
+      <tr><td><code>values</code></td><td>(64, 1024)</td><td>float32</td><td>256 KB</td></tr>
+      <tr><td><code>advantages</code></td><td>(64, 512)</td><td>float32</td><td>128 KB</td></tr>
+      <tr><td><code>returns</code></td><td>(64, 512)</td><td>float32</td><td>128 KB</td></tr>
+      <tr><td>Model weights (rollout, per GPU)</td><td>—</td><td>bfloat16</td><td>~3.5 GB</td></tr>
+      <tr><td>Model weights (training, per GPU)</td><td>—</td><td>bfloat16</td><td>~437 MB</td></tr>
+      <tr><td>Optimizer state (per GPU)</td><td>—</td><td>float32</td><td>~2.2 GB</td></tr>
+      <tr><td>KV cache (per GPU, during rollout)</td><td>(16,16,≤1024,128)×32×2</td><td>bfloat16</td><td>~4 GB</td></tr>
+    </table>
+  </div>
+
+  <!-- ── §7 Dimension index ─────────────────── -->
+  <h2>7. Dimension Index</h2>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symbol</th><th>Meaning</th><th>Value</th></tr>
+      <tr><td>\(B\)</td><td>Global prompt batch size</td><td>16</td></tr>
+      <tr><td>\(n\)</td><td>Rollouts per prompt</td><td>4</td></tr>
+      <tr><td>\(B_{seq}\)</td><td>Total sequences \((B \times n)\)</td><td>64</td></tr>
+      <tr><td>\(P\)</td><td>Prompt length</td><td>512</td></tr>
+      <tr><td>\(R\)</td><td>Response length</td><td>512</td></tr>
+      <tr><td>\(S\)</td><td>Full sequence length \((P+R)\)</td><td>1024</td></tr>
+      <tr><td>\(H\)</td><td>Hidden size</td><td>4096</td></tr>
+      <tr><td>\(A\)</td><td>Number of attention heads</td><td>32</td></tr>
+      <tr><td>\(d\)</td><td>Head dimension \((H/A)\)</td><td>128</td></tr>
+      <tr><td>\(F\)</td><td>FFN intermediate size</td><td>11008</td></tr>
+      <tr><td>\(L\)</td><td>Number of layers</td><td>32</td></tr>
+      <tr><td>\(V\)</td><td>Vocabulary size</td><td>32 000</td></tr>
+      <tr><td>TP</td><td>Tensor parallel size</td><td>2</td></tr>
+      <tr><td>DP</td><td>Data parallel size</td><td>4</td></tr>
+      <tr><td>PP</td><td>Pipeline parallel size</td><td>1</td></tr>
+    </table>
+  </div>
+
+  <!-- ── §8 Code-level trace ─────────────────── -->
+  <h2 id="code">8. The Code: verl Source, End to End</h2>
+
+  <p>The phases above are the systems view — shapes and NCCL calls. This section is the same
+  pipeline in <strong>real verl source</strong>, drilling from the driver loop down to the loss
+  kernels. Every block is actual code from verl at commit <code>8a694930</code>, lightly elided
+  (<code>…</code>) for length; the comment at the top of each block is the <code>file:line</code> of
+  the original. Phase numbers in comments map back to §4.</p>
+
+  <h3>8.1 The driver loop — <code>RayPPOTrainer.fit()</code></h3>
+
+  <p>One iteration of this loop is one PPO step. It runs on the Ray controller (CPU) and dispatches
+  each phase to the worker groups. Note the order: <strong>critic updates before actor</strong>, and
+  the actor update is gated behind <code>critic_warmup</code>.</p>
+
+  <pre><code># verl/trainer/ppo/ray_trainer.py — RayPPOTrainer.fit()   (def at :1359)
+
+for batch_dict in self.train_dataloader:               # one PPO step per dataloader batch
+    batch = DataProto.from_single_dict(batch_dict)
+    batch.non_tensor_batch["uid"] = np.array([str(uuid.uuid4()) ...])   # group id (GRPO)
+    gen_batch = self._get_gen_batch(batch)
+    gen_batch = gen_batch.repeat(repeat_times=rollout_n, interleave=True)   # n rollouts / prompt
+
+    with marked_timer("step", timing_raw):
+        # ── Phase 2 · Rollout ───────────────────────────────────
+        with marked_timer("gen", timing_raw, color="red"):
+            gen_output = self.async_rollout_manager.generate_sequences(gen_batch)
+        batch = batch.repeat(rollout_n, interleave=True).union(gen_output)
+        batch.batch["response_mask"] = compute_response_mask(batch)
+
+        # ── Phase 3 · Reward ────────────────────────────────────
+        with marked_timer("reward", timing_raw, color="yellow"):
+            if self.use_rm and "rm_scores" not in batch.batch:        # skip if a verifier
+                batch = batch.union(self._compute_reward_colocate(batch))  # already wrote scores
+            reward_tensor, reward_extra = extract_reward(batch)        # getter: reads rm_scores
+
+        # ── Phase 4 · old log-probs  (proximal anchor π_old) ────
+        with marked_timer("old_log_prob", timing_raw, color="blue"):
+            old_log_prob, _ = self._compute_old_log_prob(batch)
+            batch = batch.union(old_log_prob)
+
+        # ── Phase 5 · reference log-probs  (frozen π_ref) ───────
+        if self.use_reference_policy:
+            with marked_timer(str(Role.RefPolicy), timing_raw, color="olive"):
+                batch = batch.union(self._compute_ref_log_prob(batch))
+
+        # ── Phase 6 · critic values ─────────────────────────────
+        if self.use_critic:
+            with marked_timer("values", timing_raw, color="cyan"):
+                batch = batch.union(self._compute_values(batch))
+
+        # ── Phase 7 · token-level rewards (+KL) and GAE  (driver CPU) ──
+        with marked_timer("adv", timing_raw, color="brown"):
+            batch.batch["token_level_scores"] = reward_tensor
+            if self.config.algorithm.use_kl_in_reward:
+                batch, kl_metrics = apply_kl_penalty(batch, kl_ctrl=self.kl_ctrl_in_reward, ...)
+            else:
+                batch.batch["token_level_rewards"] = batch.batch["token_level_scores"]
+            batch = compute_advantage(batch,
+                                      adv_estimator=self.config.algorithm.adv_estimator,
+                                      gamma=..., lam=..., config=self.config.algorithm)
+
+        # ── Phase 9 · critic update  (before actor) ─────────────
+        if self.use_critic:
+            with marked_timer("update_critic", timing_raw, color="pink"):
+                critic_output = self._update_critic(batch)
+
+        # ── Phase 8 · actor update  (skipped during critic warmup) ──
+        if self.config.trainer.critic_warmup &lt;= self.global_steps:
+            with marked_timer("update_actor", timing_raw, color="red"):
+                actor_output = self._update_actor(batch)
+
+        # ── Phase 10 · weight sync → rollout engine (hybrid engine) ──
+        with marked_timer("update_weights", timing_raw, color="red"):
+            self.checkpoint_manager.update_weights(self.global_steps)</code></pre>
+
+  <p>The <code>_compute_*</code> and <code>_update_*</code> helpers are thin: they reshape the
+  <code>DataProto</code>, then call a method on a worker group (<code>self.actor_rollout_wg</code>,
+  <code>self.critic_wg</code>) whose Ray dispatch decorator fans the call out across all 8 GPUs.</p>
+
+  <h3>8.2 Phase 7 — advantages: <code>compute_advantage</code> → GAE</h3>
+
+  <p>The driver routes to one of a dozen registered estimators. For PPO it is GAE:</p>
+
+  <pre><code># verl/trainer/ppo/ray_trainer.py — compute_advantage()   (def at :187)
+
+if adv_estimator == AdvantageEstimator.GAE:
+    advantages, returns = core_algos.compute_gae_advantage_return(
+        token_level_rewards=data.batch["token_level_rewards"],
+        values=data.batch["values"],
+        response_mask=data.batch["response_mask"],
+        gamma=gamma, lam=lam)
+    data.batch["advantages"] = advantages
+    data.batch["returns"]    = returns</code></pre>
+
+  <pre><code># verl/trainer/ppo/core_algos.py — compute_gae_advantage_return()   (:216)
+
+with torch.no_grad():
+    nextvalues = 0
+    lastgaelam = 0
+    advantages_reversed = []
+    gen_len = token_level_rewards.shape[-1]
+
+    for t in reversed(range(gen_len)):
+        delta       = token_level_rewards[:, t] + gamma * nextvalues - values[:, t]
+        lastgaelam_ = delta + gamma * lam * lastgaelam
+
+        # skip values and TD-error on observation (non-response) tokens
+        nextvalues = values[:, t] * response_mask[:, t] + (1 - response_mask[:, t]) * nextvalues
+        lastgaelam = lastgaelam_ * response_mask[:, t] + (1 - response_mask[:, t]) * lastgaelam
+        advantages_reversed.append(lastgaelam)
+
+    advantages = torch.stack(advantages_reversed[::-1], dim=1)
+    returns    = advantages + values
+    advantages = verl_F.masked_whiten(advantages, response_mask)   # zero-mean, unit-var
+return advantages, returns</code></pre>
+
+  <div class="note">
+    The teaching pseudo-code in Phase 7 writes <code>nextvalues = values[:, t] * response_mask[:, t]</code>.
+    The real masking <em>carries the previous value forward</em> at masked positions
+    (<code>+ (1 - mask) * nextvalues</code>) instead of zeroing it, so a run of padding/observation
+    tokens between response spans doesn't reset the recurrence to zero. Same idea, more careful at the
+    boundaries.
+  </div>
+
+  <h3>8.3 Phase 8 — actor loss: <code>ppo_loss</code> → <code>compute_policy_loss_vanilla</code></h3>
+
+  <p>The worker's loss function (<code>ppo_loss</code>) selects the relevant fields, looks up the
+  configured policy-loss variant, and adds optional entropy/KL terms:</p>
+
+  <pre><code># verl/workers/utils/losses.py — ppo_loss()   (:57)
+
+data = data.select("response_mask", "old_log_probs", "advantages", ...).to_padded_tensor()
+response_mask = data["response_mask"].to(bool)
+
+policy_loss_fn = get_policy_loss_fn(config.policy_loss.get("loss_mode", "vanilla"))
+pg_loss, pg_metrics = policy_loss_fn(
+    old_log_prob=data["old_log_probs"], log_prob=log_prob,
+    advantages=data["advantages"], response_mask=response_mask,
+    loss_agg_mode=config.loss_agg_mode, config=config, rollout_is_weights=...)
+
+policy_loss = pg_loss
+if entropy is not None:                          # optional exploration bonus
+    policy_loss -= config.entropy_coeff * agg_loss(entropy, response_mask, ...)
+if config.use_kl_loss:                           # optional KL-in-loss (vs KL-in-reward)
+    kld = kl_penalty(log_prob, data["ref_log_prob"], config.kl_loss_type)
+    policy_loss += config.kl_loss_coef * agg_loss(kld, response_mask, ...)
+return policy_loss, metrics</code></pre>
+
+  <p>The clipped surrogate itself. Beyond the textbook two-term <code>min</code>, production verl adds
+  <strong>asymmetric clipping</strong> (separate low/high ε) and <strong>dual-clip</strong>
+  (<code>clip_ratio_c</code>) that bounds the loss when an advantage is negative:</p>
+
+  <pre><code># verl/trainer/ppo/core_algos.py — compute_policy_loss_vanilla()   (:1279)
+
+negative_approx_kl = torch.clamp(log_prob - old_log_prob, min=-20.0, max=20.0)  # stability
+ratio = torch.exp(negative_approx_kl)                                # ρ = π_θ / π_old   (4, 512)
+
+pg_losses1 = -advantages * ratio                                    # −ρ·A
+pg_losses2 = -advantages * torch.clamp(ratio, 1 - cliprange_low, 1 + cliprange_high)
+clip_pg_losses1 = torch.maximum(pg_losses1, pg_losses2)             # standard PPO clip
+
+# dual-clip: when A &lt; 0, also cap the loss at −c·A so a huge ratio can't blow it up
+pg_losses3 = -advantages * clip_ratio_c                             # c = 3.0
+clip_pg_losses2 = torch.min(pg_losses3, clip_pg_losses1)
+pg_losses = torch.where(advantages &lt; 0, clip_pg_losses2, clip_pg_losses1)
+
+pg_loss = agg_loss(loss_mat=pg_losses, loss_mask=response_mask,     # masked token-mean → scalar
+                   loss_agg_mode=loss_agg_mode, **config.global_batch_info)
+return pg_loss, {"actor/pg_clipfrac": ..., "actor/ppo_kl": ..., "actor/pg_clipfrac_lower": ...}</code></pre>
+
+  <h3>8.4 Phase 9 — critic loss: <code>value_loss</code> → <code>compute_value_loss</code></h3>
+
+  <pre><code># verl/workers/utils/losses.py — value_loss()  (:147)
+#   then verl/trainer/ppo/core_algos.py — compute_value_loss()  (:2084)
+
+vpredclipped = verl_F.clip_by_value(vpreds, values - cliprange_value,    # clip around old V
+                                            values + cliprange_value)
+vf_losses1 = (vpreds       - returns) ** 2
+vf_losses2 = (vpredclipped - returns) ** 2
+clipped_vf_losses = torch.max(vf_losses1, vf_losses2)                    # pessimistic on V
+vf_loss = 0.5 * agg_loss(clipped_vf_losses, loss_mask=response_mask, loss_agg_mode=...)
+return vf_loss, vf_clipfrac</code></pre>
+
+  <div class="note">
+    The clip-around-old-value mirrors the actor's ratio clip: it stops the critic from moving its
+    prediction too far in a single update, the same trust-region intuition applied to the value head.
+    <code>returns</code> is the (un-whitened) regression target — see Phase 7 on why it is <em>not</em>
+    whitened while advantages are.
+  </div>
+
+  <h3>8.5 Inside a worker — the DP collectives (Phases 8e–8f)</h3>
+
+  <p>Each worker runs the mini-batch loop. The two NCCL calls visible at this level are an
+  <strong>AllGather</strong> of per-rank token counts (for correct global-mean loss scaling) and an
+  <strong>AllReduce</strong> of the scalar loss across the DP group. The FSDP AllGather/ReduceScatter
+  of weights and gradients happen one level deeper, inside <code>self.engine.train_batch(...)</code>.</p>
+
+  <pre><code># verl/workers/engine_workers.py — train_mini_batch()  (:234)
+
+dataloader = tu.make_iterator(data, mini_batch_size=mini_batch_size_per_gpu,
+                              epochs=epochs, seed=seed + dp_rank, ...)
+with self.engine.train_mode():
+    for batch_idx, mini_batch_td in enumerate(dataloader):
+        global_token_num = mini_batch_td["input_ids"].offsets().diff().tolist()
+        # AllGather token counts across DP so every rank scales the loss by the same denominator
+        torch.distributed.all_gather_object(
+            global_token_num_output, global_token_num, self.engine.get_data_parallel_group())
+        actor_output = self.train_batch(mini_batch_td)   # → engine.train_batch runs fwd+bwd+step
+
+# verl/workers/engine_workers.py — train_batch()  (:325)
+output = self.engine.train_batch(data, loss_function=self.loss_fn)   # FSDP AllGather/ReduceScatter
+                                                                     # + TP AllReduce live in here
+
+# verl/workers/engine_workers.py — _postprocess_output()  (:172)
+loss = torch.sum(torch.tensor(output.pop("loss"), device=self.device_name))
+dp_group = self.engine.get_data_parallel_group()
+if dp_group is not None:
+    torch.distributed.all_reduce(loss, op=torch.distributed.ReduceOp.AVG, group=dp_group)  # 8f</code></pre>
+
+  <h3>8.6 Phases 4–6 — log-probs &amp; values: driver → worker dispatch</h3>
+
+  <p>Phases 4, 5, 6 are the same forward-pass machinery with different weights. The driver helper
+  reshapes the batch and dispatches one worker-group call; the <code>@register(dispatch_mode=...)</code>
+  decorator on the worker method is what turns a single Python call into a collective across all GPUs:</p>
+
+  <pre><code># verl/trainer/ppo/ray_trainer.py — _compute_old_log_prob()  (:1253)
+
+batch_td = left_right_2_no_padding(batch.to_tensordict())
+tu.assign_non_tensor(batch_td, calculate_entropy=True, compute_loss=False)
+output = self.actor_rollout_wg.compute_log_prob(batch_td)     # fan-out to all actor workers
+log_probs = no_padding_2_padding(tu.get(output, "log_probs"), batch_td)
+return DataProto.from_tensordict({"old_log_probs": log_probs.float(), ...}), mfu</code></pre>
+
+  <p><code>_compute_ref_log_prob</code> (Phase 5) and <code>_compute_values</code> (Phase 6) follow the
+  exact same shape — only the target worker group and the output key differ.</p>
+
+  <!-- ── §8.7 Pointer index ─────────────────── -->
+  <h3>8.7 Pointer index</h3>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Concept</th><th>File</th><th>Symbol / Lines</th></tr>
+      <tr><td>PPO training loop</td><td><code>verl/trainer/ppo/ray_trainer.py</code></td><td><code>fit()</code> · 1359, body 1420–1672</td></tr>
+      <tr><td>Advantage dispatch</td><td><code>verl/trainer/ppo/ray_trainer.py</code></td><td><code>compute_advantage()</code> · 187</td></tr>
+      <tr><td>GAE advantage / return</td><td><code>verl/trainer/ppo/core_algos.py</code></td><td><code>compute_gae_advantage_return()</code> · 216</td></tr>
+      <tr><td>GRPO advantage</td><td><code>verl/trainer/ppo/core_algos.py</code></td><td><code>compute_grpo_outcome_advantage()</code> · 268</td></tr>
+      <tr><td>Actor (PPO clip) loss</td><td><code>verl/trainer/ppo/core_algos.py</code></td><td><code>compute_policy_loss_vanilla()</code> · 1279</td></tr>
+      <tr><td>Critic (value) loss</td><td><code>verl/trainer/ppo/core_algos.py</code></td><td><code>compute_value_loss()</code> · 2084</td></tr>
+      <tr><td>Loss assembly (actor/critic)</td><td><code>verl/workers/utils/losses.py</code></td><td><code>ppo_loss()</code> · 57 · <code>value_loss()</code> · 147</td></tr>
+      <tr><td>Worker mini-batch loop</td><td><code>verl/workers/engine_workers.py</code></td><td><code>train_mini_batch()</code> · 234</td></tr>
+      <tr><td>DP loss AllReduce</td><td><code>verl/workers/engine_workers.py</code></td><td><code>_postprocess_output()</code> · 189</td></tr>
+      <tr><td>DP token-count AllGather</td><td><code>verl/workers/engine_workers.py</code></td><td>288</td></tr>
+      <tr><td>Old / ref log-prob dispatch</td><td><code>verl/trainer/ppo/ray_trainer.py</code></td><td><code>_compute_old_log_prob()</code> · 1253</td></tr>
+      <tr><td>DataProto protocol</td><td><code>verl/protocol.py</code></td><td>—</td></tr>
+    </table>
+  </div>
+
+  <!-- ── §9 Async PPO ──────────────────────── -->
+  <h2 id="async-ppo">9. Async PPO</h2>
+
+  <p>The walkthrough above describes <strong>synchronous PPO</strong>: each phase blocks until the
+  previous one completes, so the GPUs alternate between being idle during rollout (training workers
+  wait) and idle during training (generation workers wait). Async PPO breaks this barrier by running
+  generation and training concurrently.</p>
+
+  <h3>9.1 Motivation: GPU Utilization in Sync vs Async</h3>
+
+  <p>In sync mode a single training step looks like:</p>
+
+  <pre><code>[──────── Rollout (~80% of wall clock, sequential token-by-token) ────────][Reward][LogP][Ref][GAE][Train][WeightSync]
+ Training workers: IDLE ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+ Rollout workers:                                                                           IDLE ▲▲▲▲▲▲▲▲▲▲▲</code></pre>
+
+  <p>Rollout dominates because autoregressive generation is serial (one token per step), while a
+  training forward+backward is massively parallelized. Typical split: generation takes ~80% of
+  wall-clock time per iteration.</p>
+
+  <p>Async PPO overlaps the two:</p>
+
+  <pre><code>Gen workers:   [─── gen batch 1 ───][─── gen batch 2 ───][─── gen batch 3 ───] ...
+Train workers:          [─ train batch 1 ─][─ train batch 2 ─][─ train batch 3 ─] ...
+                        ↑                  ↑                  ↑
+                  weight sync         weight sync         weight sync   (every K train steps)</code></pre>
+
+  <p>Generation workers push completed sequences to a shared buffer; training workers pull from it as
+  soon as enough data is available. Neither side idles waiting for the other.</p>
+
+  <h3>9.2 Architecture</h3>
+
+  <pre><code>┌─────────────────────────────────────────────────────────┐
+│                      Ray Controller                      │
+│  ┌────────────────┐          ┌──────────────────────┐    │
+│  │  Data buffer   │◄─────────│  Generation workers  │    │
+│  │  (bounded      │  push    │  AsyncLLMEngine      │    │
+│  │   async queue) │          │  (vLLM continuous    │    │
+│  └───────┬────────┘          │   batching)          │    │
+│          │                   └──────────────────────┘    │
+│          │ pull when                     ▲               │
+│          │ buffer ≥ M             weight broadcast        │
+│          ▼                        (every K steps)        │
+│  ┌───────────────────────┐              │               │
+│  │   Training workers    │──────────────┘               │
+│  │   (actor + critic     │                              │
+│  │    update, FSDP)      │                              │
+│  └───────────────────────┘                              │
+└─────────────────────────────────────────────────────────┘</code></pre>
+
+  <p><strong>Generation workers</strong> run an <code>AsyncLLMEngine</code> (vLLM or SGLang) with
+  continuous batching. They accept new prompts and stream out completed sequences without waiting for
+  a global batch barrier. They use a potentially stale copy of the actor weights.</p>
+
+  <p><strong>Training workers</strong> run the same FSDP actor+critic setup as in the sync walkthrough
+  (Phases 4–10). They pull a mini-batch from the buffer once <code>buffer_size ≥ M</code> and
+  broadcast updated weights back to generation workers every K training steps.</p>
+
+  <p><strong>Data buffer</strong> is a bounded queue. If it fills, generation workers backpressure
+  until training catches up; if it empties, training workers block until new sequences arrive.</p>
+
+  <h3>9.3 The Staleness Problem</h3>
+
+  <p>Because training workers update the policy independently of generation, sequences in the buffer
+  were generated by a policy that is <strong>up to K training steps old</strong>. In sync PPO, the
+  behavior policy (π<sub>old</sub>) and the current training policy (π<sub>new</sub>) differ only
+  within a single mini-batch. In async PPO they can be K updates apart, widening the importance
+  ratio <code>π_new / π_old</code> beyond the range PPO was designed for.</p>
+
+  <p><strong>Importance sampling correction.</strong> Each sequence in the buffer carries
+  <code>log_prob_behavior</code> — the log prob recorded at generation time under the weights that
+  produced it. The PPO surrogate uses this instead of a separately stored <code>old_log_probs</code>:</p>
+
+  <pre><code># log_prob_behavior stored in buffer at generation time
+# log_prob_new   computed fresh in the training forward pass
+
+rho = exp(log_prob_new - log_prob_behavior)   # (M, R)  importance weight
+
+surr1 = rho * advantages
+surr2 = clamp(rho, 1-eps, 1+eps) * advantages
+actor_loss = -mean(min(surr1, surr2) * response_mask)</code></pre>
+
+  <p>The formula is identical to sync PPO; the difference is that <code>rho</code> can be
+  meaningfully far from 1 when K is large.</p>
+
+  <p><strong>Staleness bound.</strong> verl exposes a <code>max_policy_lag</code> hyperparameter.
+  If generation workers' weights are more than <code>max_policy_lag</code> training steps behind,
+  generation pauses until the next weight broadcast catches up.</p>
+
+  <pre><code>max_policy_lag = K   # typical: 1–4 training steps</code></pre>
+
+  <p>With K=1, data is at most 1 step stale — nearly on-policy. With K=4, the IS ratio distribution
+  widens and the clipped surrogate is under more stress.</p>
+
+  <h3>9.4 Weight Synchronization Cadence</h3>
+
+  <p>In sync PPO, weight sync happens once per step (Phase 10): ~3.5 GB AllGather per training
+  iteration. In async PPO the sync is decoupled:</p>
+
+  <pre><code>Every K training steps:
+  1. Training workers: FSDP AllGather → full TP-sharded weights
+     NCCL — AllGather across DP group:
+       input per GPU:   ~875 MB FSDP shard (bfloat16)
+       output per GPU:  ~3.5 GB full TP=2 copy (bfloat16)
+
+  2. Ray broadcasts weights to generation workers via object store:
+       payload: ~3.5 GB (once per K steps)
+
+  3. Generation workers load new weights into AsyncLLMEngine
+       (brief pause to swap parameters; in-flight sequences may be drained first)</code></pre>
+
+  <p>Amortized per training step: <code>3.5 GB / K</code>. With K=4 that is ~875 MB/step vs 3.5 GB/step
+  in sync mode — a 4× reduction in weight-sync bandwidth.</p>
+
+  <h3>9.5 Phase Correspondence</h3>
+
+  <p>The per-sequence computation is the same as the sync walkthrough. The structural difference is
+  <em>when</em> and <em>on what</em> each phase runs.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Sync phase</th><th>Async equivalent</th></tr>
+      <tr><td>Phase 1 — Data loading</td><td>Controller streams prompts to gen workers continuously</td></tr>
+      <tr><td>Phase 2 — Rollout</td><td>Gen workers, running concurrently with training</td></tr>
+      <tr><td>Phase 3 — Reward</td><td>Applied before sequences enter the buffer</td></tr>
+      <tr><td>Phase 4 — Old log-probs</td><td>Recorded at generation time; stored in buffer as <code>log_prob_behavior</code></td></tr>
+      <tr><td>Phase 5 — Ref log-probs</td><td>Ref workers run concurrently with generation (or collocated)</td></tr>
+      <tr><td>Phase 6 — Value estimation</td><td>Critic forward on training workers when batch is pulled</td></tr>
+      <tr><td>Phase 7 — GAE</td><td>Controller CPU, same as sync</td></tr>
+      <tr><td>Phase 8 — Actor update</td><td>Training workers, same FSDP/TP mechanics as sync</td></tr>
+      <tr><td>Phase 9 — Critic update</td><td>Training workers, same as sync</td></tr>
+      <tr><td>Phase 10 — Weight sync</td><td>Every K steps instead of every step</td></tr>
+    </table>
+  </div>
+
+  <h3>9.6 Throughput vs. Convergence Trade-off</h3>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Dimension</th><th>Sync PPO</th><th>Async K=1</th><th>Async K=4</th></tr>
+      <tr><td>GPU utilization</td><td>~20–40%</td><td>~80–90%</td><td>~85–95%</td></tr>
+      <tr><td>Policy staleness</td><td>0</td><td>1 step</td><td>up to 4 steps</td></tr>
+      <tr><td>Weight sync (per step)</td><td>3.5 GB</td><td>3.5 GB</td><td>~875 MB</td></tr>
+      <tr><td>IS ratio spread</td><td>narrow</td><td>slightly wider</td><td>wider</td></tr>
+      <tr><td>Sample efficiency</td><td>highest</td><td>slightly lower</td><td>lower</td></tr>
+      <tr><td>Throughput (seqs/s)</td><td>1×</td><td>~3–5×</td><td>~4–6×</td></tr>
+    </table>
+  </div>
+
+  <p>For tasks where rollout dominates (long responses, large models), async PPO with K=2–4 is the
+  standard choice. For tasks where training dominates (many PPO epochs, large critic, short
+  responses), sync PPO may match throughput with better sample efficiency.</p>
+
+  <h3>9.7 Key Code Pointers (Async)</h3>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Concept</th><th>File</th><th>Notes</th></tr>
+      <tr><td>Async PPO trainer</td><td><code>verl/trainer/ppo/ray_trainer.py</code></td><td><code>AsyncPPOTrainer</code> class</td></tr>
+      <tr><td>AsyncLLMEngine rollout</td><td><code>verl/workers/rollout/vllm_rollout/</code></td><td>continuous batching via vLLM</td></tr>
+      <tr><td>Weight broadcast</td><td><code>verl/trainer/ppo/ray_trainer.py</code></td><td><code>broadcast_weights_to_rollout()</code></td></tr>
+      <tr><td>Data buffer / async queue</td><td><code>verl/trainer/ppo/ray_trainer.py</code></td><td>bounded sequence queue</td></tr>
+      <tr><td>Staleness config</td><td><code>verl/trainer/config/</code></td><td><code>async_config.max_policy_lag</code></td></tr>
+    </table>
+  </div>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>MCTS — Monte Carlo Tree Search</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #0d9488;
+      --accent-light: #f0fdfa;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --note-fg: #1e40af;
+      --result-fg: #16a34a;
+      --teal-border: #99f6e4;
+      --nav-bg: rgba(255,255,255,0.92);
+      --algo-bg: #0f172a;
+      --algo-fg: #e2e8f0;
+      --algo-muted: #94a3b8;
+      --algo-border: #334155;
+      --algo-kw: #7dd3fc;
+      --algo-req: #cbd5e1;
+      --algo-phase: #f9a8d4;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #2dd4bf;
+        --accent-light: #10201e;
+        --warning-bg: #101a2b;
+        --warning-border: #1e40af;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --note-fg: #93c5fd;
+        --result-fg: #4ade80;
+        --teal-border: #134e4a;
+        --nav-bg: rgba(15,17,21,0.9);
+        --algo-bg: #1c2531;
+        --algo-fg: #e2e8f0;
+        --algo-muted: #94a3b8;
+        --algo-border: #334155;
+        --algo-kw: #7dd3fc;
+        --algo-req: #cbd5e1;
+        --algo-phase: #f9a8d4;
+      }
+    }
+
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 0; line-height: 1.75; font-size: 16px; }
+
+    nav { position: sticky; top: 0; z-index: 100; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 52px; }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 0.9rem; color: var(--accent); text-decoration: none; white-space: nowrap; }
+    .nav-links { display: flex; gap: 4px; overflow-x: auto; flex: 1; }
+    .nav-links a { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; white-space: nowrap; transition: color 0.15s, background 0.15s; }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    .hero { background: linear-gradient(135deg, #134e4a 0%, #0d9488 60%, #14b8a6 100%); color: white; padding: 56px 24px 48px; text-align: center; }
+    .hero h1 { font-size: clamp(1.5rem, 4vw, 2.2rem); font-weight: 600; margin: 0 0 12px; letter-spacing: -0.02em; }
+    .hero p { margin: 0 auto; opacity: 0.85; font-size: 0.97rem; max-width: 620px; }
+    .hero-pill { display: inline-block; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 100px; font-size: 0.78rem; padding: 3px 12px; margin-bottom: 16px; letter-spacing: 0.04em; text-transform: uppercase; }
+
+    .page-wrap { max-width: 820px; margin: 0 auto; padding: 48px 24px 80px; }
+
+    h2 { font-size: 1.15rem; font-weight: 600; margin: 2.8em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); color: var(--text); }
+    h3 { font-size: 0.97rem; font-weight: 600; margin: 1.6em 0 0.4em; color: var(--ink); }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+    code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-size: 0.88em; }
+
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
+    th, td { border: 1px solid var(--border); padding: 9px 16px; text-align: left; }
+    th { background: var(--surface); font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+    tr:hover td { background: var(--row-hover); }
+
+    .step { background: var(--step-bg); border: 1px solid var(--step-border); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 1.2em 0; }
+    .step-label { font-weight: 600; font-size: 0.88rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+    .step-label::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+
+    .note { background: var(--warning-bg); border-left: 3px solid var(--warning-border); border-radius: 0 8px 8px 0; padding: 10px 16px; margin: 1em 0; font-size: 0.92em; color: var(--note-fg); }
+    .note::before { content: '💡 '; }
+
+    .result { background: var(--boxed-bg); border: 1.5px solid var(--boxed-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; text-align: center; }
+    .result-label { font-size: 0.8rem; font-weight: 600; color: var(--result-fg); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+
+    .read { background: var(--accent-light); border: 1px solid var(--teal-border); border-radius: 8px; padding: 14px 18px; margin: 1.2em 0; }
+    .read-label { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+    .read p { margin: 0.3em 0; }
+
+    .algo { background: var(--algo-bg); color: var(--algo-fg); border-radius: 8px; padding: 20px 24px; margin: 1.2em 0; font-family: 'Menlo', 'Monaco', 'Courier New', monospace; font-size: 0.875rem; line-height: 1.8; }
+    .algo-title { font-family: 'Inter', sans-serif; font-size: 0.78rem; font-weight: 600; color: var(--algo-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0; padding-bottom: 10px; border-bottom: 1px solid var(--algo-border); }
+    .algo pre { margin: 12px 0 0; padding: 0; font: inherit; color: inherit; background: transparent; white-space: pre; }
+    .algo .kw { color: var(--algo-kw); font-weight: 600; }
+    .algo .cm { color: var(--algo-muted); font-style: italic; }
+    .algo .req { color: var(--algo-req); }
+    .algo .phase { color: var(--algo-phase); font-weight: 600; }
+
+    /* Four-phase diagram */
+    .phase-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0;
+      margin: 1.4em 0;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    @media (max-width: 640px) { .phase-grid { grid-template-columns: 1fr 1fr; } }
+    .phase-card {
+      padding: 18px 16px;
+      border-right: 1px solid var(--border);
+      position: relative;
+    }
+    .phase-card:last-child { border-right: none; }
+    .phase-num {
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: var(--accent);
+      opacity: 0.25;
+      position: absolute;
+      top: 10px;
+      right: 14px;
+      line-height: 1;
+    }
+    .phase-name { font-weight: 600; font-size: 0.92rem; margin-bottom: 6px; color: var(--text); }
+    .phase-card p { font-size: 0.83rem; color: var(--muted); margin: 0; line-height: 1.5; }
+
+    /* UCB term breakdown */
+    .formula-breakdown {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    @media (max-width: 560px) { .formula-breakdown { grid-template-columns: 1fr; } }
+    .formula-term {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .formula-term-label { font-size: 0.78rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 4px; }
+    .formula-term-eq { font-size: 1.05rem; margin-bottom: 6px; }
+    .formula-term p { font-size: 0.88rem; margin: 0; color: var(--muted); }
+
+    /* Upgrade comparison */
+    .upgrade-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    @media (max-width: 560px) { .upgrade-grid { grid-template-columns: 1fr; } }
+    .upgrade-card { border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+    .upgrade-card.after { border-color: var(--accent); background: var(--accent-light); }
+    .upgrade-label { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; color: var(--muted); }
+    .upgrade-card.after .upgrade-label { color: var(--accent); }
+    .upgrade-title { font-weight: 600; margin-bottom: 4px; font-size: 0.95rem; }
+    .upgrade-card p { font-size: 0.88rem; margin: 0.3em 0; }
+
+    .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 1.2em 0; }
+    .summary-card { background: var(--accent-light); border: 1px solid var(--teal-border); border-radius: 8px; padding: 14px 16px; }
+    .summary-card-label { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    .next-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 1.2em 0; }
+    .next-card { border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; text-decoration: none; color: inherit; transition: border-color 0.15s, box-shadow 0.15s; display: block; }
+    .next-card:hover { border-color: var(--accent); box-shadow: 0 2px 8px rgba(13,148,136,0.1); }
+    .next-card-label { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+    .next-card-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 4px; }
+    .next-card p { margin: 0; font-size: 0.88rem; color: var(--muted); }
+
+    .resource { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; margin: 1em 0 1.6em; display: flex; align-items: flex-start; gap: 12px; font-size: 0.92rem; }
+    .resource-icon { font-size: 1.2rem; flex-shrink: 0; margin-top: 1px; }
+    .resource a { color: var(--accent); font-weight: 600; }
+    .resource p { margin: 2px 0 0; color: var(--muted); font-size: 0.87rem; }
+
+    footer { border-top: 1px solid var(--border); padding: 28px 24px; text-align: center; font-size: 0.82rem; color: var(--muted); }
+    @media (max-width: 600px) { .page-wrap { padding: 32px 16px 60px; } }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>MCTS</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#notation">Notation</a>
+    <a href="#phases">Four Phases</a>
+    <a href="#ucb">UCB / UCT</a>
+    <a href="#algorithm">Algorithm</a>
+    <a href="#neural">Neural MCTS</a>
+    <a href="#puct">PUCT</a>
+    <a href="#llm">In LLM RL</a>
+    <a href="#next">What's Next</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">RL Foundations</span>
+  <h1>Monte Carlo Tree Search</h1>
+  <p>Build a search tree at decision time. Simulate possible futures, back up the results, and use visit counts and value estimates to find the best action — without needing a perfect model.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="resource">
+    <span class="resource-icon">🎓</span>
+    <div>
+      <a href="https://www.youtube.com/watch?v=2pWv7GOvuf0&list=PLqYmG7hTraZDM-OYHWgPebj2MfCFzFObQ" target="_blank">David Silver's Reinforcement Learning Course (DeepMind/UCL)</a>
+      <p>Covers MCTS from Lectures 8 (integrating learning and planning — simulation-based search) and 10 (classic games — MCTS for Go).</p>
+    </div>
+  </div>
+
+  <p><a href="dqn.html" style="color:var(--accent);">DQN</a> learns to act greedily from a single forward pass — no lookahead, no planning. <strong>MCTS</strong> does the opposite: at every decision point it simulates hundreds or thousands of possible futures, building up a local search tree before committing to an action. The key insight is that you don't need to search the entire game tree — you only need to search well enough to find a better action than greedy. UCB tells you where to focus the search budget.</p>
+
+  <h2 id="notation">Notation</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symbol</th><th>Description</th></tr>
+      <tr><td>\(N(s)\)</td><td>Visit count of node (state) \(s\)</td></tr>
+      <tr><td>\(N(s,a)\)</td><td>Visit count of edge (state–action pair) \((s,a)\)</td></tr>
+      <tr><td>\(W(s,a)\)</td><td>Total value accumulated through edge \((s,a)\)</td></tr>
+      <tr><td>\(Q(s,a)\)</td><td>Mean value of edge \((s,a)\): \(W(s,a) / N(s,a)\)</td></tr>
+      <tr><td>\(c\)</td><td>Exploration constant — scales the UCB bonus</td></tr>
+      <tr><td>\(P(a \mid s)\)</td><td>Prior probability of action \(a\) from state \(s\) (from policy network in neural MCTS)</td></tr>
+      <tr><td>\(V_\theta(s)\)</td><td>Value network estimate of expected return from state \(s\)</td></tr>
+      <tr><td>\(K\)</td><td>Number of simulations (search budget)</td></tr>
+    </table>
+  </div>
+
+  <h2 id="phases">1. The Four Phases</h2>
+  <p>Each MCTS simulation repeats four steps. Run \(K\) simulations, then act.</p>
+
+  <div class="phase-grid">
+    <div class="phase-card">
+      <div class="phase-num">1</div>
+      <div class="phase-name">Selection</div>
+      <p>Traverse the existing tree from the root, choosing the child with the highest UCT score at each node, until reaching a leaf or terminal state.</p>
+    </div>
+    <div class="phase-card">
+      <div class="phase-num">2</div>
+      <div class="phase-name">Expansion</div>
+      <p>If the leaf is not terminal and has been visited at least once, add one (or more) child nodes to the tree by expanding an unvisited action.</p>
+    </div>
+    <div class="phase-card">
+      <div class="phase-num">3</div>
+      <div class="phase-name">Simulation</div>
+      <p>From the new node, run a <em>rollout</em> — play to the end using a fast (often random) policy and observe the terminal return \(G\).</p>
+    </div>
+    <div class="phase-card">
+      <div class="phase-num">4</div>
+      <div class="phase-name">Backpropagation</div>
+      <p>Walk back up the path from leaf to root. For every edge \((s,a)\) on the path: \(N(s,a) \mathrel{+}= 1\), \(W(s,a) \mathrel{+}= G\), \(Q(s,a) = W / N\).</p>
+    </div>
+  </div>
+
+  <p>After \(K\) simulations, select the action from the root with the highest visit count \(N(s_0, a)\) — the most-explored action is typically the most reliable, since UCB concentrates visits on promising branches.</p>
+
+  <div class="note">
+    The simulation phase is the "Monte Carlo" in MCTS — it estimates the value of a node by sampling a random trajectory from it, exactly like the <a href="mc-rollouts.html" style="color:var(--note-fg);">MC rollouts</a> page describes. The "tree search" part is UCB-guided selection, which concentrates those rollouts on promising branches instead of sampling uniformly.
+  </div>
+
+  <h2 id="ucb">2. UCB and UCT — The Selection Formula</h2>
+  <p>At each selection step, MCTS must choose which child to visit. A purely greedy choice (\(\arg\max_a Q(s,a)\)) would exploit known good actions but never discover better ones. A purely random choice would explore uniformly but waste budget on bad branches. <strong>UCB1</strong> (Auer et al., 2002) solves the multi-armed bandit version of this dilemma:</p>
+
+  \[
+    \text{UCB1}(a) = \bar{r}_a + c\sqrt{\frac{\ln N}{N_a}}
+  \]
+
+  <p><strong>UCT</strong> (Upper Confidence bounds applied to Trees, Kocsis & Szepesvári 2006) lifts UCB1 into the tree by applying it at every node:</p>
+
+  <div class="result">
+    <div class="result-label">UCT selection score</div>
+    \[
+      \text{UCT}(s, a) = \underbrace{Q(s,a)}_{\text{exploit}} + c\,\underbrace{\sqrt{\frac{\ln N(s)}{N(s,a)}}}_{\text{explore}}
+    \]
+  </div>
+
+  <div class="formula-breakdown">
+    <div class="formula-term">
+      <div class="formula-term-label">Exploitation term</div>
+      <div class="formula-term-eq">\(Q(s,a) = W(s,a) \,/\, N(s,a)\)</div>
+      <p>Mean return from all past simulations through \((s,a)\). High \(Q\) → this action has historically led to good outcomes.</p>
+    </div>
+    <div class="formula-term">
+      <div class="formula-term-label">Exploration bonus</div>
+      <div class="formula-term-eq">\(c\,\sqrt{\ln N(s) \,/\, N(s,a)}\)</div>
+      <p>Grows large when \(N(s,a)\) is small relative to the parent's visit count. Forces the search to eventually visit every action.</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-label">How UCT concentrates budget</div>
+    <p>When \(N(s,a) = 0\) (action never tried), the exploration bonus is infinite — UCT always tries unvisited actions before revisiting. Once every action has been tried, UCT balances: a good-but-well-visited action competes with a mediocre-but-rarely-visited one. As \(N(s,a) \to \infty\), the exploration bonus shrinks to zero and UCT converges to greedy. The constant \(c\) controls how long exploration persists — larger \(c\) = more exploration.</p>
+    <p>UCT is theoretically grounded: for multi-armed bandits, UCB1 achieves \(O(\log N)\) regret — optimal up to a constant. In trees the analysis is more complex, but empirically UCT finds near-optimal actions with far fewer simulations than exhaustive search.</p>
+  </div>
+
+  <h2 id="algorithm">3. The Full MCTS Algorithm</h2>
+
+  <div class="algo">
+    <div class="algo-title">Algorithm — MCTS with UCT</div>
+    <pre><span class="req">Require:</span> root state s₀, simulation budget K, exploration constant c
+<span class="req">Initialize:</span> N(s₀) ← 0;  for each a: N(s₀,a) ← 0,  W(s₀,a) ← 0
+
+<span class="kw">for</span> simulation = 1 <span class="kw">to</span> K <span class="kw">do</span>
+    s ← s₀;  path ← []
+
+    <span class="phase">▷ Selection</span>
+    <span class="kw">while</span> s is in tree <span class="kw">and</span> s is not terminal <span class="kw">do</span>
+        a ← argmax<sub>a'</sub> UCT(s, a')             <span class="cm">▷ exploit + explore via UCB</span>
+        path.append(s, a);  s ← transition(s, a)
+    <span class="kw">end while</span>
+
+    <span class="phase">▷ Expansion</span>
+    <span class="kw">if</span> s is not terminal <span class="kw">then</span>
+        add s to tree;  N(s,·) ← 0;  W(s,·) ← 0
+        a ← any unvisited action from s
+        path.append(s, a);  s ← transition(s, a)
+    <span class="kw">end if</span>
+
+    <span class="phase">▷ Simulation</span>
+    G ← rollout(s)                           <span class="cm">▷ random play to terminal state</span>
+
+    <span class="phase">▷ Backpropagation</span>
+    <span class="kw">for</span> (s, a) ∈ reversed(path) <span class="kw">do</span>
+        N(s, a) ← N(s, a) + 1
+        W(s, a) ← W(s, a) + G
+        Q(s, a) ← W(s, a) / N(s, a)
+        N(s)    ← N(s) + 1
+    <span class="kw">end for</span>
+<span class="kw">end for</span>
+<span class="kw">return</span> argmax<sub>a</sub> N(s₀, a)                      <span class="cm">▷ most-visited action at root</span></pre>
+  </div>
+
+  <div class="note">
+    Acting by \(\arg\max_a N(s_0, a)\) (most visited) is more robust than \(\arg\max_a Q(s_0, a)\) (highest mean value) because visit counts are less noisy — a good action gets visited many times, while a single lucky rollout can inflate Q for a rarely-visited action.
+  </div>
+
+  <h2 id="neural">4. Neural-Guided MCTS</h2>
+  <p>Pure MCTS with random rollouts works well in games with short episodes and dense reward (Go, chess). It struggles when:</p>
+  <ul>
+    <li>Rollouts are expensive (long episodes, slow simulators)</li>
+    <li>Random play is uninformative (the rollout policy is too bad to reach meaningful terminal states)</li>
+    <li>The branching factor is huge (many possible actions — uniform UCB exploration wastes budget)</li>
+  </ul>
+  <p>Neural networks address all three by replacing the two weakest parts of MCTS:</p>
+
+  <div class="upgrade-grid">
+    <div class="upgrade-card">
+      <div class="upgrade-label">Pure MCTS</div>
+      <div class="upgrade-title">Random rollout</div>
+      <p>Play randomly until terminal. Cheap but uninformative in complex domains — the signal from a random-play game is barely related to the value of the starting position.</p>
+    </div>
+    <div class="upgrade-card after">
+      <div class="upgrade-label">Neural MCTS</div>
+      <div class="upgrade-title">Value network \(V_\theta(s)\)</div>
+      <p>Evaluate the leaf directly with a learned value function. No rollout needed — one forward pass replaces an entire trajectory. Dramatically reduces simulation cost.</p>
+    </div>
+    <div class="upgrade-card">
+      <div class="upgrade-label">Pure MCTS</div>
+      <div class="upgrade-title">Uniform prior over actions</div>
+      <p>UCT treats all unvisited actions equally. In Go (∼250 legal moves) or LLM token generation (∼100k vocab), this wastes budget on obviously bad moves.</p>
+    </div>
+    <div class="upgrade-card after">
+      <div class="upgrade-label">Neural MCTS</div>
+      <div class="upgrade-title">Policy network \(P_\theta(a \mid s)\)</div>
+      <p>Use the network's prior probability as an initial bias in UCB. Focus early simulations on plausible actions; let the search refine from there.</p>
+    </div>
+  </div>
+
+  <h2 id="puct">5. PUCT — AlphaZero's Selection Formula</h2>
+  <p>AlphaZero (Silver et al., 2017) replaces UCT's exploration bonus with a <em>policy-weighted</em> version called <strong>PUCT</strong> (Predictor UCT):</p>
+
+  <div class="result">
+    <div class="result-label">PUCT selection score</div>
+    \[
+      \text{PUCT}(s, a) = Q(s,a) + c \cdot P(a \mid s) \cdot \frac{\sqrt{N(s)}}{1 + N(s,a)}
+    \]
+  </div>
+
+  <p>Compared to UCT, two changes:</p>
+  <ul>
+    <li><strong>\(P(a \mid s)\) multiplier</strong>: the policy network's prior probability scales the exploration bonus. Actions the network thinks are likely start with a larger bonus, focusing early simulations on plausible moves rather than exploring uniformly.</li>
+    <li><strong>\(\sqrt{N(s)} / (1 + N(s,a))\)</strong>: functionally similar to \(\sqrt{\ln N(s) / N(s,a)}\) but cheaper to compute and smoother when \(N(s,a) = 0\) (bonus is \(\sqrt{N(s)}\) rather than \(\infty\)).</li>
+  </ul>
+
+  <div class="step">
+    <div class="step-label">The interplay between search and network</div>
+    <p>The policy network \(P_\theta\) shapes where the search looks; the search corrects the network's mistakes. A node that looks bad to the network but good after careful search will accumulate visits and update \(Q(s,a)\) upward — overriding the prior. In AlphaZero training, the visit count distribution \(\pi_\text{MCTS}(a) \propto N(s_0, a)^{1/\tau}\) is used as a training target for the policy network, so the network gradually learns to agree with the search. This self-reinforcing loop is the engine of AlphaZero improvement.</p>
+  </div>
+
+  <h2 id="llm">6. MCTS in LLM Reasoning</h2>
+  <p>MCTS has become an active tool for scaling test-time compute in LLMs — spending more inference budget to produce better answers to hard problems.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>MDP component</th><th>In LLM MCTS</th></tr>
+      <tr><td>State \(s_t\)</td><td>Prompt + reasoning steps generated so far (partial chain-of-thought)</td></tr>
+      <tr><td>Action \(a_t\)</td><td>The next reasoning step — typically a sentence or paragraph, not a single token</td></tr>
+      <tr><td>Transition</td><td>Append the step to the context (deterministic)</td></tr>
+      <tr><td>Rollout / value</td><td>Either continue generating to a final answer and score it, or query a <em>process reward model</em> (PRM) to score the current step</td></tr>
+      <tr><td>Terminal reward</td><td>Outcome reward model (ORM) score on the final answer, or ground-truth correctness</td></tr>
+      <tr><td>Policy prior \(P(a \mid s)\)</td><td>The LLM's own next-step probabilities — concentrated on likely continuations</td></tr>
+    </table>
+  </div>
+
+  <h3>Process reward models (PRMs) as the value function</h3>
+  <p>In standard MCTS the value network \(V_\theta(s)\) evaluates intermediate states. For LLM reasoning, a <strong>process reward model</strong> plays this role: it scores each reasoning step, not just the final answer. This is the LLM equivalent of AlphaZero's value head — a signal that tells the search whether the current chain of thought is on a good path, without needing to generate a complete answer.</p>
+
+  <p>PRMs are hard to train (they require human annotations or strong automated verifiers for intermediate steps), which is why many LLM MCTS systems fall back to outcome-based rollouts — generate a complete answer, check correctness, backpropagate. More expensive, but avoids the PRM training problem.</p>
+
+  <h3>Branching at step level, not token level</h3>
+  <p>Applying MCTS at the token level is computationally intractable — the branching factor equals the vocabulary size (~50k), and each node requires a full forward pass. Practical systems instead branch at the <em>reasoning step</em> level: generate one complete sentence or thought, evaluate it, and branch from there. This keeps the branching factor manageable (typically 2–8 continuations per node) at the cost of reduced granularity in the search.</p>
+
+  <div class="read">
+    <div class="read-label">Test-time compute scaling</div>
+    <p>The central empirical finding: for hard reasoning problems (math, code, logic), spending more MCTS simulations at inference time — without changing the model's weights — consistently improves accuracy. This is "test-time compute scaling": trading inference FLOPs for answer quality. OpenAI's o1/o3 and DeepSeek-R1 are examples of models trained to exploit this — though their exact search strategies are not fully public.</p>
+  </div>
+
+  <h2 id="next">7. What's Next</h2>
+  <div class="next-grid">
+    <a class="next-card" href="alphazero.html">
+      <div class="next-card-label">Next</div>
+      <div class="next-card-title">AlphaZero</div>
+      <p>MCTS + policy/value network + self-play. How the network and search co-train, the PUCT-guided tree, and what "tabula rasa" learning from scratch actually looks like.</p>
+    </a>
+    <a class="next-card" href="dqn.html">
+      <div class="next-card-label">Prerequisite</div>
+      <div class="next-card-title">DQN</div>
+      <p>Deep Q-Networks — neural function approximation for Q*, experience replay, and target networks. The value-learning foundation MCTS's value network builds on.</p>
+    </a>
+    <a class="next-card" href="mc-rollouts.html">
+      <div class="next-card-label">Prerequisite</div>
+      <div class="next-card-title">Monte Carlo Rollouts</div>
+      <p>The simulation phase of MCTS is a Monte Carlo rollout — understanding rollouts is key to understanding what MCTS is actually estimating.</p>
+    </a>
+    <a class="next-card" href="value-functions.html">
+      <div class="next-card-label">Prerequisite</div>
+      <div class="next-card-title">Value Functions</div>
+      <p>\(Q(s,a)\) is the core statistic MCTS maintains per edge. The Bellman equations are what MCTS is empirically approximating via simulation.</p>
+    </a>
+  </div>
+
+  <h2>Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">Four phases</div>
+      <p>Select → Expand → Simulate → Backpropagate. Repeat \(K\) times, then act.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">UCT</div>
+      <p>\(Q(s,a) + c\sqrt{\ln N(s)\,/\,N(s,a)}\) — exploit good actions, explore undervisited ones</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Action selection</div>
+      <p>\(\arg\max_a N(s_0, a)\) — most visited, not highest Q, for robustness</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">PUCT</div>
+      <p>\(Q(s,a) + c \cdot P(a|s) \cdot \sqrt{N(s)}\,/\,(1+N(s,a))\) — policy-weighted exploration</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Neural upgrade</div>
+      <p>Replace random rollout with \(V_\theta(s)\); replace uniform prior with \(P_\theta(a|s)\)</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">In LLM RL</div>
+      <p>Branch at reasoning-step level; PRM as value function; test-time compute scaling</p>
+    </div>
+  </div>
+
+</div>
+
+<footer>Personal ML notes · <a href="https://github.com/yueyiming2009/ai-learning" style="color:inherit;text-decoration:underline;">source on GitHub</a></footer>
+
+</body>
+</html>
