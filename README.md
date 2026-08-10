@@ -46,6 +46,10 @@ self-attention (forward & backward), the pre-norm block, linear attention, Gated
 routing. **Training:** the next-token objective and single-device loop, multi-token prediction
 (parallel heads vs. DeepSeek-V3's sequential MTP modules, and the free draft head that falls out),
 and the neural scaling laws that size the run (Kaplan vs. Chinchilla, the compute-optimal frontier).
+**Model Architectures:** case studies reading complete 2026 frontier designs through those
+components — DeepSeek-V4 (sequence-compressed sparse attention, mHC residual lanes), Qwen3.5
+(the 3:1 Gated DeltaNet hybrid scaled to 397B, native early-fusion vision), and Kimi K3
+(KDA + NoPE gated MLA, Block AttnRes, latent-space MoE, MXFP4 QAT).
 
 ### 04 · Systems & Scaling — [docs/systems/](docs/systems/), [triton/](triton/)
 The engineering substrate that trains it across many devices, built bottom-up — MFU, the PyTorch

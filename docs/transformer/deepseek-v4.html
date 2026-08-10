@@ -1,0 +1,977 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>DeepSeek-V4 — Compress the Sequence, Not the Channels</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #7c3aed;
+      --accent-light: #f5f3ff;
+      --warning-bg: #fffbeb;
+      --warning-border: #f59e0b;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --compare-bg: #eff6ff;
+      --compare-border: #3b82f6;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --note-fg: #78350f;
+      --result-fg: #16a34a;
+      --compare-fg: #2563eb;
+      --violet-border: #ddd6fe;
+      --nav-bg: rgba(255,255,255,0.92);
+      --fig-bg: #ffffff;
+      --plot-grid: #eceef1;
+      --plot-axis: #c7cbd1;
+      --plot-tick: #9ca3af;
+      --plot-violet: #7c3aed;
+      --plot-violet2: #a78bfa;
+      --plot-amber: #d97706;
+      --plot-teal: #0d9488;
+      --plot-gray: #9ca3af;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #a78bfa;
+        --accent-light: #1a1626;
+        --warning-bg: #251c0b;
+        --warning-border: #b45309;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --compare-bg: #101a2b;
+        --compare-border: #1e40af;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --note-fg: #fcd34d;
+        --result-fg: #4ade80;
+        --compare-fg: #60a5fa;
+        --violet-border: #372a5e;
+        --nav-bg: rgba(15,17,21,0.9);
+        --fig-bg: #14181e;
+        --plot-grid: #232830;
+        --plot-axis: #3a4149;
+        --plot-tick: #6b7280;
+        --plot-violet: #a78bfa;
+        --plot-violet2: #c4b5fd;
+        --plot-amber: #fbbf24;
+        --plot-teal: #2dd4bf;
+        --plot-gray: #6b7280;
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .nav-back {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      white-space: nowrap;
+      transition: color 0.15s;
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+    .nav-back:hover { color: var(--text); }
+
+    .hero {
+      background: linear-gradient(135deg, #5b21b6 0%, #7c3aed 50%, #8b5cf6 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.85;
+      font-size: 0.97rem;
+      max-width: 640px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+    a { color: var(--accent); }
+
+    code {
+      font-family: 'SF Mono', SFMono-Regular, ui-monospace, Menlo, monospace;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+    .note::before { content: '⚠ '; }
+
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    .compare {
+      background: var(--compare-bg);
+      border: 1.5px solid var(--compare-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .compare-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--compare-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 10px;
+    }
+    .compare-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 600px) { .compare-grid { grid-template-columns: 1fr; } }
+    .compare-col-label {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--ink);
+      margin-bottom: 4px;
+    }
+
+    .figure {
+      background: var(--fig-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 16px 14px;
+      margin: 1.6em 0;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .figure canvas {
+      width: 100%;
+      height: 300px;
+      display: block;
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      justify-content: center;
+      margin-top: 12px;
+      font-size: 0.82rem;
+      color: var(--text);
+    }
+    .legend-item { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, var(--c) 0 5px, transparent 5px 9px); }
+    .figure-caption {
+      font-size: 0.85rem;
+      color: var(--muted);
+      line-height: 1.6;
+      margin: 14px 4px 2px;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .summary-card {
+      background: var(--accent-light);
+      border: 1px solid var(--violet-border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .summary-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    .next-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .next-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      text-decoration: none;
+      color: inherit;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      display: block;
+    }
+    .next-card:hover { border-color: var(--accent); box-shadow: 0 2px 8px rgba(124,58,237,0.1); }
+    .next-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .next-card-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 4px; }
+    .next-card p { margin: 0; font-size: 0.88rem; color: var(--muted); }
+
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>DeepSeek-V4</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#lineage">Lineage</a>
+    <a href="#csa">CSA</a>
+    <a href="#hca">HCA &amp; the stack</a>
+    <a href="#rope">Positions</a>
+    <a href="#moe">MoE</a>
+    <a href="#mhc">mHC</a>
+    <a href="#training">Training</a>
+    <a href="#compared">Compared</a>
+    <a href="#summary">Summary</a>
+  </div>
+  <a class="nav-back" href="mla.html">← MLA</a>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Model Architectures</span>
+  <h1>DeepSeek-V4</h1>
+  <p>The generation that retired MLA: attention over a million tokens by compressing the sequence itself — sparse selection over 4-token summaries, dense attention over 128-token summaries, and a Sinkhorn-constrained residual stream, trained with Muon on 33T tokens.</p>
+</div>
+
+<div class="page-wrap">
+
+  <p>
+    DeepSeek-V4 (preview release, April 2026) is DeepSeek's answer to a specific question: what does a
+    transformer have to look like when <em>every</em> request may carry a million tokens of context?
+    V3's answer to long context was <a href="mla.html">MLA</a> — shrink each token's cache entry.
+    V4's answer is more radical: shrink the <em>number</em> of entries. The series ships in two sizes,
+    both MIT-licensed with open weights:
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th></th><th>V4-Pro</th><th>V4-Flash</th></tr>
+      <tr><td>Total / activated params</td><td>1.6T / 49B</td><td>284B / 13B</td></tr>
+      <tr><td>Layers × hidden dim</td><td>61 × 7168</td><td>43 × 4096</td></tr>
+      <tr><td>Attention</td><td colspan="2">Interleaved CSA + HCA (sequence-compressed; no MLA, no full attention)</td></tr>
+      <tr><td>Query heads / KV heads</td><td>128 / 1 (dim 512)</td><td>64 / 1 (dim 512)</td></tr>
+      <tr><td>Sparse top-k (CSA)</td><td>1024 compressed entries</td><td>512 compressed entries</td></tr>
+      <tr><td>MoE</td><td>1 shared + 384 routed, top-6</td><td>1 shared + 256 routed, top-6</td></tr>
+      <tr><td>Objective</td><td colspan="2">Next-token + <a href="multi-token-prediction.html">MTP</a> (1 module, unchanged from V3)</td></tr>
+      <tr><td>Optimizer</td><td colspan="2">Muon (matrices) + AdamW (embeddings, head, norms, mHC)</td></tr>
+      <tr><td>Context</td><td colspan="2">1,048,576 tokens, native (staged 4K → 16K → 64K → 1M)</td></tr>
+      <tr><td>Pretraining tokens</td><td>33T</td><td>32T</td></tr>
+    </table>
+  </div>
+
+  <p>
+    Architecturally, V4 changes four things at once: the attention stack (CSA + HCA replace MLA),
+    the residual stream (manifold-constrained hyper-connections), the optimizer (Muon becomes primary),
+    and the numerics (FP4 expert weights via quantization-aware training). This page walks each one,
+    in that order, because the attention redesign is what everything else serves.
+  </p>
+
+  <h2 id="lineage">1. Lineage — Three Answers to the Same Wall</h2>
+  <p>
+    The cost of <a href="attention.html">softmax attention</a> at decode is proportional to the number of
+    cached entries: every new token reads the whole <a href="../inference/kv-cache.html">KV cache</a>.
+    Three DeepSeek generations attacked that constant from three different directions:
+  </p>
+  <ul>
+    <li>
+      <strong>V2/V3 — compress the channel axis.</strong> <a href="mla.html">MLA</a> stores one low-rank
+      576-element latent per token instead of GQA-8's 2048. The per-entry cost shrinks 3.6×, but the
+      entry <em>count</em> still grows one-per-token: at 1M tokens the cache is still ∝ \(T\).
+    </li>
+    <li>
+      <strong>V3.2-Exp — skip most entries.</strong> DSA (DeepSeek Sparse Attention) keeps every token's
+      entry but lets each query attend to only the top-\(k\) of them, chosen by a cheap "lightning
+      indexer" scoring pass. Core-attention FLOPs become constant in \(T\) — but the memory is untouched,
+      and the indexer itself still scans all \(T\) entries.
+    </li>
+    <li>
+      <strong>V4 — store fewer entries in the first place.</strong> Compress runs of tokens into single
+      cache entries — 4-to-1 in most layers (CSA), 128-to-1 in the rest (HCA) — and run the indexer and
+      the attention over the <em>compressed</em> entries. Both memory and FLOPs now scale with \(T/m\),
+      and MLA disappears entirely: there is no per-token latent left to cache.
+    </li>
+  </ul>
+
+  <div class="compare">
+    <div class="compare-label">Two compressions that sound alike but are orthogonal</div>
+    <div class="compare-grid">
+      <div>
+        <div class="compare-col-label">MLA — channel compression (V2/V3)</div>
+        <p style="font-size:0.88rem; margin:4px 0 0;">Each token keeps its own cache slot; the slot gets
+        narrower (2048 → 576 elements). Cache = \(T \times 576\). Exact attention over every token is
+        still possible — nothing is merged.</p>
+      </div>
+      <div>
+        <div class="compare-col-label">CSA/HCA — sequence compression (V4)</div>
+        <p style="font-size:0.88rem; margin:4px 0 0;">Tokens share slots: 4 (or 128) consecutive tokens
+        are summarized into one 512-dim entry. Cache = \(\tfrac{T}{4} \times 512\) (or \(\tfrac{T}{128}\)).
+        Attention over individual distant tokens is now approximate by construction.</p>
+      </div>
+    </div>
+  </div>
+
+  <p>
+    That last clause is the bet the whole architecture makes: <em>most of a million-token history is only
+    ever needed in summary</em>. Two mechanisms hedge the bet — a sliding window of raw, uncompressed
+    recent tokens in every layer (local precision), and the interleaving of two compression strengths
+    (§3) so that what one resolution loses the other can still see.
+  </p>
+
+  <h2 id="csa">2. CSA — Compressed Sparse Attention</h2>
+  <p>CSA is a three-stage pipeline: <em>compress</em> the history, <em>select</em> from it, <em>attend</em> to the selection.</p>
+
+  <div class="step">
+    <div class="step-label">Step A — Compress: 4 tokens → 1 entry</div>
+    <p>
+      Each run of \(m = 4\) consecutive tokens is reduced to a single 512-dimensional cache entry by a
+      learned, softmax-weighted combination of the tokens' states, with learnable position-in-group
+      biases. Two compression branches (\(C_a\), \(C_b\)) run with <em>overlapping</em> windows, offset
+      from one another — so a phrase that straddles one branch's group boundary sits in the middle of the
+      other's. Compression happens once per token-group at prefill and is cached; it is never recomputed.
+    </p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step B — Select: the lightning indexer, now over summaries</div>
+    <p>
+      A lightweight scoring head — 64 indexer heads of dimension 128, ReLU activations, computed in FP4 —
+      scores every compressed entry against the current query token. The top-\(k\) entries win
+      (\(k = 1024\) for Pro, 512 for Flash) and only they enter core attention. This is V3.2's DSA
+      mechanism, inherited almost verbatim, with one big difference: it now scans \(T/4\) summaries
+      instead of \(T\) tokens, so the one remaining \(O(T)\) pass got 4× cheaper too.
+    </p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step C — Attend: shared-KV MQA over the shortlist</div>
+    <p>
+      Core attention is multi-query: 128 query heads (Pro) share a <em>single</em> KV head of dimension
+      512, and each compressed entry serves as both the key <em>and</em> the value — one vector, read
+      twice. Queries are produced low-rank from a compressed latent (\(d_c = 1536\), shared with the
+      indexer's queries), per-head RMSNorm is applied to queries and to the KV entry, and two extras
+      round out the softmax:
+    </p>
+    <ul style="margin-top:6px;">
+      <li>a <strong>sliding window</strong> of the last \(n_{\text{win}} = 128\) raw (uncompressed) tokens, always attended — local syntax never depends on the indexer;</li>
+      <li>a learnable per-head <strong>attention sink</strong> logit in the softmax denominator — the "attend to nothing" option, so heads with no relevant match aren't forced to smear probability over the shortlist.</li>
+    </ul>
+  </div>
+
+  <p>
+    The output side is also restructured: instead of one \(128 \cdot 512 \times d\) output projection, the
+    128 heads are split into 16 groups, each projected to a 1024-dim intermediate and then to
+    \(d\) — a low-rank, grouped <code>W_O</code> that cuts the projection cost several-fold.
+  </p>
+
+  <div class="note">
+    Everything the indexer never selects is still <em>in the cache</em> — selection is per-query, not a
+    deletion. Two queries ten thousand tokens apart can shortlist entirely different regions of the
+    history. This is what separates CSA from cache-eviction schemes (H2O, StreamingLLM): nothing is
+    forgotten, only deprioritized per step.
+  </div>
+
+  <h2 id="hca">3. HCA and the Interleaved Stack</h2>
+  <p>
+    HCA (Heavily Compressed Attention) is CSA's coarse sibling: \(m' = 128\) tokens per entry,
+    non-overlapping, and <em>no selection at all</em> — the entry count is so small
+    (a 1M-token history compresses to ~8K entries) that dense attention over all of them is affordable.
+    Where CSA retrieves precisely from a shortlist, HCA reads a cheap global gist of <em>everything</em>.
+  </p>
+
+  <div class="compare">
+    <div class="compare-label">Division of labor</div>
+    <div class="compare-grid">
+      <div>
+        <div class="compare-col-label">CSA — precise, sparse</div>
+        <p style="font-size:0.88rem; margin:4px 0 0;">4:1 compression, indexer picks top-1024, MQA
+        attends to those. Sharp retrieval — but only over what the indexer surfaces.</p>
+      </div>
+      <div>
+        <div class="compare-col-label">HCA — coarse, dense</div>
+        <p style="font-size:0.88rem; margin:4px 0 0;">128:1 compression, no indexer, attend to all
+        entries. Blurry — but nothing in the history is ever invisible to it.</p>
+      </div>
+    </div>
+  </div>
+
+  <p>
+    The stack interleaves them: V4-Pro opens with two HCA layers, then alternates CSA and HCA to the top.
+    An indexer miss in a CSA layer is not fatal, because the adjacent HCA layers maintain unconditional
+    (if low-resolution) access to the full history — the same "cheap global layers backstop the precise
+    ones" logic that hybrid linear-attention stacks use, with compression strength in place of
+    state size (compare <a href="qwen-3-5.html">Qwen3.5</a> and <a href="kimi-k3.html">Kimi K3</a>,
+    which interleave linear-attention layers with full-attention layers in a 3:1 ratio).
+    V4-Flash replaces its first two layers with pure sliding-window attention instead — at 13B active
+    params, the cheapest possible opening.
+  </p>
+
+  <div class="figure">
+    <canvas id="plot-kv" aria-label="KV-cache size per layer versus context length for GQA-8, MLA, CSA, and HCA on log-log axes"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg dash" style="--c:var(--plot-gray)"></span> GQA-8 (2048 elem/token)</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-amber)"></span> MLA (576)</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span> CSA (512 per 4 tokens)</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-teal)"></span> HCA (512 per 128 tokens)</span>
+    </div>
+    <p class="figure-caption">
+      <strong>Sequence compression moves the whole line, not just its slope's constant.</strong>
+      KV-cache size per layer (BF16) vs. context length, log–log. Every scheme is still linear in
+      \(T\) — a straight line of slope 1 here — but each compression drops the line by its factor:
+      MLA sits 3.6× below GQA-8, CSA 4× below MLA, HCA 32× below CSA. At 1M tokens per layer:
+      GQA-8 ≈ 4.1 GB, MLA ≈ 1.2 GB, CSA ≈ 256 MB, HCA ≈ 8 MB. Averaged over V4-Pro's interleaved
+      stack and with FP8 storage of the non-RoPE dims, the paper's official figure is a cache
+      ≈ <em>2%</em> of a BF16 GQA-8 baseline — and 10% of V3.2's MLA cache.
+    </p>
+  </div>
+
+  <h2 id="rope">4. Positions — Partial RoPE and the −i Output Trick</h2>
+  <p>
+    Only the last 64 of each 512 dimensions carry <a href="../foundations/rope-gradient.html">RoPE</a>
+    (\(\theta = 10{,}000\); compressed entries use a longer-wavelength \(\theta = 160{,}000\)), with
+    YaRN ×16 rescaling taking trained positions to 1M. The rest of the dimensions are position-free —
+    the now-standard partial-RoPE compromise (<a href="qwen-3-5.html">Qwen3.5</a> rotates 64 of 256;
+    <a href="kimi-k3.html">Kimi K3</a> goes all the way to NoPE on its global layers).
+  </p>
+  <p>
+    Shared-KV creates a subtle position bug that V4 patches with a novel trick. In standard RoPE, keys
+    are rotated by their position \(i\) and queries by \(t\); the dot product depends only on \(t - i\),
+    and <em>values pass through unrotated</em>. But in V4 the same rotated vector is key <em>and</em>
+    value — so each attended entry now injects its absolute rotation \(R_i\) into the output, and the
+    layer's output would depend on absolute position. The fix: rotate the core-attention <em>output</em>
+    by \(-t\) (the query's own position, negated).
+  </p>
+
+  <div class="step">
+    <div class="step-label">Why the output rotation restores relativity</div>
+    <p>
+      On the RoPE dims, the attended mixture is \(\sum_i a_i R_i e_i\) for entry vectors \(e_i\).
+      Applying \(R_{-t}\) to it gives \(\sum_i a_i R_{i-t}\, e_i\) — every term now depends on the
+      <em>relative</em> offset \(i - t\) only, exactly the property plain RoPE has for free when values
+      are unrotated. One extra rotation per token; absolute-position leakage cancelled.
+    </p>
+  </div>
+
+  <h2 id="moe">5. MoE — Familiar Skeleton, Three Sharpened Edges</h2>
+  <p>
+    The MoE substrate is recognizably DeepSeekMoE — fine-grained experts (1 shared + 384 routed, top-6
+    for Pro), <a href="moe-routing.html">aux-loss-free bias-based balancing</a> (bias update speed 0.001)
+    with a tiny sequence-wise balance loss (weight \(10^{-4}\)) — with three changes worth noting:
+  </p>
+  <ul>
+    <li>
+      <strong>Routing score: sigmoid → \(\sqrt{\mathrm{softplus}}\).</strong> V3 scored expert affinity
+      with a sigmoid, which saturates: once a favored expert's logit is high, gradient through the gate
+      value dies. \(\sqrt{\mathrm{softplus}(x)}\) is monotone, positive, and unbounded but
+      square-root-tempered — combining weights can keep growing (and keep receiving gradient) without
+      exploding.
+    </li>
+    <li>
+      <strong>Hash routing for the first 3 layers.</strong> V3 kept its first three FFN layers dense
+      because early-layer routing is unstable. V4 makes them MoE anyway but routes by a predefined hash
+      of the token ID — deterministic, perfectly balanced by construction, zero routing parameters to
+      destabilize. Every block in the model is now MoE.
+    </li>
+    <li>
+      <strong>Node-limited routing removed.</strong> V3 constrained each token's experts to at most
+      \(M\) nodes to bound all-to-all traffic; V4 drops the constraint entirely and lets the
+      <a href="../systems/moe-parallelism.html">expert-parallel</a> fabric take the hit — a statement
+      about how much their interconnect stack improved.
+    </li>
+  </ul>
+  <p>
+    Routed expert weights are stored and served in FP4, trained quantization-aware; most other tensors
+    train in FP8 (e4m3). The released checkpoint <em>is</em> the FP8/FP4 artifact — quantization is not a
+    post-hoc conversion (<a href="../inference/inference-quantization.html">quantization page</a> for
+    why that distinction matters).
+  </p>
+
+  <h2 id="mhc">6. mHC — A Doubly-Stochastic Residual Stream</h2>
+  <p>
+    The <a href="transformer-block.html">residual stream</a> is the one part of the block that has barely
+    changed since 2017: each sublayer adds its output to a single running vector. Hyper-connections
+    (and V4's manifold-constrained variant, mHC) widen and re-learn it:
+  </p>
+  <ul>
+    <li>The stream is widened to \(n_{hc} = 4\) parallel lanes.</li>
+    <li>
+      Each layer applies a learned <em>mixing matrix</em> \(B_\ell\) across lanes — but projected onto
+      the <strong>Birkhoff polytope</strong> (the set of doubly stochastic matrices: rows and columns
+      each sum to 1, entries ≥ 0) via 20 iterations of Sinkhorn–Knopp row/column normalization.
+    </li>
+    <li>Sigmoid gates control what each sublayer reads from and writes to the lanes.</li>
+  </ul>
+  <p>
+    The constraint is the point. An unconstrained learned mixing can amplify or attenuate the stream and
+    compound across 61 layers into exactly the signal explosion the residual highway was meant to
+    prevent; a doubly stochastic mixing is an <em>averaging</em> — total lane mass is conserved, so the
+    stream can be re-routed but never inflated. Kimi K3 attacks the same rigidity with a different tool
+    (softmax attention over previous layers' outputs — see <a href="kimi-k3.html">Block AttnRes</a>);
+    that two frontier labs independently redesigned the residual stream in the same half-year marks it
+    as the block's next contested component. mHC parameters are small, sensitive, and trained with
+    AdamW rather than Muon.
+  </p>
+
+  <h2 id="training">7. Training — Muon, Clamps, and Anticipatory Routing</h2>
+  <p>
+    V4 is the first DeepSeek flagship trained primarily with
+    <a href="../foundations/optimizers.html">Muon</a>: matrix parameters take orthogonalized momentum
+    updates (momentum 0.95, weight decay 0.1, update-RMS rescaled to 0.18), while embeddings, the
+    prediction head, RMSNorm gains, and mHC parameters stay on AdamW
+    (\(\beta_1 = 0.9\), \(\beta_2 = 0.95\), \(\varepsilon = 10^{-20}\)). Peak LR 2.0e-4 (Pro).
+    Two stability mechanisms are more unusual:
+  </p>
+  <ul>
+    <li>
+      <strong>SwiGLU clamping.</strong> Throughout training, the
+      <a href="../foundations/swiglu.html">SwiGLU</a> linear branch is clamped to \([-10, 10]\) and the
+      gate capped at 10 — a hard ceiling on the activation blow-ups that plague low-precision MoE
+      training. (Kimi K3 solves the same problem more surgically, by changing the activation itself —
+      see SiTU-GLU on the <a href="kimi-k3.html">K3 page</a>.)
+    </li>
+    <li>
+      <strong>Anticipatory Routing.</strong> When a loss spike is detected, routing <em>decisions</em>
+      switch to a slightly stale parameter copy \(\theta_{t-\Delta t}\) (precomputed one step ahead)
+      while the expert <em>computation</em> uses current \(\theta_t\), with a short rollback. The idea:
+      a spike means current parameters are momentarily unreliable — so don't let them decide where
+      tokens go. Costs ~20% wall-clock while active; engaged automatically, only on spikes. This is a
+      training-time cousin of the routing-instability problem covered on the
+      <a href="moe-routing.html">MoE routing page</a> — there, stale-vs-fresh routing appears at the
+      RL train/inference boundary; here, inside a single pretraining run.
+    </li>
+  </ul>
+  <p>
+    The rest of the recipe: 33T tokens with sample-level attention masking (documents packed into one
+    sequence can no longer attend across document boundaries — new vs. V3), staged context extension
+    4K → 16K → 64K → 1M, and batch-invariant deterministic kernels giving bitwise train/inference
+    reproducibility — which removes an entire class of
+    <a href="../rl/verl-async-training.html">RL train/rollout mismatch</a> bugs by construction.
+    <a href="multi-token-prediction.html">MTP</a> survives unchanged from V3: one sequential module,
+    loss weight 0.3 decayed to 0.1.
+  </p>
+
+  <p>
+    The payoff, per the tech report: at 1M-token context, V4-Pro decodes at <strong>27%</strong> of
+    V3.2's per-token attention FLOPs with <strong>10%</strong> of its KV cache (Flash: 10% and 7%) —
+    and V3.2 was already the sparse-attention generation.
+  </p>
+
+  <h2 id="compared">8. V4 Against Its Contemporaries</h2>
+  <p>
+    2026's three frontier open releases agree on almost everything <em>except</em> attention. All three
+    are extreme-sparsity MoE with MTP, Muon-family or undisclosed optimizers, 4-bit-precision weights,
+    and ~1M context. But where <a href="qwen-3-5.html">Qwen3.5</a> and <a href="kimi-k3.html">Kimi K3</a>
+    answer "attention over a million tokens" with <em>recurrent state</em> — most layers become
+    <a href="linear-attention.html">linear attention</a> with a fixed-size memory — V4 keeps every layer
+    softmax attention and shrinks what it reads. Summaries vs. states: the two live hypotheses for
+    long-context token mixing.
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th></th><th>DeepSeek-V4-Pro</th><th>Qwen3.5-397B</th><th>Kimi K3</th></tr>
+      <tr><td>Total / active</td><td>1.6T / 49B</td><td>397B / 17B</td><td>2.78T / 104B</td></tr>
+      <tr><td>Attention</td><td>CSA + HCA interleaved (all softmax, sequence-compressed)</td><td>3:1 Gated DeltaNet : gated attention</td><td>3:1 KDA : gated MLA</td></tr>
+      <tr><td>Long-range memory</td><td>Compressed KV summaries</td><td>Recurrent state + sparse full layers</td><td>Recurrent state + sparse full layers</td></tr>
+      <tr><td>Positions</td><td>Partial RoPE (64/512) + output \(-t\) rotation, YaRN</td><td>Partial RoPE (64/256)</td><td>NoPE on global layers</td></tr>
+      <tr><td>MoE</td><td>384+1, top-6, \(\sqrt{\mathrm{softplus}}\)</td><td>512+1, top-10, sigmoid</td><td>896+2, top-16, quantile balancing</td></tr>
+      <tr><td>Residual stream</td><td>mHC (4 lanes, Sinkhorn)</td><td>standard</td><td>Block AttnRes (8 blocks)</td></tr>
+      <tr><td>Optimizer</td><td>Muon + AdamW</td><td>not disclosed</td><td>Per-Head Muon + QK-clip</td></tr>
+      <tr><td>Low-precision weights</td><td>FP4 experts (QAT)</td><td>not disclosed</td><td>MXFP4 experts (QAT)</td></tr>
+      <tr><td>Context</td><td>1M native</td><td>262K → ~1M</td><td>1M native</td></tr>
+      <tr><td>Multimodal</td><td>text-only</td><td>native early-fusion vision</td><td>native from-scratch vision</td></tr>
+    </table>
+  </div>
+
+  <h2 id="summary">9. Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">The move</div>
+      <p>Compress the sequence axis: 4 tokens → one 512-dim shared-KV entry (CSA), 128 → 1 (HCA). MLA retired.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">CSA</div>
+      <p>Compress → lightning-indexer top-1024 → MQA over the shortlist, + 128-token raw window + attention sinks.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">HCA</div>
+      <p>128:1 compression, dense attention, no indexer — the always-on global gist that backstops CSA's misses.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Positions</div>
+      <p>Partial RoPE on 64/512 dims; output rotated by \(-t\) to cancel the absolute-position leak shared-KV creates.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Beyond attention</div>
+      <p>mHC doubly-stochastic 4-lane residual stream; \(\sqrt{\mathrm{softplus}}\) routing + hash-routed early MoE; Muon primary; FP4 experts.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">The numbers</div>
+      <p>At 1M context vs V3.2: 27% attention FLOPs, 10% KV cache (Pro). Cache ≈ 2% of a BF16 GQA-8 baseline.</p>
+    </div>
+  </div>
+
+  <h2>What's Next</h2>
+  <div class="next-grid">
+    <a class="next-card" href="mla.html">
+      <div class="next-card-label">Predecessor</div>
+      <div class="next-card-title">Multi-head Latent Attention</div>
+      <p>The channel-axis compression V4 retired — and still the global-attention layer inside Kimi K3.</p>
+    </a>
+    <a class="next-card" href="qwen-3-5.html">
+      <div class="next-card-label">The rival answer</div>
+      <div class="next-card-title">Qwen3.5</div>
+      <p>Long context via recurrent state instead of compressed summaries: the 3:1 Gated DeltaNet hybrid, scaled to 397B.</p>
+    </a>
+    <a class="next-card" href="kimi-k3.html">
+      <div class="next-card-label">The rival answer, larger</div>
+      <div class="next-card-title">Kimi K3</div>
+      <p>KDA + gated MLA at 2.8T params — and Block AttnRes, the other 2026 residual-stream redesign.</p>
+    </a>
+    <a class="next-card" href="moe-routing.html">
+      <div class="next-card-label">Deep dive</div>
+      <div class="next-card-title">MoE Routing</div>
+      <p>The gating, top-k, and aux-loss-free balancing machinery V4's sigmoid → \(\sqrt{\mathrm{softplus}}\) change plugs into.</p>
+    </a>
+    <a class="next-card" href="multi-token-prediction.html">
+      <div class="next-card-label">Deep dive</div>
+      <div class="next-card-title">Multi-Token Prediction</div>
+      <p>The sequential MTP module V4 inherits unchanged from V3 — the objective and the free draft head.</p>
+    </a>
+    <a class="next-card" href="../foundations/optimizers.html">
+      <div class="next-card-label">Deep dive</div>
+      <div class="next-card-title">Optimizers</div>
+      <p>Muon's orthogonalized momentum update, and why embeddings and norms stay on AdamW.</p>
+    </a>
+  </div>
+
+  <p style="margin-top:2.5em; font-size:0.85rem; color:var(--muted);">
+    <strong>Sources:</strong> tech report
+    <a href="https://arxiv.org/abs/2606.19348">"DeepSeek-V4: Towards Highly Efficient Million-Token Context Intelligence" (arXiv:2606.19348)</a>;
+    <a href="https://fe-static.deepseek.com/chat/transparency/deepseek-V4-model-card-EN.pdf">official model card</a>;
+    <a href="https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro">DeepSeek-V4-Pro weights and config.json</a>.
+    Spec claims on this page follow the tech report and the released <code>config.json</code>; V4 is
+    officially a <em>preview</em> release, so details may shift in the stable version.
+  </p>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; DeepSeek-V4 — compress the sequence, not the channels
+  &nbsp;·&nbsp; <a href="mla.html" style="color:inherit">← MLA page</a>
+</footer>
+
+<script>
+(function () {
+  function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+  // KV cache per layer, BF16: MB(T) = elemsPerToken * T * 2 bytes / 1e6.
+  // Plotted in log10-log10 space so the compression factors read as vertical offsets.
+  function lineFor(elemsPerToken) {
+    var pts = [];
+    for (var u = 3; u <= 6.001; u += 0.05) {
+      var T = Math.pow(10, u);
+      pts.push([u, Math.log10(elemsPerToken * T * 2 / 1e6)]);
+    }
+    return pts;
+  }
+
+  function drawPlot(canvas, cfg) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const mL = 52, mR = 14, mT = 14, mB = 40;
+    const pw = cssW - mL - mR, ph = cssH - mT - mB;
+    const { xMin, xMax, yMin, yMax } = cfg;
+    const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
+    const Y = y => mT + (yMax - y) / (yMax - yMin) * ph;
+
+    ctx.font = '11px Inter, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(t => {
+      const px = X(t[0]);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.fillText(t[1], px, mT + ph + 6);
+    });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(t => {
+      const py = Y(t[0]);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+      ctx.fillText(t[1], mL - 8, py);
+    });
+
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(cfg.xLabel, mL + pw / 2, cssH - 8);
+    ctx.save();
+    ctx.translate(12, mT + ph / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText(cfg.yLabel, 0, 0);
+    ctx.restore();
+
+    ctx.save();
+    ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    ctx.lineJoin = 'round';
+    cfg.series.forEach(s => {
+      ctx.beginPath();
+      ctx.lineWidth = s.width || 2;
+      ctx.strokeStyle = s.color.indexOf('--') === 0 ? cssVar(s.color) : s.color;
+      ctx.setLineDash(s.dash || []);
+      s.points.forEach((p, i) => {
+        const px = X(p[0]), py = Y(p[1]);
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      });
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  const plots = [];
+  const kvCanvas = document.getElementById('plot-kv');
+  if (kvCanvas) plots.push([kvCanvas, {
+    xMin: 3, xMax: 6, yMin: -2.4, yMax: 3.9,
+    xTicks: [[3, '1K'], [4, '10K'], [5, '100K'], [6, '1M']],
+    yTicks: [[-2, '0.01'], [-1, '0.1'], [0, '1'], [1, '10'], [2, '100'], [3, '1000']],
+    xLabel: 'context length (tokens, log scale)',
+    yLabel: 'KV cache per layer (MB, log scale)',
+    series: [
+      { points: lineFor(2048), color: '--plot-gray',  width: 2, dash: [5, 4] },
+      { points: lineFor(576),  color: '--plot-amber', width: 2.25 },
+      { points: lineFor(128),  color: '--plot-violet', width: 2.75 },
+      { points: lineFor(4),    color: '--plot-teal',  width: 2.25 }
+    ]
+  }]);
+
+  function renderAll() { plots.forEach(([c, cfg]) => drawPlot(c, cfg)); }
+  renderAll();
+  let raf;
+  window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(renderAll); });
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq.addEventListener) mq.addEventListener('change', renderAll);
+})();
+</script>
+
+</body>
+</html>
