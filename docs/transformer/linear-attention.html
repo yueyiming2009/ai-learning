@@ -417,10 +417,12 @@
     <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
     <a href="#idea">Idea</a>
     <a href="#notation">Notation</a>
-    <a href="#derivation">Dropping the softmax</a>
-    <a href="#recurrence">Recurrence</a>
+    <a href="#derivation">Derivation</a>
+    <a href="#recurrence">RNN view</a>
     <a href="#duality">Three forms</a>
-    <a href="#capacity">Capacity</a>
+    <a href="#capacity">What you lose</a>
+    <a href="#fixes">Fixes</a>
+    <a href="#kernel">Kernel view</a>
     <a href="#summary">Summary</a>
   </div>
   <a class="nav-back" href="attention.html">← Self-Attention</a>
@@ -442,19 +444,22 @@
     vectors, and each decoded token reads all of them — \(O(T)\) memory traffic and FLOPs <em>per token</em>.
   </p>
   <p>
-    Linear attention asks: what if the similarity function were factorizable? If the score between a query
-    and a key is a plain dot product (no softmax wrapped around it), then by associativity the entire
-    history can be <em>pre-summed</em> into one matrix — a fixed-size associative memory that is updated
-    once per token and never grows. Attention becomes an RNN with a matrix-valued hidden state:
+    Linear attention asks: what if the similarity score were a plain dot product, with no softmax wrapped
+    around it? Then — by nothing deeper than associativity — the entire history can be <em>pre-summed</em>
+    into one fixed-size matrix \(S\), updated once per token and never growing. Attention becomes an RNN
+    with a matrix-valued hidden state:
   </p>
   \[
     S_t = S_{t-1} + k_t v_t^\top, \qquad o_t = S_t^\top q_t .
   \]
   <p>
-    The catch: a \(d_k \times d_v\) matrix can only hold so much. This page derives the mechanism, its
-    three computational forms, and the capacity problem that every modern linear-attention variant —
-    RetNet, GLA, Mamba-2, <a href="gated-deltanet.html" style="color:var(--accent);">Gated DeltaNet</a> —
-    is an answer to.
+    The catch: a \(d_k \times d_v\) matrix can only hold so much. The page follows that trade end to end —
+    the two-step derivation (§1), the RNN reading of the result (§2), the three computational forms that
+    make it practical (§3), what a fixed-size memory costs you (§4), and the escalating fixes — decay,
+    gates, the delta rule, hybrids — that every modern variant (RetNet, GLA, Mamba-2,
+    <a href="gated-deltanet.html" style="color:var(--accent);">Gated DeltaNet</a>) is built from (§5).
+    A closing aside (§6) answers the theory question the derivation raises: couldn't a cleverer feature
+    map have kept the softmax? Skim it freely — nothing later depends on it.
   </p>
 
   <h2 id="notation">Notation</h2>
@@ -471,7 +476,7 @@
     </table>
   </div>
 
-  <h2 id="derivation">1. Dropping the Softmax</h2>
+  <h2 id="derivation">1. The Derivation — Two Steps and a Cleanup</h2>
   <p>
     Every attention mechanism is the same template with one slot to fill — a scoring function
     \(\mathrm{sim}(q, k)\) that answers <em>"how much should this query attend to that key?"</em>:
@@ -480,209 +485,81 @@
     o_t = \frac{\sum_{j \le t} \mathrm{sim}(q_t, k_j)\, v_j}{\sum_{j \le t} \mathrm{sim}(q_t, k_j)} .
   \]
   <p>
-    Softmax attention is the choice \(\mathrm{sim}(q,k) = \exp(q^\top k)\) (scale absorbed into the
-    vectors): the dot product measures alignment, and the exponential makes scores positive and
-    stretches gaps so the best-matching keys dominate. As a similarity, \(\exp\) is excellent — the
-    problem is its algebraic <em>shape</em>. \(\exp(q^\top k)\) is a <strong>joint</strong> function of
-    the pair: were it separable as \(g(q)\,h(k)\), taking logs would equate the interaction
-    \(q^\top k\) with a sum of two independent terms — impossible. So nothing about the history can be
-    pre-summed; every query must revisit every stored key, and that is the \(O(T)\)-per-token cost of
-    softmax decoding. Linear attention fills the slot with a similarity that is separable
-    <em>by construction</em>:
+    Softmax attention fills the slot with \(\mathrm{sim}(q,k) = \exp(q^\top k)\) (scale absorbed into the
+    vectors). As a similarity, \(\exp\) is excellent — the problem is its algebraic <em>shape</em>.
+    \(\exp(q^\top k)\) is a <strong>joint</strong> function of the pair: were it separable as
+    \(g(q)\,h(k)\), taking logs would equate the interaction \(q^\top k\) with a sum of two independent
+    terms — impossible. Because query and key are tangled inside the exponential, nothing about the
+    history can be pre-computed; every query must revisit every stored key, and that is exactly the
+    \(O(T)\)-per-token cost of softmax decoding.
+  </p>
+  <p>
+    So the whole derivation is one move: <em>replace the similarity with one that factors</em>. Everything
+    else follows mechanically.
   </p>
 
   <div class="step">
-    <div class="step-label">Step A — Factorizable similarity</div>
-    <p>Choose a feature map \(\phi\) and score with \(\mathrm{sim}(q,k) = \phi(q)^\top \phi(k)\):</p>
+    <div class="step-label">Step A — Choose a factorizable similarity</div>
+    <p>Pick a feature map \(\phi\) and score with \(\mathrm{sim}(q,k) = \phi(q)^\top \phi(k)\):</p>
     \[
       o_t = \frac{\sum_{j \le t} \bigl(\phi(q_t)^\top \phi(k_j)\bigr) v_j}{\sum_{j \le t} \phi(q_t)^\top \phi(k_j)}
     \]
     <p>
-      This is the kernel trick run in reverse (unpacked below): \(\exp(q^\top k)\) is itself an inner
-      product in an <em>infinite</em>-dimensional feature space, and Step A trades it for one whose
-      features are finite and explicit — which is what makes the factoring in Step B possible.
-      Katharopoulos et al. (2020) used \(\phi(x) = 1 + \mathrm{elu}(x)\) to keep scores positive;
-      modern variants mostly use the identity.
+      Katharopoulos et al. (2020) used \(\phi(x) = 1 + \mathrm{elu}(x)\) to keep scores positive; modern
+      variants mostly use the identity, i.e. score with the raw dot product \(q^\top k\). (Whether some
+      \(\phi\) could <em>approximate</em> the dropped \(\exp\) is the §6 aside — the derivation doesn't
+      need it.)
     </p>
   </div>
 
   <div class="step">
     <div class="step-label">Step B — Pull the query out of the sum (associativity)</div>
-    <p>\(\phi(q_t)\) does not depend on \(j\), so it factors out of both sums:</p>
+    <p>\(\phi(q_t)\) does not depend on the summation index \(j\), so it factors out of both sums:</p>
     \[
       o_t = \frac{\phi(q_t)^\top \overbrace{\textstyle\sum_{j \le t} \phi(k_j)\, v_j^\top}^{S_t}}
                  {\phi(q_t)^\top \underbrace{\textstyle\sum_{j \le t} \phi(k_j)}_{z_t}}
       \;=\; \frac{S_t^\top \phi(q_t)}{z_t^\top \phi(q_t)}
     \]
     <p>
-      Everything the history contributes is now compressed into \(S_t\) (a \(d_k \times d_v\) matrix) and
-      \(z_t\) (a \(d_k\) vector). The sum over \(j \le t\) is still there — but it no longer contains the
-      query, so it is a pure function of the history, the same object for every present and future query.
-      That gives it a <strong>fixed size</strong> (\(d_k \times d_v\) numbers whether ten tokens or a
-      million went in) and an <strong>incremental update</strong>
-      (\(S_t = S_{t-1} + \phi(k_t)\,v_t^\top\), a prefix sum costing \(O(d_k d_v)\) per token — no stored
-      \(k_j, v_j\), no revisiting). "Independent of \(T\)" means size and per-token cost, not value:
-      encoding the history is \(S_t\)'s entire job.
+      The sums over \(j \le t\) are still there — but the query is no longer inside them, so they are pure
+      functions of the history: the same two objects, \(S_t\) (a \(d_k \times d_v\) matrix) and \(z_t\)
+      (a \(d_k\) vector), serve every present and future query. Three consequences:
+    </p>
+    <ul style="margin-bottom:0;">
+      <li><strong>Fixed size.</strong> \(S_t\) is \(d_k \times d_v\) numbers whether ten tokens or a
+      million went in. No stored \(k_j, v_j\), no cache that grows.</li>
+      <li><strong>Incremental update.</strong> \(S_t = S_{t-1} + \phi(k_t)\,v_t^\top\) — a prefix sum,
+      one rank-1 addition costing \(O(d_k d_v)\) per token. No revisiting the past.</li>
+      <li><strong>"Independent of \(T\)" means size and cost, not value.</strong> \(S_t\)'s entries of
+      course depend on the whole history — encoding it is \(S_t\)'s entire job.</li>
+    </ul>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step C — Drop the denominator (the modern cleanup)</div>
+    <p>
+      Modern linear-attention layers discard \(z_t\) entirely: the normalizer is numerically fragile (it
+      can pass near zero) and turns out to be unnecessary if the output is normalized another way. That
+      "another way" is the per-head
+      <a href="../foundations/rmsnorm-gated.html" style="color:var(--accent);">gated RMSNorm</a>
+      that Qwen3-Next applies to the readout — the norm plays the softmax denominator's role, after the
+      fact. From here on the equations use the un-normalized form, with \(\phi\) absorbed into
+      \(q, k\).
     </p>
   </div>
-
-  <div class="note">
-    Modern linear-attention layers usually <em>drop the denominator</em> entirely: the \(z_t\) normalizer is
-    numerically fragile (it can pass near zero) and turns out to be unnecessary if the output is normalized
-    another way. That "another way" is exactly the per-head
-    <a href="../foundations/rmsnorm-gated.html" style="color:inherit;font-weight:600;">gated RMSNorm</a> Qwen3-Next applies
-    to the readout — the norm plays the softmax denominator's role, after the fact.
-  </div>
-
-  <h3>The kernel trick, forwards and in reverse</h3>
-  <p>
-    The classic (SVM-era) kernel trick: you want similarity measured on a rich feature expansion, but the
-    expansion is huge — so keep it implicit and evaluate a closed form instead. Smallest example,
-    degree-2 monomials in \(d = 2\):
-  </p>
-  \[
-    \varphi(x) = \bigl(x_1^2,\ \sqrt{2}\,x_1 x_2,\ x_2^2\bigr)
-    \quad\Longrightarrow\quad
-    \varphi(x)^\top \varphi(y) = (x^\top y)^2 .
-  \]
-  <p>
-    Three features per side, or one squared dot product. \(\exp(q^\top k)\) is such a kernel taken to its
-    limit — the Taylor expansion below exhibits it as the inner product of <em>all</em> tensor-power
-    features at once — so softmax attention has been using the kernel trick all along, comparing two
-    infinite feature expansions for the price of one exponential. Linear attention crosses the same
-    equivalence in the opposite direction, because the expensive resource moved:
-  </p>
-
-  <div class="compare">
-    <div class="compare-label">One equivalence, crossed in both directions</div>
-    <div class="compare-grid">
-      <div>
-        <div class="compare-col-label">Kernel trick (SVM era)</div>
-        <p style="font-size:0.9rem; margin:0;">
-          The <em>features</em> are the expensive part (huge or infinite); data points are few.
-          Escape: keep the features implicit, evaluate the closed-form kernel per pair.
-          <strong>Explicit features → implicit kernel.</strong>
-        </p>
-      </div>
-      <div>
-        <div class="compare-col-label">Reverse (attention era)</div>
-        <p style="font-size:0.9rem; margin:0;">
-          The kernel is cheap, but it couples every query–key <em>pair</em> — and \(T\) is the expensive
-          part. Escape: choose explicit finite features so the sum over keys factors and is computed once.
-          <strong>Implicit kernel → explicit features.</strong>
-        </p>
-      </div>
-    </div>
-  </div>
-
-  <p>
-    Classical kernel machines hit the same \(O(T^2)\)-in-samples wall and escaped it the same way —
-    Rahimi &amp; Recht's <em>random features</em> (2007), which Performer (below) re-runs on the softmax
-    kernel. Which side of the equivalence you compute on depends only on which resource you have run
-    out of.
-  </p>
-
-  <h3>Can a feature map actually match the softmax?</h3>
-  <p>
-    Exactly — but only with infinitely many features. Expand the exponential as a Taylor series and each
-    term factorizes on its own:
-  </p>
-  \[
-    \exp(q^\top k) = \sum_{n=0}^{\infty} \frac{(q^\top k)^n}{n!},
-    \qquad
-    (q^\top k)^n = \bigl\langle\, q^{\otimes n},\, k^{\otimes n} \bigr\rangle ,
-  \]
-  <p>
-    so the exact feature map is \(\phi(x) = \bigl(1,\ x,\ x^{\otimes 2}/\sqrt{2!},\ x^{\otimes 3}/\sqrt{3!},\ \dots\bigr)\)
-    — every polynomial degree at once, with the degree-\(n\) block alone costing \(d^n\) dimensions. Any
-    finite \(\phi\) is therefore a compromise, and the design space is <em>which</em> compromise:
-  </p>
-
-  <div class="table-wrap">
-    <table>
-      <tr><th>Feature map</th><th>Idea</th><th>Fidelity to the exp kernel</th></tr>
-      <tr>
-        <td>Identity (RetNet, GLA, DeltaNet, …)</td>
-        <td>Don't approximate — accept a plain bilinear similarity</td>
-        <td>None intended; scores can go negative, no sharpening</td>
-      </tr>
-      <tr>
-        <td>\(1 + \mathrm{elu}(x)\) (Katharopoulos et al., 2020)</td>
-        <td>Keep scores positive so the denominator is safe</td>
-        <td>Shape-only; not an approximation of \(\exp\)</td>
-      </tr>
-      <tr>
-        <td>Taylor truncation (Based, 2024)</td>
-        <td>Keep the series through degree 2: \(1 + q^\top k + \tfrac{(q^\top k)^2}{2}\)</td>
-        <td>Exact for small logits; \(1 + d + d^2\) features</td>
-      </tr>
-      <tr>
-        <td>Random features (Performer, 2021)</td>
-        <td>Monte-Carlo estimate of the kernel with \(m\) sampled features</td>
-        <td>Unbiased; error \(\sim 1/\sqrt{m}\), worst where attention is sharp</td>
-      </tr>
-    </table>
-  </div>
-
-  <p>
-    Performer's random features make "approximating softmax" precise: an unbiased Monte-Carlo estimate of
-    the kernel whose error shrinks as \(1/\sqrt{m}\) — but with a constant that grows exponentially in
-    the logit magnitude, so it is accurate where attention is diffuse and unreliable where it is sharp.
-    That points at the deeper issue: the accuracy question is less about approximating the number
-    \(\exp(q^\top k)\) than about two structural properties no finite \(\phi\) recovers:
-  </p>
-  <ul>
-    <li>
-      <strong>Rank.</strong> The linear attention matrix \(\phi(Q)\phi(K)^\top\) has rank at most \(m\)
-      (the feature dimension); a softmax attention matrix is generically full rank. A \(T \times T\)
-      pattern with \(T \gg m\) sharply-selected entries simply doesn't fit in rank \(m\).
-    </li>
-    <li>
-      <strong>Competition.</strong> Softmax makes keys <em>compete</em>: exponentiate, then renormalize,
-      and a modest score gap becomes a near-one-hot winner. A factorized similarity is additive — every
-      key contributes independently, and nothing suppresses the losers. The plot below makes this concrete.
-    </li>
-  </ul>
-
-  <div class="figure">
-    <canvas id="plot-winner" aria-label="Share of the readout going to the best-matching key versus its score margin, for softmax attention and normalized linear attention"></canvas>
-    <div class="legend">
-      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span> softmax: \(\sigma(\Delta)\), any base score</span>
-      <span class="legend-item"><span class="lg" style="--c:var(--plot-teal)"></span> linear, base score s = 1</span>
-      <span class="legend-item"><span class="lg" style="--c:var(--plot-amber)"></span> linear, base score s = 4</span>
-    </div>
-    <p class="figure-caption">
-      <strong>Softmax can do winner-take-all; a factorized similarity cannot.</strong> Two keys compete
-      for a query: the weaker scores \(s\), the stronger \(s + \Delta\). Softmax gives the winner a share
-      \(\sigma(\Delta)\) of the readout — it saturates toward 1 <em>exponentially</em> fast and depends
-      only on the margin \(\Delta\), not the base score. Normalized linear attention gives
-      \((s{+}\Delta)/(2s{+}\Delta)\): it approaches 1 only harmonically, and the larger the base score,
-      the flatter it gets. The losing key is never truly silenced — which, multiplied over thousands of
-      keys, is the interference problem of §4.
-    </p>
-  </div>
-
-  <p>
-    The field's eventual answer was to stop chasing \(\exp\) altogether. Modern linear attentions use the
-    identity map and spend their effort on the <em>mechanism</em> instead — decay gates, the delta rule,
-    output normalization — accepting a different similarity rather than a worse copy of the old one. The
-    accuracy question then stops being a kernel-approximation error and becomes a capability gap,
-    measured on recall-intensive tasks (exact retrieval over long context, in-context lookups) — which is
-    precisely the gap the hybrid stacks of §4 paper over with a few real softmax layers.
-  </p>
 
   <h2 id="recurrence">2. Attention as an RNN</h2>
-  <p>Because \(S_t\) is a prefix sum, it updates incrementally — one rank-1 write per token:</p>
+  <p>What Step B produced is worth staring at — attention has become a recurrence:</p>
 
   <div class="result">
     <div class="result-label">Result — linear attention, recurrent form</div>
     \[
       S_t = S_{t-1} + k_t v_t^\top, \qquad o_t = S_t^\top q_t
     \]
-    <p style="margin:6px 0 0; font-size:0.88rem; color:var(--muted);">(feature maps absorbed into \(q, k\); denominator dropped)</p>
+    <p style="margin:6px 0 0; font-size:0.88rem; color:var(--muted);">(feature maps absorbed into \(q, k\); denominator dropped per Step C)</p>
   </div>
 
-  <p>Read it as an associative memory:</p>
+  <p>Read it as an associative memory with a write operation and a read operation:</p>
   <ul>
     <li>
       <strong>Write:</strong> the outer product \(k_t v_t^\top\) stores the association "key \(k_t\) ↦ value
@@ -750,12 +627,18 @@
     <a href="../systems/fla-chunkwise.html" style="color:var(--accent);">the chunkwise kernel page</a>.
   </p>
 
-  <h2 id="capacity">4. What You Lose — and the Fix Ladder</h2>
+  <h2 id="capacity">4. What You Lose — a Fixed-Size Memory Fills Up</h2>
   <p>
     Softmax attention is a lossless lookup: every key–value pair remains individually addressable forever.
-    Linear attention compresses the whole history into \(d_k \times d_v\) numbers, and the additive write
-    is where it hurts. Retrieving a stored item returns the item <em>plus interference from everything
-    else</em>:
+    Linear attention compresses the whole history into \(d_k \times d_v\) numbers. Two distinct things
+    break, and it pays to keep them separate: retrieval gets <em>noisy</em> (crosstalk), and selection
+    gets <em>soft</em> (no winner-take-all).
+  </p>
+
+  <h3>Crosstalk: additive writes interfere</h3>
+  <p>
+    The write in §2 is a blind superposition — nothing is ever moved aside, nothing is ever removed.
+    Retrieving a stored item therefore returns the item <em>plus interference from everything else</em>:
   </p>
   \[
     S_T^\top k_i \;=\; \underbrace{(k_i^\top k_i)\, v_i}_{\text{what you wanted}}
@@ -763,8 +646,49 @@
   \]
   <p>
     Random directions in \(d\) dimensions overlap by \(\sim 1/\sqrt{d}\) on average, so crosstalk grows
-    with the number of stored items — the memory gets noisier with every write, and nothing is ever
-    removed. The escalating fixes:
+    with the number of stored items: the memory gets noisier with every write. A related way to say it —
+    the attention matrix \(\phi(Q)\phi(K)^\top\) has rank at most the feature dimension, while a softmax
+    attention matrix is generically full rank; a \(T \times T\) pattern of sharply-selected entries with
+    \(T\) far above the rank simply doesn't fit.
+  </p>
+
+  <h3>No winner-take-all: keys stop competing</h3>
+  <p>
+    Softmax makes keys <em>compete</em>: exponentiate, then renormalize, and a modest score gap becomes a
+    near-one-hot winner. A factorized similarity is additive — every key contributes independently, and
+    nothing suppresses the losers:
+  </p>
+
+  <div class="figure">
+    <canvas id="plot-winner" aria-label="Share of the readout going to the best-matching key versus its score margin, for softmax attention and normalized linear attention"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span> softmax: \(\sigma(\Delta)\), any base score</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-teal)"></span> linear, base score s = 1</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-amber)"></span> linear, base score s = 4</span>
+    </div>
+    <p class="figure-caption">
+      <strong>Softmax can do winner-take-all; a factorized similarity cannot.</strong> Two keys compete
+      for a query: the weaker scores \(s\), the stronger \(s + \Delta\). Softmax gives the winner a share
+      \(\sigma(\Delta)\) of the readout — it saturates toward 1 <em>exponentially</em> fast and depends
+      only on the margin \(\Delta\), not the base score. Normalized linear attention gives
+      \((s{+}\Delta)/(2s{+}\Delta)\): it approaches 1 only harmonically, and the larger the base score,
+      the flatter it gets. The losing key is never truly silenced — which, multiplied over thousands of
+      keys, is exactly the crosstalk sum above.
+    </p>
+  </div>
+
+  <p>
+    Where this shows up in practice: <strong>recall-intensive tasks</strong> — exact retrieval over long
+    context, in-context lookups, needle-in-a-haystack — are where linear attention measurably trails
+    softmax. The gap is a capability gap of the mechanism, not an approximation error you can tune away;
+    §5 is the field's response.
+  </p>
+
+  <h2 id="fixes">5. The Fix Ladder — Decay, Gates, Delta, Hybrid</h2>
+  <p>
+    Each fix targets the failure just derived: crosstalk accumulates because writes are additive and
+    nothing is ever removed. The ladder escalates from "forget uniformly" to "overwrite precisely" to
+    "stop pretending one matrix is enough":
   </p>
   <ol>
     <li>
@@ -788,8 +712,125 @@
       runs 3 Gated DeltaNet layers for every 1 softmax-attention layer.
     </li>
   </ol>
+  <p>
+    Note what the ladder does <em>not</em> do: none of these steps try to make the similarity behave more
+    like \(\exp\). Modern variants keep the identity feature map and spend all their effort on the
+    <em>mechanism</em> — which raises the obvious question the aside below answers: why did the field
+    stop chasing the softmax kernel?
+  </p>
 
-  <h2 id="summary">5. Summary</h2>
+  <h2 id="kernel">6. Aside — Couldn't a Better \(\phi\) Recover the Softmax?</h2>
+  <p>
+    Step A quietly replaced \(\exp(q^\top k)\) with \(\phi(q)^\top \phi(k)\) and moved on. This section
+    is for the reader who stopped there and asked: is that replacement <em>principled</em>? Could a clever
+    \(\phi\) make it exact, or nearly so? The answer is a nice piece of kernel theory — and it explains
+    the design choice (identity \(\phi\), effort spent elsewhere) that §5 took for granted.
+  </p>
+
+  <h3>The kernel trick, forwards and in reverse</h3>
+  <p>
+    The classic (SVM-era) kernel trick: you want similarity measured on a rich feature expansion, but the
+    expansion is huge — so keep it implicit and evaluate a closed form instead. Smallest example,
+    degree-2 monomials in \(d = 2\):
+  </p>
+  \[
+    \varphi(x) = \bigl(x_1^2,\ \sqrt{2}\,x_1 x_2,\ x_2^2\bigr)
+    \quad\Longrightarrow\quad
+    \varphi(x)^\top \varphi(y) = (x^\top y)^2 .
+  \]
+  <p>
+    Three features per side, or one squared dot product. \(\exp(q^\top k)\) is such a kernel taken to its
+    limit — the Taylor expansion below exhibits it as the inner product of <em>all</em> tensor-power
+    features at once — so softmax attention has been using the kernel trick all along, comparing two
+    infinite feature expansions for the price of one exponential. Linear attention crosses the same
+    equivalence in the opposite direction, because the expensive resource moved:
+  </p>
+
+  <div class="compare">
+    <div class="compare-label">One equivalence, crossed in both directions</div>
+    <div class="compare-grid">
+      <div>
+        <div class="compare-col-label">Kernel trick (SVM era)</div>
+        <p style="font-size:0.9rem; margin:0;">
+          The <em>features</em> are the expensive part (huge or infinite); data points are few.
+          Escape: keep the features implicit, evaluate the closed-form kernel per pair.
+          <strong>Explicit features → implicit kernel.</strong>
+        </p>
+      </div>
+      <div>
+        <div class="compare-col-label">Reverse (attention era)</div>
+        <p style="font-size:0.9rem; margin:0;">
+          The kernel is cheap, but it couples every query–key <em>pair</em> — and \(T\) is the expensive
+          part. Escape: choose explicit finite features so the sum over keys factors and is computed once.
+          <strong>Implicit kernel → explicit features.</strong>
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <p>
+    Classical kernel machines hit the same \(O(T^2)\)-in-samples wall and escaped it the same way —
+    Rahimi &amp; Recht's <em>random features</em> (2007), which Performer (below) re-runs on the softmax
+    kernel. Which side of the equivalence you compute on depends only on which resource you have run
+    out of.
+  </p>
+
+  <h3>Exactness needs infinitely many features</h3>
+  <p>
+    Expand the exponential as a Taylor series and each term factorizes on its own:
+  </p>
+  \[
+    \exp(q^\top k) = \sum_{n=0}^{\infty} \frac{(q^\top k)^n}{n!},
+    \qquad
+    (q^\top k)^n = \bigl\langle\, q^{\otimes n},\, k^{\otimes n} \bigr\rangle ,
+  \]
+  <p>
+    so the exact feature map is \(\phi(x) = \bigl(1,\ x,\ x^{\otimes 2}/\sqrt{2!},\ x^{\otimes 3}/\sqrt{3!},\ \dots\bigr)\)
+    — every polynomial degree at once, with the degree-\(n\) block alone costing \(d^n\) dimensions. Any
+    finite \(\phi\) is therefore a compromise, and the design space is <em>which</em> compromise:
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Feature map</th><th>Idea</th><th>Fidelity to the exp kernel</th></tr>
+      <tr>
+        <td>Identity (RetNet, GLA, DeltaNet, …)</td>
+        <td>Don't approximate — accept a plain bilinear similarity</td>
+        <td>None intended; scores can go negative, no sharpening</td>
+      </tr>
+      <tr>
+        <td>\(1 + \mathrm{elu}(x)\) (Katharopoulos et al., 2020)</td>
+        <td>Keep scores positive so the denominator is safe</td>
+        <td>Shape-only; not an approximation of \(\exp\)</td>
+      </tr>
+      <tr>
+        <td>Taylor truncation (Based, 2024)</td>
+        <td>Keep the series through degree 2: \(1 + q^\top k + \tfrac{(q^\top k)^2}{2}\)</td>
+        <td>Exact for small logits; \(1 + d + d^2\) features</td>
+      </tr>
+      <tr>
+        <td>Random features (Performer, 2021)</td>
+        <td>Monte-Carlo estimate of the kernel with \(m\) sampled features</td>
+        <td>Unbiased; error \(\sim 1/\sqrt{m}\), worst where attention is sharp</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>
+    Performer's random features make "approximating softmax" precise: an unbiased Monte-Carlo estimate of
+    the kernel whose error shrinks as \(1/\sqrt{m}\) — but with a constant that grows exponentially in
+    the logit magnitude, so it is accurate where attention is diffuse and unreliable exactly where
+    attention is sharp. And sharpness is the point: §4 showed the properties that matter — full rank,
+    winner-take-all competition — are structural, beyond any finite \(\phi\).
+  </p>
+  <p>
+    Hence the field's eventual answer: stop chasing \(\exp\) altogether. Accept a different similarity
+    (identity \(\phi\)), and spend the modeling budget on the mechanism instead — decay gates, the delta
+    rule, output normalization. That is precisely the §5 ladder, and it is why the modern accuracy
+    question is a <em>capability</em> gap measured on recall tasks, not a kernel-approximation error.
+  </p>
+
+  <h2 id="summary">7. Summary</h2>
   <div class="summary-grid">
     <div class="summary-card">
       <div class="summary-card-label">The trick</div>
