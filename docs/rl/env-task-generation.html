@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Task Generation, Curriculum &amp; Contamination</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #0d9488;
+      --accent-light: #f0fdfa;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --note-fg: #1e40af;
+      --result-fg: #16a34a;
+      --nav-bg: rgba(255,255,255,0.92);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #2dd4bf;
+        --accent-light: #10201e;
+        --warning-bg: #101a2b;
+        --warning-border: #1e40af;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --note-fg: #93c5fd;
+        --result-fg: #4ade80;
+        --nav-bg: rgba(15,17,21,0.9);
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    .hero {
+      background: linear-gradient(135deg, #064e3b 0%, #065f46 55%, #0d9488 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.9;
+      font-size: 0.97rem;
+      max-width: 660px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .page-wrap {
+      max-width: 880px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+    a { color: var(--accent); }
+    code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+    pre {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      line-height: 1.55;
+      margin: 1.2em 0;
+    }
+    pre code { background: none; padding: 0; border: none; color: var(--text); }
+
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.9rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 14px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+    td strong { color: var(--text); }
+
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Task Generation &amp; Curriculum</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#supply">The supply problem</a>
+    <a href="#mining">Mining reality</a>
+    <a href="#replication">Replication</a>
+    <a href="#synthetic">Synthetic worlds</a>
+    <a href="#curriculum">Curriculum</a>
+    <a href="#contamination">Contamination</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">RL Environments · Task Supply</span>
+  <h1>Task Generation, Curriculum &amp; Contamination</h1>
+  <p>Where the tasks come from: back-translating software history into verified tasks,
+  replication training against reference implementations, fully synthetic tool worlds —
+  and the two disciplines that keep a generated task supply usable: curriculum and
+  contamination control.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="note">
+    Last page of the RL Environments series (<a href="rl-environments-landscape.html">landscape</a>).
+    It leans on the <a href="verifier-reward-design.html">reward-design page</a> throughout:
+    generation is only useful if each generated task carries a trustworthy verifier, and
+    curriculum exists to serve the pass-rate curve derived there.
+  </div>
+
+  <!-- ── §1 ─────────────────────────────────────── -->
+  <h2 id="supply">1. The Task Supply Problem</h2>
+
+  <p>RL <em>consumes</em> tasks. A supervised example can be revisited for many epochs; an RL
+  task is spent once the policy saturates it — when the pass rate approaches 1, the
+  <a href="verifier-reward-design.html#difficulty">signal goes to zero</a> and the task is
+  mileage-exhausted. Meanwhile hand-authoring is expensive: market rates run $200–$2,000 per
+  task, and expert-built app replicas cost six figures. A frontier RL run needs more tasks,
+  and harder tasks, every month.</p>
+
+  <p>The observable consequence in 2026: the supply went from <em>hundreds of hand-built
+  environments</em> to <em>hundreds of thousands of generated tasks</em> in about a year —
+  Prime Intellect's 365k-task API, OpenReward's ~4.5M-task catalog. That two-orders-of-magnitude
+  jump did not come from hiring more task authors. It came from three generation strategies,
+  §2–§4, each defined by where it gets <strong>ground truth for the verifier</strong> — because
+  generating a task is easy; generating a task <em>whose grader you can trust</em> is the whole
+  problem.</p>
+
+  <!-- ── §2 ─────────────────────────────────────── -->
+  <h2 id="mining">2. Mining Reality — Back-Translation from Software History</h2>
+
+  <p>The richest free source of verified tasks is version control. Every commit in every real
+  repository is a certificate: some change was needed, and this diff satisfied it. Generation
+  pipelines run that certificate backwards — <strong>back-translation</strong>:</p>
+
+  <ol>
+    <li>Pick a commit from a real repo (a bug fix, a feature).</li>
+    <li>Rewind the repo to the parent state — that's the environment snapshot.</li>
+    <li>Generate the <em>task description</em> from the diff (an LLM writes the "issue" the
+    commit resolves) — the back-translation step.</li>
+    <li>Derive the <em>verifier</em>: tests added by the commit, or newly generated tests that
+    the post-commit code passes and the pre-commit code fails.</li>
+  </ol>
+
+  <p>SWE-Gym (2024) proved the recipe with 2,438 human-issue tasks; <strong>R2E-Gym's
+  SWE-Gen</strong> (COLM 2025) removed the human-issue dependency entirely — synthesizing
+  issues and tests directly from commits, no GitHub issue or human-written test required —
+  yielding 8,100+ executable tasks. Scaled industrially, the same idea produced Prime
+  Intellect's ~198k software tasks across 20+ languages, and <strong>Endless Terminals</strong>
+  (Jan 2026) did the analogous thing for terminal tasks, procedurally generating them at scale
+  rather than curating benchmarks.</p>
+
+  <p>The catch is verifier trust: machine-generated tests are weaker than human ones — they can
+  under-specify the fix or accidentally accept the broken state. R2E-Gym's answer is the
+  <a href="verifier-reward-design.html#spectrum">hybrid verifier</a> — execution-based and
+  execution-free checks voting — plus filtering the generated pool for tasks whose checks
+  discriminate cleanly. Generated supply and verifier ensembles arrived together because
+  neither works alone.</p>
+
+  <!-- ── §3 ─────────────────────────────────────── -->
+  <h2 id="replication">3. Replication Training — the Reference as the Verifier</h2>
+
+  <p>Mechanize's "replication training" solves verifier trust differently: task = <em>recreate
+  an existing piece of software from its specification</em>. The original implementation is the
+  ground truth — its observable behavior on any input is the reference the agent's version is
+  checked against. That buys three things:</p>
+
+  <ul>
+    <li><strong>Automatic verification at any scale</strong> — differential testing against the
+    reference needs no human grading and no hand-written suite;</li>
+    <li><strong>Unbounded difficulty</strong> — pick a bigger target (a function → a module → a
+    CLI tool → a service) and the task hardens without any authoring;</li>
+    <li><strong>Long-horizon realism</strong> — replicating real software exercises exactly the
+    sustained multi-step work agentic RL wants to train.</li>
+    </ul>
+
+  <p>The limits mirror the strengths: replication only covers "software whose behavior is the
+  spec," the agent may see the original in its pretraining data (a contamination problem, §6),
+  and behavioral equivalence is only as strong as the input distribution you test on.</p>
+
+  <!-- ── §4 ─────────────────────────────────────── -->
+  <h2 id="synthetic">4. Synthetic Worlds — Simulated Tools at Scale</h2>
+
+  <p>The third strategy abandons real-world grounding entirely. For tool-use training, Kimi
+  K2's pipeline simulated <strong>thousands of MCP-style tools and synthetic domains</strong> —
+  invented APIs with invented state — then generated agents, tasks, and rubrics inside that
+  simulated universe, with multi-turn trajectories rolled out and filtered by quality judges
+  before training. When the world is synthetic:</p>
+
+  <ul>
+    <li><strong>Consistency substitutes for truth</strong> — the simulated tool's responses just
+    have to be internally coherent and the task checkable against the simulated state;</li>
+    <li><strong>Coverage is designable</strong> — you can enumerate tool-use patterns (retries,
+    errors, multi-tool workflows) that are rare in the wild but must be learned;</li>
+    <li><strong>Cost collapses</strong> — a simulated CRM is a prompt and a state dict, not a
+    $300k replica. The trade is fidelity: policies can overfit simulator quirks, which is why
+    labs mix synthetic tool worlds with real verifiable environments rather than replacing
+    them.</li>
+  </ul>
+
+  <!-- ── §5 ─────────────────────────────────────── -->
+  <h2 id="curriculum">5. Curriculum — Serving the Pass-Rate Curve</h2>
+
+  <p>A generated pool spans difficulty from trivial to impossible, but the
+  <a href="verifier-reward-design.html#difficulty">useful-group curve</a> says training only
+  extracts signal at moderate current-pass-rate. Curriculum is the machinery that keeps the
+  <em>sampled</em> distribution in that band while the policy moves:</p>
+
+  <ul>
+    <li><strong>Difficulty ordering.</strong> Sort the pool (by model-measured pass rate, task
+    size, horizon) and advance as the policy improves — the classic curriculum, now applied to
+    task sampling weights rather than a fixed syllabus.</li>
+    <li><strong>Horizon curricula.</strong> AgentGym-RL's <em>ScalingInter-RL</em>: start
+    episodes with short interaction budgets and progressively lengthen them, so early training
+    learns single-skill competence before long-horizon credit assignment
+    (<a href="agentic-rl.html#credit">why that's hard</a>) is even in play.</li>
+    <li><strong>Adaptive samplers.</strong> Track per-task pass rates online; oversample tasks
+    near the signal peak, retire saturated ones. The <a
+    href="verifier-reward-design.html#hacking">sandbagging caveat</a> applies — any loop from
+    policy behavior to task selection is optimizable by the policy.</li>
+    <li><strong>Splits as protocol.</strong> The Open Reward Standard makes train/eval splits
+    and curriculum stages first-class protocol objects, so a hosted environment can refuse to
+    train on its eval split — versioned, like datasets learned to be.</li>
+  </ul>
+
+  <!-- ── §6 ─────────────────────────────────────── -->
+  <h2 id="contamination">6. Contamination — When Training Envs Meet Eval Benchmarks</h2>
+
+  <p>The same forces that generate training tasks corrupt evaluation. The failure modes:</p>
+
+  <ul>
+    <li><strong>Benchmark-to-gym reuse.</strong> The natural lifecycle — a benchmark
+    (Terminal-Bench) generalizes into a training framework (Harbor) — means yesterday's held-out
+    eval is today's training distribution. Scores on any benchmark whose tasks circulate as
+    training environments measure familiarity, not capability.</li>
+    <li><strong>Shared upstream sources.</strong> Mined tasks (§2) come from the same repos
+    benchmarks mine — training on generated PyTorch-repo tasks then reporting SWE-bench-style
+    numbers on the same repos is contamination one hop removed, even with disjoint instances.</li>
+    <li><strong>Pretraining leakage.</strong> The agent may have memorized the repo, the issue
+    thread, or (for replication) the reference implementation itself from pretraining text —
+    contamination that no split of the RL task pool can fix.</li>
+  </ul>
+
+  <p>The defenses are the dataset world's, upgraded: strict provenance metadata on generated
+  pools (which repos, which date cutoffs), repo-level (not instance-level) train/eval
+  separation, private eval suites — and most structurally, <strong>dynamic generation</strong>:
+  if fresh instances can be minted on demand from held-out or post-cutoff sources, the eval can
+  always outrun memorization. Procedural generation, introduced to solve supply (§2), turns out
+  to be the contamination fix too — the two problems share a solution.</p>
+
+  <div class="result">
+    <div class="result-label">The mental model</div>
+    <p style="margin:0;">Task generation is <strong>verifier generation</strong> — the three
+    scalable sources are distinguished by where ground truth comes from: software history
+    (back-translation), a reference implementation (replication), or internal consistency
+    (synthetic worlds). Curriculum keeps sampled difficulty on the productive part of the
+    pass-rate curve as the policy moves, and contamination control — provenance, repo-level
+    splits, dynamic generation — keeps the eval meaning something after the gym ate the
+    benchmark.</p>
+  </div>
+
+  <!-- ── References ─────────────────────────────── -->
+  <h2>References</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><td><a href="https://arxiv.org/abs/2504.07164">R2E-Gym / SWE-Gen (COLM 2025)</a> · <a href="https://arxiv.org/abs/2412.21139">SWE-Gym</a></td><td>Back-translation from commits; the §2 pipeline</td></tr>
+      <tr><td><a href="https://arxiv.org/abs/2601.16443">Endless Terminals (2026)</a></td><td>Procedural terminal-task generation at scale</td></tr>
+      <tr><td><a href="https://www.primeintellect.ai/blog/scaling-agentic-rl">Prime Intellect, "Scaling Agentic RL"</a></td><td>The 365k-task industrial version of §2</td></tr>
+      <tr><td><a href="https://www.mechanize.work/blog/the-upcoming-gpt-3-moment-for-rl/">Mechanize, "The upcoming GPT-3 moment for RL"</a></td><td>Replication training, §3</td></tr>
+      <tr><td><a href="https://arxiv.org/abs/2507.20534">Kimi K2 tech report</a></td><td>Synthetic MCP tool universe, §4</td></tr>
+      <tr><td><a href="https://arxiv.org/abs/2509.08755">AgentGym-RL (ICLR 2026)</a></td><td>ScalingInter-RL horizon curriculum, §5</td></tr>
+      <tr><td><a href="https://openrewardstandard.io">Open Reward Standard</a></td><td>Splits and curriculum as protocol primitives</td></tr>
+      <tr><td><a href="https://epoch.ai/gradient-updates/state-of-rl-envs">Epoch AI, RL environments FAQ</a></td><td>Task economics in §1</td></tr>
+    </table>
+  </div>
+
+</div>
+</body>
+</html>
