@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Scaling Environments — Sandboxes &amp; Rollout Infrastructure</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #0d9488;
+      --accent-light: #f0fdfa;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --note-fg: #1e40af;
+      --result-fg: #16a34a;
+      --nav-bg: rgba(255,255,255,0.92);
+      --fig-bg: #fbfcfd;
+      --plot-grid: #eceef1;
+      --plot-axis: #c7cbd1;
+      --plot-tick: #9ca3af;
+      --plot-gray: #9ca3af;
+      --plot-violet: #6d28d9;
+      --plot-violet-lt: #a78bfa;
+      --plot-teal: #0d9488;
+      --plot-amber: #f59e0b;
+      --plot-orange: #d97706;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #2dd4bf;
+        --accent-light: #10201e;
+        --warning-bg: #101a2b;
+        --warning-border: #1e40af;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --note-fg: #93c5fd;
+        --result-fg: #4ade80;
+        --nav-bg: rgba(15,17,21,0.9);
+        --fig-bg: #14181e;
+        --plot-grid: #232830;
+        --plot-axis: #3a4149;
+        --plot-tick: #6b7280;
+        --plot-gray: #6b7280;
+        --plot-violet: #a78bfa;
+        --plot-violet-lt: #c4b5fd;
+        --plot-teal: #2dd4bf;
+        --plot-amber: #fbbf24;
+        --plot-orange: #fb923c;
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    .hero {
+      background: linear-gradient(135deg, #064e3b 0%, #065f46 55%, #0d9488 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.9;
+      font-size: 0.97rem;
+      max-width: 660px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .page-wrap {
+      max-width: 880px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+    a { color: var(--accent); }
+    code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+    pre {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      line-height: 1.55;
+      margin: 1.2em 0;
+    }
+    pre code { background: none; padding: 0; border: none; color: var(--text); }
+
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.9rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 14px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+    td strong { color: var(--text); }
+
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Figure / plot ───────────────────────── */
+    .figure {
+      background: var(--fig-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 16px 14px;
+      margin: 1.6em 0;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .figure canvas {
+      width: 100%;
+      height: 300px;
+      display: block;
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      justify-content: center;
+      margin-top: 12px;
+      font-size: 0.82rem;
+      color: var(--text);
+    }
+    .legend-item { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, var(--plot-gray) 0 5px, transparent 5px 9px); }
+    .figure-caption {
+      font-size: 0.85rem;
+      color: var(--muted);
+      line-height: 1.6;
+      margin: 14px 4px 2px;
+    }
+
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Scaling Environments</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#requirement">The requirement</a>
+    <a href="#isolation">Isolation</a>
+    <a href="#reset">Reset &amp; fork</a>
+    <a href="#providers">Providers</a>
+    <a href="#utilization">GPU utilization</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">RL Environments · Systems</span>
+  <h1>Scaling Environments — Sandboxes &amp; Rollout Infrastructure</h1>
+  <p>RL wants thousands of cheap, disposable, restorable copies of a software world. The
+  isolation spectrum from containers to microVMs, snapshot/fork as the reset primitive,
+  the provider-abstraction layers, and the oversubscription math that keeps GPUs busy while
+  environments think.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="note">
+    Part of the RL Environments series (<a href="rl-environments-landscape.html">landscape</a>) —
+    this is the <em>substrate</em> layer of the stack. It pairs with the systems pages:
+    <a href="async-rl.html">Async RL</a> (staleness and IS correction),
+    <a href="verl-async-training.html">verl async training</a>, and
+    <a href="reward-pipelining.html">reward pipelining</a> all attack the same idle-GPU problem
+    from the trainer side; this page attacks it from the environment side.
+  </div>
+
+  <!-- ── §1 The requirement ─────────────────────── -->
+  <h2 id="requirement">1. The Requirement: Disposable Worlds, by the Thousand</h2>
+
+  <p>A developer sandbox is one long-lived, carefully maintained machine. An RL environment
+  fleet is the opposite object: <strong>thousands of short-lived, identical, mutually isolated
+  worlds</strong>, each born for one episode, mutated arbitrarily by an agent, graded, and
+  destroyed. The public design point is Qwen3-Coder: <strong>20,000 independent environments
+  in parallel</strong> on Alibaba Cloud for long-horizon code RL. Every property follows from
+  the workload:</p>
+
+  <ul>
+    <li><strong>Cheap creation.</strong> An episode may last a minute; if provisioning takes 30s,
+    a third of the fleet is always warming up. Providers compete on cold start — tens to a few
+    hundred milliseconds is the current bar.</li>
+    <li><strong>Real isolation.</strong> The agent executes untrusted, model-generated code —
+    <code>rm -rf</code>, fork bombs, network scans are all in-distribution. One episode must not
+    corrupt another, the host, or the grader (<a
+    href="verifier-reward-design.html#hacking">reward hacking</a> gets much easier if it can).</li>
+    <li><strong>Deterministic reset.</strong> Every episode must start from a bit-identical
+    world, or reward becomes noise and rollouts aren't comparable within a
+    <a href="grpo.html">GRPO</a> group.</li>
+    <li><strong>Hermeticity.</strong> Pinned dependencies, no uncontrolled network egress — both
+    for reproducibility (a task that breaks when PyPI changes is not a task) and for containment.</li>
+  </ul>
+
+  <!-- ── §2 Isolation ───────────────────────────── -->
+  <h2 id="isolation">2. The Isolation Spectrum</h2>
+
+  <p>Every sandbox technology is a trade between isolation strength, startup latency, and
+  density (how many fit per host). The fleet vendors are all points on one spectrum:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Mechanism</th><th>How it isolates</th><th>Cold start</th><th>Used by</th><th>The catch</th></tr>
+      <tr>
+        <td><strong>Container (Docker/K8s)</strong></td>
+        <td>Namespaces + cgroups; <em>shared host kernel</em></td>
+        <td>~100ms–1s (image cached)</td>
+        <td>Default everywhere — OpenEnv, Harbor tasks, SWE gyms</td>
+        <td>Kernel exploits escape; weakest boundary for hostile code</td>
+      </tr>
+      <tr>
+        <td><strong>gVisor</strong></td>
+        <td>User-space kernel intercepting syscalls</td>
+        <td>~100s of ms</td>
+        <td>Modal (with GPU support in sandboxes)</td>
+        <td>Syscall interception overhead on I/O-heavy work</td>
+      </tr>
+      <tr>
+        <td><strong>MicroVM (Firecracker)</strong></td>
+        <td>Hardware virtualization, minimal device model</td>
+        <td>~125–150ms</td>
+        <td>E2B, Morph Cloud (AWS Lambda's engine)</td>
+        <td>Own kernel per VM — more memory per instance; GPU passthrough is work</td>
+      </tr>
+      <tr>
+        <td><strong>Dev-container platforms</strong></td>
+        <td>Containers + orchestration polish</td>
+        <td>~27–90ms claimed (Daytona)</td>
+        <td>Daytona (an OpenEnv provider), cloud dev boxes</td>
+        <td>Same kernel-sharing caveat as any container</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>The practical resolution most fleets land on: <strong>containers for density, microVM or
+  gVisor tiers for hostile or internet-touching work</strong> — and the choice is increasingly
+  made <em>per environment</em> by declaring a runtime requirement and letting the provider
+  layer (§4) place it. Numbers above are vendor point-in-time claims; the ordering, not the
+  digits, is the durable content.</p>
+
+  <!-- ── §3 Reset & fork ────────────────────────── -->
+  <h2 id="reset">3. Reset, Snapshot, Fork</h2>
+
+  <p>Classic Gym's <code>reset()</code> is free; here it is the dominant cost decision. Three
+  implementations, in ascending sophistication:</p>
+
+  <ol>
+    <li><strong>Rebuild</strong> — recreate the container from its image every episode. Simple,
+    bit-exact, and slow when setup is heavy (clone repo, install deps, seed DB — SWE tasks can
+    take minutes to build).</li>
+    <li><strong>Pre-warm pools</strong> — keep a pool of already-built idle environments;
+    <code>reset()</code> pops one. Hides latency, costs standing memory/CPU, and is how most
+    hosted providers actually serve fleets.</li>
+    <li><strong>Snapshot / restore</strong> — checkpoint the <em>running</em> world (filesystem
+    + memory) after setup, then restore in ~100ms per episode. Morph Cloud's Firecracker
+    snapshots are the exemplar; the expensive setup runs once, and every episode boots from the
+    frozen instant.</li>
+  </ol>
+
+  <p>Snapshotting has a second, more interesting consequence: <strong>fork</strong>. If you can
+  restore a snapshot, you can restore it <em>N times</em> — branching a live trajectory into
+  parallel continuations from the same mid-episode state. That primitive is exactly what
+  search-flavored RL wants: <a href="mcts.html">MCTS</a>-style expansion over real environment
+  states, <a href="grpo.html">GRPO</a> groups launched from a shared prefix state instead of
+  re-executing the prefix G times, and cheap counterfactuals ("what if the agent had run the
+  tests here?"). Classic RL got this free from cheap simulators; systems RL had to rebuild it
+  as infrastructure.</p>
+
+  <!-- ── §4 Providers ───────────────────────────── -->
+  <h2 id="providers">4. Provider Abstraction &amp; Env-as-a-Service</h2>
+
+  <p>Nobody wants their environment code married to one vendor's sandbox API, so 2025–26 grew a
+  provider-abstraction layer, the same way training frameworks abstracted accelerators:</p>
+
+  <ul>
+    <li><strong>SWE-ReX</strong> (the runtime under SWE-agent): one "spawn a shell session, run
+    a command" interface with Local/Docker/Modal/AWS Fargate/Daytona backends — the same agent
+    code runs on a laptop or as 100+ parallel rollouts in the cloud.</li>
+    <li><strong>Harbor</strong>: containerized tasks executed across Daytona, Modal, and other
+    providers, with the checker and rollout export riding along —
+    the <a href="rl-environments-landscape.html#profiles">taskset layer</a> handling placement.</li>
+    <li><strong>OpenEnv container providers</strong>: the spec separates the env server from
+    where it runs (local Docker, Kubernetes, hosted sandbox), so the trainer's
+    <code>from_docker_image()</code> doesn't change when the fleet moves.</li>
+  </ul>
+
+  <p>Above raw placement sits <strong>env-as-a-service</strong> plumbing, the unglamorous half
+  of the <a href="openenv.html">OpenEnv</a>/ORS designs: session routing (thousands of episodes
+  multiplexed onto env servers, each episode's <code>step()</code> calls reaching <em>its</em>
+  world), crash containment (an env that dies takes one episode, and the trainer must treat the
+  loss as censored data, not silently drop it), and backpressure when the fleet saturates.
+  This is the same shape as the sticky-session routing the
+  <a href="verl-agentic-training.html">verl agentic page</a> covers for tool servers, promoted
+  to a first-class service.</p>
+
+  <!-- ── §5 Utilization ─────────────────────────── -->
+  <h2 id="utilization">5. The Utilization Problem — Oversubscription Math</h2>
+
+  <p>Now the systems tension that shapes every agentic-RL trainer. During rollout, a trajectory
+  alternates two phases: <em>generation</em> (the policy emits an action — GPU busy) and the
+  <em>environment step</em> (code runs, tests execute, pages load — GPU idle for that
+  trajectory). Let \(x = t_{\text{env}}/t_{\text{gen}}\) be their ratio per turn. A trajectory
+  only occupies the GPU a fraction \(1/(1+x)\) of its wall time — for a coding env where
+  generation takes 2s and the test suite 20s, that's 9%.</p>
+
+  <p>The fix is the same as any latency-hiding problem: <strong>oversubscribe</strong>. Run
+  \(k\) concurrent trajectories per GPU batch slot; expected slot occupancy is</p>
+
+  \[
+    U(x; k) \;=\; \min\!\left(1,\; \frac{k}{1+x}\right).
+  \]
+
+  <div class="figure">
+    <canvas id="plot-util" aria-label="GPU slot occupancy versus environment-to-generation latency ratio for oversubscription factors 1, 2, 8, and 32"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg dash"></span> k = 1 (no oversubscription)</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet-lt)"></span> k = 2</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span> k = 8</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-teal)"></span> k = 32</span>
+    </div>
+    <p class="figure-caption">
+      <strong>GPU slot occupancy \(U = \min(1, k/(1+x))\) vs. the env-to-generation latency
+      ratio \(x\).</strong> Without oversubscription (dashed) utilization collapses as soon as
+      the environment is slower than generation. Each curve stays saturated exactly until
+      \(x = k - 1\): to hide a 7×-slower environment you need ~8 trajectories per slot; a
+      31×-slower one needs ~32. That is why agentic trainers run hundreds of concurrent
+      episodes per GPU — and why Qwen3-Coder's fleet is 20k environments, not 20k GPUs.
+    </p>
+  </div>
+
+  <p>Three real-world corrections to the idealized curve, each pushing toward more machinery:</p>
+
+  <ul>
+    <li><strong>Variance, not just means.</strong> Env steps are heavy-tailed (most commands are
+    fast; occasionally the build takes 10 minutes). Batch-synchronous rollouts stall on the
+    straggler, so schedulers detach trajectories from batches — continuous batching on the
+    inference side, fully async episode management on the env side (Kimi K2's orchestrator,
+    verl's <code>AgentLoop</code>).</li>
+    <li><strong>Oversubscription costs staleness.</strong> More in-flight episodes means
+    episodes finishing under older policy weights — the exact off-policy trade the
+    <a href="async-rl.html">Async RL</a> page prices out with importance-sampling corrections.
+    The env fleet sets how much asynchrony you <em>need</em>; the trainer decides how much it
+    can <em>afford</em>.</li>
+    <li><strong>Memory bounds \(k\).</strong> Every in-flight trajectory pins KV-cache on the
+    inference engine, so \(k\) is capped by rollout-engine memory long before the env fleet
+    runs out of containers — one more place the <a href="resource-pool-placement.html">placement
+    trade-offs</a> bite.</li>
+  </ul>
+
+  <div class="result">
+    <div class="result-label">The mental model</div>
+    <p style="margin:0;">The environment fleet is a <strong>latency-hiding machine wrapped
+    around untrusted code</strong>: isolation chosen per-risk (container → gVisor → microVM),
+    reset made O(100ms) by snapshots (and fork turned into a search primitive), providers
+    abstracted so the fleet is portable, and concurrency \(k\) sized to the env-to-generation
+    ratio \(k \gtrsim 1 + t_{\text{env}}/t_{\text{gen}}\) — with the resulting staleness handed
+    to the async-RL machinery to correct.</p>
+  </div>
+
+  <!-- ── References ─────────────────────────────── -->
+  <h2>References</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><td><a href="https://qwenlm.github.io/blog/qwen3-coder/">Qwen3-Coder blog</a></td><td>The 20,000-parallel-environments design point</td></tr>
+      <tr><td><a href="https://modal.com/resources/best-sandboxes-rl-environments">Modal, "Best Sandboxes for RL Environments"</a></td><td>The §2 isolation/latency comparison (vendor-authored, read accordingly)</td></tr>
+      <tr><td><a href="https://github.com/SWE-agent/SWE-ReX">SWE-ReX</a></td><td>Provider-abstraction runtime under SWE-agent</td></tr>
+      <tr><td><a href="https://github.com/harbor-framework/harbor">Harbor</a></td><td>Tasks parallelized across sandbox providers, rollouts exported for RL</td></tr>
+      <tr><td><a href="https://arxiv.org/abs/2507.20534">Kimi K2 tech report</a></td><td>Fully async actor/env/reward orchestration at lab scale</td></tr>
+      <tr><td><a href="https://github.com/meta-pytorch/OpenEnv">OpenEnv</a></td><td>Container-provider and session plumbing — see the <a href="openenv.html">OpenEnv page</a></td></tr>
+    </table>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  function util(x, k) { return Math.min(1, k / (1 + x)); }
+
+  // resolve colors at draw time so the plot follows the OS light/dark scheme
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+  function drawPlot(canvas, cfg) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const mL = 44, mR = 14, mT = 14, mB = 30;
+    const pw = cssW - mL - mR, ph = cssH - mT - mB;
+    const { xMin, xMax, yMin, yMax } = cfg;
+    const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
+    const Y = y => mT + (yMax - y) / (yMax - yMin) * ph;
+
+    // gridlines + tick labels
+    ctx.font = '11px Inter, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(t => {
+      const px = X(t);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.fillText(String(t), px, mT + ph + 6);
+    });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(t => {
+      const py = Y(t);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+      ctx.fillText(String(t), mL - 8, py);
+    });
+
+    // emphasized zero axes
+    ctx.strokeStyle = cssVar('--plot-axis');
+    ctx.lineWidth = 1.25;
+    if (yMin <= 0 && yMax > 0) { const py = Y(0); ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke(); }
+    if (xMin <= 0 && xMax > 0) { const px = X(0); ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke(); }
+
+    // curves (clipped to plot area)
+    ctx.save();
+    ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    ctx.lineJoin = 'round';
+    cfg.series.forEach(s => {
+      ctx.beginPath();
+      ctx.lineWidth = s.width || 2;
+      ctx.strokeStyle = cssVar(s.color);
+      ctx.setLineDash(s.dash || []);
+      const N = 260;
+      for (let i = 0; i <= N; i++) {
+        const x = xMin + (xMax - xMin) * i / N;
+        const px = X(x), py = Y(s.fn(x));
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  const plots = [];
+  const utilCanvas = document.getElementById('plot-util');
+  if (utilCanvas) plots.push([utilCanvas, {
+    xMin: 0, xMax: 40, yMin: 0, yMax: 1.05,
+    xTicks: [0, 10, 20, 30, 40],
+    yTicks: [0, 0.25, 0.5, 0.75, 1],
+    series: [
+      { fn: x => util(x, 1),  color: '--plot-gray',      width: 1.75, dash: [5, 4] },
+      { fn: x => util(x, 2),  color: '--plot-violet-lt', width: 2.5 },
+      { fn: x => util(x, 8),  color: '--plot-violet',    width: 2.75 },
+      { fn: x => util(x, 32), color: '--plot-teal',      width: 2.5 }
+    ]
+  }]);
+
+  function renderAll() { plots.forEach(([c, cfg]) => drawPlot(c, cfg)); }
+  renderAll();
+  let raf;
+  window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(renderAll); });
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq.addEventListener) mq.addEventListener('change', renderAll);
+})();
+</script>
+
+</body>
+</html>
