@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>OpenEnv — The Environment Interface Standard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #0d9488;
+      --accent-light: #f0fdfa;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --note-fg: #1e40af;
+      --result-fg: #16a34a;
+      --nav-bg: rgba(255,255,255,0.92);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #2dd4bf;
+        --accent-light: #10201e;
+        --warning-bg: #101a2b;
+        --warning-border: #1e40af;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --note-fg: #93c5fd;
+        --result-fg: #4ade80;
+        --nav-bg: rgba(15,17,21,0.9);
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    .hero {
+      background: linear-gradient(135deg, #064e3b 0%, #065f46 55%, #0d9488 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.9;
+      font-size: 0.97rem;
+      max-width: 660px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .page-wrap {
+      max-width: 880px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+    a { color: var(--accent); }
+    code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+    pre {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      line-height: 1.55;
+      margin: 1.2em 0;
+    }
+    pre code { background: none; padding: 0; border: none; color: var(--text); }
+
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.9rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 14px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+    td strong { color: var(--text); }
+
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>OpenEnv</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#problem">The problem</a>
+    <a href="#api">The API</a>
+    <a href="#artifacts">One env, three artifacts</a>
+    <a href="#mcp">MCP</a>
+    <a href="#training">In the training loop</a>
+    <a href="#ors">vs. OpenReward</a>
+    <a href="#status">Status</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">RL Environments · Interface Spec</span>
+  <h1>OpenEnv — The Environment Interface Standard</h1>
+  <p>The Gymnasium of the LLM era: a typed <code>reset()</code> / <code>step()</code> /
+  <code>state()</code> contract between RL trainers and containerized environment servers —
+  how the API works, how one environment becomes a Space, an image, and a package at once,
+  and how a trainer like TRL actually drives it.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="note">
+    Part of the RL Environments series — the <a href="rl-environments-landscape.html">landscape
+    page</a> places OpenEnv on the ecosystem stack (it owns the <em>interface</em> layer). This
+    page assumes the <a href="agentic-rl.html">agentic RL</a> framing: rollouts are multi-turn
+    MDPs against an environment.
+  </div>
+
+  <!-- ── §1 The problem ─────────────────────────── -->
+  <h2 id="problem">1. The N×M Problem</h2>
+
+  <p>By late 2025 there were N trainers (TRL, verl, SkyRL, torchforge, prime-rl, …) and M
+  environment collections (SWE gyms, terminal tasks, browser tasks, games, …), and every
+  pairing needed a bespoke adapter: each framework defined its own env base class, its own
+  action/observation types, its own reset semantics. Classic RL solved exactly this problem
+  once — OpenAI Gym's <code>reset()</code>/<code>step()</code> became the universal seam, and
+  any algorithm could run any environment. OpenEnv, announced by Meta's PyTorch team and
+  Hugging Face in October 2025, is the deliberate re-run of that move for LLM-agent RL.</p>
+
+  <p>Two things changed from classic Gym, both forced by what LLM environments are
+  (<a href="rl-environments-landscape.html#anatomy">anatomy</a>):</p>
+
+  <ul>
+    <li><strong>The environment is a server, not a library.</strong> A CartPole can live
+    in-process; a terminal environment with its own filesystem, package versions, and untrusted
+    agent-generated code cannot. OpenEnv environments run as HTTP servers inside Docker
+    containers — dependency-isolated, language-agnostic, horizontally scalable, crash-contained.</li>
+    <li><strong>Actions and observations are typed models, not arrays.</strong> Instead of
+    <code>Box</code>/<code>Discrete</code> spaces, each environment declares typed
+    <code>Action</code> and <code>Observation</code> classes (a coding env's action might be a
+    shell command; a game env's an integer move), serialized over the wire.</li>
+  </ul>
+
+  <!-- ── §2 The API ─────────────────────────────── -->
+  <h2 id="api">2. The Core API</h2>
+
+  <p>The contract has two halves. Server-side, an environment author subclasses
+  <code>Environment</code> and implements the three verbs; client-side, the trainer talks to it
+  through an <code>EnvClient</code> that hides the transport. The shape (condensed from the
+  OpenEnv docs — treat as a sketch, the project is pre-1.0 and details move):</p>
+
+  <pre><code># server side — runs inside the container
+class EchoEnv(Environment):
+    async def reset(self) -&gt; Observation:
+        self.turns = 0
+        return Observation(message="say something")
+
+    async def step(self, action: Action) -&gt; Observation:
+        self.turns += 1
+        return Observation(
+            message=f"you said: {action.text}",
+            reward=len(action.text),          # env-computed reward
+            done=self.turns &gt;= 3,
+        )
+
+# client side — runs in the trainer process
+env = EchoEnv.from_docker_image("myorg/echo-env:latest")   # or .from_hub(...)
+obs = env.reset()
+while not obs.done:
+    action = policy(obs)          # the LLM picks the action
+    obs = env.step(action)</code></pre>
+
+  <p>Things to notice, because they are where the LLM-specific design lives:</p>
+
+  <ul>
+    <li><strong>Async-first.</strong> The server methods are coroutines and the transport
+    supports WebSockets; synchronous <code>.sync()</code> wrappers exist for simple use. This
+    matters because env steps take milliseconds-to-minutes and trainers overlap thousands of
+    episodes — see <a href="env-scaling-sandboxing.html">Scaling &amp; Sandboxing</a>.</li>
+    <li><strong>The environment owns the reward.</strong> <code>step()</code> returns reward
+    and done alongside the observation — the verifier is bundled inside the env boundary, which
+    is what makes environments shippable as self-contained units
+    (<a href="verifier-reward-design.html">reward design</a> covers what goes in there).</li>
+    <li><strong>Sessions.</strong> One server can host many concurrent episodes; environments
+    declare whether they support concurrent sessions, and the client library routes each
+    episode's calls to its own session. State between <code>step()</code> calls is the
+    server's problem, not the trainer's.</li>
+    <li><strong><code>state()</code>, the third verb.</strong> Beyond the observation stream,
+    the client can query environment state — episode metadata, accumulated info — which is how
+    trainers pull end-of-episode rewards out of environments that only grade at the end.</li>
+  </ul>
+
+  <!-- ── §3 Artifacts ───────────────────────────── -->
+  <h2 id="artifacts">3. One Environment, Three Artifacts</h2>
+
+  <p>OpenEnv's distribution story is the part Hugging Face brought. The CLI scaffolds and
+  ships an environment (<code>openenv init</code> → <code>openenv push</code>), and one
+  environment lands as three artifacts simultaneously:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Artifact</th><th>What it gives you</th></tr>
+      <tr><td><strong>A Hugging Face Space</strong></td><td>A live hosted env server anyone can hit — the Hub becomes the discovery surface, and "try the environment" is a URL</td></tr>
+      <tr><td><strong>A Docker image</strong></td><td>The same server, pullable for local rollouts or a Kubernetes/sandbox fleet at training scale</td></tr>
+      <tr><td><strong>A pip package</strong></td><td>The typed client (Action/Observation classes) the trainer imports</td></tr>
+    </table>
+  </div>
+
+  <p>This mirrors what made Gym and the HF model Hub work: a standard interface plus a
+  low-friction registry. The container providers are pluggable — local Docker for development,
+  Kubernetes or commercial sandbox platforms (Daytona, Modal, …) for fleets — which is exactly
+  the <a href="env-scaling-sandboxing.html">substrate layer</a> of the stack.</p>
+
+  <!-- ── §4 MCP ─────────────────────────────────── -->
+  <h2 id="mcp">4. Where MCP Fits</h2>
+
+  <p>Agent frameworks already standardized how a model calls tools: MCP. OpenEnv's design
+  (via its RFC process) makes MCP first-class <em>inside</em> the environment boundary: an
+  environment can expose its action surface as MCP tools, so an agent harness that already
+  speaks MCP can act in the environment without a custom adapter. The layering is worth being
+  precise about:</p>
+
+  <ul>
+    <li><strong>MCP standardizes the tool call</strong> — how a model invokes one capability
+    and gets a result back. No episodes, no reward, no reset.</li>
+    <li><strong>OpenEnv standardizes the episode</strong> — reset/step/state lifecycle, typed
+    observations, reward, sessions. A tool call is what happens <em>inside</em> a step.</li>
+  </ul>
+
+  <p>So "is MCP the environment standard?" conflates layers: MCP is the harness-to-world verb;
+  OpenEnv (and ORS, §6) wrap that verb in RL semantics. The two compose rather than compete.</p>
+
+  <!-- ── §5 Training loop ───────────────────────── -->
+  <h2 id="training">5. In the Training Loop — the TRL Walkthrough</h2>
+
+  <p>The cleanest public integration is TRL's. <a href="trl.html">GRPOTrainer</a> accepts an
+  <code>environment_factory</code>; when set, the trainer stops treating generation as one
+  <code>generate()</code> call and instead runs the multi-turn env loop for every group member
+  (<a href="grpo.html">GRPO</a> needs G rollouts per prompt):</p>
+
+  <pre><code>def env_factory():
+    return EchoEnv.from_docker_image("myorg/echo-env:latest")
+
+trainer = GRPOTrainer(
+    model=model,
+    environment_factory=env_factory,   # replaces plain generation
+    ...
+)</code></pre>
+
+  <p>Per rollout, the trainer now does:</p>
+
+  <ol>
+    <li><code>env.reset()</code> → initial observation, rendered into the prompt;</li>
+    <li>sample model output → parse it into the env's typed <code>Action</code>;</li>
+    <li><code>env.step(action)</code> → observation text appended to the context;</li>
+    <li>repeat until <code>done</code> or the turn budget ends;</li>
+    <li>read the reward from the env (per-step or from final <code>state()</code>), and drop
+    the whole multi-turn trajectory into the GRPO group as one sequence.</li>
+  </ol>
+
+  <p>Everything the <a href="verl-agentic-training.html">verl agentic-training page</a> derives
+  still applies here — tool/env output occupies response tokens, so the trainer must mask
+  environment-generated tokens out of the loss (the token-in-token-out invariant and
+  <code>response_mask</code>). OpenEnv standardizes the <em>env side</em> of the seam; the
+  loss-masking bookkeeping stays on the trainer side. verl consumes OpenEnv through its
+  <code>AgentLoop</code> abstraction, torchforge and SkyRL through their own hooks — one env,
+  every trainer.</p>
+
+  <!-- ── §6 vs ORS ──────────────────────────────── -->
+  <h2 id="ors">6. The Other Standard: OpenReward / ORS</h2>
+
+  <p>OpenEnv is not the only bid for the seam. The <strong>Open Reward Standard</strong> takes
+  the opposite starting point: instead of a Gym-style API served from containers you own, ORS
+  extends the MCP protocol itself with RL primitives — episodes, reward signals, tasks,
+  train/eval splits, curriculum — and OpenReward (the company) serves 330+ environments over
+  ~4.5M tasks as managed, autoscaled endpoints. You don't pull an image; you point your trainer
+  at a URL.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th></th><th>OpenEnv</th><th>OpenReward / ORS</th></tr>
+      <tr><td><strong>What is standardized</strong></td><td>Client/server env API (reset/step/state)</td><td>Wire protocol: MCP + episodes/rewards/splits</td></tr>
+      <tr><td><strong>Where envs run</strong></td><td>Containers you deploy (Space, Docker, K8s, sandbox)</td><td>Managed endpoints (or self-hosted)</td></tr>
+      <tr><td><strong>Distribution unit</strong></td><td>Image + package on a hub</td><td>API endpoint + task registry</td></tr>
+      <tr><td><strong>Splits / curriculum</strong></td><td>Left to the env author</td><td>Protocol primitives</td></tr>
+      <tr><td><strong>Governance</strong></td><td>Multi-org open committee</td><td>Company-led open spec</td></tr>
+    </table>
+  </div>
+
+  <p>In practice the trainer layer absorbed the difference: TRL documents OpenEnv, OpenReward,
+  and Harbor tasksets as interchangeable backends behind the same <code>environment_factory</code>
+  contract. The competition is real but it is happening one layer down from where a training
+  job notices.</p>
+
+  <!-- ── §7 Status ──────────────────────────────── -->
+  <h2 id="status">7. Governance &amp; Status (mid-2026)</h2>
+
+  <ul>
+    <li><strong>Oct 2025</strong> — announced as a Meta-PyTorch + Hugging Face project.</li>
+    <li><strong>June 2026</strong> — moved to multi-org governance: a technical committee
+    spanning Meta-PyTorch, Hugging Face, Reflection, Unsloth, Modal, Prime Intellect, Nvidia,
+    Mercor, Fleet, Microsoft, RadixArk, with supporters including the PyTorch Foundation, vLLM,
+    SGLang, and SkyRL. Microsoft's Foundry announced enterprise RL built on it.</li>
+    <li><strong>Still experimental.</strong> The repo remains pre-1.0 and explicitly so; APIs
+    move. The bet embodied by the committee list is that the <em>interface</em> layer is where
+    the ecosystem wants exactly one winner — and that it will be this one.</li>
+  </ul>
+
+  <div class="result">
+    <div class="result-label">The mental model</div>
+    <p style="margin:0;">OpenEnv is <strong>Gym's reset/step, moved across an HTTP boundary and
+    given types</strong>: env = containerized server owning state and reward; client = typed
+    stub the trainer drives; distribution = Space + image + package. MCP handles the tool call
+    inside a step; the trainer handles loss masking outside it. If you remember one line:
+    <em>any trainer, any environment, one seam.</em></p>
+  </div>
+
+  <!-- ── References ─────────────────────────────── -->
+  <h2>References</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><td><a href="https://github.com/meta-pytorch/OpenEnv">meta-pytorch/OpenEnv</a></td><td>Spec, RFCs, and reference implementation</td></tr>
+      <tr><td><a href="https://huggingface.co/blog/openenv-agentic-rl">HF blog: OpenEnv for agentic RL</a> · <a href="https://huggingface.co/openenv">hf.co/openenv</a></td><td>Announcement, governance update, and the Space-hosted env hub</td></tr>
+      <tr><td><a href="https://huggingface.co/docs/trl/openenv">TRL OpenEnv integration guide</a></td><td>The §5 walkthrough, in full — the best concrete env-in-training-loop doc</td></tr>
+      <tr><td><a href="https://pytorch.org/blog/introducing-torchforge/">torchforge announcement</a></td><td>Meta's PyTorch-native trainer consuming OpenEnv</td></tr>
+      <tr><td><a href="https://openrewardstandard.io">Open Reward Standard</a> · <a href="https://docs.openreward.ai">OpenReward docs</a></td><td>The §6 comparison target</td></tr>
+    </table>
+  </div>
+
+</div>
+</body>
+</html>
