@@ -489,7 +489,7 @@
       entry <em>count</em> still grows one-per-token: at 1M tokens the cache is still ∝ \(T\).
     </li>
     <li>
-      <strong>V3.2-Exp — skip most entries.</strong> DSA (DeepSeek Sparse Attention) keeps every token's
+      <strong>V3.2-Exp — skip most entries.</strong> <a href="sparse-attention.html">DSA (DeepSeek Sparse Attention)</a> keeps every token's
       entry but lets each query attend to only the top-\(k\) of them, chosen by a cheap "lightning
       indexer" scoring pass. Core-attention FLOPs become constant in \(T\) — but the memory is untouched,
       and the indexer itself still scans all \(T\) entries.
@@ -546,8 +546,9 @@
     <p>
       A lightweight scoring head — 64 indexer heads of dimension 128, ReLU activations, computed in FP4 —
       scores every compressed entry against the current query token. The top-\(k\) entries win
-      (\(k = 1024\) for Pro, 512 for Flash) and only they enter core attention. This is V3.2's DSA
-      mechanism, inherited almost verbatim, with one big difference: it now scans \(T/4\) summaries
+      (\(k = 1024\) for Pro, 512 for Flash) and only they enter core attention. This is
+      <a href="sparse-attention.html">V3.2's DSA mechanism</a> — including its distillation-trained
+      indexer — inherited almost verbatim, with one big difference: it now scans \(T/4\) summaries
       instead of \(T\) tokens, so the one remaining \(O(T)\) pass got 4× cheaper too.
     </p>
   </div>
@@ -608,8 +609,8 @@
     The stack interleaves them: V4-Pro opens with two HCA layers, then alternates CSA and HCA to the top.
     An indexer miss in a CSA layer is not fatal, because the adjacent HCA layers maintain unconditional
     (if low-resolution) access to the full history — the same "cheap global layers backstop the precise
-    ones" logic that hybrid linear-attention stacks use, with compression strength in place of
-    state size (compare <a href="qwen-3-5.html">Qwen3.5</a> and <a href="kimi-k3.html">Kimi K3</a>,
+    ones" logic that <a href="hybrid-attention.html">hybrid linear-attention stacks</a> use, with
+    compression strength in place of state size (compare <a href="qwen-3-5.html">Qwen3.5</a> and <a href="kimi-k3.html">Kimi K3</a>,
     which interleave linear-attention layers with full-attention layers in a 3:1 ratio).
     V4-Flash replaces its first two layers with pure sliding-window attention instead — at 13B active
     params, the cheapest possible opening.
@@ -698,8 +699,9 @@
   <h2 id="mhc">6. mHC — A Doubly-Stochastic Residual Stream</h2>
   <p>
     The <a href="transformer-block.html">residual stream</a> is the one part of the block that has barely
-    changed since 2017: each sublayer adds its output to a single running vector. Hyper-connections
-    (and V4's manifold-constrained variant, mHC) widen and re-learn it:
+    changed since 2017: each sublayer adds its output to a single running vector.
+    <a href="hyper-connections.html">Hyper-connections</a> (and V4's manifold-constrained variant, mHC)
+    widen and re-learn it:
   </p>
   <ul>
     <li>The stream is widened to \(n_{hc} = 4\) parallel lanes.</li>
@@ -836,6 +838,16 @@
       <div class="next-card-label">The rival answer, larger</div>
       <div class="next-card-title">Kimi K3</div>
       <p>KDA + gated MLA at 2.8T params — and Block AttnRes, the other 2026 residual-stream redesign.</p>
+    </a>
+    <a class="next-card" href="sparse-attention.html">
+      <div class="next-card-label">Deep dive</div>
+      <div class="next-card-title">Sparse Attention</div>
+      <p>The lightning indexer, its distillation training, and the NSA → DSA → CSA lineage behind V4's attention.</p>
+    </a>
+    <a class="next-card" href="hyper-connections.html">
+      <div class="next-card-label">Deep dive</div>
+      <div class="next-card-title">Rewiring the Residual Stream</div>
+      <p>mHC's Sinkhorn-constrained mixing, side by side with Kimi's AttnRes — and why both are convex combinations.</p>
     </a>
     <a class="next-card" href="moe-routing.html">
       <div class="next-card-label">Deep dive</div>

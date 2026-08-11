@@ -42,8 +42,9 @@ hierarchy, and interconnect topology.
 
 ### 03 · Transformer & Pretraining — [docs/transformer/](docs/transformer/)
 Assembling the Foundations pieces into a working model and training it. **Architecture:**
-self-attention (forward & backward), the pre-norm block, linear attention, Gated DeltaNet, MoE
-routing. **Training:** the next-token objective and single-device loop, multi-token prediction
+self-attention (forward & backward), the pre-norm block, linear attention, Gated DeltaNet, KDA,
+sparse attention (the lightning indexer), hybrid attention stacks, MoE routing, and the 2026
+residual-stream redesigns (hyper-connections / attention residuals). **Training:** the next-token objective and single-device loop, multi-token prediction
 (parallel heads vs. DeepSeek-V3's sequential MTP modules, and the free draft head that falls out),
 and the neural scaling laws that size the run (Kaplan vs. Chinchilla, the compute-optimal frontier).
 **Model Architectures:** case studies reading complete 2026 frontier designs through those
@@ -53,7 +54,8 @@ components — DeepSeek-V4 (sequence-compressed sparse attention, mHC residual l
 
 ### 04 · Systems & Scaling — [docs/systems/](docs/systems/), [triton/](triton/)
 The engineering substrate that trains it across many devices, built bottom-up — MFU, the PyTorch
-execution model (operators, dispatch, eager vs. graph) and Triton kernels, sharding & collectives
+execution model (operators, dispatch, eager vs. graph), Triton kernels and the chunkwise
+linear-attention kernels (FLA), sharding & collectives
 (NCCL), tensor/pipeline/sequence/MoE parallelism, the ZeRO/FSDP distributed-training ladder, and
 the training-framework landscape (Megatron-LM vs. DeepSpeed vs. FSDP/TorchTitan).
 

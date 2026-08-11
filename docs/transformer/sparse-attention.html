@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Sparse Attention — Learned Selection with a Lightning Indexer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #7c3aed;
+      --accent-light: #f5f3ff;
+      --warning-bg: #fffbeb;
+      --warning-border: #f59e0b;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --compare-bg: #eff6ff;
+      --compare-border: #3b82f6;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --note-fg: #78350f;
+      --result-fg: #16a34a;
+      --compare-fg: #2563eb;
+      --violet-border: #ddd6fe;
+      --nav-bg: rgba(255,255,255,0.92);
+      --fig-bg: #ffffff;
+      --plot-grid: #eceef1;
+      --plot-axis: #c7cbd1;
+      --plot-tick: #9ca3af;
+      --plot-violet: #7c3aed;
+      --plot-violet2: #a78bfa;
+      --plot-amber: #d97706;
+      --plot-teal: #0d9488;
+      --plot-gray: #9ca3af;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #a78bfa;
+        --accent-light: #1a1626;
+        --warning-bg: #251c0b;
+        --warning-border: #b45309;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --compare-bg: #101a2b;
+        --compare-border: #1e40af;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --note-fg: #fcd34d;
+        --result-fg: #4ade80;
+        --compare-fg: #60a5fa;
+        --violet-border: #372a5e;
+        --nav-bg: rgba(15,17,21,0.9);
+        --fig-bg: #14181e;
+        --plot-grid: #232830;
+        --plot-axis: #3a4149;
+        --plot-tick: #6b7280;
+        --plot-violet: #a78bfa;
+        --plot-violet2: #c4b5fd;
+        --plot-amber: #fbbf24;
+        --plot-teal: #2dd4bf;
+        --plot-gray: #6b7280;
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .nav-back {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      white-space: nowrap;
+      transition: color 0.15s;
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+    .nav-back:hover { color: var(--text); }
+
+    .hero {
+      background: linear-gradient(135deg, #5b21b6 0%, #7c3aed 50%, #8b5cf6 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.85;
+      font-size: 0.97rem;
+      max-width: 640px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+    a { color: var(--accent); }
+
+    code {
+      font-family: 'SF Mono', SFMono-Regular, ui-monospace, Menlo, monospace;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+    .note::before { content: '⚠ '; }
+
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    .compare {
+      background: var(--compare-bg);
+      border: 1.5px solid var(--compare-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .compare-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--compare-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 10px;
+    }
+    .compare-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 600px) { .compare-grid { grid-template-columns: 1fr; } }
+    .compare-col-label {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--ink);
+      margin-bottom: 4px;
+    }
+
+    .figure {
+      background: var(--fig-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 16px 14px;
+      margin: 1.6em 0;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .figure canvas {
+      width: 100%;
+      height: 300px;
+      display: block;
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      justify-content: center;
+      margin-top: 12px;
+      font-size: 0.82rem;
+      color: var(--text);
+    }
+    .legend-item { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, var(--c) 0 5px, transparent 5px 9px); }
+    .figure-caption {
+      font-size: 0.85rem;
+      color: var(--muted);
+      line-height: 1.6;
+      margin: 14px 4px 2px;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .summary-card {
+      background: var(--accent-light);
+      border: 1px solid var(--violet-border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .summary-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    .next-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .next-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      text-decoration: none;
+      color: inherit;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      display: block;
+    }
+    .next-card:hover { border-color: var(--accent); box-shadow: 0 2px 8px rgba(124,58,237,0.1); }
+    .next-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .next-card-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 4px; }
+    .next-card p { margin: 0; font-size: 0.88rem; color: var(--muted); }
+
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Sparse Attention</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#space">Design space</a>
+    <a href="#nsa">NSA</a>
+    <a href="#dsa">DSA</a>
+    <a href="#training">Training it</a>
+    <a href="#cost">The cost</a>
+    <a href="#csa">To summaries</a>
+    <a href="#tradeoffs">Trade-offs</a>
+    <a href="#summary">Summary</a>
+  </div>
+  <a class="nav-back" href="attention.html">← Self-Attention</a>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Transformer &amp; Pretraining</span>
+  <h1>Sparse Attention</h1>
+  <p>Attend to a thousand entries, not a million: static patterns, learned selection, and the lightning indexer — the cheap scoring pass that lets DeepSeek's models pick what full attention gets to read.</p>
+</div>
+
+<div class="page-wrap">
+
+  <p>
+    <a href="attention.html">Softmax attention</a> reads everything: each new token's query is scored
+    against every cached entry, every step. <a href="../inference/flash-attention.html">FlashAttention</a>
+    makes that read fast, and <a href="mla.html">MLA</a> makes each entry small — but neither changes the
+    count. At a million tokens of context, "read everything" is the budget item that dominates decode,
+    and the empirical observation that motivates this whole page is old and robust: <em>trained attention
+    distributions are already sparse</em>. For most queries, a few hundred entries carry nearly all the
+    probability mass. Sparse attention architectures try to find those entries without paying for the
+    rest.
+  </p>
+
+  <h2 id="space">1. The Design Space</h2>
+  <p>Four families, distinguished by <em>who decides what gets read, and when</em>:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Family</th><th>Mechanism</th><th>Examples</th><th>Weakness</th></tr>
+      <tr>
+        <td><strong>Static patterns</strong></td>
+        <td>Fixed, content-blind masks: sliding windows, strides, global tokens</td>
+        <td>Longformer, BigBird, Mistral's SWA</td>
+        <td>A content-dependent long-range link (page 3 cites page 700) is invisible unless the pattern happens to cover it</td>
+      </tr>
+      <tr>
+        <td><strong>Cache eviction</strong></td>
+        <td>Permanently delete "unimportant" entries as decode proceeds</td>
+        <td>H2O, StreamingLLM, SnapKV</td>
+        <td>Lossy and irreversible — a deleted entry cannot matter later, and "later" is exactly what long contexts are for</td>
+      </tr>
+      <tr>
+        <td><strong>Learned selection</strong></td>
+        <td>Keep everything; a trained scorer picks top-\(k\) entries <em>per query</em></td>
+        <td>NSA, DSA (V3.2), CSA (V4), Quest</td>
+        <td>Adds a scoring pass and a second model component that must be trained to agree with attention</td>
+      </tr>
+      <tr>
+        <td><strong>Sequence compression</strong></td>
+        <td>Merge runs of tokens into single entries before caching</td>
+        <td>V4's CSA (4:1) and HCA (128:1)</td>
+        <td>Individual-token resolution at long range is gone by construction; needs a raw-token window for local precision</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>
+    The modern DeepSeek line combines the last two: <em>learned selection</em> is the core mechanism
+    (this page), and V4 layers <em>compression</em> underneath it
+    (<a href="deepseek-v4.html">the V4 page</a>). The critical property separating selection from
+    eviction: selection is per-query and reversible — an entry ignored by this token is fully available
+    to the next one. Nothing is forgotten; things are merely not read.
+  </p>
+
+  <h2 id="nsa">2. NSA — The Trainable-Sparsity Template</h2>
+  <p>
+    NSA (Native Sparse Attention, DeepSeek, early 2025) established the template that later designs
+    refine. Each query runs three branches over the same history, and a learned per-query gate blends
+    them:
+  </p>
+  <ul>
+    <li><strong>Compression branch</strong> — attend to block-level summaries of the history (one learned summary per block of tokens): cheap global gist.</li>
+    <li><strong>Selection branch</strong> — score blocks, pick the top-\(n\), attend to the <em>raw tokens</em> inside the winners: sharp retrieval where it matters.</li>
+    <li><strong>Sliding-window branch</strong> — attend to recent raw tokens: local syntax, guaranteed.</li>
+  </ul>
+  <p>
+    Two ideas here outlived the specific design. First, <em>block-granular sparsity</em>: selecting
+    contiguous blocks instead of scattered tokens keeps memory reads coalesced, which is what makes
+    sparse attention actually faster on a GPU rather than merely FLOP-count-smaller
+    (<a href="../hardware/gpu-hardware.html">memory-hierarchy page</a> for why scattered reads lose).
+    Second, <em>native trainability</em>: NSA is trained sparse from scratch — the model learns to
+    concentrate its attention within what the sparse machinery can deliver, instead of having sparsity
+    imposed post-hoc on a dense-trained model and hoping the approximation holds.
+  </p>
+
+  <h2 id="dsa">3. DSA — The Lightning Indexer</h2>
+  <p>
+    DSA (DeepSeek Sparse Attention, shipped in V3.2-Exp) strips the template to one mechanism: a single
+    cheap scoring pass — the <em>lightning indexer</em> — followed by top-\(k\) selection, feeding the
+    model's ordinary <a href="mla.html">MLA</a> core attention.
+  </p>
+
+  <div class="step">
+    <div class="step-label">Step A — Score every entry, cheaply</div>
+    <p>For query token \(t\) and each cached position \(s\), a small set of indexer heads computes</p>
+    \[
+      I_{t,s} \;=\; \sum_{j=1}^{H_I} w_{t,j}\cdot \mathrm{ReLU}\!\bigl(q^{I}_{t,j}\cdot k^{I}_{s}\bigr)
+    \]
+    <p>
+      — \(H_I\) indexer heads (dozens, not hundreds) with small head dim, per-head weights \(w_{t,j}\)
+      produced from the query token, ReLU keeping scores sparse and cheap. The whole pass runs in very
+      low precision (FP8 in V3.2; V4 pushes the QK compute to FP4), because the indexer only has to get
+      the <em>ranking</em> roughly right — its scores never touch the value path.
+    </p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step B — Keep the top-k, attend normally</div>
+    <p>
+      The \(k\) highest-scoring entries (V3.2: \(k = 2048\)) form the query's shortlist; core attention —
+      full-precision, full-width, softmax — runs over the shortlist only. Everything else about the
+      layer is unchanged: the sparse machinery is a <em>filter in front of</em> attention, not a new
+      attention.
+    </p>
+  </div>
+
+  <p>
+    The economics: an indexer head-set costing ~1/15th of core attention per entry scans all \(T\)
+    entries, so that core attention — the expensive part — touches only \(k\) of them. The total is
+    \(c_{\text{idx}} \cdot T + c_{\text{core}} \cdot k\): still linear in \(T\), but with a slope more
+    than an order of magnitude shallower, and with the expensive term now constant.
+  </p>
+
+  <h2 id="training">4. How the Indexer Learns to Agree with Attention</h2>
+  <p>
+    The top-\(k\) is a hard, non-differentiable selection, and the indexer's scores never enter the
+    output — so where does its gradient come from? Not through the selection at all. DSA trains the
+    indexer by <em>distillation from the attention it serves</em>:
+  </p>
+  <ol>
+    <li>
+      <strong>Dense warm-up.</strong> Run attention dense (no selection). Train the indexer — alone — to
+      match the real attention distribution: KL from the (head-summed) attention scores to the indexer's
+      softmaxed scores. The main model is briefly frozen from the indexer's perspective; the indexer is
+      learning to <em>predict where attention will land</em>.
+    </li>
+    <li>
+      <strong>Sparse stage.</strong> Switch selection on. The main model trains normally — its gradients
+      flow through the \(k\) selected entries only, exactly like attention over a shorter sequence — and
+      the indexer keeps distilling, now against the attention distribution over the selected set.
+    </li>
+  </ol>
+  <p>
+    Both failure directions are self-limiting: if the indexer drifts from what attention wants, the
+    distillation loss pulls it back; if attention starts needing entries the indexer suppresses, those
+    entries' scores rise in the (dense-computed) target the moment they get selected again. What is
+    <em>not</em> self-limiting is a region the indexer never selects and attention never sees — the miss
+    that stays a miss. That residual risk is why V4 pairs its selective layers with dense-over-summaries
+    layers as a backstop (§6).
+  </p>
+
+  <h2 id="cost">5. What It Costs</h2>
+
+  <div class="figure">
+    <canvas id="plot-dsa" aria-label="Per-token decode attention cost versus context length for dense MLA, DSA total, and the constant core-attention component, log-log"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-amber)"></span> dense MLA (reads all \(T\))</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span> DSA total (indexer + core)</span>
+      <span class="legend-item"><span class="lg dash" style="--c:var(--plot-teal)"></span> core attention alone (\(k\)=2048, constant)</span>
+    </div>
+    <p class="figure-caption">
+      <strong>Selection makes the expensive part constant; the cheap part inherits the slope.</strong>
+      Per-token decode attention cost vs. context length (illustrative constants: MLA ≈147K MACs/entry
+      across 128 heads; indexer ≈8K MACs/entry across 64 small heads; \(k = 2048\)), log–log. DSA
+      crosses below dense around \(T \approx 2k\) and settles at ≈18× cheaper: past ~100K tokens
+      essentially <em>all</em> remaining cost is the indexer's linear scan, while full-precision
+      attention (dashed) is a flat floor. That readout is the setup for V4: once the indexer <em>is</em>
+      the cost, the next win must shrink what the indexer scans — which is exactly what scoring 4:1
+      compressed summaries does.
+    </p>
+  </div>
+
+  <h2 id="csa">6. From Tokens to Summaries — Where V4 Takes It</h2>
+  <p>
+    V4's CSA keeps the DSA skeleton and changes the unit of selection: the indexer scores 4-token
+    <em>summaries</em> instead of tokens, so its scan covers \(T/4\) entries, and \(k\) halves
+    (2048 → 1024) because each selected entry now carries four tokens' worth of content. Both terms of
+    the cost shrink. The mechanics of the compression, the shared-KV core attention behind it, and the
+    128:1 HCA layers that guarantee nothing is ever fully invisible are on the
+    <a href="deepseek-v4.html">DeepSeek-V4 page</a> — from this page's perspective, V4 is the answer to
+    the plot above: <em>after DSA, the indexer is the bottleneck, so compress its input.</em>
+  </p>
+
+  <h2 id="tradeoffs">7. Selection vs. State — the Two Long-Context Bets</h2>
+
+  <div class="compare">
+    <div class="compare-label">Failure modes, side by side</div>
+    <div class="compare-grid">
+      <div>
+        <div class="compare-col-label">Learned selection (DSA/CSA)</div>
+        <p style="font-size:0.88rem; margin:4px 0 0;">Exact attention — <em>conditional on the indexer
+        surfacing the right region</em>. Failure is a retrieval miss: rare, discrete, potentially
+        unrecoverable within a layer. Memory still grows with \(T\) (shallower slope).</p>
+      </div>
+      <div>
+        <div class="compare-col-label">Recurrent state (<a href="linear-attention.html" style="color:var(--accent);">linear attention</a> hybrids)</div>
+        <p style="font-size:0.88rem; margin:4px 0 0;">Constant memory, no indexer to miss — but the
+        state is lossy <em>always</em>: everything is stored approximately, and verbatim long-range
+        recall needs the hybrid's few full-attention layers. Failure is gradual blur, not a discrete
+        miss.</p>
+      </div>
+    </div>
+  </div>
+
+  <p>
+    These are the two live philosophies in 2026's frontier open models —
+    <a href="deepseek-v4.html">DeepSeek-V4</a> on the selection side,
+    <a href="qwen-3-5.html">Qwen3.5</a> and <a href="kimi-k3.html">Kimi K3</a> on the state side
+    (<a href="hybrid-attention.html">hybrid attention page</a> for that design pattern). Notably, each
+    camp imports the other's insurance: V4 interleaves dense-over-summaries layers (state-like
+    unconditional coverage), and the hybrids keep a few exact softmax layers (selection-like precision).
+    Neither trusts its own failure mode unhedged.
+  </p>
+
+  <h2 id="summary">8. Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">Premise</div>
+      <p>Trained attention is already sparse — a few hundred entries carry the mass. Find them cheaply.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Mechanism</div>
+      <p>\(I_{t,s} = \sum_j w_{t,j}\,\mathrm{ReLU}(q^I_{t,j}\cdot k^I_s)\) — low-precision scoring pass, top-\(k\) shortlist, full attention on the shortlist.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Training</div>
+      <p>No gradient through the top-\(k\): the indexer distills from attention's own distribution (dense warm-up → sparse stage).</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Cost shape</div>
+      <p>\(c_{\text{idx}}T + c_{\text{core}}k\): the expensive term goes constant; the cheap scan owns the slope — and becomes the next target.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Vs. eviction</div>
+      <p>Per-query and reversible: unselected entries stay cached, unlike H2O-style deletion.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">The lineage</div>
+      <p>NSA (three branches) → DSA (one indexer, V3.2) → CSA (indexer over 4:1 summaries, V4).</p>
+    </div>
+  </div>
+
+  <h2>What's Next</h2>
+  <div class="next-grid">
+    <a class="next-card" href="deepseek-v4.html">
+      <div class="next-card-label">Case study</div>
+      <div class="next-card-title">DeepSeek-V4</div>
+      <p>CSA and HCA in full: sequence compression under the indexer, shared-KV MQA, and the interleaved stack.</p>
+    </a>
+    <a class="next-card" href="attention.html">
+      <div class="next-card-label">Prerequisite</div>
+      <div class="next-card-title">Self-Attention</div>
+      <p>The dense baseline and the \(O(T^2)\) wall — forward and backward.</p>
+    </a>
+    <a class="next-card" href="hybrid-attention.html">
+      <div class="next-card-label">The rival bet</div>
+      <div class="next-card-title">Hybrid Attention Stacks</div>
+      <p>Constant-memory recurrent state with a few exact layers — the other answer to a million tokens.</p>
+    </a>
+    <a class="next-card" href="../inference/kv-cache.html">
+      <div class="next-card-label">Foundation</div>
+      <div class="next-card-title">KV Cache</div>
+      <p>The memory object all of this is trying to shrink — its arithmetic and its growth.</p>
+    </a>
+  </div>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; Sparse attention — learned selection with a lightning indexer
+  &nbsp;·&nbsp; <a href="attention.html" style="color:inherit">← Self-attention page</a>
+</footer>
+
+<script>
+(function () {
+  function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+  // Per-token decode attention cost (MACs), log10-log10.
+  // dense MLA:  C_CORE * T;   DSA: C_IDX * T + C_CORE * K;   core-only floor: C_CORE * K.
+  var C_CORE = 147000, C_IDX = 8200, K = 2048;
+
+  function densePts() {
+    var pts = [];
+    for (var u = 3; u <= 6.001; u += 0.05) pts.push([u, Math.log10(C_CORE * Math.pow(10, u))]);
+    return pts;
+  }
+  function dsaPts() {
+    var pts = [];
+    for (var u = 3; u <= 6.001; u += 0.05) pts.push([u, Math.log10(C_IDX * Math.pow(10, u) + C_CORE * K)]);
+    return pts;
+  }
+  function corePts() {
+    var v = Math.log10(C_CORE * K);
+    return [[3, v], [6, v]];
+  }
+
+  function drawPlot(canvas, cfg) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const mL = 62, mR = 14, mT = 14, mB = 40;
+    const pw = cssW - mL - mR, ph = cssH - mT - mB;
+    const { xMin, xMax, yMin, yMax } = cfg;
+    const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
+    const Y = y => mT + (yMax - y) / (yMax - yMin) * ph;
+
+    ctx.font = '11px Inter, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(t => {
+      const px = X(t[0]);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.fillText(t[1], px, mT + ph + 6);
+    });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(t => {
+      const py = Y(t[0]);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+      ctx.fillText(t[1], mL - 8, py);
+    });
+
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(cfg.xLabel, mL + pw / 2, cssH - 8);
+    ctx.save();
+    ctx.translate(12, mT + ph / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText(cfg.yLabel, 0, 0);
+    ctx.restore();
+
+    ctx.save();
+    ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    ctx.lineJoin = 'round';
+    cfg.series.forEach(s => {
+      ctx.beginPath();
+      ctx.lineWidth = s.width || 2;
+      ctx.strokeStyle = s.color.indexOf('--') === 0 ? cssVar(s.color) : s.color;
+      ctx.setLineDash(s.dash || []);
+      s.points.forEach((p, i) => {
+        const px = X(p[0]), py = Y(p[1]);
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      });
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  const plots = [];
+  const dsaCanvas = document.getElementById('plot-dsa');
+  if (dsaCanvas) plots.push([dsaCanvas, {
+    xMin: 3, xMax: 6, yMin: 8.1, yMax: 11.4,
+    xTicks: [[3, '1K'], [4, '10K'], [5, '100K'], [6, '1M']],
+    yTicks: [[8.48, '0.3G'], [9, '1G'], [10, '10G'], [11, '100G']],
+    xLabel: 'context length (tokens, log scale)',
+    yLabel: 'attention MACs per decoded token (log)',
+    series: [
+      { points: corePts(),  color: '--plot-teal',  width: 2, dash: [5, 4] },
+      { points: densePts(), color: '--plot-amber', width: 2.25 },
+      { points: dsaPts(),   color: '--plot-violet', width: 2.75 }
+    ]
+  }]);
+
+  function renderAll() { plots.forEach(([c, cfg]) => drawPlot(c, cfg)); }
+  renderAll();
+  let raf;
+  window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(renderAll); });
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq.addEventListener) mq.addEventListener('change', renderAll);
+})();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,823 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Chunkwise Linear Attention — Training RNNs on Tensor Cores</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #b45309;
+      --accent-light: #fef3c7;
+      --warning-bg: #fffbeb;
+      --warning-border: #f59e0b;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #fff7ed;
+      --boxed-border: #f97316;
+      --compare-bg: #eff6ff;
+      --compare-border: #3b82f6;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --note-fg: #78350f;
+      --result-fg: #c2410c;
+      --compare-fg: #2563eb;
+      --accent-border: #fde68a;
+      --nav-bg: rgba(255,255,255,0.92);
+      --fig-bg: #ffffff;
+      --plot-grid: #eceef1;
+      --plot-axis: #c7cbd1;
+      --plot-tick: #9ca3af;
+      --plot-violet: #7c3aed;
+      --plot-amber: #d97706;
+      --plot-teal: #0d9488;
+      --plot-gray: #9ca3af;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #fbbf24;
+        --accent-light: #251c0b;
+        --warning-bg: #251c0b;
+        --warning-border: #b45309;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #251c0b;
+        --boxed-border: #9a3412;
+        --compare-bg: #101a2b;
+        --compare-border: #1e40af;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --note-fg: #fcd34d;
+        --result-fg: #fb923c;
+        --compare-fg: #60a5fa;
+        --accent-border: #78350f;
+        --nav-bg: rgba(15,17,21,0.9);
+        --fig-bg: #14181e;
+        --plot-grid: #232830;
+        --plot-axis: #3a4149;
+        --plot-tick: #6b7280;
+        --plot-violet: #a78bfa;
+        --plot-amber: #fbbf24;
+        --plot-teal: #2dd4bf;
+        --plot-gray: #6b7280;
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .nav-back {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      white-space: nowrap;
+      transition: color 0.15s;
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+    .nav-back:hover { color: var(--text); }
+
+    .hero {
+      background: linear-gradient(135deg, #78350f 0%, #b45309 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.85;
+      font-size: 0.97rem;
+      max-width: 640px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+    a { color: var(--accent); }
+
+    code {
+      font-family: 'SF Mono', SFMono-Regular, ui-monospace, Menlo, monospace;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+    pre {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      line-height: 1.55;
+      margin: 1.2em 0;
+    }
+    pre code { background: none; border: none; padding: 0; color: var(--text); }
+
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+    .note::before { content: '⚠ '; }
+
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    .compare {
+      background: var(--compare-bg);
+      border: 1.5px solid var(--compare-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .compare-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--compare-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 10px;
+    }
+    .compare-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 600px) { .compare-grid { grid-template-columns: 1fr; } }
+    .compare-col-label {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--ink);
+      margin-bottom: 4px;
+    }
+
+    .figure {
+      background: var(--fig-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 16px 14px;
+      margin: 1.6em 0;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .figure canvas {
+      width: 100%;
+      height: 300px;
+      display: block;
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      justify-content: center;
+      margin-top: 12px;
+      font-size: 0.82rem;
+      color: var(--text);
+    }
+    .legend-item { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, var(--c) 0 5px, transparent 5px 9px); }
+    .figure-caption {
+      font-size: 0.85rem;
+      color: var(--muted);
+      line-height: 1.6;
+      margin: 14px 4px 2px;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .summary-card {
+      background: var(--accent-light);
+      border: 1px solid var(--accent-border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .summary-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    .next-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .next-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      text-decoration: none;
+      color: inherit;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      display: block;
+    }
+    .next-card:hover { border-color: var(--accent); box-shadow: 0 2px 8px rgba(180,83,9,0.12); }
+    .next-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .next-card-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 4px; }
+    .next-card p { margin: 0; font-size: 0.88rem; color: var(--muted); }
+
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Chunkwise Linear Attention</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#three-forms">Three forms</a>
+    <a href="#chunkwise">The derivation</a>
+    <a href="#decay">With decay</a>
+    <a href="#delta">With the delta rule</a>
+    <a href="#fla">The FLA library</a>
+    <a href="#chunk-size">Chunk size</a>
+    <a href="#summary">Summary</a>
+  </div>
+  <a class="nav-back" href="triton-kernels.html">← Triton Kernels</a>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">GPU Kernels · Linear Attention</span>
+  <h1>Chunkwise Linear Attention</h1>
+  <p>The recurrence is the semantics; the chunked form is the implementation. How flash-linear-attention turns sequential state updates into tensor-core matmuls — the kernel algorithm that makes DeltaNet, KDA, and every hybrid stack trainable.</p>
+</div>
+
+<div class="page-wrap">
+
+  <p>
+    Every linear-attention architecture on this site —
+    <a href="../transformer/linear-attention.html">vanilla</a>,
+    <a href="../transformer/gated-deltanet.html">Gated DeltaNet</a>,
+    <a href="../transformer/kda.html">KDA</a> — is <em>defined</em> by a recurrence:
+    \(S_t = A_t S_{t-1} + \beta_t k_t v_t^\top\). Run that definition literally during training and you
+    get \(T\) sequential steps of small elementwise operations: on a GPU whose entire throughput story
+    is <a href="../hardware/gpu-hardware.html">tensor cores executing large matmuls</a>, the recurrence
+    achieves a few percent of peak. The chunkwise form is the reason these architectures exist at
+    frontier scale at all: it re-expresses the same math — bit-for-bit the same function — as dense
+    matmuls within fixed-size chunks plus one small state hand-off between chunks.
+  </p>
+
+  <h2 id="three-forms">1. One Layer, Three Computational Forms</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Form</th><th>Cost</th><th>Parallel over T?</th><th>Used for</th></tr>
+      <tr>
+        <td><strong>Parallel</strong> — materialize \((QK^\top \odot M^{\text{decay}})V\)</td>
+        <td>\(O(T^2 d)\)</td>
+        <td>yes</td>
+        <td>nothing at scale — quadratic cost surrendered the whole point</td>
+      </tr>
+      <tr>
+        <td><strong>Recurrent</strong> — step the state token by token</td>
+        <td>\(O(T d^2)\)</td>
+        <td>no — \(T\) dependent steps</td>
+        <td>decode (one step per generated token is exactly what decode needs)</td>
+      </tr>
+      <tr>
+        <td><strong>Chunkwise</strong> — matmuls within chunks of \(C\), recurrence between chunks</td>
+        <td>\(O(T C d + T d^2)\)</td>
+        <td>yes (within chunk; \(T/C\) short sequential hops)</td>
+        <td>training and prefill</td>
+      </tr>
+    </table>
+  </div>
+  <p>
+    Decode gets the recurrent form for free — that is the architecture's selling point. The engineering
+    problem is training: teacher-forced training processes the whole sequence at once, and the chunkwise
+    form is what makes that tensor-core-shaped.
+  </p>
+
+  <h2 id="chunkwise">2. The Chunkwise Derivation (Vanilla Case)</h2>
+  <p>
+    Notation follows the <a href="../transformer/linear-attention.html">linear attention page</a>:
+    state \(S \in \mathbb{R}^{d_k \times d_v}\), update \(S_t = S_{t-1} + k_t v_t^\top\), readout
+    \(o_t = S_t^\top q_t\). Split the sequence into chunks of \(C\) tokens; write
+    \(Q_{[i]}, K_{[i]}, V_{[i]} \in \mathbb{R}^{C \times d}\) for chunk \(i\)'s stacked vectors and
+    \(S_{(i)}\) for the state after chunk \(i\).
+  </p>
+
+  <div class="step">
+    <div class="step-label">Step A — Split each token's output into "before my chunk" + "inside my chunk"</div>
+    <p>
+      Token \(t\) in chunk \(i\) reads \(S_t = S_{(i-1)} + \sum_{s \le t,\, s \in \text{chunk } i} k_s v_s^\top\).
+      The first term is <em>shared by every token in the chunk</em>; the second involves only the chunk's
+      own tokens.
+    </p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step B — Both terms are matmuls</div>
+    \[
+      O_{[i]} \;=\; \underbrace{Q_{[i]}\, S_{(i-1)}}_{\text{inter-chunk: } C \times d_k \cdot d_k \times d_v}
+      \;+\; \underbrace{\bigl(Q_{[i]} K_{[i]}^\top \odot M\bigr) V_{[i]}}_{\text{intra-chunk: causal attention on } C \text{ tokens}}
+    \]
+    <p>
+      \(M\) is the lower-triangular causal mask <em>within</em> the chunk. The intra-chunk term is
+      literally a \(C\)-token attention (no softmax); the inter-chunk term is one dense matmul against
+      the carried state.
+    </p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step C — Advance the state once per chunk</div>
+    \[
+      S_{(i)} \;=\; S_{(i-1)} \;+\; K_{[i]}^\top V_{[i]}
+    \]
+    <p>
+      One \(d_k \times C \cdot C \times d_v\) matmul per chunk. The only sequential dependency left in
+      the whole computation is this chain of \(T/C\) cheap updates — 1/64th as many sequential steps as
+      the recurrence, with all the heavy work parallel.
+    </p>
+  </div>
+
+  <div class="result">
+    <div class="result-label">Result — the cost structure</div>
+    <p style="margin:0;">
+      Per token: \(\;\approx 2Cd\) MACs of intra-chunk attention \(+\;4d^2\) of state read/update —
+      <strong>constant in \(T\)</strong>. Softmax attention pays \(\approx 4Td\) per token, growing
+      without bound. Same causal semantics, opposite scaling.
+    </p>
+  </div>
+
+  <div class="figure">
+    <canvas id="plot-flops" aria-label="Training FLOPs per token versus sequence length for softmax attention and chunkwise linear attention, log-log"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span> softmax attention (\(\propto T\) per token)</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-amber)"></span> chunkwise linear (\(C{=}64\), constant)</span>
+    </div>
+    <p class="figure-caption">
+      <strong>Constant per-token training cost, from a few hundred tokens on.</strong> Attention MACs
+      per token during training/prefill (one head, \(d = 128\)), log–log. Softmax attention's per-token
+      cost grows with everything before it; chunkwise linear attention pays a flat
+      \(\approx 2Cd + 4d^2\) regardless of position. Crossover ≈160 tokens; at 64K the gap is ~400×,
+      at 1M ~6000×. This flat line — not the recurrence — is why
+      <a href="../transformer/hybrid-attention.html" style="color:var(--accent);">hybrid stacks</a> can
+      afford to make 75% of their layers linear: at 1M-token prefill, the few softmax layers dominate
+      total compute and the 45–69 linear layers are nearly free. (The recurrent form has slightly
+      <em>fewer</em> FLOPs still — but as \(T\) sequential steps, which is why it never trains.)
+    </p>
+  </div>
+
+  <h2 id="decay">3. Adding Decay Gates</h2>
+  <p>
+    A decay \(\alpha_t\) (scalar per <a href="../transformer/gated-deltanet.html">GDN</a>, per-channel
+    per <a href="../transformer/kda.html">KDA</a>) turns the state carry into
+    \(S_t = \alpha_t S_{t-1} + \dots\), and the chunkwise form absorbs it with cumulative products.
+    Within a chunk, define \(\gamma_t = \prod_{s \le t} \alpha_s\) (accumulated in log space —
+    <code>cumsum</code> of \(\log \alpha\) — since a product of 64 sub-one numbers underflows fp16
+    otherwise). Then the same three matmuls apply with scaled operands: queries scaled by
+    \(\gamma_t\), keys by \(\gamma_C / \gamma_t\)-style ratios, and the chunk's state carry scaled by
+    the full-chunk decay \(\gamma_C\). The mask \(M\) becomes a decay-weighted mask. No new sequential
+    structure appears — the gates ride along inside the matmuls, which is exactly the property an
+    architecture must preserve to stay trainable (and which shaped
+    <a href="../transformer/kda.html">KDA's parameterization</a>).
+  </p>
+
+  <h2 id="delta">4. Adding the Delta Rule — the WY Trick</h2>
+  <p>
+    The delta rule breaks the easy story: its transition
+    \((I - \beta_t k_t k_t^\top)\) is not diagonal, so a chunk's combined transition is a <em>product
+    of \(C\) Householder-like matrices</em> — naively, back to sequential. The rescue is a classic from
+    numerical linear algebra (the WY representation of products of Householder transforms): the product
+    collapses to identity-minus-low-rank,
+  </p>
+  \[
+    \prod_{t \in \text{chunk}} \bigl(I - \beta_t k_t k_t^\top\bigr) \;=\; I - K_{[i]}^\top W_{[i]},
+  \]
+  <p>
+    where the \(C \times d\) matrix \(W_{[i]}\) is obtained by solving one small \(C \times C\)
+    lower-triangular system built from \(\beta\) and \(K_{[i]} K_{[i]}^\top\) (the "UT transform" of
+    Yang et al., 2024). One triangular solve of size 64, then everything else — applying the chunk
+    transition to the carried state, computing intra-chunk corrections — is matmuls again. Gated and
+    channel-wise variants (GDN, KDA) compose this with §3's decay scalings. The takeaway worth keeping:
+    <em>an architecture idea in this family survives only if its chunk-level algebra collapses like
+    this</em> — expressivity proposals are ultimately auditioning for a matmul decomposition.
+  </p>
+
+  <h2 id="fla">5. FLA — the Library That Ships All of This</h2>
+  <p>
+    <a href="https://github.com/fla-org/flash-linear-attention">flash-linear-attention</a>
+    (<code>fla</code>) is the de-facto home of these kernels: Triton implementations
+    (<a href="triton-kernels.html">Triton page</a> for the programming model) of the chunkwise and
+    recurrent forms for essentially every modern linear-attention and SSM layer — GLA, RetNet, Mamba-2,
+    DeltaNet, Gated DeltaNet, KDA and more — exposed as paired ops:
+  </p>
+  <pre><code>from fla.ops.gated_delta_rule import chunk_gated_delta_rule      # training / prefill
+from fla.ops.gated_delta_rule import fused_recurrent_gated_delta_rule  # decode
+
+o, S_final = chunk_gated_delta_rule(q, k, v, g, beta, initial_state=S0,
+                                    output_final_state=True)   # chunks of 64</code></pre>
+  <p>
+    Hugging Face <code>transformers</code> integrations (Qwen3-Next's Gated DeltaNet among them) call
+    these kernels when installed, alongside <code>causal-conv1d</code> for the short convolution in
+    front of the recurrence. Model authors ship the eager recurrence as a reference; <code>fla</code>
+    supplies the speed.
+  </p>
+
+  <div class="note">
+    <strong>The fallback is silent.</strong> <code>fla</code> and <code>causal-conv1d</code> are
+    optional dependencies: absent, frameworks quietly run the eager Python-loop recurrence — same
+    numbers, orders of magnitude slower, no warning. The failure signature and the argument for an
+    explicit startup assertion are documented on the
+    <a href="../transformer/gated-deltanet.html">Gated DeltaNet page</a>.
+  </div>
+
+  <h2 id="chunk-size">6. Why C = 64</h2>
+  <ul>
+    <li>
+      <strong>FLOPs:</strong> the intra-chunk term costs \(\approx 2Cd\) per token — linear in \(C\).
+      Smaller chunks mean fewer wasted attention FLOPs.
+    </li>
+    <li>
+      <strong>Sequentiality:</strong> the state chain has \(T/C\) dependent steps; each step is a
+      kernel-level synchronization. Larger chunks mean fewer of them.
+    </li>
+    <li>
+      <strong>Hardware quantization:</strong> the intra-chunk matmuls must fill
+      <a href="../hardware/gpu-hardware.html">tensor-core tiles</a> (multiples of 16) and keep the
+      \(C \times d\) operands plus the \(d \times d\) state resident in SRAM — the same tiling logic as
+      <a href="../inference/flash-attention.html">FlashAttention</a>, with the state in the role of the
+      running softmax accumulators.
+    </li>
+  </ul>
+  <p>
+    \(C = 64\) (occasionally 128) is where these meet for \(d = 128\)-ish heads on current GPUs: big
+    enough that matmuls saturate tensor cores and the sequential chain is short, small enough that the
+    \(O(TC)\) term stays a minority of the work. It is an engineering constant, not a modeling one —
+    the output is identical for any \(C\).
+  </p>
+
+  <h2 id="summary">7. Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">The move</div>
+      <p>\(O_{[i]} = Q_{[i]} S_{(i-1)} + (Q_{[i]}K_{[i]}^\top \odot M)V_{[i]}\); \(\;S_{(i)} = S_{(i-1)} + K_{[i]}^\top V_{[i]}\).</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Cost</div>
+      <p>\(\approx 2Cd + 4d^2\) per token, constant in \(T\) — vs. softmax's \(\approx 4Td\).</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Gates</div>
+      <p>Decay rides along as log-space cumulative products scaling Q, K, and the state carry.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Delta rule</div>
+      <p>WY representation: a chunk of Householder transitions collapses to \(I - K^\top W\) via one 64×64 triangular solve.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">The library</div>
+      <p><code>fla</code>: Triton chunkwise + recurrent kernels for GLA / RetNet / Mamba-2 / GDN / KDA; silent eager fallback when missing.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Design law</div>
+      <p>A linear-attention idea survives iff its chunk algebra stays matmul-shaped — kernels vet architectures.</p>
+    </div>
+  </div>
+
+  <h2>What's Next</h2>
+  <div class="next-grid">
+    <a class="next-card" href="../transformer/linear-attention.html">
+      <div class="next-card-label">Prerequisite</div>
+      <div class="next-card-title">Linear Attention</div>
+      <p>The parallel / recurrent / chunked duality this page implements — derived from the semantics side.</p>
+    </a>
+    <a class="next-card" href="../transformer/gated-deltanet.html">
+      <div class="next-card-label">The layer</div>
+      <div class="next-card-title">Gated DeltaNet</div>
+      <p>The decode loop these kernels accelerate, and the exact update the WY trick chunk-parallelizes.</p>
+    </a>
+    <a class="next-card" href="triton-kernels.html">
+      <div class="next-card-label">Foundation</div>
+      <div class="next-card-title">Triton Kernels</div>
+      <p>The programming model fla's kernels are written in — tiles, SRAM, and autotuning.</p>
+    </a>
+    <a class="next-card" href="../transformer/hybrid-attention.html">
+      <div class="next-card-label">Why it matters</div>
+      <div class="next-card-title">Hybrid Attention Stacks</div>
+      <p>The architecture pattern whose economics depend on this flat per-token cost line.</p>
+    </a>
+  </div>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; Chunkwise linear attention — training RNNs on tensor cores
+  &nbsp;·&nbsp; <a href="triton-kernels.html" style="color:inherit">← Triton kernels page</a>
+</footer>
+
+<script>
+(function () {
+  function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+  // MACs per token, one head, d=128, C=64. log10-log10.
+  var D = 128, C = 64;
+  function softmaxPts() {
+    var pts = [];
+    for (var u = 1.5; u <= 6.001; u += 0.05) {
+      var T = Math.pow(10, u);
+      pts.push([u, Math.log10(4 * T * D)]);
+    }
+    return pts;
+  }
+  function chunkPts() {
+    var v = Math.log10(2 * C * D + 4 * D * D);
+    return [[1.5, v], [6, v]];
+  }
+
+  function drawPlot(canvas, cfg) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const mL = 56, mR = 14, mT = 14, mB = 40;
+    const pw = cssW - mL - mR, ph = cssH - mT - mB;
+    const { xMin, xMax, yMin, yMax } = cfg;
+    const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
+    const Y = y => mT + (yMax - y) / (yMax - yMin) * ph;
+
+    ctx.font = '11px Inter, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(t => {
+      const px = X(t[0]);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.fillText(t[1], px, mT + ph + 6);
+    });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(t => {
+      const py = Y(t[0]);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+      ctx.fillText(t[1], mL - 8, py);
+    });
+
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(cfg.xLabel, mL + pw / 2, cssH - 8);
+    ctx.save();
+    ctx.translate(12, mT + ph / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText(cfg.yLabel, 0, 0);
+    ctx.restore();
+
+    ctx.save();
+    ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    ctx.lineJoin = 'round';
+    cfg.series.forEach(s => {
+      ctx.beginPath();
+      ctx.lineWidth = s.width || 2;
+      ctx.strokeStyle = s.color.indexOf('--') === 0 ? cssVar(s.color) : s.color;
+      ctx.setLineDash(s.dash || []);
+      s.points.forEach((p, i) => {
+        const px = X(p[0]), py = Y(p[1]);
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      });
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  const plots = [];
+  const flopsCanvas = document.getElementById('plot-flops');
+  if (flopsCanvas) plots.push([flopsCanvas, {
+    xMin: 1.5, xMax: 6, yMin: 4.2, yMax: 9,
+    xTicks: [[2, '100'], [3, '1K'], [4, '10K'], [5, '100K'], [6, '1M']],
+    yTicks: [[5, '100K'], [6, '1M'], [7, '10M'], [8, '100M'], [9, '1G']],
+    xLabel: 'sequence length (tokens, log scale)',
+    yLabel: 'attention MACs per token (log scale)',
+    series: [
+      { points: softmaxPts(), color: '--plot-violet', width: 2.25 },
+      { points: chunkPts(),   color: '--plot-amber',  width: 2.75 }
+    ]
+  }]);
+
+  function renderAll() { plots.forEach(([c, cfg]) => drawPlot(c, cfg)); }
+  renderAll();
+  let raf;
+  window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(renderAll); });
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq.addEventListener) mq.addEventListener('change', renderAll);
+})();
+</script>
+
+</body>
+</html>

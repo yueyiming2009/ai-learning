@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Hybrid Attention Stacks — Rationing Exact Recall</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #7c3aed;
+      --accent-light: #f5f3ff;
+      --warning-bg: #fffbeb;
+      --warning-border: #f59e0b;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --compare-bg: #eff6ff;
+      --compare-border: #3b82f6;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --note-fg: #78350f;
+      --result-fg: #16a34a;
+      --compare-fg: #2563eb;
+      --violet-border: #ddd6fe;
+      --nav-bg: rgba(255,255,255,0.92);
+      --fig-bg: #ffffff;
+      --plot-grid: #eceef1;
+      --plot-axis: #c7cbd1;
+      --plot-tick: #9ca3af;
+      --plot-violet: #7c3aed;
+      --plot-violet2: #a78bfa;
+      --plot-amber: #d97706;
+      --plot-teal: #0d9488;
+      --plot-gray: #9ca3af;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #a78bfa;
+        --accent-light: #1a1626;
+        --warning-bg: #251c0b;
+        --warning-border: #b45309;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --compare-bg: #101a2b;
+        --compare-border: #1e40af;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --note-fg: #fcd34d;
+        --result-fg: #4ade80;
+        --compare-fg: #60a5fa;
+        --violet-border: #372a5e;
+        --nav-bg: rgba(15,17,21,0.9);
+        --fig-bg: #14181e;
+        --plot-grid: #232830;
+        --plot-axis: #3a4149;
+        --plot-tick: #6b7280;
+        --plot-violet: #a78bfa;
+        --plot-violet2: #c4b5fd;
+        --plot-amber: #fbbf24;
+        --plot-teal: #2dd4bf;
+        --plot-gray: #6b7280;
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .nav-back {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      white-space: nowrap;
+      transition: color 0.15s;
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+    .nav-back:hover { color: var(--text); }
+
+    .hero {
+      background: linear-gradient(135deg, #5b21b6 0%, #7c3aed 50%, #8b5cf6 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.85;
+      font-size: 0.97rem;
+      max-width: 640px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+    a { color: var(--accent); }
+
+    code {
+      font-family: 'SF Mono', SFMono-Regular, ui-monospace, Menlo, monospace;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+    .note::before { content: '⚠ '; }
+
+    .compare {
+      background: var(--compare-bg);
+      border: 1.5px solid var(--compare-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .compare-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--compare-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 10px;
+    }
+    .compare-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 600px) { .compare-grid { grid-template-columns: 1fr; } }
+    .compare-col-label {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--ink);
+      margin-bottom: 4px;
+    }
+
+    .figure {
+      background: var(--fig-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 16px 14px;
+      margin: 1.6em 0;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .figure canvas {
+      width: 100%;
+      height: 300px;
+      display: block;
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      justify-content: center;
+      margin-top: 12px;
+      font-size: 0.82rem;
+      color: var(--text);
+    }
+    .legend-item { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, var(--c) 0 5px, transparent 5px 9px); }
+    .figure-caption {
+      font-size: 0.85rem;
+      color: var(--muted);
+      line-height: 1.6;
+      margin: 14px 4px 2px;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .summary-card {
+      background: var(--accent-light);
+      border: 1px solid var(--violet-border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .summary-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    .next-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .next-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      text-decoration: none;
+      color: inherit;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      display: block;
+    }
+    .next-card:hover { border-color: var(--accent); box-shadow: 0 2px 8px rgba(124,58,237,0.1); }
+    .next-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .next-card-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 4px; }
+    .next-card p { margin: 0; font-size: 0.88rem; color: var(--muted); }
+
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Hybrid Attention</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#premise">Premise</a>
+    <a href="#axes">Design axes</a>
+    <a href="#why-few">Why few full layers</a>
+    <a href="#arithmetic">Arithmetic</a>
+    <a href="#placement">Placement</a>
+    <a href="#training">Training &amp; serving</a>
+    <a href="#open">Open questions</a>
+    <a href="#summary">Summary</a>
+  </div>
+  <a class="nav-back" href="linear-attention.html">← Linear Attention</a>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Transformer &amp; Pretraining</span>
+  <h1>Hybrid Attention Stacks</h1>
+  <p>Most layers recurrent, a few layers exact: the design pattern behind Qwen3.5 and Kimi K3 — the ratio, the placement, what the full layers are for, and why two labs independently landed on 3:1.</p>
+</div>
+
+<div class="page-wrap">
+
+  <p>
+    Two pure designs, two dual failure modes. A stack of
+    <a href="attention.html">softmax attention</a> layers recalls anything, verbatim, at any distance —
+    and pays memory and decode compute proportional to context length in <em>every layer</em>. A stack
+    of <a href="linear-attention.html">linear attention</a> layers runs at constant per-token cost — and
+    stores its entire history in a fixed-size state that is lossy by construction. The hybrid stack is
+    the observation that these failure modes cancel: make <em>most</em> layers cheap recurrent mixers
+    and keep a <em>few</em> exact softmax layers as the random-access path. Nearly every 2025–26
+    linear-attention deployment at scale — Jamba, MiniMax-01, Qwen3-Next,
+    <a href="qwen-3-5.html">Qwen3.5</a>, Kimi Linear, <a href="kimi-k3.html">Kimi K3</a> — is a hybrid;
+    pure linear stacks stayed in research papers.
+  </p>
+
+  <h2 id="premise">1. The Premise — Recall Is Rare but Non-Negotiable</h2>
+  <p>
+    The empirical bet under every hybrid: <em>most token mixing doesn't need exact retrieval</em>.
+    Local syntax, coreference over a paragraph, topic state, incremental computation — a decaying
+    associative memory handles all of it. What a fixed-size state cannot do is verbatim recall of
+    arbitrary spans at arbitrary distance ("what was the exact value defined 400K tokens ago?") — the
+    <a href="linear-attention.html">capacity analysis</a> shows the state blurs precisely when many
+    items compete. So the architecture rations exactness: a handful of full-attention layers, each
+    seeing the entire uncompressed history, provide lookup; everything else streams.
+  </p>
+
+  <h2 id="axes">2. The Design Axes</h2>
+  <p>A hybrid stack is specified by four choices:</p>
+  <ol>
+    <li><strong>The ratio</strong> — linear layers per full layer.</li>
+    <li><strong>The linear layer</strong> — which recurrent mixer (Mamba, lightning attention, <a href="gated-deltanet.html">Gated DeltaNet</a>, <a href="kda.html">KDA</a>).</li>
+    <li><strong>The full layer</strong> — vanilla GQA, gated attention, or <a href="mla.html">MLA</a>; and its positional scheme (RoPE, partial RoPE, NoPE).</li>
+    <li><strong>The placement</strong> — uniform interleave vs. blocks; what the first and last layers are.</li>
+  </ol>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Model</th><th>Ratio (linear : full)</th><th>Linear layer</th><th>Full layer</th><th>Positions in full layers</th></tr>
+      <tr><td>Jamba (2024)</td><td>7 : 1</td><td>Mamba</td><td>vanilla attention</td><td>none (NoPE-like)</td></tr>
+      <tr><td>MiniMax-01 (2025)</td><td>7 : 1</td><td>lightning attention</td><td>softmax attention</td><td>RoPE</td></tr>
+      <tr><td>Qwen3-Next / <a href="qwen-3-5.html">Qwen3.5</a></td><td>3 : 1</td><td><a href="gated-deltanet.html">Gated DeltaNet</a></td><td>gated GQA (output gate)</td><td>partial RoPE (¼ dims)</td></tr>
+      <tr><td>Kimi Linear / <a href="kimi-k3.html">K3</a></td><td>3 : 1</td><td><a href="kda.html">KDA</a></td><td>gated <a href="mla.html">MLA</a></td><td><strong>NoPE</strong></td></tr>
+      <tr><td><a href="deepseek-v4.html">DeepSeek-V4</a> (contrast)</td><td>—</td><td colspan="2">no linear layers: interleaves two <em>compression strengths</em> of softmax attention (CSA 4:1 / HCA 128:1)</td><td>partial RoPE + output correction</td></tr>
+    </table>
+  </div>
+
+  <p>
+    The V4 row is there deliberately: interleaving a precise mechanism with a cheap-global mechanism is
+    the general pattern, and "sparse-selective + dense-over-summaries" is its
+    <a href="sparse-attention.html">selection-side</a> instantiation — same division of labor, no
+    recurrence.
+  </p>
+
+  <h2 id="why-few">3. Why a Few Full Layers Are Enough</h2>
+  <ul>
+    <li>
+      <strong>Retrieval structure is concentrated, not uniform.</strong> Interpretability work
+      consistently finds that exact-copy behavior (induction heads, retrieval heads) lives in a small
+      subset of heads and layers. Give the model 25% softmax layers and training routes the
+      retrieval-heavy circuits into them; the recurrent layers keep the roles they're good at.
+    </li>
+    <li>
+      <strong>One exact read can be re-broadcast.</strong> Information retrieved by a full layer enters
+      the residual stream and is available to every layer above it. The stack needs <em>access</em> to
+      exact recall at several depths — not exact recall in every layer.
+    </li>
+    <li>
+      <strong>The empirical convergence:</strong> Kimi's published ablations (the Kimi Linear line)
+      found 3:1 quality-neutral vs. denser attention, and two labs (Qwen, Moonshot) landed on 3:1
+      independently. MiniMax's earlier 7:1 traded a little recall robustness for more speed. Nobody
+      ships less than ~12% full attention — recall degrades noticeably beyond that in
+      needle-in-haystack regimes.
+    </li>
+  </ul>
+
+  <h2 id="arithmetic">4. The Arithmetic of the Ratio</h2>
+  <p>
+    Let a stack have \(L\) layers, of which \(L_f\) are full attention with per-token KV cost
+    \(c_{kv}\), and \(L - L_f\) linear layers with constant state size \(c_s\). Sequence memory:
+  </p>
+  \[
+    M(T) \;=\; \underbrace{L_f \, c_{kv}\, T}_{\text{grows with context}} \;+\; \underbrace{(L - L_f)\, c_s}_{\text{fixed floor}}
+  \]
+  <p>
+    The ratio only moves the slope: 3:1 cuts it 4×, 7:1 cuts it 8×, all-linear zeroes it. Each doubling
+    of the ratio buys half as much as the last — while the recall risk compounds.
+  </p>
+
+  <div class="figure">
+    <canvas id="plot-ratio" aria-label="Sequence memory versus context length for all-full, 3:1, 7:1, and all-linear stacks, log-log"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-amber)"></span> all full attention</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span> 3 : 1 hybrid</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet2)"></span> 7 : 1 hybrid</span>
+      <span class="legend-item"><span class="lg dash" style="--c:var(--plot-teal)"></span> all linear (state only)</span>
+    </div>
+    <p class="figure-caption">
+      <strong>Diminishing returns after 3:1.</strong> Sequence memory vs. context (64-layer model,
+      1024 KV elements/token per full layer, 2 MB state per linear layer, BF16), log–log. Going from
+      all-full to 3:1 removes 75% of the slope — the bulk of the win. Going on to 7:1 removes only
+      another 12.5% of the original slope, and all-linear (flat dashed) saves barely a further factor
+      of 2 at 1M tokens over 7:1 — while giving up exact recall entirely. The marginal memory saved
+      shrinks geometrically; the recall risk doesn't. That asymmetry is why the deployed frontier
+      clusters at 3:1.
+    </p>
+  </div>
+
+  <h2 id="placement">5. Placement Details That Turn Out to Matter</h2>
+  <ul>
+    <li>
+      <strong>Uniform interleave</strong> (every \(r{+}1\)-th layer full) beats clustering: each
+      recurrent segment is at most \(r\) layers from an exact read in both directions.
+    </li>
+    <li>
+      <strong>The last layer should be global.</strong> <a href="kimi-k3.html">K3</a> appends one extra
+      gated-MLA layer so the stack <em>ends</em> on full attention — the final prediction gets one last
+      exact look at the whole context, with no recurrent blur after it.
+    </li>
+    <li>
+      <strong>Positions:</strong> if the linear layer's decay is channel-wise
+      (<a href="kda.html">KDA</a>), it carries a relative position code by itself and the full layers
+      can run NoPE — which also makes context extension rescaling-free. With scalar-gated linear layers
+      (<a href="gated-deltanet.html">GDN</a>), Qwen keeps partial RoPE in the full layers instead.
+    </li>
+    <li>
+      <strong>Short conv in front of the linear layers</strong> (kernel 3–4, depthwise) is universal:
+      the recurrent state shouldn't waste capacity on adjacency the convolution gets for free.
+    </li>
+  </ul>
+
+  <h2 id="training">6. Training and Serving Consequences</h2>
+  <ul>
+    <li>
+      <strong>Prefill/training compute:</strong> full layers cost \(O(T^2)\) at prefill, linear layers
+      \(O(T)\) via the <a href="../systems/fla-chunkwise.html">chunkwise kernels</a>. At 1M-token
+      sequences the few full layers dominate prefill compute — the ratio is doing double duty, cutting
+      the quadratic term 4× too.
+    </li>
+    <li>
+      <strong>The cache becomes two objects.</strong> Serving stacks built around
+      <a href="../inference/paged-attention.html">paged KV</a> must now also checkpoint recurrent
+      states: prefix caching stores per-chunk state snapshots (K3's infra calls this state-aware prefix
+      caching), and preemption/restart must replay or restore states, not just remap pages.
+    </li>
+    <li>
+      <strong>Decode is bandwidth-light.</strong> The linear layers read a fixed-size state instead of
+      a growing cache — the source of the 8–19× long-context decode throughput gains
+      <a href="qwen-3-5.html">Qwen3.5 reports</a>, and a large win for
+      <a href="../inference/rl-inference.html">RL rollout serving</a>, where long-context decode
+      dominates.
+    </li>
+  </ul>
+
+  <h2 id="open">7. Open Questions</h2>
+  <ul>
+    <li><strong>Does the ratio have a scaling law?</strong> 3:1 was tuned at 48–80B; nobody has published whether the optimal ratio drifts with model size or context length.</li>
+    <li><strong>Recall cliffs:</strong> hybrids pass standard needle tests, but multi-hop retrieval chains that must route repeatedly through the sparse full layers remain the suspected weak spot.</li>
+    <li><strong>State interference at 1M:</strong> the linear layers' state carries positional/ordering duty (especially under NoPE) over sequences vastly longer than the state is large; how gracefully this degrades is an active question.</li>
+  </ul>
+
+  <h2 id="summary">8. Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">Pattern</div>
+      <p>Most layers: recurrent state at \(O(1)\)/token. Few layers: exact softmax over everything.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Memory</div>
+      <p>\(M(T) = L_f c_{kv} T + (L{-}L_f)c_s\) — the ratio sets the slope, the state sets the floor.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">The ratio</div>
+      <p>3:1 captures 75% of the slope win; further thinning buys geometrically less and risks recall — hence the convergence.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Placement</div>
+      <p>Uniform interleave; end global; conv in front of linear layers; NoPE iff the linear layer encodes position.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Deployed</div>
+      <p>Qwen3.5 (GDN 3:1, partial RoPE), K3 (KDA 3:1, NoPE), MiniMax-01 (7:1), Jamba (Mamba 7:1).</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">The alternative</div>
+      <p>DeepSeek-V4 gets the same division of labor with no recurrence — sparse-selective + heavily-compressed softmax layers.</p>
+    </div>
+  </div>
+
+  <h2>What's Next</h2>
+  <div class="next-grid">
+    <a class="next-card" href="linear-attention.html">
+      <div class="next-card-label">Prerequisite</div>
+      <div class="next-card-title">Linear Attention</div>
+      <p>The fixed-size-state mechanism and the capacity limits that make the full layers necessary.</p>
+    </a>
+    <a class="next-card" href="kda.html">
+      <div class="next-card-label">Component</div>
+      <div class="next-card-title">Kimi Delta Attention</div>
+      <p>The channel-wise-gated linear layer whose decay doubles as the stack's positional encoding.</p>
+    </a>
+    <a class="next-card" href="qwen-3-5.html">
+      <div class="next-card-label">Case study</div>
+      <div class="next-card-title">Qwen3.5</div>
+      <p>The 3:1 GDN hybrid at 397B — with the state-floor/KV-slope crossover plotted.</p>
+    </a>
+    <a class="next-card" href="kimi-k3.html">
+      <div class="next-card-label">Case study</div>
+      <div class="next-card-title">Kimi K3</div>
+      <p>The 3:1 KDA hybrid at 2.8T — NoPE globals, final-layer-global placement.</p>
+    </a>
+    <a class="next-card" href="sparse-attention.html">
+      <div class="next-card-label">The rival bet</div>
+      <div class="next-card-title">Sparse Attention</div>
+      <p>Learned selection over a growing cache — the non-recurrent answer to the same cost wall.</p>
+    </a>
+    <a class="next-card" href="../systems/fla-chunkwise.html">
+      <div class="next-card-label">Systems</div>
+      <div class="next-card-title">Chunkwise Linear Attention</div>
+      <p>How the linear layers train at O(T) on tensor cores — the kernel side of the hybrid.</p>
+    </a>
+  </div>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; Hybrid attention stacks — rationing exact recall
+  &nbsp;·&nbsp; <a href="linear-attention.html" style="color:inherit">← Linear attention page</a>
+</footer>
+
+<script>
+(function () {
+  function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+  // 64-layer model, BF16. Full layer: 1024 elems/token -> 0.002048 MB/token.
+  // Linear layer: 2 MB constant state.
+  var KV = 1024 * 2 / 1e6, ST = 2;
+  function stackPts(fullLayers, linearLayers) {
+    var pts = [];
+    for (var u = 2; u <= 6.001; u += 0.05) {
+      var T = Math.pow(10, u);
+      pts.push([u, Math.log10(fullLayers * KV * T + linearLayers * ST)]);
+    }
+    return pts;
+  }
+
+  function drawPlot(canvas, cfg) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const mL = 56, mR = 14, mT = 14, mB = 40;
+    const pw = cssW - mL - mR, ph = cssH - mT - mB;
+    const { xMin, xMax, yMin, yMax } = cfg;
+    const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
+    const Y = y => mT + (yMax - y) / (yMax - yMin) * ph;
+
+    ctx.font = '11px Inter, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(t => {
+      const px = X(t[0]);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.fillText(t[1], px, mT + ph + 6);
+    });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(t => {
+      const py = Y(t[0]);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+      ctx.fillText(t[1], mL - 8, py);
+    });
+
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(cfg.xLabel, mL + pw / 2, cssH - 8);
+    ctx.save();
+    ctx.translate(12, mT + ph / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText(cfg.yLabel, 0, 0);
+    ctx.restore();
+
+    ctx.save();
+    ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    ctx.lineJoin = 'round';
+    cfg.series.forEach(s => {
+      ctx.beginPath();
+      ctx.lineWidth = s.width || 2;
+      ctx.strokeStyle = s.color.indexOf('--') === 0 ? cssVar(s.color) : s.color;
+      ctx.setLineDash(s.dash || []);
+      s.points.forEach((p, i) => {
+        const px = X(p[0]), py = Y(p[1]);
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      });
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  const plots = [];
+  const ratioCanvas = document.getElementById('plot-ratio');
+  if (ratioCanvas) plots.push([ratioCanvas, {
+    xMin: 2, xMax: 6, yMin: 0.9, yMax: 5.4,
+    xTicks: [[2, '100'], [3, '1K'], [4, '10K'], [5, '100K'], [6, '1M']],
+    yTicks: [[1, '10 MB'], [2, '100 MB'], [3, '1 GB'], [4, '10 GB'], [5, '100 GB']],
+    xLabel: 'context length (tokens, log scale)',
+    yLabel: 'sequence memory, 64 layers (log scale)',
+    series: [
+      { points: stackPts(0, 64),  color: '--plot-teal',    width: 2, dash: [5, 4] },
+      { points: stackPts(64, 0),  color: '--plot-amber',   width: 2.25 },
+      { points: stackPts(8, 56),  color: '--plot-violet2', width: 2.25 },
+      { points: stackPts(16, 48), color: '--plot-violet',  width: 2.75 }
+    ]
+  }]);
+
+  function renderAll() { plots.forEach(([c, cfg]) => drawPlot(c, cfg)); }
+  renderAll();
+  let raf;
+  window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(renderAll); });
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq.addEventListener) mq.addEventListener('change', renderAll);
+})();
+</script>
+
+</body>
+</html>
