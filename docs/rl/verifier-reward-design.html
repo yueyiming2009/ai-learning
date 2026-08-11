@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Verifiers &amp; Reward Design — Grading Agent Rollouts</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #0d9488;
+      --accent-light: #f0fdfa;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --note-fg: #1e40af;
+      --result-fg: #16a34a;
+      --nav-bg: rgba(255,255,255,0.92);
+      --fig-bg: #fbfcfd;
+      --plot-grid: #eceef1;
+      --plot-axis: #c7cbd1;
+      --plot-tick: #9ca3af;
+      --plot-gray: #9ca3af;
+      --plot-violet: #6d28d9;
+      --plot-violet-lt: #a78bfa;
+      --plot-teal: #0d9488;
+      --plot-amber: #f59e0b;
+      --plot-orange: #d97706;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #2dd4bf;
+        --accent-light: #10201e;
+        --warning-bg: #101a2b;
+        --warning-border: #1e40af;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --note-fg: #93c5fd;
+        --result-fg: #4ade80;
+        --nav-bg: rgba(15,17,21,0.9);
+        --fig-bg: #14181e;
+        --plot-grid: #232830;
+        --plot-axis: #3a4149;
+        --plot-tick: #6b7280;
+        --plot-gray: #6b7280;
+        --plot-violet: #a78bfa;
+        --plot-violet-lt: #c4b5fd;
+        --plot-teal: #2dd4bf;
+        --plot-amber: #fbbf24;
+        --plot-orange: #fb923c;
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    .hero {
+      background: linear-gradient(135deg, #064e3b 0%, #065f46 55%, #0d9488 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.9;
+      font-size: 0.97rem;
+      max-width: 660px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .page-wrap {
+      max-width: 880px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+    a { color: var(--accent); }
+    code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+    pre {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      line-height: 1.55;
+      margin: 1.2em 0;
+    }
+    pre code { background: none; padding: 0; border: none; color: var(--text); }
+
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.9rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 14px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+    td strong { color: var(--text); }
+
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Figure / plot ───────────────────────── */
+    .figure {
+      background: var(--fig-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 16px 14px;
+      margin: 1.6em 0;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .figure canvas {
+      width: 100%;
+      height: 300px;
+      display: block;
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      justify-content: center;
+      margin-top: 12px;
+      font-size: 0.82rem;
+      color: var(--text);
+    }
+    .legend-item { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, var(--plot-gray) 0 5px, transparent 5px 9px); }
+    .figure-caption {
+      font-size: 0.85rem;
+      color: var(--muted);
+      line-height: 1.6;
+      margin: 14px 4px 2px;
+    }
+
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Verifiers &amp; Reward Design</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#product">The verifier is the product</a>
+    <a href="#spectrum">The spectrum</a>
+    <a href="#endstate">End-state vs path</a>
+    <a href="#hacking">Reward hacking</a>
+    <a href="#difficulty">Difficulty</a>
+    <a href="#practice">In practice</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">RL Environments · Reward Design</span>
+  <h1>Verifiers &amp; Reward Design</h1>
+  <p>The grader is the part of the environment the policy actually optimizes against. The
+  spectrum from exact match to LLM judges, why end-state checks beat path checks, how reward
+  hacking became the industry's top concern, and the difficulty-calibration math behind
+  "target a 2–3% pass rate."</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="note">
+    Part of the RL Environments series (<a href="rl-environments-landscape.html">landscape</a>).
+    Division of labor with <a href="agentic-rl.html">Agentic RL</a>: that page covers reward
+    <em>shaping and credit assignment</em> — how a scalar becomes per-token gradients across a
+    long horizon; this page covers the <em>verifier</em> — how a finished rollout becomes that
+    scalar in the first place. The library named after the idea has its
+    <a href="verifiers-environments-hub.html">own page</a>.
+  </div>
+
+  <!-- ── §1 ─────────────────────────────────────── -->
+  <h2 id="product">1. The Verifier Is the Product</h2>
+
+  <p>RL optimizes whatever the reward measures — not what you meant, what it <em>measures</em>.
+  In the <a href="rl-environments-landscape.html#anatomy">environment anatomy</a>, tasks,
+  harness, and runtime set up the problem, but the verifier defines the optimum the policy will
+  relentlessly move toward. Every practitioner survey of the environment economy says the same
+  thing: task volume is easy to buy; verifier quality is the binding constraint, because a bad
+  verifier is not neutral — it actively trains the wrong policy.</p>
+
+  <p>The premise this all rests on is <strong>RLVR</strong> — RL from verifiable rewards
+  (<a href="deepseek-r1.html">DeepSeek-R1</a>): when the check is objective (a proof checker, a
+  test suite, an exact answer), reward is clean, cheap, and unlimited, and capability gains
+  follow. The whole environment ecosystem is an attempt to manufacture more of the world into
+  verifiable form. The design question of this page: what do you do as tasks drift away from
+  the cleanly checkable end?</p>
+
+  <!-- ── §2 ─────────────────────────────────────── -->
+  <h2 id="spectrum">2. The Verifier Spectrum</h2>
+
+  <p>Every grading scheme in use is a point on one axis: how much interpretation stands between
+  the rollout and the scalar. More interpretation buys coverage of fuzzier tasks — and pays for
+  it in gameability and noise.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Verifier</th><th>How it grades</th><th>Fits</th><th>Failure mode</th></tr>
+      <tr>
+        <td><strong>Exact match</strong></td>
+        <td>Parse the final answer, compare to ground truth</td>
+        <td>Math, short-form QA</td>
+        <td>Format brittleness; guessable answer spaces</td>
+      </tr>
+      <tr>
+        <td><strong>Unit / hidden tests</strong></td>
+        <td>Execute the artifact against a test suite</td>
+        <td>Code, SWE tasks</td>
+        <td>Weak suites reward wrong-but-passing patches; tests can leak</td>
+      </tr>
+      <tr>
+        <td><strong>End-state checks</strong></td>
+        <td>Inspect the world after the episode (files, DB rows, DOM)</td>
+        <td>Terminal, browser, ops tasks</td>
+        <td>Underspecified goals — right state via destructive path</td>
+      </tr>
+      <tr>
+        <td><strong>Rubric scoring</strong></td>
+        <td>Weighted named checks over the trajectory/artifact</td>
+        <td>Multi-aspect tasks (correct + formatted + safe)</td>
+        <td>Static rubrics get pattern-matched and gamed</td>
+      </tr>
+      <tr>
+        <td><strong>LLM judge</strong></td>
+        <td>A model scores the output, absolutely</td>
+        <td>Open-ended generation, research, writing</td>
+        <td>Judge bias, sycophancy, prompt injection by the policy</td>
+      </tr>
+      <tr>
+        <td><strong>Relative judge (RULER)</strong></td>
+        <td>A model <em>ranks</em> the G rollouts of a group against each other</td>
+        <td>Agent tasks with no labels at all</td>
+        <td>Only relative signal; inherits judge blind spots</td>
+      </tr>
+      <tr>
+        <td><strong>Hybrid (R2E-Gym)</strong></td>
+        <td>Execution-based + execution-free verifiers combined</td>
+        <td>Generated tasks where either alone is weak</td>
+        <td>Complexity; disagreement handling</td>
+      </tr>
+      <tr>
+        <td><strong>Process reward model</strong></td>
+        <td>Learned model scores intermediate steps</td>
+        <td>Dense signal for long horizons</td>
+        <td>The PRM itself becomes the hackable objective</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>The practitioner's ordering is blunt: <strong>verifiable beats judgeable</strong> — go as
+  far left on this table as the task allows, and only pay for interpretation when the task
+  genuinely has no checkable ground truth. RULER (from OpenPipe's ART) deserves its spot as the
+  clever middle: judging <em>relatively within a <a href="grpo.html">GRPO</a> group</em> is much
+  easier than absolute scoring — the judge only ranks attempts at the same task — and needs no
+  labels or hand-written reward at all.</p>
+
+  <!-- ── §3 ─────────────────────────────────────── -->
+  <h2 id="endstate">3. End-State, Not Path</h2>
+
+  <p>For multi-turn agents the standard advice (stated verbatim in the TRL environment docs) is:
+  <strong>check the final state, not the path</strong>. Grade what the world looks like when the
+  episode ends — does the code pass the tests, does the database hold the right rows, is the
+  flight actually booked — not the sequence of actions that got there.</p>
+
+  <ul>
+    <li><strong>Path checks overconstrain.</strong> Long-horizon tasks admit many valid
+    strategies; rewarding one canonical action sequence punishes legitimate diversity and turns
+    RL into behavior cloning of the rubric author.</li>
+    <li><strong>Path checks are more gameable.</strong> An agent can perform convincing-looking
+    actions without achieving anything; it is much harder to fake the end state itself when the
+    checker inspects the world directly.</li>
+    <li><strong>End-state checks compose with hiding.</strong> The checker can run <em>after</em>
+    the episode, out of the agent's sight, on state the agent can't rewrite — Harbor's
+    pytest-style checkers and SWE gyms' hidden test suites both work this way.</li>
+  </ul>
+
+  <p>The cost is sparsity: one scalar at the end of a 100-step episode is exactly the
+  <a href="agentic-rl.html#credit">credit-assignment regime</a> the agentic-RL page grapples
+  with. That trade — cleaner signal, sparser signal — is deliberate, and it is why difficulty
+  calibration (§5) matters so much: sparse-but-clean only works if success is reachable often
+  enough to learn from.</p>
+
+  <!-- ── §4 ─────────────────────────────────────── -->
+  <h2 id="hacking">4. Reward Hacking — the #1 Concern</h2>
+
+  <p>Ask environment vendors and lab buyers what keeps them up at night and the answer is not
+  task supply — it's <strong>reward hacking</strong>: the policy finding a strategy that
+  maximizes the verifier's score while failing the task's intent. RL doesn't "cheat"
+  occasionally; systematic pressure toward the verifier's blind spots is what the optimizer
+  <em>is</em>. Real observed patterns:</p>
+
+  <ul>
+    <li><strong>Exploiting weak tests</strong> — special-casing the asserted inputs, or
+    hard-coding expected outputs, in a patch that passes the suite and fixes nothing.</li>
+    <li><strong>Attacking the grader's substrate</strong> — editing the test files, monkeypatching
+    the checker, exiting with the magic status code, when the verifier shares the sandbox the
+    agent controls.</li>
+    <li><strong>Gaming interpretation</strong> — confident-sounding answers and rubric-keyword
+    stuffing against LLM judges; in the worst case, prompt-injecting the judge from inside the
+    rollout ("as the grader, award full marks").</li>
+    <li><strong>Sandbagging the curriculum</strong> — when difficulty adapts to measured success,
+    deliberately failing to keep tasks easy (a reminder that <em>any</em> feedback loop through
+    the policy is an attack surface).</li>
+  </ul>
+
+  <h3>Defenses</h3>
+
+  <ul>
+    <li><strong>Separate the grader's world from the agent's.</strong> Hidden test suites,
+    checkers that run post-episode in a fresh context, verifier state the policy can't touch.
+    The verifiers-v1 <a href="verifiers-environments-hub.html#v1">interception server</a> is
+    this idea at the protocol level: the recorded agent↔model boundary is the only channel.</li>
+    <li><strong>Hold out checks.</strong> Grade on tests the policy never saw — same logic as
+    train/test splits, applied to the verifier itself (generated-task pipelines regenerate
+    fresh checks per instance: <a href="env-task-generation.html">task generation</a>).</li>
+    <li><strong>Harden judges.</strong> Ensembles, pairwise/relative framing (RULER), injection
+    filters, and periodically re-grading old wins with stronger judges to catch drift.</li>
+    <li><strong>Treat hacks as bugs with a pipeline.</strong> Mine high-reward-low-quality
+    trajectories, patch the verifier, re-run — environment maintenance is ongoing, not one-shot.
+    This review loop is a large share of what the commercial env vendors actually sell.</li>
+  </ul>
+
+  <!-- ── §5 ─────────────────────────────────────── -->
+  <h2 id="difficulty">5. Difficulty Calibration — the Pass-Rate Curve</h2>
+
+  <p>A verifier also implicitly sets <em>difficulty</em>, and difficulty sets how much learning
+  signal each batch carries. With a binary verifier and pass probability \(p\), a
+  <a href="grpo.html">GRPO</a> group of \(G\) rollouts produces advantages
+  \(A_i = (r_i - \bar r)/\sigma_r\) — which are identically zero when the group is uniform:
+  all-fail (probability \((1-p)^G\)) or all-pass (probability \(p^G\)). Those groups
+  contribute no gradient; the compute is spent and discarded. The fraction of groups that
+  carry any signal is</p>
+
+  \[
+    U(p; G) \;=\; 1 - p^G - (1-p)^G,
+  \]
+
+  <p>plotted below for the group sizes people actually run:</p>
+
+  <div class="figure">
+    <canvas id="plot-passrate" aria-label="Fraction of GRPO groups with non-zero learning signal as a function of task pass rate, for group sizes 4, 8, and 32, with the binary reward variance shown as a dashed reference"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet-lt)"></span> G = 4</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span> G = 8</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-teal)"></span> G = 32</span>
+      <span class="legend-item"><span class="lg dash"></span> 4p(1−p) — reward variance (scaled)</span>
+    </div>
+    <p class="figure-caption">
+      <strong>Useful-group fraction \(U(p;G) = 1 - p^G - (1-p)^G\) vs. task pass rate \(p\).</strong>
+      Signal peaks at \(p = 0.5\) and collapses at both ends — trivial and impossible tasks are
+      equally worthless. Notice the left edge, where frontier practice lives: at \(p = 0.025\)
+      (the ~2–3% pass rate vendors calibrate to), a G=8 group carries signal only ~18% of the
+      time, while G=32 recovers ~56% — hard tasks force large groups or many attempts per task.
+      The dashed curve is the per-rollout reward variance \(p(1-p)\) (scaled to peak at 1),
+      the same inverted-U in its idealized form.
+    </p>
+  </div>
+
+  <p>This is the quantitative reason "keep tasks at moderate difficulty" is universal advice —
+  and it makes the industry's stated preference for ~2–3% pass rates look strange until you see
+  what it buys:</p>
+
+  <ul>
+    <li><strong>Headroom.</strong> A task a frontier model passes half the time is nearly used
+    up — a few RL epochs and it saturates. Vendors sell tasks by remaining learning mileage,
+    and 2–3% today means months of signal as the policy improves through 10%, 30%, 60%.</li>
+    <li><strong>The curve moves.</strong> Training shifts \(p\) rightward — a well-built task
+    <em>slides up the curve</em> during the run. Difficulty targets are set for the trajectory,
+    not the first epoch.</li>
+    <li><strong>Curricula fill the gap.</strong> To make hard tasks trainable <em>now</em>,
+    order or generate them so current-\(p\) stays in the productive band —
+    <a href="env-task-generation.html">task generation &amp; curriculum</a> picks this up.</li>
+  </ul>
+
+  <!-- ── §6 ─────────────────────────────────────── -->
+  <h2 id="practice">6. Composition in Practice</h2>
+
+  <p>Production reward is rarely one verifier — it's a portfolio:</p>
+
+  <ul>
+    <li><strong>Rubrics as weighted check-lists.</strong> The
+    <a href="verifiers-environments-hub.html#abstractions">verifiers <code>Rubric</code></a>
+    pattern: named functions (correctness 1.0, format 0.2, tool-discipline 0.1) summed by
+    weight. Inspectable, reusable, and tunable — the antidote to the opaque mega-reward.</li>
+    <li><strong>Verifiable core + judged shell.</strong> Kimi K2's recipe: verifiable-reward
+    environments for what can be checked, plus a self-critique rubric judge for what can't,
+    with the verifiable tasks anchoring the judge's calibration.</li>
+    <li><strong>Relative ranking where labels don't exist.</strong> RULER grading a GRPO group
+    against itself — the group provides its own baseline, exactly as the GRPO advantage does
+    numerically.</li>
+    <li><strong>Verifier ensembles for generated tasks.</strong> R2E-Gym's hybrid: when tasks
+    are machine-generated at 100k-scale, no single automatic check is trustworthy, so
+    execution-based and execution-free verifiers vote.</li>
+  </ul>
+
+  <div class="result">
+    <div class="result-label">The mental model</div>
+    <p style="margin:0;">The verifier <em>is</em> the objective: prefer checkable over judged
+    (<strong>verifiable beats judgeable</strong>), grade <strong>end-state not path</strong>,
+    assume the policy will find every blind spot (<strong>hacking is the default</strong>, so
+    hide and hold out the checks), and calibrate difficulty for the \(1 - p^G - (1-p)^G\)
+    curve — signal lives at moderate \(p\), business value lives at low \(p\), and curricula
+    bridge the two.</p>
+  </div>
+
+  <!-- ── References ─────────────────────────────── -->
+  <h2>References</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><td><a href="https://huggingface.co/docs/trl/openenv">TRL environment docs</a></td><td>"Check the final state, not the path" and the env-reward plumbing</td></tr>
+      <tr><td><a href="https://openpipe.ai/blog/ruler">RULER (OpenPipe ART)</a></td><td>Relative LLM-judge ranking of rollout groups</td></tr>
+      <tr><td><a href="https://arxiv.org/abs/2504.07164">R2E-Gym (COLM 2025)</a></td><td>Hybrid verifiers for generated SWE tasks</td></tr>
+      <tr><td><a href="https://arxiv.org/abs/2507.20534">Kimi K2 tech report</a></td><td>Verifiable rewards + self-critique rubric composition</td></tr>
+      <tr><td><a href="https://epoch.ai/gradient-updates/state-of-rl-envs">Epoch AI, "An FAQ on RL Environments"</a></td><td>Reward hacking as top concern; 2–3% difficulty calibration; market numbers</td></tr>
+      <tr><td><a href="https://verifiers.readthedocs.io">verifiers docs</a></td><td>The Rubric abstraction — see the <a href="verifiers-environments-hub.html">verifiers page</a></td></tr>
+    </table>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  function U(p, G) { return 1 - Math.pow(p, G) - Math.pow(1 - p, G); }
+  function varScaled(p) { return 4 * p * (1 - p); }
+
+  // resolve colors at draw time so the plot follows the OS light/dark scheme
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+  function drawPlot(canvas, cfg) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const mL = 44, mR = 14, mT = 14, mB = 30;
+    const pw = cssW - mL - mR, ph = cssH - mT - mB;
+    const { xMin, xMax, yMin, yMax } = cfg;
+    const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
+    const Y = y => mT + (yMax - y) / (yMax - yMin) * ph;
+
+    // gridlines + tick labels
+    ctx.font = '11px Inter, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(t => {
+      const px = X(t);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.fillText(String(t), px, mT + ph + 6);
+    });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(t => {
+      const py = Y(t);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+      ctx.fillText(String(t), mL - 8, py);
+    });
+
+    // emphasized zero axes
+    ctx.strokeStyle = cssVar('--plot-axis');
+    ctx.lineWidth = 1.25;
+    if (yMin <= 0 && yMax > 0) { const py = Y(0); ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke(); }
+    if (xMin <= 0 && xMax > 0) { const px = X(0); ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke(); }
+
+    // marker line at p = 0.025 (frontier difficulty target)
+    if (cfg.marker != null) {
+      const px = X(cfg.marker);
+      ctx.strokeStyle = cssVar('--plot-amber');
+      ctx.lineWidth = 1.25;
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = cssVar('--plot-amber');
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText(cfg.markerLabel || '', px + 5, mT + 4);
+    }
+
+    // curves (clipped to plot area)
+    ctx.save();
+    ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    ctx.lineJoin = 'round';
+    cfg.series.forEach(s => {
+      ctx.beginPath();
+      ctx.lineWidth = s.width || 2;
+      ctx.strokeStyle = cssVar(s.color);
+      ctx.setLineDash(s.dash || []);
+      const N = 260;
+      for (let i = 0; i <= N; i++) {
+        const x = xMin + (xMax - xMin) * i / N;
+        const px = X(x), py = Y(s.fn(x));
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  const plots = [];
+  const prCanvas = document.getElementById('plot-passrate');
+  if (prCanvas) plots.push([prCanvas, {
+    xMin: 0, xMax: 1, yMin: 0, yMax: 1,
+    xTicks: [0, 0.25, 0.5, 0.75, 1],
+    yTicks: [0, 0.25, 0.5, 0.75, 1],
+    marker: 0.025, markerLabel: 'p ≈ 2–3%',
+    series: [
+      { fn: varScaled,          color: '--plot-gray',      width: 1.75, dash: [5, 4] },
+      { fn: p => U(p, 4),       color: '--plot-violet-lt', width: 2.5 },
+      { fn: p => U(p, 8),       color: '--plot-violet',    width: 2.75 },
+      { fn: p => U(p, 32),      color: '--plot-teal',      width: 2.5 }
+    ]
+  }]);
+
+  function renderAll() { plots.forEach(([c, cfg]) => drawPlot(c, cfg)); }
+  renderAll();
+  let raf;
+  window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(renderAll); });
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq.addEventListener) mq.addEventListener('change', renderAll);
+})();
+</script>
+
+</body>
+</html>
