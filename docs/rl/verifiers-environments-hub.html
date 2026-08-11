@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>verifiers &amp; the Environments Hub — Environments as Packages</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #0d9488;
+      --accent-light: #f0fdfa;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --note-fg: #1e40af;
+      --result-fg: #16a34a;
+      --nav-bg: rgba(255,255,255,0.92);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #2dd4bf;
+        --accent-light: #10201e;
+        --warning-bg: #101a2b;
+        --warning-border: #1e40af;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --note-fg: #93c5fd;
+        --result-fg: #4ade80;
+        --nav-bg: rgba(15,17,21,0.9);
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    .hero {
+      background: linear-gradient(135deg, #064e3b 0%, #065f46 55%, #0d9488 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.9;
+      font-size: 0.97rem;
+      max-width: 660px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .page-wrap {
+      max-width: 880px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+    a { color: var(--accent); }
+    code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+    pre {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      line-height: 1.55;
+      margin: 1.2em 0;
+    }
+    pre code { background: none; padding: 0; border: none; color: var(--text); }
+
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.9rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 14px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+    td strong { color: var(--text); }
+
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>verifiers &amp; the Hub</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#idea">The idea</a>
+    <a href="#abstractions">The abstractions</a>
+    <a href="#hub">The Hub</a>
+    <a href="#v1">verifiers v1</a>
+    <a href="#scale">Scale</a>
+    <a href="#vs">vs. OpenEnv</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">RL Environments · Packaging</span>
+  <h1>verifiers &amp; the Environments Hub</h1>
+  <p>Prime Intellect's answer to "what is an environment?": a versioned Python package —
+  dataset + rollout logic + tools + rubric — installable like any dependency and runnable
+  against any OpenAI-compatible endpoint. The library's abstractions, the community hub, the
+  v1 taskset/harness/runtime redesign, and how it trained INTELLECT-3.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="note">
+    Part of the RL Environments series — see the <a href="rl-environments-landscape.html">landscape</a>
+    for where this sits on the stack (the <em>packaging + harness</em> layer, complementary to
+    <a href="openenv.html">OpenEnv</a>'s interface layer). The reward machinery this library
+    names itself after has its own page: <a href="verifier-reward-design.html">Verifiers &amp;
+    Reward Design</a>.
+  </div>
+
+  <!-- ── §1 The idea ────────────────────────────── -->
+  <h2 id="idea">1. Environments as Versioned Packages</h2>
+
+  <p><code>verifiers</code> (started by Will Brown, now developed at Prime Intellect) makes a
+  different structural bet than OpenEnv. Where OpenEnv says "an environment is a
+  <em>server</em>," verifiers says "an environment is a <em>library</em>": a pip-installable
+  Python module with a <code>pyproject.toml</code>, distributed as a wheel, that bundles
+  everything an RL run needs —</p>
+
+  <ul>
+    <li>the <strong>dataset</strong> of tasks (often a HF dataset reference),</li>
+    <li>the <strong>rollout logic</strong> — how a multi-turn episode proceeds,</li>
+    <li>the <strong>tools</strong> the agent may call,</li>
+    <li>the <strong>rubric</strong> — the reward functions that grade an episode.</li>
+  </ul>
+
+  <p>The environment runs <em>client-side</em>, in the trainer's process, and drives any
+  OpenAI-compatible inference endpoint (vLLM, SGLang, a lab API — anything speaking
+  <code>/chat/completions</code>). That inversion is what makes it trainer-agnostic: the env
+  doesn't care whether prime-rl, TRL, or a bare eval script (<code>vf-eval</code>) is on the
+  other side, because all it needs is an endpoint that completes prompts. Stateful execution —
+  running agent code, sandboxed shells — is delegated to sandbox backends rather than baked
+  into the package.</p>
+
+  <pre><code>prime env install primeintellect/wordle   # install an environment like a dependency
+vf-eval wordle -m gpt-5-mini              # smoke-test it against any endpoint</code></pre>
+
+  <!-- ── §2 Abstractions ────────────────────────── -->
+  <h2 id="abstractions">2. The Abstractions (v0)</h2>
+
+  <p>Two class families carried the original library, and they map exactly onto the
+  <a href="rl-environments-landscape.html#anatomy">harness/verifier anatomy</a>:</p>
+
+  <h3>The environment family — the harness</h3>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Class</th><th>What it defines</th></tr>
+      <tr><td><code>Environment</code></td><td>Base: dataset + rollout protocol + rubric, plus eval/generation plumbing</td></tr>
+      <tr><td><code>MultiTurnEnv</code></td><td>The core rollout loop — alternate model turns and env responses until done; subclasses implement "is the episode over" and "what does the env say next"</td></tr>
+      <tr><td><code>SingleTurnEnv</code></td><td><code>MultiTurnEnv</code> with one turn — prompt → response → grade (RLVR-style tasks)</td></tr>
+      <tr><td><code>ToolEnv</code></td><td>Plain Python functions auto-exposed to the model as tool schemas; the loop executes calls and feeds results back — the <a href="react.html">ReAct</a> loop as a library</td></tr>
+      <tr><td><code>SandboxEnv</code> / <code>PythonEnv</code></td><td>Stateful variants where actions execute in a sandbox (code interpreters, shells)</td></tr>
+    </table>
+  </div>
+
+  <h3>The rubric family — the verifier</h3>
+
+  <p>A <code>Rubric</code> is a container of reward functions, each scoring one aspect of a
+  finished rollout — correctness, format, tool discipline — combined with weights into the
+  scalar the trainer sees. <code>RubricGroup</code> composes rubrics. The design insight worth
+  keeping: <strong>reward is a list of named, weighted checks, not one opaque function</strong> —
+  which makes rewards inspectable, reusable, and tunable per-run (the
+  <a href="verifier-reward-design.html">reward-design page</a> builds on exactly this
+  decomposition):</p>
+
+  <pre><code>def correct(completion, answer, **kw):    # exact-match check
+    return 1.0 if parse(completion) == answer else 0.0
+
+def well_formatted(completion, **kw):     # format check
+    return 0.2 if has_answer_tags(completion) else 0.0
+
+rubric = Rubric(funcs=[correct, well_formatted], weights=[1.0, 0.2])
+env = SingleTurnEnv(dataset=ds, rubric=rubric)</code></pre>
+
+  <p>Wrappers exist for external suites — TextArena games, ReasoningGym generators,
+  BrowserGym, even <a href="openenv.html">OpenEnv</a> servers — so foreign environments can be
+  republished as verifiers packages.</p>
+
+  <!-- ── §3 The Hub ─────────────────────────────── -->
+  <h2 id="hub">3. The Environments Hub</h2>
+
+  <p>Packages need a registry; Prime Intellect launched the Environments Hub in late summer
+  2025 as "the app store": browse environments, <code>prime env install</code> them, publish
+  your own with version pins. Scale-up since (community counts are approximate,
+  point-in-time): ~400 reviewed environments by Oct 2025, a few thousand community
+  environments by mid-2026.</p>
+
+  <p>The strategic argument, made explicitly in Prime Intellect's launch essay: frontier labs
+  treat environments as proprietary crown jewels
+  (<a href="rl-environments-landscape.html#labs">the $1B/year gyms</a>); if open-source RL is
+  to keep pace, environments must be community-built and shared the way models are on the HF
+  Hub. The existence proof is <strong>INTELLECT-3</strong> — a 100B+ MoE post-trained with
+  prime-rl on hub environments, the largest open model trained on community environment
+  infrastructure to date.</p>
+
+  <!-- ── §4 v1 ──────────────────────────────────── -->
+  <h2 id="v1">4. verifiers v1 — Taskset / Harness / Runtime</h2>
+
+  <p>The July 2026 v1 release re-architected the library around the decomposition the whole
+  field had converged on, splitting the monolithic env class into three composable parts:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Part</th><th>Owns</th><th>Examples</th></tr>
+      <tr><td><strong>Taskset</strong></td><td>Data, tools, scoring — <em>what</em> to do and how it's graded</td><td>A verifiers taskset; a <strong>Harbor</strong> taskset (first-class third-party format)</td></tr>
+      <tr><td><strong>Harness</strong></td><td>Producing rollouts — <em>how</em> the agent acts</td><td>The built-in loop; <strong>Codex CLI</strong>; <strong>Terminus 2</strong> — third-party agents work out of the box</td></tr>
+      <tr><td><strong>Runtime</strong></td><td>Where execution happens</td><td>Local process; sandbox providers</td></tr>
+    </table>
+  </div>
+
+  <p>Two v1 additions matter beyond tidiness:</p>
+
+  <ul>
+    <li><strong>The interception server.</strong> A proxy that sits between the harness and the
+    inference endpoint, recording every agent↔model exchange. This gives training-grade traces
+    even when the harness is a third-party binary you can't instrument (you train on what the
+    proxy saw), and it closes a reward-hacking channel — the agent can't quietly query the
+    grader or leak state around the recorded interface. It also speaks both OpenAI
+    (Chat/Responses) and Anthropic Messages dialects, so agents built for either API family
+    run unmodified.</li>
+    <li><strong>Harness pluralism as a design principle.</strong> v0 assumed the library owns
+    the agent loop; v1 accepts that serious agents (Claude Code, Codex, Terminus) have their own
+    loops, and the environment's job is to <em>host and grade</em> them, not re-implement them.
+    Compare <a href="rl-environments-landscape.html#profiles">agent-lightning</a>, which
+    reached the same conclusion from the opposite direction.</li>
+  </ul>
+
+  <!-- ── §5 Scale ───────────────────────────────── -->
+  <h2 id="scale">5. Scaling the Task Supply</h2>
+
+  <p>In July 2026 Prime Intellect shipped "Scaling Agentic RL": <strong>365,000+ tasks across
+  23 tasksets behind one API</strong> — roughly 198k software-engineering tasks in 20+
+  languages, ~29k terminal tasks, ~138k search tasks, backed by ~135k task container images.
+  The jump from "hundreds of hand-written envs" to "hundreds of thousands of tasks" came from
+  procedural generation — mining real repos and back-translating commits into tasks — which is
+  the subject of the <a href="env-task-generation.html">task-generation page</a>. The point to
+  register here: the packaging layer (§1) is what made this consumable — 365k tasks are useless
+  unless a trainer can pull them through one interface.</p>
+
+  <!-- ── §6 vs OpenEnv ──────────────────────────── -->
+  <h2 id="vs">6. verifiers vs. OpenEnv — Library vs. Server</h2>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th></th><th>verifiers</th><th>OpenEnv</th></tr>
+      <tr><td><strong>An environment is…</strong></td><td>a versioned Python package</td><td>a containerized HTTP server</td></tr>
+      <tr><td><strong>Rollout loop runs</strong></td><td>client-side, driving an inference endpoint</td><td>trainer-side, driving an env server</td></tr>
+      <tr><td><strong>State &amp; execution</strong></td><td>delegated to sandbox backends</td><td>owned by the env container</td></tr>
+      <tr><td><strong>Distribution</strong></td><td>package registry (<code>prime env install</code>)</td><td>HF Space + Docker image + pip client</td></tr>
+      <tr><td><strong>Reward</strong></td><td>explicit <code>Rubric</code> — named, weighted checks</td><td>inside <code>step()</code>/<code>state()</code>, opaque to the client</td></tr>
+      <tr><td><strong>Natural home</strong></td><td>text-first tasks, tool loops, rubric grading, community sharing</td><td>heavy stateful worlds (terminals, browsers, games) needing isolation</td></tr>
+    </table>
+  </div>
+
+  <p>They interoperate rather than compete head-on — verifiers wraps OpenEnv servers, both
+  consume Harbor tasksets, and TRL sits in front of either. The philosophical difference
+  persists though: verifiers treats the <em>rubric</em> as a first-class, inspectable object,
+  OpenEnv hides grading behind the server boundary. Which one you prefer tends to track whether
+  you think reward design (<a href="verifier-reward-design.html">next page</a>) is the part you
+  iterate on most.</p>
+
+  <div class="result">
+    <div class="result-label">The mental model</div>
+    <p style="margin:0;">verifiers = <strong>environment as dependency</strong>: dataset +
+    rollout loop + tools + rubric in one versioned package, running client-side against any
+    OpenAI-compatible endpoint; the Hub is its registry, v1 splits it into
+    taskset/harness/runtime with an interception proxy for traces, and INTELLECT-3 plus the
+    365k-task API are the proof it scales.</p>
+  </div>
+
+  <!-- ── References ─────────────────────────────── -->
+  <h2>References</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><td><a href="https://github.com/PrimeIntellect-ai/verifiers">PrimeIntellect-ai/verifiers</a> · <a href="https://verifiers.readthedocs.io">docs</a></td><td>The library — abstractions in §2, v1 in §4</td></tr>
+      <tr><td><a href="https://www.primeintellect.ai/blog/environments">"Environments Hub" launch essay</a></td><td>The open-vs-lab argument in §3</td></tr>
+      <tr><td><a href="https://www.primeintellect.ai/blog/scaling-agentic-rl">"Scaling Agentic RL"</a></td><td>The 365k-task release in §5</td></tr>
+      <tr><td><a href="https://arxiv.org/abs/2512.16144">INTELLECT-3 tech report</a></td><td>The end-to-end proof point</td></tr>
+      <tr><td><a href="https://app.primeintellect.ai/dashboard/environments">Environments Hub</a></td><td>The registry itself</td></tr>
+    </table>
+  </div>
+
+</div>
+</body>
+</html>
