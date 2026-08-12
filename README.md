@@ -49,8 +49,10 @@ residual-stream redesigns (hyper-connections / attention residuals). **Training:
 and the neural scaling laws that size the run (Kaplan vs. Chinchilla, the compute-optimal frontier).
 **Model Architectures:** case studies reading complete 2026 frontier designs through those
 components — DeepSeek-V4 (sequence-compressed sparse attention, mHC residual lanes), Qwen3.5
-(the 3:1 Gated DeltaNet hybrid scaled to 397B, native early-fusion vision), and Kimi K3
-(KDA + NoPE gated MLA, Block AttnRes, latent-space MoE, MXFP4 QAT).
+(the 3:1 Gated DeltaNet hybrid scaled to 397B, native early-fusion vision), Kimi K3
+(KDA + NoPE gated MLA, Block AttnRes, latent-space MoE, MXFP4 QAT), GLM-5 (MLA-256, IndexShare
+indexer sharing, Muon Split, shared-weight MTP), MiniMax-M2.5 (the full-attention counterpoint
+and its published ablation), and Nemotron 3 (Mamba-2 hybrid, LatentMoE, NVFP4 pretraining).
 
 ### 04 · Systems & Scaling — [docs/systems/](docs/systems/), [triton/](triton/)
 The engineering substrate that trains it across many devices, built bottom-up — MFU, the PyTorch

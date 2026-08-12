@@ -467,6 +467,7 @@
       <tr><td>MiniMax-01 (2025)</td><td>7 : 1</td><td>lightning attention</td><td>softmax attention</td><td>RoPE</td></tr>
       <tr><td>Qwen3-Next / <a href="qwen-3-5.html">Qwen3.5</a></td><td>3 : 1</td><td><a href="gated-deltanet.html">Gated DeltaNet</a></td><td>gated GQA (output gate)</td><td>partial RoPE (¼ dims)</td></tr>
       <tr><td>Kimi Linear / <a href="kimi-k3.html">K3</a></td><td>3 : 1</td><td><a href="kda.html">KDA</a></td><td>gated <a href="mla.html">MLA</a></td><td><strong>NoPE</strong></td></tr>
+      <tr><td><a href="nemotron-3.html">Nemotron 3</a> (2026)</td><td>5 : 1</td><td>Mamba-2</td><td>GQA, 2 KV heads</td><td><strong>none anywhere</strong></td></tr>
       <tr><td><a href="deepseek-v4.html">DeepSeek-V4</a> (contrast)</td><td>—</td><td colspan="2">no linear layers: interleaves two <em>compression strengths</em> of softmax attention (CSA 4:1 / HCA 128:1)</td><td>partial RoPE + output correction</td></tr>
     </table>
   </div>
@@ -476,6 +477,20 @@
     the general pattern, and "sparse-selective + dense-over-summaries" is its
     <a href="sparse-attention.html">selection-side</a> instantiation — same division of labor, no
     recurrence.
+  </p>
+
+  <h3>Hybrids by conversion</h3>
+  <p>
+    A 2026 pattern worth knowing: hybrids no longer have to be pretrained hybrid.
+    Ant's Ling-2.5-1T — the first trillion-parameter open hybrid — was built by <em>converting</em> a
+    subset of a pretrained model's GQA layers into lightning linear attention (7 of every 8 layers)
+    and continuing training; OpenBMB's MiniCPM-SALA converted a 9B dense model into a 25% trainable-
+    sparse / 75% linear stack for roughly a quarter of from-scratch cost; and ServiceNow's SuperApriel
+    took the idea to its limit — a supernet where each layer can execute any of four mixers (full GQA,
+    sliding window, <a href="gated-deltanet.html">Gated DeltaNet</a>, <a href="kda.html">KDA</a>), with
+    eight Pareto-optimal placements extractable from one checkpoint. The pretrained softmax weights
+    evidently contain most of what the recurrent replacement needs — which also means the ratio can be
+    chosen <em>after</em> pretraining, not committed to before it.
   </p>
 
   <h2 id="why-few">3. Why a Few Full Layers Are Enough</h2>
@@ -578,10 +593,26 @@
     </li>
   </ul>
 
-  <h2 id="open">7. Open Questions</h2>
+  <h2 id="open">7. Open Questions — and One Public Recantation</h2>
+  <p>
+    The hybrid bet has a prominent dissenter, and it is the lab that made the bet first. MiniMax
+    pioneered lightning-attention hybrids at scale (Text-01, M1) — then reverted to full softmax
+    attention in every layer for M2 and
+    <a href="minimax-m2-5.html">M2.5</a>, with a published post-mortem: hybrid models matched
+    full attention on saturated benchmarks but showed <em>clear deficits on multi-hop reasoning</em>
+    (their read: retrieval-heavy attention patterns form early in pretraining and the efficient layers
+    couldn't reproduce them); linear layers broke the serving stack they cared about (a recurrent
+    state has no prefix cache and complicates speculative decoding — §6's "two objects" problem,
+    experienced in production); and their internal 128K RULER ablation scored full attention 90 vs. 72
+    for the sliding-window alternative. Their conclusion — "efficient attention still has some way to
+    go before it can definitively beat full attention" — is the strongest published counterweight to
+    this page. Note what it does and doesn't contradict: Qwen and Moonshot's hybrids keep 25% exact
+    layers precisely to protect retrieval circuits; MiniMax's ablation compared against <em>SWA</em>,
+    not a 3:1 delta-rule hybrid. The experiment that would settle it hasn't been published.
+  </p>
   <ul>
     <li><strong>Does the ratio have a scaling law?</strong> 3:1 was tuned at 48–80B; nobody has published whether the optimal ratio drifts with model size or context length.</li>
-    <li><strong>Recall cliffs:</strong> hybrids pass standard needle tests, but multi-hop retrieval chains that must route repeatedly through the sparse full layers remain the suspected weak spot.</li>
+    <li><strong>Recall cliffs:</strong> hybrids pass standard needle tests, but multi-hop retrieval chains that must route repeatedly through the sparse full layers remain the suspected weak spot — this is exactly where MiniMax reported the damage.</li>
     <li><strong>State interference at 1M:</strong> the linear layers' state carries positional/ordering duty (especially under NoPE) over sequences vastly longer than the state is large; how gracefully this degrades is an active question.</li>
   </ul>
 
