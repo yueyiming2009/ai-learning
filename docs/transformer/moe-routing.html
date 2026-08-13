@@ -790,6 +790,68 @@ def moe_forward(x, W_gate, experts, K=2):
     AlltoAll for the routed experts. See <a href="../systems/moe-parallelism.html">MoE Parallelism</a>.
   </div>
 
+  <h3>Latent MoE — dispatch in a compressed space</h3>
+  <p>
+    Fine granularity created a communication problem — more selected experts means more AlltoAll
+    fan-out — and device-limited routing answered it by capping how many <em>places</em> a token's
+    hidden state is sent. The 2026-generation answer attacks the other factor: shrink <em>what</em>
+    is sent. A latent MoE inserts one shared down-projection
+    \(W^{\downarrow} \in \mathbb{R}^{D \times d_\ell}\) before dispatch, runs every routed expert
+    entirely at the latent width \(d_\ell < D\), and up-projects the combined result back:
+  </p>
+  <div class="eq-block">
+    \[\mathbf{y} = W^{\uparrow} \Big( \sum_{i \in \mathcal{S}} \tilde{p}_i \cdot \operatorname{FFN}_i\big(W^{\downarrow} \mathbf{x}\big) \Big) \;+\; \operatorname{FFN}_\text{shared}(\mathbf{x})\]
+  </div>
+  <p>
+    Nothing in §2–§6 changes: the gate, top-\(K\), renormalization, and balancing all operate as
+    before — the compression sits between the routing decision and the expert compute. The shared
+    experts keep the full-width path; they run on every token, so they never cross the network and
+    have nothing to save. This is the same low-rank logic that
+    <a href="mla.html">Multi-head Latent Attention</a> applies to the KV path, applied to the FFN.
+  </p>
+  <p>
+    What it buys is measured in bytes, not FLOPs. Dispatch traffic scales with
+    \(K \times d_\ell\): a half-width latent halves every AlltoAll dispatch and combine, and the
+    experts themselves are narrower, so the same communication budget affords more experts or a
+    higher \(K\). That second dial is the surprising one — Nemotron 3 runs <strong>top-22</strong>
+    against the field's top-6 to top-16, because \(22 \times d_\ell\) at quarter width still moves
+    fewer bytes than a conventional top-6 at full width.
+  </p>
+
+  <div class="compare">
+    <div class="compare-label">The two shipped instances</div>
+    <div class="compare-grid">
+      <div>
+        <div class="compare-col-label">Kimi K3 — Stable LatentMoE</div>
+        <ul style="font-size:0.92rem; margin:0; padding-left:1.2em;">
+          <li>Latent = \(D/2\): 7168 → 3584</li>
+          <li>896 routed experts, top-16, + 2 full-width shared</li>
+          <li>RMSNorm on the aggregated sum before up-projection, taming the variance of a 16-expert sum</li>
+          <li>Details: <a href="kimi-k3.html#moe">Kimi K3 §3 →</a></li>
+        </ul>
+      </div>
+      <div>
+        <div class="compare-col-label">Nemotron 3 — LatentMoE</div>
+        <ul style="font-size:0.92rem; margin:0; padding-left:1.2em;">
+          <li>Latent = \(D/4\): 4096 → 1024 (Ultra: 8192 → 2048)</li>
+          <li>512 routed experts, top-22, + 1 full-width shared</li>
+          <li>Shipped first (Mar 2026), at both 120B and 550B</li>
+          <li>Details: <a href="nemotron-3.html#latentmoe">Nemotron 3 §3 →</a></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <p>
+    What it costs: the two projections are dense per-token compute, and they are a
+    <em>representational bottleneck</em> — every expert's input and output squeezes through
+    \(d_\ell\) dimensions, which is why they are precision-critical (Nemotron 3 keeps
+    \(W^{\downarrow}\)/\(W^{\uparrow}\) in BF16 inside an otherwise 4-bit network). And the trick
+    only pays when there is dispatch traffic to save: Nemotron 3 Nano (30B, hidden 2688, top-6)
+    ships with <code>moe_latent_size: null</code> — at that scale the AlltoAll is too small for a
+    bottleneck to earn its projections. Latent dispatch is a big-model economy.
+  </p>
+
   <!-- ════════════════════════ SUMMARY ════════════════════════ -->
   <!-- ════════════════════════ STABILITY / RL ════════════════════════ -->
   <h2 id="stability">9 · Routing stability across parameter versions, and routing replay</h2>
@@ -998,6 +1060,10 @@ def moe_forward(x, W_gate, experts, K=2):
     <div class="summary-card">
       <div class="summary-card-label">Granularity</div>
       <p>Splitting \(E\) experts into \(mE\) narrower ones and raising \(K\) to \(mK\) holds FLOPs fixed while growing reachable combinations \(\binom{E}{K}\) by orders of magnitude — a specialization lever independent of \(K\).</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Latent dispatch</div>
+      <p>Down-project once to \(d_\ell < D\), run all routed experts at latent width, up-project the combined sum. AlltoAll bytes scale with \(K \times d_\ell\) — K3 uses \(D/2\), Nemotron 3 \(D/4\) with top-22; small models skip it.</p>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">Rich-get-richer fix</div>
