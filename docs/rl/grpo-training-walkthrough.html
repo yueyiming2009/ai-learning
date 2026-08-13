@@ -685,6 +685,19 @@ loss      = -per_token.sum() / response_mask.sum()        # scalar  (token-mean)
   from the current (updated) policy weights. Since there's no critic whose value predictions
   go stale, GRPO tolerates more epochs than PPO before gradient variance dominates.</p>
 
+  <div class="note">
+    <strong>Shared-prefix redundancy.</strong> The rollout engine computes the shared prompt KV
+    once per group (prefix caching), but this actor update recomputes it for every sequence — the
+    same prompt prefix goes through forward <em>and</em> backward G times per pass.
+    <a href="https://arxiv.org/abs/2606.01143">Schedule-level shared-prefix reuse</a> (Li, Sheng
+    et al., 2026 — co-authored by verl's lead) reorders the schedule: prefix forward once (cache
+    K/V, keep the autograd graph), suffixes run as ordinary microbatches reading the cached K/V
+    while accumulating gK/gV, then prefix backward once on the accumulated gradients. The reorder
+    is exact up to floating-point, because the prefix backward is a vector-Jacobian product —
+    linear in the incoming gradients. Payoff scales with prefix ratio and G: up to ~4.4× for
+    prefix-dominant workloads (fixed-context RAG, video), only ~1.17× for short-prompt math/code.
+  </div>
+
   <!-- PPO Phase removed -->
   <div class="phase-gone">
     <span class="phase-gone-label">Eliminated</span>
