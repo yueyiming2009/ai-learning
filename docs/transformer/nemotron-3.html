@@ -374,6 +374,7 @@
     <a href="#nvfp4">NVFP4</a>
     <a href="#mtp">MTP</a>
     <a href="#adamw">Still AdamW</a>
+    <a href="#small">Nano &amp; 3.5</a>
     <a href="#compared">Compared</a>
     <a href="#summary">Summary</a>
   </div>
@@ -383,15 +384,16 @@
 <div class="hero">
   <span class="hero-pill">Model Architectures</span>
   <h1>Nemotron 3</h1>
-  <p>NVIDIA's answer to the 2026 frontier: a Mamba-2 hybrid with no positional embeddings anywhere, experts that live in a quarter-width latent space, twenty-two of them active per token — and most linear layers pretrained in 4-bit NVFP4, with the data and recipes published.</p>
+  <p>NVIDIA's answer to the 2026 frontier: a Mamba-2 hybrid with no positional embeddings anywhere, experts that live in a quarter-width latent space, twenty-two of them active per token — and most linear layers pretrained in 4-bit NVFP4, with the data and recipes published. Spanning the 30B Nano and its training-only successor 3.5 Lightning up to the 550B Ultra.</p>
 </div>
 
 <div class="page-wrap">
 
   <p>
-    Nemotron 3 (Super-120B, March 2026; Ultra-550B, June 2026) is the Western entry in the frontier
-    open-model class, and the most <em>reproducible</em> one: per-model technical reports, opened
-    pretraining and post-training datasets, and disclosed hyperparameters down to the batch size. It
+    Nemotron 3 (Nano-30B, December 2025; Super-120B, March 2026; Ultra-550B, June 2026 — joined in
+    August 2026 by the 3.5-generation <a href="#small">Lightning-30B</a>) is the Western entry in the
+    frontier open-model class, and the most <em>reproducible</em> one: per-model technical reports,
+    opened pretraining and post-training datasets, and disclosed hyperparameters down to the batch size. It
     is also a distinct architectural lineage from everything else in this section — the linear layers
     are Mamba-2 (diagonal-decay SSMs) rather than delta-rule, the experts compute in a compressed
     latent space, and precision is pushed further than anyone: 4-bit weights not as post-training
@@ -529,7 +531,63 @@
     to <em>reproduce</em> rather than admire.
   </p>
 
-  <h2 id="compared">7. Nemotron 3 Against Its Contemporaries</h2>
+  <h2 id="small">7. The Small End — Nano and 3.5 Lightning</h2>
+  <p>
+    The family's first and newest members are the same size. <strong>Nemotron 3 Nano</strong>
+    (December 15, 2025) opened the generation: a 30B-class MoE (≈31.6B total, ≈3.5B active — branded
+    30B-A3B) in the same hybrid grammar as the flagships. <strong>Nemotron 3.5 Lightning</strong>
+    (August 11, 2026) is the first 3.5-generation model, and its <code>config.json</code> is
+    Nano's, value for value — same layer string, same dims, same experts. The half-generation bump
+    is <em>entirely training and packaging</em>; the architecture did not move.
+  </p>
+  <div class="note">
+    Naming: there is no "Nemotron 3.5 Nano." Lightning <em>is</em> the 3.5-generation replacement
+    for Nano — NVIDIA renamed the small tier (the Hugging Face URL for a 3.5 Nano redirects to
+    Lightning), pitching it as "the knowledge of Ultra packed into the size of Nano."
+  </div>
+  <p>The shared 52-layer skeleton, verbatim from both configs:</p>
+  <pre><code>MEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME</code></pre>
+  <p>
+    That is 23 Mamba-2, 23 MoE, and 6 attention layers — a mixer ratio just under 4:1, denser in
+    attention than the flagships' 5:1. Hidden dim 2688; GQA 32 Q / 2 KV at head dim 128; Mamba-2 at
+    64 heads × dim 64, state 128; vocab 131,072 and the same 1M-token long-context story. The MoE
+    is the interesting departure: 128 routed experts <strong>top-6</strong> + 1 shared, expert dim
+    1856, ReLU² — and <strong>no LatentMoE</strong> (<code>moe_latent_size: null</code>). The
+    experts run at full model width. At hidden 2688 with top-6 dispatch there is little all-to-all
+    traffic for a latent bottleneck to save; the ¼-width trick of §3 is a big-model economy, and the
+    small models simply skip it.
+  </p>
+  <p>What separates the two is the training run:</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th></th><th>Nemotron 3 Nano (Dec 2025)</th><th>Nemotron 3.5 Lightning (Aug 2026)</th></tr>
+      <tr><td>Pretraining</td><td>25T tokens, BF16, WSD (peak LR 1e-3, batch 3072)</td><td>&gt;20T tokens on the <strong>NVFP4 recipe</strong> — §4's 4-bit pretraining, now at 30B scale</td></tr>
+      <tr><td>MTP</td><td>no MTP module</td><td><strong>baked in during pretraining</strong> — one shared draft step (an attention + MoE pair, the same shape as §5's), then a dedicated "MTP-boosting" phase</td></tr>
+      <tr><td>Drafters shipped</td><td>—</td><td>in-model MTP, plus trained <strong>DFlash</strong> (block-parallel) and <strong>DSpark</strong> (semi-autoregressive) external drafters</td></tr>
+      <tr><td>Post-training</td><td>SFT + large-scale RL</td><td>harness-optimized for agent execution; post-training data through May 2026</td></tr>
+      <tr><td>Checkpoints / license</td><td>BF16 · NVIDIA Open Model License</td><td>BF16 + NVFP4 · OpenMDW-1.1</td></tr>
+    </table>
+  </div>
+  <p>
+    What that training bought, on the same weights shape: Artificial Analysis Intelligence Index
+    15 → 24 — level with gpt-oss-120b and two points shy of Super — Terminal-Bench v2.1 7% → 24%,
+    SWE-bench Verified 38.8 → 51.6, MMLU-Pro 78.3 → 81.9. The drafter menu (MTP for medium-to-high
+    concurrency, DSpark for low-concurrency and DGX Spark, DFlash to benchmark against — the
+    mechanics are on the <a href="../inference/speculative-decoding.html">speculative decoding
+    page</a>) is where the "up to 4× output speed" claim lives; hosted endpoints measured ~670
+    tokens/s at launch.
+  </p>
+  <p>
+    The positioning is explicit: Lightning is an <em>execution-layer</em> model, meant to sit under
+    a frontier planner and absorb the routine calls that dominate an agent's token budget. It
+    shipped alongside NeMo Switchyard, a router that decides per-request whether the small model
+    suffices — LangChain's 145-task benchmark measured a 74% cost cut versus frontier-only, sending
+    just 7% of calls upstream, at a ~6-point accuracy giveback. The architectural lesson runs the
+    other way: when a skeleton is settled, a whole generation bump can come from data, a precision
+    recipe, and inference packaging — with zero changes to the stack.
+  </p>
+
+  <h2 id="compared">8. Nemotron 3 Against Its Contemporaries</h2>
   <div class="table-wrap">
     <table>
       <tr><th></th><th>Nemotron 3 Ultra</th><th>Kimi K3</th><th>Qwen3.5-397B</th><th>DeepSeek-V4-Pro</th></tr>
@@ -544,7 +602,7 @@
     </table>
   </div>
 
-  <h2 id="summary">8. Summary</h2>
+  <h2 id="summary">9. Summary</h2>
   <div class="summary-grid">
     <div class="summary-card">
       <div class="summary-card-label">The stack</div>
@@ -565,6 +623,10 @@
     <div class="summary-card">
       <div class="summary-card-label">MTP</div>
       <p>2 shared-weight draft steps, each an attention+MoE pair; ≈97% two-token acceptance.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Nano → 3.5 Lightning</div>
+      <p>Config-identical 30B pair; the generation bump is pure training — NVFP4 pretrain, baked-in MTP, a three-drafter serving kit.</p>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">Why study it</div>
@@ -606,12 +668,17 @@
     <a href="https://arxiv.org/abs/2604.12374">Nemotron 3 Super technical report (arXiv:2604.12374)</a>;
     <a href="https://research.nvidia.com/labs/nemotron/files/NVIDIA-Nemotron-3-Ultra-Technical-Report.pdf">Ultra technical report</a>;
     family paper <a href="https://arxiv.org/abs/2512.20856">arXiv:2512.20856</a>;
-    <a href="https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16">Super</a> and
-    <a href="https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16">Ultra</a> model
+    Nano paper <a href="https://arxiv.org/abs/2512.20848">arXiv:2512.20848</a>;
+    <a href="https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16">Super</a>,
+    <a href="https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16">Ultra</a>,
+    <a href="https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16">Nano</a>, and
+    <a href="https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16">3.5 Lightning</a> model
     cards and raw <code>config.json</code> (the authority for the layer pattern and dims above; note
     the configs carry vestigial RoPE keys that both reports explicitly override with "no positional
     embeddings", and 262,144 <code>max_position_embeddings</code> against the 1M long-context
-    training).
+    training). Lightning launch:
+    <a href="https://developer.nvidia.com/blog/nvidia-nemotron-3-5-lightning-delivers-fast-accurate-specialized-task-execution-for-long-running-agents/">NVIDIA developer blog</a> (MTP/DFlash/DSpark guidance, PinchBench);
+    <a href="https://artificialanalysis.ai/articles/nemotron-3-5-lightning-launch">Artificial Analysis launch coverage</a> (Index 15 → 24, Terminal-Bench, throughput).
   </p>
 
 </div>

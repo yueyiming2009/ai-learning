@@ -52,7 +52,8 @@ components — DeepSeek-V4 (sequence-compressed sparse attention, mHC residual l
 (the 3:1 Gated DeltaNet hybrid scaled to 397B, native early-fusion vision), Kimi K3
 (KDA + NoPE gated MLA, Block AttnRes, latent-space MoE, MXFP4 QAT), GLM-5 (MLA-256, IndexShare
 indexer sharing, Muon Split, shared-weight MTP), MiniMax-M2.5 (the full-attention counterpoint
-and its published ablation), and Nemotron 3 (Mamba-2 hybrid, LatentMoE, NVFP4 pretraining).
+and its published ablation), and Nemotron 3 & 3.5 (Mamba-2 hybrid, LatentMoE, NVFP4 pretraining,
+and Lightning — the 30B whose generation bump is pure training).
 
 ### 04 · Systems & Scaling — [docs/systems/](docs/systems/), [triton/](triton/)
 The engineering substrate that trains it across many devices, built bottom-up — MFU, the PyTorch
