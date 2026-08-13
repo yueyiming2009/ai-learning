@@ -42,7 +42,8 @@ hierarchy, and interconnect topology.
 
 ### 03 · Transformer & Pretraining — [docs/transformer/](docs/transformer/)
 Assembling the Foundations pieces into a working model and training it. **Architecture:**
-self-attention (forward & backward), the pre-norm block, linear attention, Gated DeltaNet, KDA,
+self-attention (forward & backward), the pre-norm block, linear attention, Mamba & SSMs
+(discretization → selection → the Mamba-2 duality), Gated DeltaNet, KDA,
 sparse attention (the lightning indexer), hybrid attention stacks, MoE routing, and the 2026
 residual-stream redesigns (hyper-connections / attention residuals). **Training:** the next-token objective and single-device loop, multi-token prediction
 (parallel heads vs. DeepSeek-V3's sequential MTP modules, and the free draft head that falls out),

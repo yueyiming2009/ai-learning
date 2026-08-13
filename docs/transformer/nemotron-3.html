@@ -395,7 +395,7 @@
     frontier open-model class, and the most <em>reproducible</em> one: per-model technical reports,
     opened pretraining and post-training datasets, and disclosed hyperparameters down to the batch size. It
     is also a distinct architectural lineage from everything else in this section — the linear layers
-    are Mamba-2 (diagonal-decay SSMs) rather than delta-rule, the experts compute in a compressed
+    are <a href="mamba.html">Mamba-2</a> (decay-only SSMs) rather than delta-rule, the experts compute in a compressed
     latent space, and precision is pushed further than anyone: 4-bit weights not as post-training
     quantization but <em>in the pretraining loop itself</em>.
   </p>
@@ -428,9 +428,9 @@
     <a href="hybrid-attention.html">hybrid ratio</a></strong>, leaner than Qwen's and Kimi's 3:1,
     with a leaner full layer too: 2 KV heads means each attention layer caches just 512 elements per
     token. The linear layer is also a different animal from the delta-rule family:
-    Mamba-2's transition is a pure per-channel decay, \(\mathrm{Diag}(\alpha_t)\), with no erase-write
-    term — <a href="kda.html">KDA</a> without the Householder (its family-tree box places all of
-    these). NVIDIA's bet is that at 5:1 with capable attention layers, the cheaper mixer is enough.
+    <a href="mamba.html">Mamba-2's</a> transition is a pure decay — one scalar per head, with no
+    erase-write term — <a href="kda.html">KDA</a> without the Householder (its family-tree box places
+    all of these). NVIDIA's bet is that at 5:1 with capable attention layers, the cheaper mixer is enough.
   </p>
 
   <h2 id="nope">2. No Positional Embeddings At All</h2>
@@ -593,7 +593,7 @@
       <tr><th></th><th>Nemotron 3 Ultra</th><th>Kimi K3</th><th>Qwen3.5-397B</th><th>DeepSeek-V4-Pro</th></tr>
       <tr><td>Total / active</td><td>550B / 55B</td><td>2.78T / 104B</td><td>397B / 17B</td><td>1.6T / 49B</td></tr>
       <tr><td>Hybrid</td><td>5:1 Mamba-2 : GQA</td><td>3:1 KDA : gated MLA</td><td>3:1 GDN : gated attention</td><td>CSA + HCA (all softmax)</td></tr>
-      <tr><td>Linear-layer transition</td><td>\(\mathrm{Diag}(\alpha_t)\) only</td><td>\(\mathrm{Diag}(\alpha_t)\) × Householder</td><td>scalar × Householder</td><td>—</td></tr>
+      <tr><td>Linear-layer transition</td><td>scalar \(\alpha_t\) only</td><td>\(\mathrm{Diag}(\alpha_t)\) × Householder</td><td>scalar × Householder</td><td>—</td></tr>
       <tr><td>Positions</td><td><strong>none anywhere</strong></td><td>NoPE globals</td><td>partial RoPE</td><td>partial RoPE + output fix</td></tr>
       <tr><td>MoE</td><td>512, top-22, latent ¼, ReLU²</td><td>896+2, top-16, latent ½</td><td>512+1, top-10</td><td>384+1, top-6</td></tr>
       <tr><td>4-bit</td><td><strong>in pretraining</strong> (NVFP4)</td><td>QAT from SFT (MXFP4)</td><td>not disclosed</td><td>QAT experts (FP4)</td></tr>
@@ -641,10 +641,15 @@
       <div class="next-card-title">Hybrid Attention Stacks</div>
       <p>The ratio economics Nemotron pushes to 5:1 with a Mamba-2 linear layer.</p>
     </a>
+    <a class="next-card" href="mamba.html">
+      <div class="next-card-label">Foundations</div>
+      <div class="next-card-title">Mamba &amp; State Space Models</div>
+      <p>The layer itself, built from scratch: discretization, selection, the SSD duality — and every config key above decoded.</p>
+    </a>
     <a class="next-card" href="kda.html">
       <div class="next-card-label">Contrast</div>
       <div class="next-card-title">Kimi Delta Attention</div>
-      <p>The family tree: Mamba-2's pure diagonal decay vs. the delta-rule transitions — one Householder apart.</p>
+      <p>The family tree: Mamba-2's pure decay vs. the delta-rule transitions — one Householder apart.</p>
     </a>
     <a class="next-card" href="kimi-k3.html">
       <div class="next-card-label">Convergence</div>
