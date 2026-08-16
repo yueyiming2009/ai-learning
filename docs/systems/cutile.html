@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>GPU Kernels in cuTile — NVIDIA's Tile-Level Programming Model</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #ffffff; --surface: #f8f9fa; --border: #e8eaed;
+      --text: #1a1a2e; --muted: #6b7280;
+      --accent: #0d9488; --accent-light: #ccfbf1;
+      --warning-bg: #fffbeb; --warning-border: #f59e0b;
+      --step-bg: #f9fafb; --step-border: #d1d5db;
+      --boxed-bg: #f0fdfa; --boxed-border: #14b8a6;
+      --compare-bg: #eff6ff; --compare-border: #3b82f6;
+      --code-bg: #1e1b4b; --code-text: #e2e8f0;
+      --nav-bg: rgba(255,255,255,0.92);
+      --ink: #374151;
+      --icode-bg: #f1f5f9;
+      --kw-fg: #c084fc;
+      --fn-fg: #60a5fa;
+      --cm-fg: #94a3b8;
+      --str-fg: #86efac;
+      --num-fg: #fbbf24;
+      --dec-fg: #f9a8d4;
+      --row-hover: #fafafa;
+      --good-fg: #16a34a;
+      --bad-fg: #dc2626;
+      --compare-fg: #2563eb;
+      --teal-border: #5eead4;
+      --note-fg: #78350f;
+      --fig-bg: #fcfcfd;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #2dd4bf;
+        --accent-light: #0a2724;
+        --warning-bg: #251c0b;
+        --warning-border: #b45309;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0b2320;
+        --boxed-border: #0f766e;
+        --compare-bg: #101a2b;
+        --compare-border: #1e40af;
+        --code-bg: #221f3d;
+        --code-text: #e2e8f0;
+        --nav-bg: rgba(15,17,21,0.9);
+        --ink: #cbd5e1;
+        --icode-bg: #1c2531;
+        --kw-fg: #c084fc;
+        --fn-fg: #60a5fa;
+        --cm-fg: #94a3b8;
+        --str-fg: #86efac;
+        --num-fg: #fbbf24;
+        --dec-fg: #f9a8d4;
+        --row-hover: #191e25;
+        --good-fg: #4ade80;
+        --bad-fg: #f87171;
+        --compare-fg: #60a5fa;
+        --teal-border: #134e4a;
+        --note-fg: #fcd34d;
+        --fig-bg: #12161c;
+      }
+    }
+
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 0; line-height: 1.75; font-size: 16px; }
+    nav { position: sticky; top: 0; z-index: 100; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 52px; }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 0.9rem; color: var(--accent); text-decoration: none; white-space: nowrap; }
+    .nav-links { display: flex; gap: 4px; overflow-x: auto; flex: 1; }
+    .nav-links a { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; white-space: nowrap; transition: color 0.15s, background 0.15s; }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .nav-back { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); white-space: nowrap; transition: color 0.15s; margin-left: auto; flex-shrink: 0; }
+    .nav-back:hover { color: var(--text); }
+    .hero { background: linear-gradient(135deg, #134e4a 0%, #0f766e 100%); color: white; padding: 56px 24px 48px; text-align: center; }
+    .hero h1 { font-size: clamp(1.5rem, 4vw, 2.2rem); font-weight: 600; margin: 0 0 12px; letter-spacing: -0.02em; }
+    .hero p { margin: 0 auto; opacity: 0.85; font-size: 0.97rem; max-width: 640px; }
+    .hero-pill { display: inline-block; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 100px; font-size: 0.78rem; padding: 3px 12px; margin-bottom: 16px; letter-spacing: 0.04em; text-transform: uppercase; }
+    .page-wrap { max-width: 820px; margin: 0 auto; padding: 48px 24px 80px; }
+    h2 { font-size: 1.15rem; font-weight: 600; margin: 2.8em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); color: var(--text); }
+    h3 { font-size: 0.97rem; font-weight: 600; margin: 1.6em 0 0.4em; color: var(--ink); }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    code { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
+    p code, li code, td code { background: var(--icode-bg); padding: 1px 6px; border-radius: 4px; font-size: 0.88em; color: var(--accent); }
+    pre { background: var(--code-bg); color: var(--code-text); border-radius: 10px; padding: 20px 24px; overflow-x: auto; font-size: 0.85rem; line-height: 1.6; margin: 1.2em 0; }
+    pre code { background: none; padding: 0; font-size: inherit; color: inherit; }
+    .kw  { color: var(--kw-fg); }
+    .fn  { color: var(--fn-fg); }
+    .cm  { color: var(--cm-fg); font-style: italic; }
+    .str { color: var(--str-fg); }
+    .num { color: var(--num-fg); }
+    .dec { color: var(--dec-fg); }
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
+    th, td { border: 1px solid var(--border); padding: 9px 16px; text-align: left; vertical-align: top; }
+    th { background: var(--surface); font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+    tr:hover td { background: var(--row-hover); }
+    td.good { color: var(--good-fg); font-weight: 600; }
+    td.bad  { color: var(--bad-fg); }
+    td.ctr, th.ctr { text-align: center; }
+    .step { background: var(--step-bg); border: 1px solid var(--step-border); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 1.2em 0; }
+    .step-label { font-weight: 600; font-size: 0.88rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+    .step-label::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+    .note { background: var(--warning-bg); border-left: 3px solid var(--warning-border); border-radius: 0 8px 8px 0; padding: 10px 16px; margin: 1em 0; font-size: 0.92em; color: var(--note-fg); }
+    .result { background: var(--boxed-bg); border: 1.5px solid var(--boxed-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; text-align: center; }
+    .result-label { font-size: 0.8rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+    .compare { background: var(--compare-bg); border: 1.5px solid var(--compare-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; }
+    .compare-label { font-size: 0.8rem; font-weight: 600; color: var(--compare-fg); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
+    .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 1.2em 0; }
+    .summary-card { background: var(--accent-light); border: 1px solid var(--teal-border); border-radius: 8px; padding: 14px 16px; }
+    .summary-card-label { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+    .xref { background: var(--accent-light); border: 1px solid var(--teal-border); border-radius: 8px; padding: 12px 18px; margin: 1.4em 0; font-size: 0.92rem; }
+    .xref a { color: var(--accent); font-weight: 600; text-decoration: none; }
+    .xref a:hover { text-decoration: underline; }
+
+    /* ── Figure container (static diagrams) ──── */
+    .figure {
+      background: var(--fig-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 16px 14px;
+      margin: 1.6em 0;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .figure-caption {
+      font-size: 0.85rem;
+      color: var(--muted);
+      line-height: 1.6;
+      margin: 14px 4px 2px;
+    }
+
+    /* ── Altitude diagram ────────────────────── */
+    .alt-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .alt-box { border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; }
+    .alt-box h4 { font-size: 0.85rem; font-weight: 600; margin: 0 0 2px; }
+    .alt-sub { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
+    .alt-list { font-size: 0.8rem; line-height: 1.55; margin: 0; padding-left: 1.1em; }
+    .alt-list li { margin-bottom: 2px; }
+    .alt-you { color: var(--ink); }
+    .alt-hdr { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin: 8px 0 3px; }
+    .alt-hdr.you { color: var(--accent); }
+    .alt-hdr.compiler { color: var(--muted); }
+    .alt-simt  { border-top: 3px solid #9ca3af; }
+    .alt-cute  { border-top: 3px solid #16a34a; }
+    .alt-tile  { border-top: 3px solid var(--accent); }
+
+    /* ── Side-by-side addressing panels ──────── */
+    .pass-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 1.2em 0; }
+    .pass-box { border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+    .pass-box h4 { font-size: 0.85rem; font-weight: 600; margin: 0 0 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .pass-box pre { margin: 0; padding: 12px 14px; font-size: 0.78rem; }
+    .pass-box p { font-size: 0.85rem; margin: 10px 0 0; }
+    .pass-a { border-left: 3px solid #b45309; }
+    .pass-b { border-left: 3px solid var(--accent); }
+
+    footer { border-top: 1px solid var(--border); padding: 28px 24px; text-align: center; font-size: 0.82rem; color: var(--muted); }
+    @media (max-width: 640px) { .hero { padding: 40px 16px 36px; } .page-wrap { padding: 32px 16px 60px; } .alt-grid, .pass-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>cuTile</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#what-cutile">What it is</a>
+    <a href="#execution-model">Execution model</a>
+    <a href="#first-kernel">First kernel</a>
+    <a href="#tiled-matmul">MatMul</a>
+    <a href="#tile-ir">Tile IR</a>
+    <a href="#tuning">Tuning</a>
+    <a href="#three-dsls">Three DSLs</a>
+  </div>
+  <a class="nav-back" href="../index.html">Home</a>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">GPU Kernels · cuTile</span>
+  <h1>GPU Kernels in cuTile</h1>
+  <p>CUDA's native tile programming model — write kernels as operations on whole tiles, let the compiler own threads, shared memory, and tensor cores, and compile through Tile IR, a new virtual ISA built for forward compatibility.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="xref">
+    <strong>Pre-reading:</strong> <a href="triton-kernels.html">GPU Kernels in Triton</a> — cuTile lives at the same block-level altitude, and this page constantly compares the two. <a href="cute-dsl.html">GPU Kernels in CuTe DSL</a> covers NVIDIA's thread-level DSL, the other end of the control spectrum. <a href="../hardware/gpu-hardware.html">GPU Hardware for ML</a> for the memory hierarchy and tensor cores everything here is compiled onto.
+  </div>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="what-cutile">What cuTile is: tiles become a first-class CUDA citizen</h2>
+
+  <p>For eighteen years CUDA offered exactly one programming model: <strong>SIMT</strong> — you decide what every thread does, and all structure above the thread (warps, tiles, staging through shared memory) is convention you build by hand. Triton demonstrated that for most deep-learning kernels a <em>tile-level</em> model is the right altitude: describe operations on blocks of data, let a compiler assign threads. With <strong>CUDA 13.1 (December 2025)</strong>, NVIDIA adopted that conclusion into CUDA itself: <strong>CUDA Tile</strong> is a new tile-based programming model alongside SIMT, and <strong>cuTile Python</strong> (<code>pip install cuda-tile</code>) is its first DSL — with a C++ implementation announced to follow.</p>
+
+  <p>Two design decisions distinguish it from "NVIDIA's Triton clone":</p>
+
+  <ul>
+    <li><strong>A virtual ISA underneath.</strong> cuTile kernels compile to <strong>Tile IR</strong>, a documented tile-level instruction set that the driver's <code>tileiras</code> compiler lowers to each GPU generation. Tensor cores, TMA, and whatever replaces them are targets of the IR, not features of your source: the promise is that tile code written today recompiles onto future architectures at full speed, the way PTX carried SIMT code forward. Other languages can target the same IR — a Julia frontend (cuTile.jl) already exists.</li>
+    <li><strong>Arrays and tile indices instead of pointers and masks.</strong> Kernels receive real arrays (a PyTorch/CuPy tensor passes straight through via DLPack, shape and strides included) and load <em>tile number k</em> of a declared tile shape. Out-of-bounds handling is a <code>padding_mode</code> argument, not eight lines of offset-and-mask arithmetic.</li>
+  </ul>
+
+  <div class="figure">
+    <div class="alt-grid">
+      <div class="alt-box alt-simt">
+        <h4>CUDA C++ (SIMT)</h4>
+        <div class="alt-sub">thread level · 2007</div>
+        <div class="alt-hdr you">You write</div>
+        <ul class="alt-list alt-you">
+          <li>every thread's index math</li>
+          <li>shared-memory staging &amp; syncs</li>
+          <li>tensor-core intrinsics, pipelining</li>
+        </ul>
+        <div class="alt-hdr compiler">Compiler owns</div>
+        <ul class="alt-list">
+          <li>registers, scheduling</li>
+        </ul>
+      </div>
+      <div class="alt-box alt-cute">
+        <h4>CuTe DSL</h4>
+        <div class="alt-sub">thread level, algebra-checked · 2025</div>
+        <div class="alt-hdr you">You write</div>
+        <ul class="alt-list alt-you">
+          <li>thread↔data layouts (as functions)</li>
+          <li>copy/MMA atom choices, stages</li>
+        </ul>
+        <div class="alt-hdr compiler">Compiler owns</div>
+        <ul class="alt-list">
+          <li>index arithmetic (folded away)</li>
+          <li>registers, scheduling</li>
+        </ul>
+      </div>
+      <div class="alt-box alt-tile">
+        <h4>cuTile / Triton</h4>
+        <div class="alt-sub">tile level · 2019 / 2025</div>
+        <div class="alt-hdr you">You write</div>
+        <ul class="alt-list alt-you">
+          <li>tile shapes + the algorithm</li>
+        </ul>
+        <div class="alt-hdr compiler">Compiler owns</div>
+        <ul class="alt-list">
+          <li>thread mapping, vectorization</li>
+          <li>shared memory, TMA, tensor cores</li>
+          <li>asynchrony &amp; pipelining</li>
+        </ul>
+      </div>
+    </div>
+    <p class="figure-caption">
+      <strong>Three altitudes for the same hardware.</strong> The line that moves is who owns the thread↔data mapping. cuTile and Triton sit at the same altitude; cuTile's bet is that owning the whole stack — language, IR, and the <code>tileiras</code> compiler that knows each architecture's tensor cores natively — closes the performance gap while keeping the tile model's economy of expression.
+    </p>
+  </div>
+
+  <p>The supported-hardware matrix is the one genuinely surprising fact: at launch, Tile IR compiles for <strong>Ampere, Ada, and Blackwell</strong> (compute capability 8.x, 10.x–12.x) — <em>not Hopper</em>. Hopper support (9.x) is listed as coming in a future version. Running it needs CUDA Toolkit 13.1+ and driver r580+.</p>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="execution-model">The execution model: blocks compute, tiles are values</h2>
+
+  <p>The abstract machine is small enough to state completely. A kernel is executed by a 1-/2-/3-D <strong>grid of logical blocks</strong>. Each block runs the whole kernel body: <strong>scalar operations execute serially</strong> (conceptually on one thread), and <strong>tile operations execute collectively</strong> across the block's execution resources. That is the entire parallelism story you're shown — individual threads are not exposed at all, and explicit synchronization <em>within</em> a block is not just unnecessary but disallowed. Coordination <em>between</em> blocks remains your job, via atomics (the LayerNorm sample serializes cross-block gradient accumulation with an <code>atomic_cas</code> spin-lock and acquire/release memory orders).</p>
+
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">Block — unit of execution</div>
+      <p>Runs the kernel body. Tile ops parallelize across it; scalars are serial. No thread IDs, no <code>__syncthreads</code>.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Tile — unit of data</div>
+      <p>An immutable value with <em>no defined storage</em> — registers, shared memory, TMEM: the compiler's call. Shapes are compile-time constants, powers of two.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Array — the data at rest</div>
+      <p>A global-memory view with runtime shape/strides (your PyTorch tensor). Mutable through loads/stores; must not alias other array arguments.</p>
+    </div>
+  </div>
+
+  <p>Two consequences are worth pausing on. First, because tiles have no storage, the register-vs-shared-memory question — the central obsession of the <a href="cute-dsl.html">thread-level style</a> — simply is not in the language; the compiler places data per target. Second, everything in tile code is <strong>immutable</strong>: an operation that "modifies" a tile returns a new one. That functional flavor is what gives the compiler freedom to reorder, fuse, and pipeline tile operations, and it makes kernels read like NumPy rather than like CUDA.</p>
+
+  <p>Kernel parameters annotated <code>ct.Constant[...]</code> are <strong>constant-embedded</strong>: the kernel is specialized and compiled per unique value, exactly like a C++ template parameter or Triton's <code>tl.constexpr</code> — this is how tile shapes meet their compile-time-constant requirement while remaining ordinary function arguments.</p>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="first-kernel">First kernel: vector add, with no pointers in sight</h2>
+
+<pre><code><span class="kw">import</span> cuda.tile <span class="kw">as</span> ct
+<span class="kw">import</span> torch
+
+TILE = <span class="num">256</span>
+
+<span class="dec">@ct.kernel</span>
+<span class="kw">def</span> <span class="fn">vector_add</span>(a, b, c):
+    bid = ct.bid(<span class="num">0</span>)                                  <span class="cm"># which tile am I?</span>
+    ta = ct.load(a, index=(bid,), shape=(TILE,),
+                 padding_mode=ct.PaddingMode.ZERO)   <span class="cm"># tile #bid, OOB reads 0</span>
+    tb = ct.load(b, index=(bid,), shape=(TILE,),
+                 padding_mode=ct.PaddingMode.ZERO)
+    ct.store(c, index=(bid,), tile=ta + tb)          <span class="cm"># edge tiles clipped automatically</span>
+
+a = torch.randn(<span class="num">1_000_000</span>, device=<span class="str">"cuda"</span>)
+b = torch.randn(<span class="num">1_000_000</span>, device=<span class="str">"cuda"</span>)
+c = torch.empty_like(a)
+
+grid = (ct.cdiv(a.shape[<span class="num">0</span>], TILE), <span class="num">1</span>, <span class="num">1</span>)
+ct.launch(torch.cuda.current_stream(), grid, vector_add, (a, b, c))
+</code></pre>
+
+  <p>Structurally this is the Triton vector add — one block per tile, a grid of <code>cdiv(N, TILE)</code> blocks — but the addressing model is where the two languages part ways:</p>
+
+  <div class="pass-grid">
+    <div class="pass-box pass-a">
+      <h4 style="color:#b45309;">Triton: pointers + masks</h4>
+<pre><code>offs = pid * BS + tl.arange(<span class="num">0</span>, BS)
+mask = offs &lt; n
+x = tl.load(x_ptr + offs, mask=mask)
+</code></pre>
+      <p>You reconstruct the array from a raw pointer, and every edge case is your mask. Flexible — and the source of most first-week Triton bugs.</p>
+    </div>
+    <div class="pass-box pass-b">
+      <h4 style="color:var(--accent);">cuTile: arrays + tile indices</h4>
+<pre><code>x = ct.load(arr, index=(pid,),
+            shape=(BS,),
+            padding_mode=ZERO)
+</code></pre>
+      <p>The array keeps its shape and strides; you name a tile by index. Bounds, padding, and (on edge stores) clipping are the runtime's problem.</p>
+    </div>
+  </div>
+
+  <p>Because tile shapes are compile-time constants, <code>TILE</code> can be a captured Python global (as here), a <code>ct.Constant[int]</code> parameter, or any constant expression — and each distinct value produces its own compiled specialization.</p>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="tiled-matmul">A real kernel: tiled matmul on tensor cores</h2>
+
+  <p>This is the shipped <code>samples/MatMul.py</code> kernel, lightly simplified to a 2-D grid (the original linearizes the grid and applies a group swizzle for L2 reuse, exactly like Triton's canonical matmul). Each block owns one \((t_m, t_n)\) tile of \(C\) and marches over \(K\):</p>
+
+<pre><code>ConstInt = ct.Constant[<span class="fn">int</span>]
+
+<span class="dec">@ct.kernel</span>(num_ctas=ct.ByTarget(sm_100=<span class="num">2</span>))       <span class="cm"># 2 cooperating CTAs on Blackwell</span>
+<span class="kw">def</span> <span class="fn">matmul_kernel</span>(A, B, C, tm: ConstInt, tn: ConstInt, tk: ConstInt):
+    bidx, bidy = ct.bid(<span class="num">0</span>), ct.bid(<span class="num">1</span>)
+    num_k = ct.num_tiles(A, axis=<span class="num">1</span>, shape=(tm, tk))   <span class="cm"># K-extent in tiles</span>
+
+    acc = ct.full((tm, tn), <span class="num">0</span>, dtype=ct.float32)      <span class="cm"># fp32 accumulator</span>
+    dtype = ct.tfloat32 <span class="kw">if</span> A.dtype == ct.float32 <span class="kw">else</span> A.dtype  <span class="cm"># tf32 → tensor cores</span>
+
+    <span class="kw">for</span> k <span class="kw">in</span> range(num_k):
+        a = ct.load(A, index=(bidx, k), shape=(tm, tk),
+                    padding_mode=ct.PaddingMode.ZERO).astype(dtype)
+        b = ct.load(B, index=(k, bidy), shape=(tk, tn),
+                    padding_mode=ct.PaddingMode.ZERO).astype(dtype)
+        acc = ct.mma(a, b, acc)                       <span class="cm"># tile × tile + acc</span>
+
+    ct.store(C, index=(bidx, bidy), tile=ct.astype(acc, C.dtype))
+</code></pre>
+
+  <p>Now compare this against the <a href="cute-dsl.html#gemm">CuTe DSL GEMM skeleton</a> and notice everything that is <em>absent</em>: no shared-memory tensors, no <code>cp.async</code>/TMA copy atoms, no <code>ldmatrix</code>, no swizzled smem layouts, no pipeline stages, no barrier choreography. All of it still happens — the <code>tileiras</code> compiler stages tiles through shared memory, drives TMA, selects <code>mma.sync</code> on Ampere or <code>tcgen05</code> on Blackwell, and software-pipelines the K-loop — but it happens below the IR, per target. The one hardware-generation fact in the source is a <em>tuning annotation</em>, not code: <code>num_ctas=ct.ByTarget(sm_100=2)</code> requests Blackwell's paired-CTA mode, and is ignored where it doesn't apply.</p>
+
+  <div class="step">
+    <div class="step-label">Beyond matmul: the op vocabulary</div>
+    <p style="margin:0;">Tiles support NumPy-style elementwise math and broadcasting, <code>ct.sum</code>/reductions and scans along axes, <code>ct.where</code>, <code>ct.arange</code>, <code>ct.transpose</code>, type casts, and atomics with explicit memory orders. The samples directory covers the practical span: LayerNorm (cross-tile reduction loops), FMHA (attention), batched and block-scaled matmul, MoE, FFT, and a distributed all-gather+matmul — plus NVIDIA's TileGym repo with more. A persistent-kernel variant is idiomatic: launch <code>min(num_SMs, num_tiles)</code> blocks and stride tiles by <code>ct.num_blocks(0)</code>.</p>
+  </div>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="tile-ir">Tile IR: the part that isn't a DSL</h2>
+
+  <p>Everything above could be (and in Triton, is) implemented as a compiler bolted onto the side of CUDA. The structural novelty is that NVIDIA specified the tile machine <em>as an ISA</em>. The stack:</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Layer</th><th>Artifact</th><th>Analogue in SIMT CUDA</th></tr></thead>
+      <tbody>
+        <tr><td>cuTile Python (today), C++ (announced), cuTile.jl</td><td>Python source, traced per launch</td><td>CUDA C++</td></tr>
+        <tr><td><strong>Tile IR</strong> — documented virtual ISA for tile programs</td><td>portable bytecode</td><td>PTX</td></tr>
+        <tr><td><code>tileiras</code> (in the driver / toolkit)</td><td>per-architecture SASS</td><td><code>ptxas</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>The compilation flow follows: <code>ct.launch</code> specializes the kernel for its concrete arguments (dtypes, constant-embedded values) and JIT-compiles with caching; <code>cuda.tile.compilation.export_kernel</code> does it ahead of time instead, emitting either a <code>cubin</code> for a specific GPU or <strong>Tile IR bytecode</strong> that the driver finishes compiling on whatever GPU it meets — the forward-compatibility path. AOT export requires spelling out the parameter constraints (alignments, divisibility, constants) that JIT would have inferred from example arguments.</p>
+
+  <div class="result">
+    <div class="result-label">The strategic read</div>
+    <p style="margin:0;">PTX made SIMT programs outlive their hardware; Tile IR is the same bet one level up. Tensor-core generations have been churning (<code>mma.sync</code> → <code>wgmma</code> → <code>tcgen05</code> in three architectures — the reason the <a href="cute-dsl.html#gemm">CuTe atom table</a> exists), and NVIDIA's answer is to make the <em>tile op</em> the stable contract and absorb that churn inside the compiler. Kernels that must exploit a generation's quirks by hand keep CuTe; kernels that express an algorithm keep recompiling.</p>
+  </div>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="tuning">Tuning without touching threads</h2>
+
+  <p>You can't reorder warps or resize a shared-memory buffer — so performance work happens through declared knobs and hints, all of which are semantically optional:</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Knob</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>tm/tn/tk</code> tile shapes</td><td>The dominant lever, exactly as in Triton — passed as <code>ct.Constant</code> parameters, one compiled specialization per value.</td></tr>
+        <tr><td><code>ct.ByTarget(...)</code></td><td>Per-architecture values for kernel config — <code>num_ctas</code>, <code>occupancy</code>, <code>opt_level</code> — e.g. paired CTAs only on <code>sm_100</code>.</td></tr>
+        <tr><td><code>latency=1..10</code> on load/store</td><td>Declares how DRAM-heavy the access is; guides prefetch depth in the generated pipeline.</td></tr>
+        <tr><td><code>allow_tma=True/False</code></td><td>Permits or forbids lowering a load/store to TMA (allowed by default where supported).</td></tr>
+        <tr><td><code>ct.assume_divisible_by(n, 16)</code></td><td>Unchecked divisibility promise on a runtime scalar; propagates through derived indices so dynamic slices still get aligned, wide memory ops.</td></tr>
+        <tr><td><code>ct.tune.exhaustive_search</code></td><td>Built-in autotuner: benchmark a config space, keep the winner.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>The pattern to notice: every knob is a <em>declaration about the problem</em> (this scalar is aligned; this access is heavy; this target has CTA pairs), never an <em>instruction about the machine</em>. That's what keeps the source portable across the IR's targets.</p>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="three-dsls">Triton vs. cuTile vs. CuTe DSL</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th></th><th>Triton</th><th>cuTile</th><th>CuTe DSL</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Altitude</strong></td><td>tile / block</td><td>tile / block</td><td>thread</td></tr>
+        <tr><td><strong>Addressing</strong></td><td>pointers + offset math + masks</td><td class="good">arrays + tile indices + padding modes</td><td>layouts as functions, algebra-checked</td></tr>
+        <tr><td><strong>Thread mapping</strong></td><td>compiler</td><td>compiler (below Tile IR)</td><td class="good">you, explicitly</td></tr>
+        <tr><td><strong>Compile target</strong></td><td>own compiler → PTX</td><td class="good">Tile IR (virtual ISA) → <code>tileiras</code></td><td>MLIR → PTX/cubin</td></tr>
+        <tr><td><strong>Hardware support</strong></td><td class="good">NVIDIA + AMD + others</td><td>NVIDIA only; Ampere/Ada/Blackwell, no Hopper yet</td><td>NVIDIA only, incl. Hopper</td></tr>
+        <tr><td><strong>Ecosystem</strong></td><td class="good">huge — torch.compile backend, years of kernels</td><td>new (Dec 2025): samples, TileGym, cuTile.jl</td><td>FA4, QuACK, production Blackwell kernels</td></tr>
+        <tr><td><strong>Peak-perf ceiling</strong></td><td>high, gaps on frontier parts</td><td>vendor compiler, native tensor-core lowering; too new for a verdict</td><td class="good">CUTLASS-class</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="compare">
+    <div class="compare-label">Rule of thumb</div>
+    <p style="margin:0;">Reading the three as one landscape: <strong>Triton</strong> is the portable incumbent with the ecosystem; <strong>cuTile</strong> is the same programming model with a cleaner addressing story and NVIDIA's compiler underneath — the natural choice when you're NVIDIA-only and want tile code that survives architecture churn; <strong>CuTe DSL</strong> is for the kernels where the compiler's choices are the bottleneck and you need to place every value yourself. The realistic 2026 stack uses Triton/cuTile for the long tail of fused kernels and CuTe for the handful of GEMM/attention kernels where the last 20% lives.</p>
+  </div>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="where-next">Where this leads</h2>
+
+  <ul>
+    <li><strong><a href="triton-kernels.html">GPU Kernels in Triton</a></strong> — the model cuTile validates; the worked kernels there translate to cuTile almost mechanically.</li>
+    <li><strong><a href="cute-dsl.html">GPU Kernels in CuTe DSL</a></strong> — what all the machinery the tile compiler hides actually looks like when written by hand.</li>
+    <li><strong><a href="../inference/flash-attention.html">FlashAttention</a></strong> — the algorithm behind the FMHA sample; try reading the cuTile version after the tiling math.</li>
+    <li><strong>NVIDIA/cutile-python</strong> on GitHub — README, samples (MatMul, LayerNorm, FMHA, MoE, FFT), and the docs source; rendered docs at docs.nvidia.com/cuda/cutile-python, Tile IR spec at docs.nvidia.com/cuda/tile-ir.</li>
+    <li><strong>NVIDIA/TileGym</strong> — the growing corpus of cuTile deep-learning kernels.</li>
+  </ul>
+
+</div>
+
+<footer>Personal ML notes · <a href="https://github.com/yueyiming2009/ai-learning" style="color:inherit;text-decoration:underline;">source on GitHub</a></footer>
+
+</body>
+</html>
