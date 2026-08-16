@@ -403,12 +403,12 @@ cute.zipped_divide(M, (<span class="num">4</span>, <span class="num">32</span>))
 blkA = gA[((<span class="kw">None</span>, <span class="kw">None</span>), bidx)]          <span class="cm"># keep mode 0, fix tile = bidx → (16,128)</span>
 </code></pre>
 
-  <p>The <code>None</code>s work like NumPy's <code>:</code> — keep that mode. Three tensor species matter in practice:</p>
+  <p>The <code>None</code>s work like NumPy's <code>:</code> — keep that mode. Three tensor species matter in practice, one per level of the <a href="../hardware/gpu-hardware.html#memory">memory hierarchy</a>:</p>
 
   <ul>
-    <li><strong>Global-memory tensors</strong> — created on the host from PyTorch arrays via DLPack (<code>from_dlpack(t)</code>), zero-copy.</li>
-    <li><strong>Shared-memory tensors</strong> — a shared-memory pointer plus a (often swizzled) layout; same algebra, different engine.</li>
-    <li><strong>Fragments</strong> — per-thread register arrays, usually built to mirror a partition: <code>make_fragment_like(thrA)</code>. Loading a fragment gives a <em>TensorSSA</em> value supporting vectorized elementwise math (<code>frgA.load() + frgB.load()</code>).</li>
+    <li><strong>Global-memory tensors</strong> — a view of <a href="../hardware/gpu-hardware.html#memory">HBM</a>, created on the host from PyTorch arrays via DLPack (<code>from_dlpack(t)</code>), zero-copy.</li>
+    <li><strong>Shared-memory tensors</strong> — a <a href="../hardware/gpu-hardware.html#memory">shared-memory</a> pointer plus a (often swizzled) layout; same algebra, different engine.</li>
+    <li><strong>Fragments</strong> — per-thread arrays living in the SM's <a href="../hardware/gpu-hardware.html#sm">register file</a>, usually built to mirror a partition: <code>make_fragment_like(thrA)</code>. Loading a fragment gives a <em>TensorSSA</em> value supporting vectorized elementwise math (<code>frgA.load() + frgB.load()</code>).</li>
   </ul>
 
   <p>One more tensor deserves a name: the <strong>identity tensor</strong>, <code>make_identity_tensor(shape)</code>, whose value at coordinate \((m,n)\) is the coordinate itself. Tile and partition it alongside the data and every thread ends up holding the <em>logical coordinates</em> of its values — compare them against the true extent (<code>elem_less(coord, shape)</code>) and you have out-of-bounds predication that survives every layout transformation. This is CuTe's answer to Triton's <code>mask=</code>.</p>
