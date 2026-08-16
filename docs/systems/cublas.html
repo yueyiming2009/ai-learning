@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>cuBLAS — Calling Peak GEMM: BLAS Levels, cublasLt &amp; the Kernel Zoo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #ffffff; --surface: #f8f9fa; --border: #e8eaed;
+      --text: #1a1a2e; --muted: #6b7280;
+      --accent: #0284c7; --accent-light: #e0f2fe;
+      --warning-bg: #fffbeb; --warning-border: #f59e0b;
+      --step-bg: #f9fafb; --step-border: #d1d5db;
+      --boxed-bg: #f0f9ff; --boxed-border: #0ea5e9;
+      --compare-bg: #eff6ff; --compare-border: #3b82f6;
+      --code-bg: #1e1b4b; --code-text: #e2e8f0;
+      --nav-bg: rgba(255,255,255,0.92);
+      --ink: #374151;
+      --icode-bg: #f1f5f9;
+      --kw-fg: #c084fc;
+      --fn-fg: #60a5fa;
+      --cm-fg: #94a3b8;
+      --str-fg: #86efac;
+      --num-fg: #fbbf24;
+      --dec-fg: #f9a8d4;
+      --row-hover: #fafafa;
+      --good-fg: #16a34a;
+      --bad-fg: #dc2626;
+      --compare-fg: #2563eb;
+      --sky-border: #bae6fd;
+      --note-fg: #78350f;
+      --fig-bg: #fcfcfd;
+      --plot-gray: #9ca3af;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #38bdf8;
+        --accent-light: #0b2331;
+        --warning-bg: #251c0b;
+        --warning-border: #b45309;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0a2532;
+        --boxed-border: #0369a1;
+        --compare-bg: #101a2b;
+        --compare-border: #1e40af;
+        --code-bg: #221f3d;
+        --code-text: #e2e8f0;
+        --nav-bg: rgba(15,17,21,0.9);
+        --ink: #cbd5e1;
+        --icode-bg: #1c2531;
+        --kw-fg: #c084fc;
+        --fn-fg: #60a5fa;
+        --cm-fg: #94a3b8;
+        --str-fg: #86efac;
+        --num-fg: #fbbf24;
+        --dec-fg: #f9a8d4;
+        --row-hover: #191e25;
+        --good-fg: #4ade80;
+        --bad-fg: #f87171;
+        --compare-fg: #60a5fa;
+        --sky-border: #0c4a6e;
+        --note-fg: #fcd34d;
+        --fig-bg: #12161c;
+        --plot-gray: #6b7280;
+      }
+    }
+
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 0; line-height: 1.75; font-size: 16px; }
+    nav { position: sticky; top: 0; z-index: 100; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 52px; }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 0.9rem; color: var(--accent); text-decoration: none; white-space: nowrap; }
+    .nav-links { display: flex; gap: 4px; overflow-x: auto; flex: 1; }
+    .nav-links a { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; white-space: nowrap; transition: color 0.15s, background 0.15s; }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .nav-back { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); white-space: nowrap; transition: color 0.15s; margin-left: auto; flex-shrink: 0; }
+    .nav-back:hover { color: var(--text); }
+    .hero { background: linear-gradient(135deg, #0c4a6e 0%, #0284c7 100%); color: white; padding: 56px 24px 48px; text-align: center; }
+    .hero h1 { font-size: clamp(1.5rem, 4vw, 2.2rem); font-weight: 600; margin: 0 0 12px; letter-spacing: -0.02em; }
+    .hero p { margin: 0 auto; opacity: 0.85; font-size: 0.97rem; max-width: 640px; }
+    .hero-pill { display: inline-block; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 100px; font-size: 0.78rem; padding: 3px 12px; margin-bottom: 16px; letter-spacing: 0.04em; text-transform: uppercase; }
+    .page-wrap { max-width: 820px; margin: 0 auto; padding: 48px 24px 80px; }
+    h2 { font-size: 1.15rem; font-weight: 600; margin: 2.8em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); color: var(--text); }
+    h3 { font-size: 0.97rem; font-weight: 600; margin: 1.6em 0 0.4em; color: var(--ink); }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    code { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
+    p code, li code, td code { background: var(--icode-bg); padding: 1px 6px; border-radius: 4px; font-size: 0.88em; color: var(--accent); }
+    pre { background: var(--code-bg); color: var(--code-text); border-radius: 10px; padding: 20px 24px; overflow-x: auto; font-size: 0.85rem; line-height: 1.6; margin: 1.2em 0; }
+    pre code { background: none; padding: 0; font-size: inherit; color: inherit; }
+    .kw  { color: var(--kw-fg); }
+    .fn  { color: var(--fn-fg); }
+    .cm  { color: var(--cm-fg); font-style: italic; }
+    .str { color: var(--str-fg); }
+    .num { color: var(--num-fg); }
+    .dec { color: var(--dec-fg); }
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
+    th, td { border: 1px solid var(--border); padding: 9px 16px; text-align: left; vertical-align: top; }
+    th { background: var(--surface); font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+    tr:hover td { background: var(--row-hover); }
+    td.good { color: var(--good-fg); font-weight: 600; }
+    td.bad  { color: var(--bad-fg); }
+    td.ctr, th.ctr { text-align: center; }
+    .step { background: var(--step-bg); border: 1px solid var(--step-border); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 1.2em 0; }
+    .step-label { font-weight: 600; font-size: 0.88rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+    .step-label::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+    .note { background: var(--warning-bg); border-left: 3px solid var(--warning-border); border-radius: 0 8px 8px 0; padding: 10px 16px; margin: 1em 0; font-size: 0.92em; color: var(--note-fg); }
+    .result { background: var(--boxed-bg); border: 1.5px solid var(--boxed-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; text-align: center; }
+    .result-label { font-size: 0.8rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+    .compare { background: var(--compare-bg); border: 1.5px solid var(--compare-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; }
+    .compare-label { font-size: 0.8rem; font-weight: 600; color: var(--compare-fg); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
+    .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 1.2em 0; }
+    .summary-card { background: var(--accent-light); border: 1px solid var(--sky-border); border-radius: 8px; padding: 14px 16px; }
+    .summary-card-label { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+    .xref { background: var(--accent-light); border: 1px solid var(--sky-border); border-radius: 8px; padding: 12px 18px; margin: 1.4em 0; font-size: 0.92rem; }
+    .xref a { color: var(--accent); font-weight: 600; text-decoration: none; }
+    .xref a:hover { text-decoration: underline; }
+
+    /* ── Figure / plot ───────────────────────── */
+    .figure {
+      background: var(--fig-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 16px 14px;
+      margin: 1.6em 0;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .figure canvas {
+      width: 100%;
+      height: 300px;
+      display: block;
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      justify-content: center;
+      margin-top: 12px;
+      font-size: 0.82rem;
+      color: var(--text);
+    }
+    .legend-item { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, var(--plot-gray) 0 5px, transparent 5px 9px); }
+    .figure-caption {
+      font-size: 0.85rem;
+      color: var(--muted);
+      line-height: 1.6;
+      margin: 14px 4px 2px;
+    }
+
+    footer { border-top: 1px solid var(--border); padding: 28px 24px; text-align: center; font-size: 0.82rem; color: var(--muted); }
+    @media (max-width: 640px) { .hero { padding: 40px 16px 36px; } .page-wrap { padding: 32px 16px 60px; } }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>cuBLAS</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#why">Why cuBLAS</a>
+    <a href="#levels">BLAS levels</a>
+    <a href="#gemm-call">GEMM anatomy</a>
+    <a href="#batched">Batched</a>
+    <a href="#cublaslt">cublasLt</a>
+    <a href="#inside">Inside the box</a>
+    <a href="#numerics">Numerics</a>
+    <a href="#practice">Practice</a>
+  </div>
+  <a class="nav-back" href="../index.html">Home</a>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">GPU Kernels · cuBLAS</span>
+  <h1>cuBLAS — Calling Peak GEMM</h1>
+  <p>The most-executed library in deep learning: the BLAS levels and why only GEMM escapes the bandwidth ceiling, the column-major legacy, batched matmuls, cublasLt's epilogues and heuristics, and what determinism costs.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="xref">
+    <strong>Pre-reading:</strong> <a href="../hardware/gpu-hardware.html">GPU Hardware for ML</a> for the roofline model this page leans on, and <a href="mfu.html">MFU</a> for the whole-run accounting. <a href="cutlass.html">CUTLASS</a> is this library's open twin — read together, they are the closed box and its blueprints.
+  </div>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="why">The most-executed library in deep learning</h2>
+
+  <p>Every <code>nn.Linear</code>, every attention projection, every LM head — when PyTorch multiplies matrices on an NVIDIA GPU, the call bottoms out in <strong>cuBLAS</strong>. It has shipped with CUDA since the first toolkit (2007), implementing the BLAS interface — the 1979-vintage Fortran API that scientific computing standardized on — plus a modern extension layer (<code>cublasLt</code>) that grew up specifically to serve deep learning. By instruction count and by joules, it is plausibly the most-executed numerical library on earth right now.</p>
+
+  <p>Its contract is the inverse of everything else on the <a href="../index.html#systems">kernel shelf</a>: <em>zero programmability, maximum performance-per-effort</em>. One function call gets you the tensor cores at somewhere near peak, tuned per architecture by the people who designed the silicon. The rest of this page is about what that call actually is, what the box does inside, and where its edges are — the edges being exactly where <a href="triton-kernels.html">Triton</a>, <a href="cutlass.html">CUTLASS</a>, and friends take over.</p>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="levels">The BLAS levels — and why GEMM is the only one that matters</h2>
+
+  <p>BLAS organizes its routines into three levels, and the split is really about <strong>arithmetic intensity</strong> — FLOPs per byte of memory traffic:</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Level</th><th>Shape</th><th>Canonical routine</th><th>FLOPs : data</th><th>Intensity (BF16)</th></tr></thead>
+      <tbody>
+        <tr><td><strong>1</strong> — vector</td><td>\(y \leftarrow \alpha x + y\)</td><td><code>axpy</code>, <code>dot</code></td><td>\(O(N) : O(N)\)</td><td class="bad">~0.3 FLOPs/B, constant</td></tr>
+        <tr><td><strong>2</strong> — matrix·vector</td><td>\(y \leftarrow Ax\)</td><td><code>gemv</code></td><td>\(O(N^2) : O(N^2)\)</td><td class="bad">~1 FLOP/B, constant</td></tr>
+        <tr><td><strong>3</strong> — matrix·matrix</td><td>\(C \leftarrow \alpha\,\text{op}(A)\text{op}(B) + \beta C\)</td><td><code>gemm</code></td><td>\(O(N^3) : O(N^2)\)</td><td class="good">~N/3 FLOPs/B — grows with size</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Levels 1 and 2 touch each operand once per FLOP-pair: no tiling, no cleverness, no library can save them — they are bandwidth, full stop. Level 3 is the only routine whose intensity <em>grows with problem size</em>, because each element of \(A\) and \(B\) participates in \(N\) multiply-adds. That single asymptotic fact is why tensor cores exist, why the <a href="cutlass.html#hierarchy">CUTLASS tiling hierarchy</a> exists, and why "is it GEMM-shaped?" is the first question of GPU performance:</p>
+
+  <div class="figure">
+    <canvas id="plot-intensity" aria-label="Log-log plot of arithmetic intensity versus matrix size for AXPY, GEMV, and GEMM against the H100 ridge point"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:#0284c7"></span> GEMM \(N{\times}N{\times}N\): \(N/3\)</span>
+      <span class="legend-item"><span class="lg" style="--c:#0d9488"></span> GEMV: ≈1</span>
+      <span class="legend-item"><span class="lg" style="--c:#f59e0b"></span> AXPY: ≈0.33</span>
+      <span class="legend-item"><span class="lg dash"></span> H100 ridge ≈ 295 FLOPs/B</span>
+    </div>
+    <p class="figure-caption">
+      <strong>Only Level 3 can climb out of the bandwidth regime.</strong> Arithmetic intensity (BF16 FLOPs per byte of unavoidable HBM traffic) versus size, log–log, against an H100 SXM's ridge point (989 TF/s ÷ 3.35 TB/s ≈ 295). AXPY and GEMV are flat lines a decade below the ridge — perfect implementations of them are still ~1% of peak FLOP/s. Square GEMM crosses the ridge near \(N \approx 900\): below that, even cuBLAS is bandwidth-bound; above it, tensor cores can be fed. Note where inference decode lives: batch-1 matmuls are GEMV-shaped — the teal line — which is the arithmetic behind the <a href="../inference/inference-compute-model.html">memory-bound decode</a> story.
+    </p>
+  </div>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="gemm-call">Anatomy of the call — and the column-major legacy</h2>
+
+  <p>The classic API is a stateful handle plus per-routine calls. Everything is asynchronous on the handle's stream:</p>
+
+<pre><code>cublasHandle_t handle;
+cublasCreate(&amp;handle);                          <span class="cm">// heavyweight: create once, reuse</span>
+cublasSetStream(handle, stream);
+
+<span class="kw">const float</span> alpha = <span class="num">1.0f</span>, beta = <span class="num">0.0f</span>;
+cublasSgemm(handle,
+            CUBLAS_OP_N, CUBLAS_OP_N,           <span class="cm">// op(A), op(B): N, T, or C</span>
+            m, n, k,                            <span class="cm">// C is m×n, op(A) m×k, op(B) k×n</span>
+            &amp;alpha,
+            A, lda,                             <span class="cm">// lda: leading dimension —</span>
+            B, ldb,                             <span class="cm">//   column stride, allows submatrices</span>
+            &amp;beta,
+            C, ldc);                            <span class="cm">// C = α·op(A)·op(B) + β·C</span>
+</code></pre>
+
+  <p>The trap every framework author has met: BLAS is <strong>column-major</strong>, inherited from Fortran, while C/C++/PyTorch tensors are row-major. Nobody transposes anything to cope — they use an identity instead. A row-major matrix reinterpreted as column-major <em>is</em> its transpose, and \(C^\top = B^\top A^\top\). So to compute row-major \(C = AB\), you call cuBLAS with the operands <strong>swapped</strong> — asking for what it thinks is \(C^\top = B^\top A^\top\), all in its column-major world — and the row-major result comes out right, zero copies made:</p>
+
+<pre><code><span class="cm">// row-major C[m×n] = A[m×k] · B[k×n]: swap operands, swap m↔n</span>
+cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
+            n, m, k,                     <span class="cm">// note: n first</span>
+            &amp;alpha, B, n, A, k,          <span class="cm">// note: B first</span>
+            &amp;beta,  C, n);
+</code></pre>
+
+  <p>Mixed precision arrived as <code>cublasGemmEx</code>: storage dtypes and the <strong>compute type</strong> become arguments, decoupling "what the matrices are" from "what the tensor cores accumulate" — <code>CUBLAS_COMPUTE_32F</code> with FP16/BF16 inputs is the standard training configuration; the FP32-storage variants can be silently accelerated with TF32 when the math mode allows it (see <a href="#numerics">numerics</a>).</p>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="batched">Batched GEMM: the transformer's actual workload</h2>
+
+  <p>A transformer rarely runs one big GEMM; it runs <em>stacks</em> of them — the attention scores \(QK^\top\) and \(PV\) are a matmul <em>per head per sequence</em>, each too small to fill the GPU alone. Launching them one by one dies of <a href="pytorch-execution.html">launch overhead</a> and low occupancy, so cuBLAS provides one-launch batch families:</p>
+
+  <ul>
+    <li><code>cublasGemmBatchedEx</code> — takes <strong>arrays of pointers</strong>: each problem anywhere in memory (same shape). What ragged workloads use.</li>
+    <li><code>cublasGemmStridedBatchedEx</code> — one base pointer per operand plus a fixed <strong>stride between problems</strong>: exactly the layout of a contiguous <code>[B, H, S, d]</code> tensor. This is what <code>torch.matmul</code> on 4-D tensors becomes, and it's the fast path — no pointer-array indirection.</li>
+  </ul>
+
+  <p>The mental model: batching turns many small GEMMs into one grid-level workload, recovering occupancy — but each problem is still tiled independently, so <em>tiny</em> matmuls (small \(d\), short sequences) remain inefficient inside the batch. That inefficiency, plus the unfusable softmax sitting between the two attention GEMMs, is precisely why attention left cuBLAS for <a href="../inference/flash-attention.html">FlashAttention</a>; and the MoE variant of the problem — thousands of expert GEMMs with <em>different</em> shapes — is why <a href="cutlass.html#epilogues">grouped GEMM</a> lives in CUTLASS.</p>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="cublaslt">cublasLt: the API deep learning actually calls</h2>
+
+  <p>By 2019 the classic API was drowning: dtype combinations × layouts × tensor-core generations × the epilogue fusions every network wants. <strong>cublasLt</strong> (CUDA 10.1) restructured matmul as a <em>configured object</em> rather than a function name — and it is what PyTorch calls for your Linear layers:</p>
+
+<pre><code><span class="cm">// 1 · describe the operation: compute type + epilogue</span>
+cublasLtMatmulDesc_t op;
+cublasLtMatmulDescCreate(&amp;op, CUBLAS_COMPUTE_32F, CUDA_R_32F);
+cublasLtEpilogue_t epi = CUBLASLT_EPILOGUE_BIAS;          <span class="cm">// or RELU_BIAS, GELU_BIAS…</span>
+cublasLtMatmulDescSetAttribute(op, CUBLASLT_MATMUL_DESC_EPILOGUE, &amp;epi, <span class="kw">sizeof</span>(epi));
+cublasLtMatmulDescSetAttribute(op, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &amp;bias, <span class="kw">sizeof</span>(bias));
+
+<span class="cm">// 2 · describe the matrices: dtype, shape, ld — row-major is now a legal order</span>
+cublasLtMatrixLayout_t La, Lb, Lc;
+cublasLtMatrixLayoutCreate(&amp;La, CUDA_R_16F, m, k, lda);   <span class="cm">// …order attribute settable</span>
+
+<span class="cm">// 3 · ask the heuristic for kernels, then run the best one</span>
+cublasLtMatmulHeuristicResult_t algos[<span class="num">8</span>]; <span class="kw">int</span> found;
+cublasLtMatmulAlgoGetHeuristic(lt, op, La, Lb, Lc, Lc, pref, <span class="num">8</span>, algos, &amp;found);
+cublasLtMatmul(lt, op, &amp;alpha, A, La, B, Lb, &amp;beta, C, Lc, D, Lc,
+               &amp;algos[<span class="num">0</span>].algo, workspace, ws_size, stream);
+</code></pre>
+
+  <p>Three ideas matter more than the boilerplate:</p>
+
+  <ul>
+    <li><strong>Epilogues as attributes.</strong> Bias add, ReLU/GELU (with auxiliary output for the backward pass), and scaling ride inside the GEMM's register tail instead of costing an extra kernel and an HBM round-trip of the output — the sealed-box version of <a href="cutlass.html#epilogues">CUTLASS's EVT</a>, limited to the menu NVIDIA ships. PyTorch's <code>addmm</code> (Linear with bias) maps straight onto <code>CUBLASLT_EPILOGUE_BIAS</code>.</li>
+    <li><strong>The heuristic is a query, not an oracle.</strong> <code>GetHeuristic</code> returns <em>candidates</em>; serious users (TensorRT, inference stacks) benchmark the top few on their real shapes and cache the winner. That's autotuning re-entering through the API's front door.</li>
+    <li><strong>FP8 lives here.</strong> Hopper/Blackwell FP8 GEMM is a cublasLt exclusive: E4M3/E5M2 inputs with per-tensor scale pointers, higher-precision accumulate, an <code>amax</code> output for computing the next iteration's scales — the primitive under <a href="../inference/inference-quantization.html">FP8 serving</a> and FP8 training recipes. Workspace (a few MB) stops being optional if you want the fast algorithms.</li>
+    </ul>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="inside">Inside the box: a dispatcher over a kernel zoo</h2>
+
+  <p>A cuBLAS call does no code generation. The library ships <strong>thousands of pre-compiled kernels</strong> — the <a href="cutlass.html#hierarchy">CUTLASS-style decomposition</a> instantiated across tile shapes, stage counts, dtypes, and architectures — plus a heuristic that maps your (shape, dtype, layout, arch) onto one of them. That design explains its observable behavior:</p>
+
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">Why it's fast</div>
+      <p>For the shapes deep learning actually runs — the dense square-ish GEMMs of transformer blocks — the mapping is exhaustively tuned per architecture.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Why it has cliffs</div>
+      <p>Performance vs. shape is piecewise: tile-quantization sawtooth (a dimension one past a tile boundary wastes a whole extra tile) and <a href="mfu.html">wave quantization</a> show through the abstraction.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Why it's beatable</div>
+      <p>Odd shapes (skinny K, weird aspect ratios, tiny batched problems) can fall between tuned kernels — where a <a href="cutlass.html#practice">CUTLASS profiler search</a> or a custom kernel finds 1.2–2×.</p>
+    </div>
+  </div>
+
+  <p>The practical upshot: treat cuBLAS performance as an empirical surface, not a constant. The same reasoning that sizes <a href="cutlass.html#hierarchy">CUTLASS tiles</a> tells you which of your shapes sit badly on it — and shape hygiene (dimensions divisible by 16, padded vocab sizes) is usually cheaper than replacing the kernel.</p>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="numerics">Numerics and determinism: the knobs frameworks argue about</h2>
+
+  <ul>
+    <li><strong>TF32</strong> — on Ampere+, FP32-typed GEMMs can run on tensor cores with 10-bit mantissas: ~8× faster, ~3 decimal digits. cuBLAS exposes it as a math mode / compute type; PyTorch surfaces it as <code>torch.backends.cuda.matmul.allow_tf32</code> (default <em>off</em> for matmul, <em>on</em> for cuDNN convs) and <code>torch.set_float32_matmul_precision("high")</code> — the switch the <a href="cutile.html#tiled-matmul">cuTile sample</a> flips before checking correctness against torch.</li>
+    <li><strong>Reduced-precision accumulate</strong> — FP16 storage with FP16 accumulate is faster on some parts and quietly dangerous at large \(K\); training recipes accumulate in FP32. cublasLt makes the choice explicit per-call via the compute type.</li>
+    <li><strong>Determinism</strong> — cuBLAS is bitwise run-to-run reproducible <em>for the same version, architecture, and shape</em>, except for algorithms that reduce via atomics (some split-K and batched paths), where floating-point addition order varies. <code>torch.use_deterministic_algorithms(True)</code> therefore demands <code>CUBLAS_WORKSPACE_CONFIG=:4096:8</code> (or <code>:16:8</code>) — pinning workspace so only order-stable algorithms run. Across versions or GPUs, no promise: heuristics change, tiles change, sums reorder. Loss-curve archaeology should never assume otherwise.</li>
+  </ul>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="practice">Where the box ends</h2>
+
+  <p>The family tree, for completeness: <code>cublasLt</code> is the DL workhorse; classic <code>cublas</code> wraps it for BLAS compatibility; <code>cublasXt</code> does out-of-core multi-GPU GEMM with host pointers (HPC, not DL); <code>cuBLASDx</code> is a device-side header library for calling BLAS <em>inside your own kernel</em> — the fusion escape hatch, adjacent to writing <a href="cutlass.html">CUTLASS</a> directly.</p>
+
+  <div class="compare">
+    <div class="compare-label">Rule of thumb — completing the ladder</div>
+    <p style="margin:0;">Start here: if your operation is a dense matmul (± the stock epilogues) on healthy shapes, cuBLAS/cublasLt is one call away from peak, and nothing on this shelf will beat it by enough to matter. Leave when one of three things is true: you need a <strong>fusion</strong> it doesn't offer (→ <a href="triton-kernels.html">Triton</a>/<a href="cutile.html">cuTile</a>, or FlashAttention's fate), your <strong>shapes</strong> sit in its cliffs (→ <a href="cutlass.html">CUTLASS</a> search or grouped GEMM), or the op <strong>isn't a matmul</strong> at all (→ the whole <a href="cuda.html">SIMT</a> toolbox). The kernel-programming ladder on this site is, in effect, a taxonomy of reasons to leave this library.</p>
+  </div>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="where-next">Where this leads</h2>
+
+  <ul>
+    <li><strong><a href="cutlass.html">CUTLASS</a></strong> — the open twin: the same kernels as templates, plus everything cuBLAS won't customize.</li>
+    <li><strong><a href="mfu.html">MFU</a></strong> — turning "cuBLAS is fast" into a measured fraction of peak for a whole training run.</li>
+    <li><strong><a href="../inference/flash-attention.html">FlashAttention</a></strong> — the canonical story of a workload outgrowing batched GEMM.</li>
+    <li><strong><a href="../inference/inference-quantization.html">Inference Quantization</a></strong> — where the FP8 cublasLt path meets serving.</li>
+    <li><strong>cuBLAS documentation</strong> (docs.nvidia.com/cuda/cublas) — the reference for every routine and attribute named here.</li>
+  </ul>
+
+</div>
+
+<footer>Personal ML notes · <a href="https://github.com/yueyiming2009/ai-learning" style="color:inherit;text-decoration:underline;">source on GitHub</a></footer>
+
+<script>
+(function () {
+  'use strict';
+
+  var canvas = document.getElementById('plot-intensity');
+  if (!canvas) return;
+  var ctx = canvas.getContext('2d');
+
+  // Arithmetic intensity (BF16, FLOPs per byte) vs problem size N, log-log.
+  var X_MIN = 16, X_MAX = 16384;      // N
+  var Y_MIN = 0.1, Y_MAX = 10000;    // FLOPs/byte (gemm tops out at 16384/3 ≈ 5461)
+  var RIDGE = 295;                   // H100 SXM: 989e12 / 3.35e12
+  var gemm = function (n) { return n / 3; };
+  var CROSS_N = 3 * RIDGE;           // where gemm(n) == RIDGE
+
+  function cssVar(name, fallback) {
+    var v = getComputedStyle(document.body).getPropertyValue(name).trim();
+    return v || fallback;
+  }
+  var lg10 = function (v) { return Math.log(v) / Math.LN10; };
+
+  function draw() {
+    var dpr = window.devicePixelRatio || 1;
+    var W = canvas.clientWidth, H = canvas.clientHeight;
+    if (W === 0 || H === 0) return;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+
+    var muted = cssVar('--muted', '#6b7280');
+    var borderC = cssVar('--border', '#e8eaed');
+    var gray = cssVar('--plot-gray', '#9ca3af');
+
+    var L = 46, R = 12, T = 14, B = 34;
+    var pw = W - L - R, ph = H - T - B;
+
+    var xPos = function (n) { return L + pw * (lg10(n) - lg10(X_MIN)) / (lg10(X_MAX) - lg10(X_MIN)); };
+    var yPos = function (v) { return T + ph * (1 - (lg10(v) - lg10(Y_MIN)) / (lg10(Y_MAX) - lg10(Y_MIN))); };
+
+    // gridlines + ticks
+    ctx.font = '10px ui-monospace, Menlo, monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    var xt = [16, 64, 256, 1024, 4096, 16384], i;
+    for (i = 0; i < xt.length; i++) {
+      var xx = xPos(xt[i]);
+      ctx.strokeStyle = borderC; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(xx, T); ctx.lineTo(xx, T + ph); ctx.stroke();
+      ctx.fillStyle = muted;
+      ctx.fillText(String(xt[i]), xx, T + ph + 6);
+    }
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    var yt = [0.1, 1, 10, 100, 1000, 10000];
+    for (i = 0; i < yt.length; i++) {
+      var yy = yPos(yt[i]);
+      ctx.strokeStyle = borderC;
+      ctx.beginPath(); ctx.moveTo(L, yy); ctx.lineTo(L + pw, yy); ctx.stroke();
+      ctx.fillStyle = muted;
+      ctx.fillText(String(yt[i]), L - 6, yy);
+    }
+    // axis titles
+    ctx.fillStyle = muted;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.fillText('matrix size N (log)', L + pw / 2, H - 2);
+    ctx.save();
+    ctx.translate(10, T + ph / 2); ctx.rotate(-Math.PI / 2);
+    ctx.fillText('FLOPs / byte (log)', 0, 0);
+    ctx.restore();
+
+    ctx.save();
+    ctx.beginPath(); ctx.rect(L, T, pw, ph); ctx.clip();
+
+    // ridge line (dashed gray)
+    ctx.strokeStyle = gray; ctx.lineWidth = 1.5; ctx.setLineDash([5, 4]);
+    ctx.beginPath(); ctx.moveTo(L, yPos(RIDGE)); ctx.lineTo(L + pw, yPos(RIDGE)); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // flat series: AXPY 0.33 (amber), GEMV 1 (teal)
+    ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(L, yPos(1 / 3)); ctx.lineTo(L + pw, yPos(1 / 3)); ctx.stroke();
+    ctx.strokeStyle = '#0d9488'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(L, yPos(1)); ctx.lineTo(L + pw, yPos(1)); ctx.stroke();
+
+    // GEMM curve (sky), densely sampled in log space
+    ctx.strokeStyle = '#0284c7'; ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    var steps = 260, j;
+    for (j = 0; j <= steps; j++) {
+      var n = Math.pow(10, lg10(X_MIN) + (lg10(X_MAX) - lg10(X_MIN)) * j / steps);
+      var px = xPos(n), py = yPos(gemm(n));
+      if (j === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+
+    // crossover marker
+    ctx.fillStyle = '#0284c7';
+    ctx.beginPath(); ctx.arc(xPos(CROSS_N), yPos(RIDGE), 4, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+
+    // annotations (outside clip so text isn't cut)
+    ctx.fillStyle = gray;
+    ctx.font = '10px ui-monospace, Menlo, monospace';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+    ctx.fillText('compute-bound above', L + 6, yPos(RIDGE) - 4);
+    ctx.textBaseline = 'top';
+    ctx.fillText('memory-bound below', L + 6, yPos(RIDGE) + 5);
+    ctx.fillStyle = '#0284c7';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.fillText('N ≈ ' + Math.round(CROSS_N), xPos(CROSS_N), yPos(RIDGE) - 8);
+  }
+
+  var raf = null;
+  window.addEventListener('resize', function () {
+    if (raf) cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(draw);
+  });
+  if (window.matchMedia) {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', draw);
+  }
+  draw();
+})();
+</script>
+
+</body>
+</html>
