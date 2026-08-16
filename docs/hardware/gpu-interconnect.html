@@ -487,10 +487,14 @@
     GPU A HBM → PCIe switch → NIC A → optics → leaf switch → [spine] → leaf switch → NIC B → PCIe switch → GPU B HBM
   </div>
   <p>
-    What makes this fast is <strong>GPUDirect RDMA</strong>: the NIC reads and writes <em>GPU HBM directly</em> over
-    PCIe — no CPU copy, no staging in system RAM. Without it, every inter-node byte would detour through the CPU and
-    the effective bandwidth would collapse. (The GPU↔NIC PCIe Gen5 ×16 link is ~64 GB/s, which is why a 50 GB/s NIC
-    fits comfortably under it.)
+    What makes this fast is a pair of ideas. <strong>RDMA</strong> (remote direct memory access) is the transport
+    primitive: the NICs themselves move the bytes from one machine’s memory into another’s — the sender posts a
+    transfer, the receiving NIC writes the payload straight to its destination address, and neither side’s CPU or
+    operating system touches the data path. <strong>GPUDirect RDMA</strong> extends the memory a NIC can reach from
+    host RAM to <em>GPU HBM</em>: the NIC reads and writes GPU memory directly over PCIe — no CPU copy, no staging
+    in system RAM. Without it, every inter-node byte would detour through host memory and the effective bandwidth
+    would collapse. (The GPU↔NIC PCIe Gen5 ×16 link is ~64 GB/s, which is why a 50 GB/s NIC fits comfortably
+    under it.)
   </p>
 
   <h3>The topology: a rail-optimized fat-tree</h3>
