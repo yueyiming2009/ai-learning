@@ -417,10 +417,18 @@
 
   <h3>How NVSwitch really builds one</h3>
   <p>
-    NVSwitch is not a grid of analog crosspoints — NVLink is a <strong>packet-switched</strong> fabric, and an
-    NVSwitch chip is a small router that <em>behaves like</em> a non-blocking crossbar: input ports queue arriving
-    packets per destination, and an arbiter picks a fresh input→output permutation every cycle.
+    A real NVSwitch is not a grid of physical crosspoints you close — it is a packet <em>router</em> that recreates
+    the crossbar’s guarantees in logic. Traffic crosses the chip as NVLink packets, and every cycle the switch
+    decides afresh which inputs connect to which outputs. Two mechanisms make that behave like the ideal grid
+    above:
   </p>
+  <ul>
+    <li><strong>Per-destination queues at each input.</strong> A packet waiting on a busy output never blocks the
+      packets queued behind it that are headed elsewhere — one congested destination can’t stall the rest.</li>
+    <li><strong>A per-cycle arbiter.</strong> Each cycle it pairs waiting inputs with free outputs, one-to-one, so
+      every cycle carries a full permutation — the “all \(N\) connections at once, full rate” property of the
+      ideal crossbar, re-established millions of times per second.</li>
+  </ul>
   <div class="table-wrap">
     <table>
       <thead><tr><th>NVSwitch (gen 3, H100)</th><th>Value</th></tr></thead>
