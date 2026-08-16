@@ -37,8 +37,10 @@ gradients, SwiGLU, RoPE, optimizers, importance sampling, log-probabilities from
 production BPE, test-time compute scaling, the Jacobian lens.
 
 ### 02 · Hardware — [docs/hardware/](docs/hardware/)
-The physical accelerator — GPU and TPU architecture: SM and tensor-core layout, the memory
-hierarchy, and interconnect topology.
+The physical accelerator, in four pages: inside the GPU chip (SIMT, SMs and Tensor Cores, the
+memory hierarchy, the roofline), the GPU interconnect (NVSwitch crossbar, rail-optimized
+fat-tree, the bandwidth cliff), GPU generations (Blackwell, the H100→B300 lineup,
+B300 vs. GB300), and the TPU's systolic array and torus.
 
 ### 03 · Transformer & Pretraining — [docs/transformer/](docs/transformer/)
 Assembling the Foundations pieces into a working model and training it. **Architecture:**

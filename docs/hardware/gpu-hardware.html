@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light dark">
-  <title>GPU Hardware for ML — Compute, Memory, Interconnect</title>
+  <title>GPU Hardware — Inside the Chip</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -324,11 +324,6 @@
     <a href="#memory">Memory</a>
     <a href="#datamove">Data movement</a>
     <a href="#roofline">Roofline</a>
-    <a href="#nvlink">Intra-node</a>
-    <a href="#network">Inter-node</a>
-    <a href="#map">Map to math</a>
-    <a href="#blackwell">Blackwell</a>
-    <a href="#lineup">The lineup</a>
     <a href="#summary">Summary</a>
   </div>
   <a class="nav-back" href="../index.html">Home</a>
@@ -336,28 +331,28 @@
 
 <div class="hero">
   <span class="hero-pill">Systems · Hardware</span>
-  <h1>GPU Hardware for ML</h1>
-  <p>The compute, memory, and interconnect a training GPU actually exposes — peak FLOPs, the bandwidth hierarchy from registers to HBM to NVLink to the network, and the roofline that decides whether your kernel is compute- or memory-bound. The physical basis for every parallelism and collective cost — built on the H100, then carried across the lineup (H200, B200, B300) and the Blackwell changes that move each constraint.</p>
+  <h1>GPU Hardware: Inside the Chip</h1>
+  <p>What one training GPU actually exposes — the SIMT execution model (warps, occupancy, latency hiding), the SM with its Tensor Cores and managed scratchpad, the memory hierarchy from registers to HBM, the copy engines behind software pipelining, and the roofline that decides whether a kernel is compute- or memory-bound. Built on the H100, the running example for the whole series.</p>
 </div>
 
 <div class="page-wrap">
 
   <p>
     All the math in this series — every matmul FLOP, every collective’s \(V/W\) cost — ultimately runs on silicon
-    with fixed throughputs. This page is the hardware substrate: what a modern training GPU (we use the
-    <strong>NVIDIA H100 SXM5</strong> as the running example) can compute, how fast it can feed that compute from
-    each level of memory, and how fast it can talk to other GPUs. Three numbers per level, and almost every
-    performance question reduces to comparing two of them. The last two sections carry the same mental model onto
-    <strong>Blackwell</strong>, compare the <strong>H100 / H200 / B200 / B300</strong> SKUs you’ll actually be
-    scheduled on, and split the <strong>B300-vs-GB300</strong> decision — the same chip in two very different
-    machines.
+    with fixed throughputs. This page is the first of three on that hardware substrate, and it stays inside one
+    chip: what a modern training GPU (we use the <strong>NVIDIA H100 SXM5</strong> as the running example) can
+    compute, and how fast each level of memory can feed that compute. Three numbers per level, and almost every
+    performance question reduces to comparing two of them. The story continues off-chip in
+    <a href="gpu-interconnect.html">GPU Interconnect</a> — NVLink, NVSwitch, and the scale-out network — and
+    across parts in <a href="gpu-generations.html">GPU Generations</a>: Blackwell, the H100 → B300 lineup, and
+    B300 vs. GB300.
   </p>
 
   <div class="spec-grid">
     <div class="spec"><div class="spec-num">989</div><div class="spec-key">TFLOP/s bf16</div></div>
     <div class="spec"><div class="spec-num">80 GB</div><div class="spec-key">HBM3 capacity</div></div>
     <div class="spec"><div class="spec-num">3.35 TB/s</div><div class="spec-key">HBM bandwidth</div></div>
-    <div class="spec"><div class="spec-num">900 GB/s</div><div class="spec-key">NVLink / GPU</div></div>
+    <div class="spec"><div class="spec-num">~295</div><div class="spec-key">FLOP/byte ridge</div></div>
   </div>
 
   <!-- ════════════════════════ MENTAL MODEL ════════════════════════ -->
@@ -376,8 +371,9 @@
   </ul>
   <p>
     Performance work is almost always about <em>which level is the bottleneck</em>. A kernel that re-reads HBM is
-    HBM-bound; a tensor-parallel layer is NVLink-bound; a data-parallel cluster is network-bound. The rest of this
-    page makes each level concrete.
+    HBM-bound; a tensor-parallel layer is NVLink-bound; a data-parallel cluster is network-bound. This page makes
+    the on-package levels concrete — compute down through HBM; the bottom rungs of the ladder are
+    <a href="gpu-interconnect.html">GPU Interconnect</a>’s subject.
   </p>
 
   <!-- ════════════════════════ EXECUTION MODEL ════════════════════════ -->
@@ -402,22 +398,22 @@
     Tensor Cores and ALUs never idle even though every individual memory access is slow. The fraction of the SM’s
     warp capacity you actually use (up to <strong>64 warps/SM</strong> on Hopper) is called <strong>occupancy</strong>.
   </p>
-  <div class=”note” style=”background:#ecfccb; border-left-color:#65a30d; color:#3f6212”>
+  <div class="note" style="background:var(--lime-bg); border-left-color:var(--lime-border); color:var(--lime-fg)">
     <strong>Foundation for kernel optimization →</strong> occupancy is the knob that hides HBM latency. Too few
     warps (often from using too many registers or too much shared memory per block) leaves the SM stalling on
     memory with no other work to switch to — the “low-occupancy” trap. This is why kernels budget registers and
     shared memory carefully.
   </div>
 
-  <div class=”note” style=”background:#fef9c3; border-left-color:#ca8a04; color:#713f12”>
+  <div class="note">
     <strong>SM utilization ≠ Tensor-Core active.</strong> These are two distinct profiler metrics that measure different levels of the hierarchy — and confusing them is the most common misread of GPU profiling output.
-    <ul style=”margin:8px 0 0 0”>
+    <ul style="margin:8px 0 0 0">
       <li><strong>SM utilization</strong> (<code>sm__active_cycles</code>) — fraction of elapsed cycles where the SM has at least one active warp. The SM is “active” even if every warp inside it is stalled waiting for HBM.</li>
       <li><strong>Tensor-Core active</strong> (<code>sm__pipe_tensor_op_hmma_cycles_active</code>) — fraction of cycles where the tensor-core pipeline is actually issuing a matrix-multiply instruction.</li>
     </ul>
-    <p style=”margin:8px 0 0 0”>During decode on an H100, SM utilization is typically 20–40% (warps are scheduled), but tensor-core active is 5–12% (those warps are mostly stalled on HBM reads, not computing). The gap between the two is the fraction of SM-active time spent waiting for memory — which is the definition of memory-bound.</p>
-    <p style=”margin:6px 0 0 0”><strong>Warp stall types</strong> (visible in Nsight Compute as “warp stall reasons”) tell you <em>why</em> a warp is not issuing:
-      <ul style=”margin:4px 0 0 0”>
+    <p style="margin:8px 0 0 0">During decode on an H100, SM utilization is typically 20–40% (warps are scheduled), but tensor-core active is 5–12% (those warps are mostly stalled on HBM reads, not computing). The gap between the two is the fraction of SM-active time spent waiting for memory — which is the definition of memory-bound.</p>
+    <p style="margin:6px 0 0 0"><strong>Warp stall types</strong> (visible in Nsight Compute as “warp stall reasons”) tell you <em>why</em> a warp is not issuing:
+      <ul style="margin:4px 0 0 0">
         <li><em>Memory pipe stall</em> — warp is waiting for an HBM or L2 load to return. Dominant during decode; the KV cache and weight reads are what trigger these.</li>
         <li><em>Instruction dependency stall</em> — warp is waiting for a prior arithmetic result before it can issue the next instruction. More common during prefill, where large matmuls generate long chains of dependent tile accumulations.</li>
       </ul>
@@ -626,451 +622,8 @@
     tokens/sec, and divide by this page’s \(P_\text{peak}\).
   </div>
 
-  <!-- ════════════════════════ NVLINK ════════════════════════ -->
-  <h2 id="nvlink">7 · Inside a node: NVLink and the NVSwitch crossbar</h2>
-  <p>
-    Eight H100s in a server (an HGX/DGX baseboard) are wired together not by a ring or a mesh but by a set of
-    <strong>NVSwitch</strong> chips that form a <strong>non-blocking all-to-all crossbar</strong>. Each GPU has
-    <strong>18 NVLink-4 links</strong> (each ~50 GB/s, a few 100 Gbps lanes), totalling
-    <strong>900 GB/s bidirectional</strong> (≈450 GB/s each way) into the switch fabric, and — crucially —
-    <em>every</em> GPU can drive that full bandwidth to <em>every</em> other GPU at the same time. There is no
-    shared bottleneck and no notion of “distance” between GPUs in a node. Those 18 links are not one fat pipe: they
-    <strong>fan out across the 4 NVSwitches</strong>, which is exactly what lets the fabric stay non-blocking — and
-    they set the ceiling on how many parallel <a href="../systems/nccl.html#selection">NCCL channels</a> can run at once.
-  </p>
-
-  <div class="diagram">
-    <div class="diagram-title">▸ An 8-GPU node: every GPU reaches every other at full bandwidth</div>
-    <div class="diagram-hint">NVSwitch is a crossbar, not a ring — there are no nearest neighbors.</div>
-    <div class="diagram-stage">
-      <svg viewBox="0 0 560 220" width="560" height="220" role="img" aria-label="8-GPU NVSwitch node">
-        <g font-family="Inter, sans-serif" font-size="11">
-          <!-- central switch -->
-          <rect x="220" y="90" width="120" height="40" rx="8" fill="#1e293b" stroke="#334155"/>
-          <text x="280" y="115" text-anchor="middle" fill="#e2e8f0" font-weight="600" font-size="12.5">NVSwitch ⨯4</text>
-          <!-- 8 GPUs around -->
-          <!-- positions -->
-          <!-- top row -->
-        </g>
-        <g id="node-gpus"></g>
-      </svg>
-    </div>
-  </div>
-
-  <p>
-    This is the single most important fact for <a href="../systems/tensor-parallelism.html">tensor parallelism</a>: a TP group
-    can shard a layer across these 8 GPUs and pay only the NVLink-speed AllReduce, with no penalty for which GPU
-    talks to which. But “non-blocking crossbar” is doing a lot of work in that sentence — it’s worth unpacking.
-  </p>
-
-  <h3>What “crossbar” actually means</h3>
-  <p>
-    A <strong>crossbar</strong> is the simplest fabric that connects <em>every</em> input to <em>every</em> output.
-    The mental model is a literal grid: inputs run horizontally, outputs run vertically, and at each intersection
-    sits a switch (a <em>crosspoint</em>). To connect input \(i\) to output \(j\), you close crosspoint \((i,j)\).
-    Two properties make it the gold standard:
-  </p>
-  <ul>
-    <li><strong>Any-to-any, one hop.</strong> There is no notion of “neighbor” or “distance” — every pair is
-      directly reachable. (Contrast a ring/torus, where reaching a far node costs multiple hops.)</li>
-    <li><strong>Non-blocking.</strong> All \(N\) inputs can be connected to \(N\) outputs <em>at once</em> — any
-      <em>permutation</em> — each at full link rate, because no two connections share any wire in the middle.</li>
-  </ul>
-  <p>
-    The only limit is at the endpoints: two inputs can’t both drive one output at full rate (an
-    <em>output-port conflict</em>). So the fabric never blocks — but a single GPU’s own link bandwidth still caps
-    how much can flow into it. Drag a new permutation and notice all four paths stay full-rate simultaneously:
-  </p>
-
-  <div class="diagram">
-    <div class="diagram-title">▸ A 4×4 crossbar — any permutation, all at full rate</div>
-    <div class="diagram-hint">Inputs → rows, outputs → columns. Filled dots = closed crosspoints. No two paths share a wire.</div>
-    <div class="diagram-stage">
-      <svg id="xbar-svg" viewBox="0 0 360 300" width="360" height="300" role="img" aria-label="Crossbar switch"></svg>
-    </div>
-    <div class="anim-controls">
-      <button class="anim-btn" id="xbar-shuffle">New permutation ▸</button>
-      <span class="anim-step-label" id="xbar-status">Each input reaches a distinct output — 4 simultaneous full-rate connections.</span>
-    </div>
-  </div>
-
-  <h3>How NVSwitch really builds one</h3>
-  <p>
-    NVSwitch is not a grid of analog crosspoints flipping on and off. Since 2018, NVLink has been a
-    <strong>packet-switched</strong> fabric, so an NVSwitch chip is a small high-speed router that <em>behaves
-    like</em> a non-blocking crossbar. Inside one chip: input ports buffer arriving NVLink packets (using
-    <em>virtual output queues</em> — a queue per destination — to avoid head-of-line blocking); an
-    <strong>arbiter</strong> solves a bipartite matching each cycle to decide which inputs cross to which outputs;
-    the crossbar datapath carries that permutation; and packets are routed by physical address (a host-side
-    <em>fabric manager</em> programs the tables). The “closing of crosspoints” is done in logic, every cycle.
-  </p>
-  <div class="table-wrap">
-    <table>
-      <thead><tr><th>NVSwitch (gen 3, H100)</th><th>Value</th></tr></thead>
-      <tbody>
-        <tr><td>NVLink-4 ports per chip</td><td>64 (non-blocking)</td></tr>
-        <tr><td>Bidirectional bandwidth / chip</td><td>3.2 TB/s</td></tr>
-        <tr><td>Chips per 8-GPU baseboard</td><td>4 — each H100’s 18 links fan out across all four</td></tr>
-        <tr><td>In-switch compute (SHARP)</td><td>embedded ALU, ~400 GFLOP/s — sums + multicasts data</td></tr>
-      </tbody>
-    </table>
-  </div>
-  <p>
-    That last row is the hardware behind <a href="../systems/nccl.html#nvls">NVLS</a>: because the switch has an ALU, it can
-    <em>sum</em> data from many GPUs and multicast the result — so an AllReduce can be done <em>in the switch</em>
-    instead of circulating partial sums around a ring.
-  </p>
-
-  <h3>Why the crossbar stops at the node</h3>
-  <p>
-    A crossbar costs \(O(N^2)\) crosspoints, so you cannot build a 10,000-port one — the silicon and wiring blow
-    up. The universal fix is to <strong>compose small crossbars into a near-non-blocking <em>fat-tree</em> (Clos
-    network)</strong>, trading a little blocking and \(O(\log N)\) hops for \(O(N\log N)\) cost. Crossbars are the
-    atom at every tier: one node is a single crossbar (NVSwitch); the InfiniBand network in §8 is a fat-tree
-    <em>of</em> crossbar switch chips. Stepping from one crossbar to a fat-tree of them is exactly the bandwidth
-    cliff at the node boundary — and the reason tensor parallelism is <em>capped at one node</em>.
-  </p>
-
-  <!-- ════════════════════════ NETWORK ════════════════════════ -->
-  <h2 id="network">8 · Across nodes: the scale-out network</h2>
-  <p>
-    A GPU lives in <em>two</em> networks, and “going across nodes” means dropping from the first to the second:
-  </p>
-  <ul>
-    <li><strong>Scale-up</strong> — the <a href="#nvlink">NVLink domain</a>: the fast, non-blocking NVSwitch
-      crossbar. On a classic HGX H100 node that’s <strong>8 GPUs</strong>; on a GB200 NVL72 rack it’s
-      <strong>72 GPUs</strong>. No cliff inside this domain — it’s all ~450 GB/s/GPU.</li>
-    <li><strong>Scale-out</strong> — the data-center fabric (InfiniBand or Ethernet) connecting NVLink domains to
-      each other. This is the slow tier, ~50 GB/s/GPU.</li>
-  </ul>
-  <p>
-    So the boundary that matters isn’t literally “the node” — it’s the <strong>edge of the NVLink domain</strong>.
-    Cross it and you’re on the scale-out network, built from three things:
-  </p>
-  <ul>
-    <li><strong>One NIC per GPU.</strong> A DGX H100 has <strong>8 ConnectX-7 adapters at 400 Gb/s (≈50 GB/s)</strong>,
-      one dedicated to each GPU (plus separate NICs for storage). The 1-NIC-per-GPU ratio holds on NVL72 too.</li>
-    <li><strong>GPU and its NIC under the same PCIe switch</strong>, so the GPU reaches the wire without crossing the CPU.</li>
-    <li><strong>A fabric of switches</strong> wiring the NICs together (next).</li>
-  </ul>
-
-  <h3>The data path, and why GPUDirect RDMA matters</h3>
-  <p>
-    A transfer from GPU&nbsp;A on one node to GPU&nbsp;B on another follows:
-  </p>
-  <div class="result" style="font-family:ui-monospace,monospace; font-size:0.84rem; text-align:left; line-height:1.7">
-    GPU A HBM → PCIe switch → NIC A → optics → leaf switch → [spine] → leaf switch → NIC B → PCIe switch → GPU B HBM
-  </div>
-  <p>
-    What makes this fast is <strong>GPUDirect RDMA</strong>: the NIC reads and writes <em>GPU HBM directly</em> over
-    PCIe, bypassing the CPU and host memory entirely. NIC&nbsp;B performs a remote DMA straight into GPU&nbsp;B’s
-    HBM — no CPU copy, no staging in system RAM. Without it, every inter-node byte would detour through the CPU and
-    the effective bandwidth would collapse. (The GPU↔NIC PCIe Gen5 ×16 link is ~64 GB/s, which is why a 50 GB/s NIC
-    fits comfortably under it.)
-  </p>
-
-  <h3>The topology: a rail-optimized fat-tree</h3>
-  <p>
-    The switches form a <strong>fat-tree (Clos network)</strong> — the same crossbars-of-crossbars from §7: each
-    switch (e.g. an NVIDIA Quantum-2, 64×400 Gb/s) is a crossbar, composed into a near-non-blocking tree with full
-    bisection bandwidth. Nodes attach to <strong>leaf</strong> switches; leaves connect through <strong>spine</strong>
-    switches; the largest clusters add a third core tier.
-  </p>
-  <p>
-    The GPU-specific twist is <strong>rail optimization</strong>: with 8 GPUs/8 NICs per node, NIC&nbsp;\(i\) of
-    <em>every</em> node connects to the same “rail” (leaf switch \(i\)) — so there are 8 parallel rails. GPU&nbsp;\(i\)
-    on any node reaches GPU&nbsp;\(i\) on any other node by <strong>staying on its rail — one leaf-switch hop</strong>,
-    never touching the contended spine. NCCL leans on this: it structures collectives so same-rank GPUs talk on their
-    own rail. Cross-rail traffic either climbs to the spine, or first hops over <em>NVLink inside the node</em> to the
-    GPU on the right rail — combining both networks.
-  </p>
-
-  <div class="diagram">
-    <div class="diagram-title">▸ Rail-optimized fat-tree (2 nodes, 4 rails)</div>
-    <div class="diagram-hint">GPU i → NIC i → rail i. Same-rail = 1 hop (green); cross-rail climbs to the spine (dashed).</div>
-    <div class="diagram-stage">
-      <svg id="rail-svg" viewBox="0 0 560 300" width="560" height="300" role="img" aria-label="Rail-optimized fat-tree"></svg>
-    </div>
-  </div>
-
-  <h3>InfiniBand vs Ethernet</h3>
-  <p>
-    Two transport flavors carry this: <strong>InfiniBand</strong> (NVIDIA Quantum) — lossless, RDMA-native,
-    hardware congestion control, and the default in most large training clusters; its switches can even do
-    in-network reduction (<strong>SHARP</strong> → NCCL’s CollNet, the InfiniBand analogue of NVLS). And
-    <strong>RoCE / Ethernet</strong> (RDMA over Converged Ethernet; NVIDIA Spectrum-X) — RDMA over Ethernet, needing
-    careful PFC/ECN tuning to stay lossless, favored by some hyperscalers. Either way the transport is RDMA: the
-    point is to move GPU memory to GPU memory without the CPUs in the loop.
-  </p>
-
-  <div class="result">
-    <div class="result-label">The cliff at the NVLink-domain boundary</div>
-    NVLink ~450 GB/s  →  network ~50 GB/s &nbsp;&nbsp;≈&nbsp;&nbsp; <strong>~9–10× less bandwidth per GPU</strong>
-  </div>
-  <p>
-    Everything about multi-node parallelism is organized around hiding this drop. The collectives that must cross
-    it — the gradient AllReduce of data parallelism, the activation sends of pipeline parallelism — are chosen
-    either to be <em>rare</em> (once per step) or to <em>overlap</em> with compute, so the slow fabric is never on
-    the exposed critical path. The chatty, per-layer collectives stay inside the NVLink domain. And the modern
-    trend — NVL72 growing that domain from 8 to 72 GPUs — is precisely about <strong>moving this cliff outward</strong>
-    so more of your parallelism enjoys scale-up bandwidth.
-  </p>
-
-  <!-- ════════════════════════ MAP TO MATH ════════════════════════ -->
-  <h2 id="map">9 · How this maps onto the parallelism math</h2>
-  <p>
-    The <a href="../systems/collectives.html">collectives cost model</a> prices a collective as \(T \approx V/W\): bytes moved
-    per GPU over link bandwidth. Everything on this page is where those two symbols come from:
-  </p>
-  <div class="table-wrap">
-    <table>
-      <thead><tr><th>In the math</th><th>Is physically…</th><th>H100 value</th></tr></thead>
-      <tbody>
-        <tr><td>\(P_\text{peak}\) (matmul rate)</td><td>Tensor Cores across 132 SMs</td><td>989 TFLOP/s bf16</td></tr>
-        <tr><td>HBM \(W\) (kernel roofline)</td><td>HBM3 stacks</td><td>3.35 TB/s</td></tr>
-        <tr><td>\(W\) for tensor-parallel AllReduce</td><td>NVLink + NVSwitch crossbar (in-node)</td><td>~450 GB/s/GPU</td></tr>
-        <tr><td>\(W\) for data/pipeline parallel</td><td>NIC + InfiniBand fat-tree (cross-node)</td><td>~50 GB/s/GPU</td></tr>
-        <tr><td>Per-GPU memory budget</td><td>HBM capacity</td><td>80 GB</td></tr>
-      </tbody>
-    </table>
-  </div>
-  <p>
-    The two-tier \(W\) — fast NVLink inside the node, slow network outside — is not a footnote; it is the reason the
-    parallelism schemes are layered the way they are, with tensor parallelism inside each node and data/pipeline
-    parallelism spanning nodes.
-  </p>
-
-  <!-- ════════════════════════ BLACKWELL ════════════════════════ -->
-  <h2 id="blackwell">10 · Blackwell: what changed from Hopper</h2>
-  <p>
-    Everything above uses the <strong>H100</strong> as the running example. Its successor, <strong>Blackwell</strong> —
-    shipping as the <strong>B200</strong> (2024) and the <strong>B300 / “Blackwell Ultra”</strong> (2025) — keeps the
-    exact mental model of this page (compute fed by a bandwidth pyramid) but <em>relaxes three constraints the rest of
-    these notes treat as fixed on the H100</em>. Each lever pulls on a number you now know how to reason about.
-  </p>
-  <div class="table-wrap">
-  <table>
-    <thead><tr><th>Change</th><th>vs. H100</th><th>The number it moves</th></tr></thead>
-    <tbody>
-      <tr><td><strong>Dual-die “one GPU”</strong> + 192–288 GB HBM3e</td><td>single die, 80 GB HBM3</td><td>KV-cache headroom, how many GPUs hold a model, the memory roofline</td></tr>
-      <tr><td><strong>FP4 microscaling</strong> (2nd-gen Transformer Engine)</td><td>FP8 was the precision floor</td><td>bytes/token in decode, the compute ceiling for matmuls, your quantization recipe</td></tr>
-      <tr><td><strong>NVL72</strong> single NVLink domain</td><td>NVLink domain ≈ 8 GPUs</td><td>how far tensor / expert parallelism scales before falling off NVLink</td></tr>
-    </tbody>
-  </table>
-  </div>
-
-  <h3>10.1 · The dual-die “one GPU” and HBM3e capacity</h3>
-  <p>
-    A single die is capped by the <em>reticle limit</em> — the largest pattern a lithography stepper can print, and
-    Hopper was already near it. Blackwell sidesteps the wall by putting <strong>two reticle-sized dies</strong> in one
-    package, joined by the <strong>NV-HBI</strong> interconnect at <strong>10 TB/s</strong> die-to-die, and exposing
-    them to software as a <em>single CUDA device with one unified memory space</em>. You program one GPU; the runtime
-    keeps the dies coherent.
-  </p>
-  <p>
-    That 10 TB/s link is what makes the abstraction hold: it is roughly <strong>5–6× the per-GPU NVLink bandwidth</strong>
-    and over an order of magnitude above the network, so cross-die traffic is cheap enough to hide. On the
-    <a href="#memory">bandwidth ladder</a> from §4 it slots in just below on-die SRAM, at the very top of the pyramid.
-  </p>
-  <div class="result">
-    <div class="result-label">Why the capacity bump matters</div>
-    192 GB (B200) / 288 GB (B300) of HBM3e vs. 80 GB on H100 — <strong>2.4–3.6× the on-package memory</strong>.
-  </div>
-  <p>
-    Capacity is the quietly decisive number. It sets the <a href="../inference/kv-cache.html">KV-cache</a> budget (longer context
-    and bigger batches before you spill) and shrinks the GPU count needed to hold a model’s weights — which in turn
-    shrinks the parallelism degrees you need (fewer GPUs, less collective traffic). The bandwidth bump, ~8 TB/s vs.
-    3.35 TB/s, lifts the memory roof that decode lives under (§6).
-  </p>
-
-  <h3>10.2 · FP4 &amp; microscaling — the inference headline</h3>
-  <p>
-    The 2nd-generation Transformer Engine adds <strong>FP4</strong> (and FP6) next to Hopper’s FP8. Four bits buys huge
-    bandwidth and math savings — but a raw 4-bit float (<code>E2M1</code>: 1 sign, 2 exponent, 1 mantissa) has only
-    16 levels and almost no dynamic range, so naïve FP4 destroys accuracy. The fix is <strong>microscaling</strong>:
-    split a tensor into small contiguous blocks and give <em>each block its own scale factor</em>, so the limited 4-bit
-    range is re-centered on the local magnitude.
-  </p>
-  <div class="table-wrap">
-  <table>
-    <thead><tr><th>Format</th><th>Element</th><th>Block</th><th>Per-block scale</th><th>Note</th></tr></thead>
-    <tbody>
-      <tr><td><strong>MXFP4</strong> (OCP)</td><td>E2M1 (4-bit)</td><td>32 values</td><td>E8M0 (power-of-two)</td><td>open standard, coarse scale</td></tr>
-      <tr><td><strong>NVFP4</strong> (NVIDIA)</td><td>E2M1 (4-bit)</td><td>16 values</td><td>FP8 E4M3 + per-tensor FP32</td><td>finer blocks + higher-precision scale ⇒ better accuracy</td></tr>
-    </tbody>
-  </table>
-  </div>
-  <p>The payoff splits along the same <a href="#roofline">roofline</a> the rest of this page is built on:</p>
-  <ul>
-    <li><strong>Decode is memory-bandwidth-bound.</strong> Halving bytes per weight vs. FP8 roughly
-      <strong>doubles the throughput</strong> — you stream half the bytes per generated token.</li>
-    <li><strong>Prefill and training matmuls are compute-bound.</strong> Blackwell’s FP4 Tensor Cores deliver on the
-      order of <strong>2× the FP8 math throughput</strong> — a higher compute ceiling.</li>
-  </ul>
-
-  <div class="figure">
-    <canvas id="plot-roofline" aria-label="Roofline showing FP4 raising the compute ceiling above BF16 over a shared HBM bandwidth diagonal"></canvas>
-    <div class="legend">
-      <span class="legend-item"><span class="lg" style="--c:var(--plot-orange)"></span> FP4 ceiling (~2×)</span>
-      <span class="legend-item"><span class="lg" style="--c:var(--plot-teal)"></span> BF16 ceiling</span>
-    </div>
-    <p class="figure-caption">
-      <strong>FP4 raises the compute roof on the same HBM bandwidth diagonal.</strong> Same axes as §6: x = arithmetic
-      intensity (FLOP/byte), y = achievable throughput (normalized). At decode-level intensity (far left) both curves
-      sit on the shared diagonal — there FP4’s win is moving <em>fewer bytes per token</em>, not more FLOP/s. The raised
-      ceiling pays off for the compute-bound matmuls on the right (prefill, training). FP8 sits between the two lines.
-    </p>
-  </div>
-
-  <div class="note">
-    FP4 is not free accuracy. Activation outliers and sensitive layers (e.g. the LM head, some attention projections)
-    are usually kept at FP8/BF16, and quality depends on calibration and block granularity. The numerics — how the
-    block scales are chosen and why NVFP4 beats INT4 — live on the
-    <a href="../inference/inference-quantization.html#fp4">Quantization</a> page; for a clear visual walkthrough of microscaling,
-    see <a href="https://www.youtube.com/watch?v=1vKPj7SXkwU" target="_blank">this video</a>.
-  </div>
-
-  <h3>10.3 · NVL72 — the rack as one NVLink domain</h3>
-  <p>
-    5th-generation NVLink doubles per-GPU bandwidth to <strong>1.8 TB/s</strong>. The structural change is what it
-    enables: in a <strong>GB200 / GB300 NVL72</strong> rack, NVLink Switch trays wire <strong>72 GPUs into a single,
-    all-to-all NVLink domain</strong> (~130 TB/s aggregate) — every GPU talks to every other at NVLink speed, not just
-    the 8 in a box. It is the same non-blocking crossbar from <a href="#nvlink">§7</a>, scaled from one baseboard to a
-    whole rack. Note the 72-GPU domain is a property of the Grace-based rack product, not of the chip: the same
-    B200/B300 on an HGX baseboard still lives in an 8-GPU domain (<a href="#b300-vs-gb300">§11.3</a>).
-  </p>
-  <p>
-    That moves the <a href="#network">cliff from §8</a> outward. On H100 the NVLink domain <em>is</em> the node — about
-    8 GPUs — so AllReduce-heavy <a href="../systems/tensor-parallelism.html#cap">tensor parallelism stops at one node</a> and
-    <a href="../systems/collectives.html">collectives</a> fall off a bandwidth cliff past it. NVL72 raises that boundary from 8 to 72.
-  </p>
-  <div class="compare">
-    <div class="compare-label">What a 72-GPU NVLink domain unlocks</div>
-    <ul style="margin:0;">
-      <li><strong>Tensor parallelism past 8.</strong> TP can run 16- or 32-way on NVLink before the exposed AllReduce
-        forces you onto a slower axis — the <a href="../systems/tensor-parallelism.html#cap">TP↔PP transition</a> moves out.</li>
-      <li><strong>Expert parallelism for a whole MoE.</strong> A large model’s experts can sit inside one NVLink domain,
-        so the <a href="../systems/moe-parallelism.html">AlltoAll dispatch</a> stays on NVLink instead of crossing the network —
-        often what makes wide-EP serving practical.</li>
-      <li><strong>Fewer, bigger collectives.</strong> More of the parallelism plan fits on the fast fabric, so the
-        cross-node network carries less of the critical path.</li>
-    </ul>
-  </div>
-  <div class="xref">
-    Re-read <a href="../systems/tensor-parallelism.html#cap">Tensor Parallelism §6 “Why TP stops at one node”</a> with NVL72 in
-    mind: the math is unchanged, but “one node” is now up to 72 GPUs, not 8.
-  </div>
-
-  <!-- ════════════════════════ LINEUP ════════════════════════ -->
-  <h2 id="lineup">11 · The lineup: H100 → H200 → B200 → B300</h2>
-  <p>
-    Four SKUs you’ll actually be scheduled on, across the exact dimensions this page taught — compute per precision,
-    memory capacity and bandwidth, the NVLink rung, and the size of the NVLink domain. Read the columns left to right
-    as two within-generation memory bumps (H100→H200, B200→B300) straddling one architecture jump (Hopper→Blackwell).
-  </p>
-  <div class="table-wrap">
-  <table>
-    <thead><tr><th></th><th>H100 SXM</th><th>H200 SXM</th><th>B200</th><th>B300 (Ultra)</th></tr></thead>
-    <tbody>
-      <tr><td>Architecture</td><td>Hopper · 1 die</td><td>Hopper · 1 die</td><td>Blackwell · 2 dies</td><td>Blackwell · 2 dies</td></tr>
-      <tr><td>BF16 dense</td><td>989 TFLOP/s</td><td>989 TFLOP/s</td><td>~2.25 PFLOP/s</td><td>~2.25 PFLOP/s</td></tr>
-      <tr><td>FP8 dense</td><td>1,979 TFLOP/s</td><td>1,979 TFLOP/s</td><td>~4.5 PFLOP/s</td><td>~4.5 PFLOP/s</td></tr>
-      <tr><td>FP4 dense</td><td class="ctr">—</td><td class="ctr">—</td><td>~9 PFLOP/s</td><td><strong>~15 PFLOP/s</strong> (~1.7×)</td></tr>
-      <tr><td>HBM capacity</td><td>80 GB HBM3</td><td><strong>141 GB</strong> HBM3e</td><td><strong>192 GB</strong> HBM3e</td><td><strong>288 GB</strong> HBM3e</td></tr>
-      <tr><td>HBM bandwidth</td><td>3.35 TB/s</td><td><strong>4.8 TB/s</strong></td><td><strong>~8 TB/s</strong></td><td>~8 TB/s</td></tr>
-      <tr><td>NVLink / GPU</td><td>0.9 TB/s (gen 4)</td><td>0.9 TB/s (gen 4)</td><td><strong>1.8 TB/s</strong> (gen 5)</td><td>1.8 TB/s (gen 5)</td></tr>
-      <tr><td>NVLink domain</td><td>8 (HGX)</td><td>8 (HGX)</td><td>8 (HGX) · <strong>72</strong> (GB200 NVL72)</td><td>8 (HGX) · 72 (GB300 NVL72)</td></tr>
-      <tr><td>TDP (approx.)</td><td>700 W</td><td>~700 W</td><td>~1,000 W</td><td>~1,400 W</td></tr>
-    </tbody>
-  </table>
-  </div>
-  <div class="note">
-    Exact FLOPs vary by source and by whether 2:4 sparsity is counted (NVIDIA’s headline numbers usually are; we quote
-    <strong>dense</strong>). Treat the Blackwell figures as orders of magnitude and check the datasheet for a specific
-    SKU — the progression, not the third digit, is the point.
-  </div>
-
-  <h3>11.1 · H200 = H100 with a bigger memory roof</h3>
-  <p>
-    The H100→H200 step is the cleanest illustration on this page that <em>the memory wall, not FLOPs, gates inference</em>.
-    H200 is the <strong>same GH100 die with the same Tensor Cores</strong> — 989 TFLOP/s BF16, byte-for-byte identical
-    compute — but its HBM grows to <strong>141 GB at 4.8 TB/s</strong>. Nothing about the compute roof moves; the memory
-    roof rises ~43%.
-  </p>
-  <div class="result">
-    <div class="result-label">On the roofline (§6)</div>
-    A higher \(W_\text{HBM}\) lifts the entire memory-bound ramp — so every <strong>bandwidth-bound</strong> workload
-    (decode, long context, big-batch serving) speeds up, while compute-bound prefill is unchanged.
-  </div>
-  <p>
-    That is why H200 is a popular inference upgrade despite identical peak FLOPs: it buys KV-cache headroom and a higher
-    decode ceiling without touching the silicon’s arithmetic.
-  </p>
-
-  <h3>11.2 · B200 vs. B300, and the other variants</h3>
-  <p>
-    <strong>B300 (Blackwell Ultra)</strong> is a refresh of the same architecture, not a new one — same NVLink 5, same
-    NVL72, same dual-die package. The deltas are <strong>capacity</strong> (288 vs. 192 GB) and <strong>FP4
-    throughput</strong> (~15 vs. ~9 PFLOP/s dense, ~1.7×; NVIDIA markets it as ~1.5× against the higher-clocked GB200
-    part), both aimed at long-context and reasoning inference, where KV headroom and test-time compute pay off directly.
-  </p>
-  <p>The SXM modules above are the datacenter mainstream, but the family is wider:</p>
-  <ul>
-    <li><strong>PCIe / NVL boards</strong> trade bandwidth and TDP for form factor — e.g. <em>H100 NVL</em> pairs two
-      cards at 94 GB each for inference.</li>
-    <li><strong>Grace-X superchips</strong> pair an Arm CPU with the GPU(s) over a 900 GB/s NVLink-C2C link:
-      <em>GH200</em> (Grace + H200), <em>GB200</em> (Grace + 2×B200), <em>GB300</em> (Grace + 2×B300). The GB200/GB300
-      modules are the literal building blocks of the <a href="#blackwell">NVL72</a> rack — and for a training cluster
-      that G prefix changes more than any row of the SKU table; <a href="#b300-vs-gb300">§11.3</a> unpacks it.</li>
-  </ul>
-
-  <h3 id="b300-vs-gb300">11.3 · B300 vs. GB300 — same silicon, two different machines</h3>
-  <p>
-    The table in §11 describes the <em>chip</em>. “B300 or GB300?” is not a chip question — the GPU package, its
-    FLOPs, and its 288 GB of HBM are identical — it is a question about the <em>machine built around the chip</em>.
-    <strong>B300</strong> in practice means an <strong>HGX B300</strong> baseboard: eight SXM packages plus two x86
-    host CPUs, a node that slots into a conventional datacenter. <strong>GB300</strong> means the Grace superchip,
-    which only ships inside the liquid-cooled <strong>GB300 NVL72</strong> rack: 72 GPUs and 36 Grace CPUs behaving
-    as one machine. Three differences matter for training:
-  </p>
-  <div class="table-wrap">
-  <table>
-    <thead><tr><th></th><th>HGX B300 (x86 node)</th><th>GB300 NVL72 (Grace rack)</th></tr></thead>
-    <tbody>
-      <tr><td>Unit you deploy</td><td>a node: 8 B300 + 2 x86 CPUs</td><td>a rack: 72 B300 + 36 Grace</td></tr>
-      <tr><td>NVLink domain</td><td><strong>8 GPUs</strong> — the baseboard</td><td><strong>72 GPUs</strong> — the rack (§10.3)</td></tr>
-      <tr><td>CPU ↔ GPU link</td><td>PCIe Gen5 ×16, ~64 GB/s, separate address space</td><td>NVLink-C2C, <strong>900 GB/s</strong>, cache-coherent</td></tr>
-      <tr><td>Memory beyond HBM</td><td>host DDR — a staging area you DMA through</td><td>~480 GB LPDDR5X per Grace, coherently addressable: <strong>~17 TB per rack</strong> on top of ~21 TB HBM</td></tr>
-      <tr><td>Scale-out NIC</td><td>ConnectX-8, 800 Gb/s per GPU</td><td>ConnectX-8, 800 Gb/s per GPU — the same</td></tr>
-      <tr><td>Power &amp; cooling</td><td>node-level, air or liquid</td><td>liquid only, ~130–140 kW per rack</td></tr>
-    </tbody>
-  </table>
-  </div>
-  <ul>
-    <li><strong>Where the network cliff sits.</strong> Per-GPU scale-out bandwidth is the same on both, so the real
-      delta is the fast domain’s size. On HGX B300 the <a href="#network">cliff from §8</a> is at the node: TP caps at
-      8-way, and everything wider — DP, PP, MoE AlltoAll — crosses the 800 Gb/s network. On GB300 the cliff moves to
-      the rack: <a href="../systems/tensor-parallelism.html#cap">TP</a> and
-      <a href="../systems/moe-parallelism.html">EP</a> can go up to 72-way on NVLink, and the network carries only the
-      DP/PP axes. Same chip, different parallelism plan.</li>
-    <li><strong>Offload becomes a real memory tier.</strong> Over PCIe, host RAM is where
-      <a href="../systems/training-frameworks.html#deepspeed">ZeRO-Offload</a> pays a steep step-time tax — ~64 GB/s,
-      explicit copies. Grace’s coherent 900 GB/s link is ~14× that, about a quarter of HBM bandwidth, so parking
-      optimizer state, EMA weights, or spilled activations in LPDDR5X stops being a last resort and becomes part of
-      the memory budget: ~38 TB of addressable fast memory per rack instead of ~21 TB.</li>
-    <li><strong>The roofline doesn’t move.</strong> Per-GPU FLOPs, HBM bandwidth, and the §6 ridge point are identical
-      — kernels don’t care which machine they run in. What you buy with GB300 is communication topology and memory
-      capacity; what you pay is a rack-scale, liquid-cooled commitment, where HGX B300 deploys node by node in an
-      existing facility.</li>
-  </ul>
-  <div class="note">
-    Naming trap: NVIDIA’s GPU counting changed with Blackwell Ultra. The HGX board is branded <em>HGX B300 NVL16</em>
-    — eight dual-die packages, each <em>die</em> counted as a GPU — while <em>NVL72</em> counts the 72 packages
-    (36 superchips × 2). When comparing domain sizes, count packages: 8 vs. 72.
-  </div>
-
   <!-- ════════════════════════ SUMMARY ════════════════════════ -->
-  <h2 id="summary">12 · Summary</h2>
+  <h2 id="summary">7 · Summary</h2>
   <div class="summary-grid">
     <div class="summary-card">
       <div class="summary-card-label">Execution model</div>
@@ -1096,38 +649,19 @@
       <div class="summary-card-label">Roofline</div>
       <p>Ridge at ~295 FLOP/byte. Below it = memory-bound (fuse for free speedup); above = compute-bound.</p>
     </div>
-    <div class="summary-card">
-      <div class="summary-card-label">Crossbar in, cliff out</div>
-      <p>NVSwitch gives all-to-all ~450 GB/s within 8 GPUs; the network drops to ~50 GB/s across nodes.</p>
-    </div>
-    <div class="summary-card">
-      <div class="summary-card-label">Generations</div>
-      <p>H100→H200 is a pure memory bump (same FLOPs, +43% bandwidth); Hopper→Blackwell adds dual-die, FP4, and the 72-GPU NVLink domain.</p>
-    </div>
-    <div class="summary-card">
-      <div class="summary-card-label">FP4 microscaling</div>
-      <p>Per-block scales make 4-bit usable; FP4 raises the compute ceiling ~2× over FP8 and halves decode bytes/token.</p>
-    </div>
-    <div class="summary-card">
-      <div class="summary-card-label">NVL72</div>
-      <p>The NVSwitch crossbar scales from 8 GPUs to 72 — moving the network cliff outward so TP/EP fit on NVLink.</p>
-    </div>
-    <div class="summary-card">
-      <div class="summary-card-label">Chip vs. machine</div>
-      <p>B300 vs. GB300 is the machine, not the chip: HGX = 8-GPU domain + PCIe hosts; GB300 NVL72 = 72-GPU domain + coherent Grace memory.</p>
-    </div>
   </div>
 
   <div class="xref">
-    Next: <a href="../systems/collectives.html">Sharding &amp; Collectives →</a> turns these bandwidths into the
-    \(T \approx V/W\) cost of every communication primitive, and <a href="tpu-hardware.html">TPU Hardware →</a>
-    contrasts this crossbar world with the TPU’s nearest-neighbor torus.
+    Next: <a href="gpu-interconnect.html">GPU Interconnect →</a> continues down the bandwidth ladder — the
+    NVSwitch crossbar inside the node, the scale-out network across nodes, and the ~10× cliff between them — and
+    <a href="gpu-generations.html">GPU Generations →</a> carries this mental model onto Blackwell and the
+    H100 → B300 lineup.
   </div>
 
 </div>
 
 <footer>
-  Personal ML notes &nbsp;·&nbsp; GPU hardware for ML
+  Personal ML notes &nbsp;·&nbsp; GPU hardware — inside the chip
   &nbsp;·&nbsp; <a href="../index.html" style="color:inherit">← All notes</a>
 </footer>
 
@@ -1136,43 +670,6 @@
   const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const darkMQ = window.matchMedia('(prefers-color-scheme: dark)');
   const onSchemeChange = fn => { if (darkMQ.addEventListener) darkMQ.addEventListener('change', fn); };
-
-  // ── 8-GPU node diagram ────────────────────────────────────
-  (function () {
-    const g = document.getElementById('node-gpus');
-    if (!g) return;
-    const SVGNS = 'http://www.w3.org/2000/svg';
-    const cx = 280, cy = 110, sw = { x: 220, y: 90, w: 120, h: 40 };
-    const pts = [
-      {x:60,y:30},{x:180,y:18},{x:380,y:18},{x:500,y:30},
-      {x:60,y:190},{x:180,y:202},{x:380,y:202},{x:500,y:190}
-    ];
-    function render() {
-      while (g.firstChild) g.removeChild(g.firstChild);
-      pts.forEach((p, i) => {
-        // link to nearest edge of switch
-        const tx = Math.max(sw.x, Math.min(p.x, sw.x + sw.w));
-        const ty = p.y < cy ? sw.y : sw.y + sw.h;
-        const line = document.createElementNS(SVGNS, 'line');
-        line.setAttribute('x1', p.x); line.setAttribute('y1', p.y + 14);
-        line.setAttribute('x2', tx); line.setAttribute('y2', ty);
-        line.setAttribute('stroke', cssVar('--gpu-link')); line.setAttribute('stroke-width', '2.5');
-        g.appendChild(line);
-        const r = document.createElementNS(SVGNS, 'rect');
-        r.setAttribute('x', p.x - 30); r.setAttribute('y', p.y - 2);
-        r.setAttribute('width', 60); r.setAttribute('height', 30); r.setAttribute('rx', 6);
-        r.setAttribute('fill', '#0d9488'); g.appendChild(r);
-        const t = document.createElementNS(SVGNS, 'text');
-        t.setAttribute('x', p.x); t.setAttribute('y', p.y + 18);
-        t.setAttribute('text-anchor', 'middle'); t.setAttribute('fill', '#fff');
-        t.setAttribute('font-family', 'Inter, sans-serif'); t.setAttribute('font-size', '11.5');
-        t.setAttribute('font-weight', '600'); t.textContent = 'GPU ' + i;
-        g.appendChild(t);
-      });
-    }
-    render();
-    onSchemeChange(render);
-  })();
 
   // ── Roofline explorer ─────────────────────────────────────
   (function () {
@@ -1248,106 +745,6 @@
     onSchemeChange(update);
   })();
 
-  // ── Crossbar permutation widget ───────────────────────────
-  (function () {
-    const svg = document.getElementById('xbar-svg');
-    const btn = document.getElementById('xbar-shuffle');
-    const status = document.getElementById('xbar-status');
-    if (!svg) return;
-    const SVGNS = 'http://www.w3.org/2000/svg';
-    const N = 4;
-    const yR = [70, 120, 170, 220];        // input rows
-    const xC = [110, 170, 230, 290];       // output columns
-    const xL = 64, xRgt = 322, yTop = 46, yBot = 244;
-    const colors = ['--plot-teal', '--plot-rust', '--plot-violet', '--plot-blue'];
-    let perm = [0, 1, 2, 3];
-
-    function mk(tag, a, txt) { const e = document.createElementNS(SVGNS, tag); for (const k in a) e.setAttribute(k, a[k]); if (txt != null) e.textContent = txt; svg.appendChild(e); return e; }
-
-    function shuffle() {
-      do { for (let i = N - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [perm[i], perm[j]] = [perm[j], perm[i]]; } }
-      while (perm.every((c, r) => c === r));   // avoid the identity for visual interest
-      draw();
-    }
-
-    function draw() {
-      while (svg.firstChild) svg.removeChild(svg.firstChild);
-      // grid wires
-      for (let r = 0; r < N; r++) mk('line', { x1: xL, y1: yR[r], x2: xRgt, y2: yR[r], stroke: cssVar('--svg-wire-lt'), 'stroke-width': 2 });
-      for (let c = 0; c < N; c++) mk('line', { x1: xC[c], y1: yTop, x2: xC[c], y2: yBot, stroke: cssVar('--svg-wire-lt'), 'stroke-width': 2 });
-      // active L-paths (input r → crosspoint → output c)
-      for (let r = 0; r < N; r++) {
-        const c = perm[r], col = cssVar(colors[r]);
-        mk('line', { x1: xL, y1: yR[r], x2: xC[c], y2: yR[r], stroke: col, 'stroke-width': 3 });
-        mk('line', { x1: xC[c], y1: yR[r], x2: xC[c], y2: yBot, stroke: col, 'stroke-width': 3 });
-      }
-      // crosspoint dots (filled = closed)
-      for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
-        const on = perm[r] === c;
-        mk('circle', { cx: xC[c], cy: yR[r], r: on ? 6 : 3, fill: on ? cssVar(colors[r]) : cssVar('--svg-wire') });
-      }
-      // labels
-      for (let r = 0; r < N; r++) mk('text', { x: xL - 8, y: yR[r] + 4, 'text-anchor': 'end', 'font-family': 'ui-monospace', 'font-size': 12, fill: cssVar('--svg-label') }, 'in' + r);
-      for (let c = 0; c < N; c++) mk('text', { x: xC[c], y: yBot + 18, 'text-anchor': 'middle', 'font-family': 'ui-monospace', 'font-size': 12, fill: cssVar('--svg-label') }, 'out' + c);
-      status.textContent = 'in→out: ' + perm.map((c, r) => r + '→' + c).join(', ') + ' — 4 simultaneous full-rate paths, no shared wire.';
-    }
-
-    btn.addEventListener('click', shuffle);
-    draw();
-    onSchemeChange(draw);
-  })();
-
-  // ── Rail-optimized fat-tree diagram ───────────────────────
-  (function () {
-    const svg = document.getElementById('rail-svg');
-    if (!svg) return;
-    const SVGNS = 'http://www.w3.org/2000/svg';
-    const R = 4;                                   // rails
-    const railX = [80, 220, 360, 500], railY = 130;
-    const spine = { x: 230, y: 36, w: 100, h: 30 };
-    const highlight = 1;                           // which rail to light as "same-rail, 1 hop"
-    // two nodes, each with R GPUs (GPU i wired to rail i)
-    const nodes = [
-      { x: 30,  label: 'Node A', gx: [55, 105, 155, 205] },
-      { x: 350, label: 'Node B', gx: [375, 425, 475, 525] }
-    ];
-    const gY = 250;
-    function mk(tag, a, txt) { const e = document.createElementNS(SVGNS, tag); for (const k in a) e.setAttribute(k, a[k]); if (txt != null) e.textContent = txt; svg.appendChild(e); return e; }
-
-    function render() {
-      while (svg.firstChild) svg.removeChild(svg.firstChild);
-      // spine ↔ rails (dashed = cross-rail path up to spine)
-      railX.forEach(rx => mk('line', { x1: rx, y1: railY, x2: spine.x + spine.w / 2, y2: spine.y + spine.h, stroke: cssVar('--svg-wire'), 'stroke-width': 1.5, 'stroke-dasharray': '4 3' }));
-      // GPU → rail links
-      nodes.forEach(nd => nd.gx.forEach((gx, i) => {
-        const lit = i === highlight;
-        mk('line', { x1: gx, y1: gY - 10, x2: railX[i], y2: railY + 13, stroke: lit ? cssVar('--plot-green') : cssVar('--svg-gray'), 'stroke-width': lit ? 3 : 1.8 });
-      }));
-      // spine box
-      mk('rect', { x: spine.x, y: spine.y, width: spine.w, height: spine.h, rx: 6, fill: '#334155' });
-      mk('text', { x: spine.x + spine.w / 2, y: spine.y + 20, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 12, 'font-weight': 600, fill: '#e2e8f0' }, 'spine');
-      // rail (leaf) switches
-      railX.forEach((rx, i) => {
-        const lit = i === highlight;
-        mk('rect', { x: rx - 34, y: railY - 13, width: 68, height: 26, rx: 5, fill: lit ? '#16a34a' : '#0d9488' });
-        mk('text', { x: rx, y: railY + 5, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11, 'font-weight': 600, fill: '#fff' }, 'rail ' + i);
-      });
-      // nodes + GPUs
-      nodes.forEach(nd => {
-        mk('rect', { x: nd.x, y: gY - 26, width: 250, height: 52, rx: 8, fill: 'none', stroke: cssVar('--svg-wire'), 'stroke-dasharray': '5 4' });
-        mk('text', { x: nd.x + 6, y: gY + 40, 'font-family': 'Inter', 'font-size': 11, fill: cssVar('--plot-label') }, nd.label);
-        nd.gx.forEach((gx, i) => {
-          const lit = i === highlight;
-          mk('rect', { x: gx - 18, y: gY - 12, width: 36, height: 26, rx: 4, fill: lit ? '#15803d' : '#4f46e5' });
-          mk('text', { x: gx, y: gY + 5, 'text-anchor': 'middle', 'font-family': 'ui-monospace', 'font-size': 11, fill: '#fff' }, 'G' + i);
-        });
-      });
-      mk('text', { x: 280, y: 292, 'text-anchor': 'middle', 'font-family': 'Inter', 'font-size': 11, fill: cssVar('--plot-green') }, 'green: GPU 1 ↔ GPU 1 stays on rail 1 — a single leaf hop, no spine');
-    }
-    render();
-    onSchemeChange(render);
-  })();
-
   // ── SM internals diagram ──────────────────────────────────
   (function () {
     const svg = document.getElementById('sm-svg');
@@ -1391,74 +788,6 @@
     onSchemeChange(render);
   })();
 
-  // ── FP4 roofline (Blackwell §10.2) ────────────────────────
-  (function () {
-    function drawPlot(canvas, cfg) {
-      const dpr = window.devicePixelRatio || 1;
-      const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
-      if (!cssW || !cssH) return;
-      canvas.width = Math.round(cssW * dpr);
-      canvas.height = Math.round(cssH * dpr);
-      const ctx = canvas.getContext('2d');
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, cssW, cssH);
-      const mL = 44, mR = 14, mT = 14, mB = 30;
-      const pw = cssW - mL - mR, ph = cssH - mT - mB;
-      const { xMin, xMax, yMin, yMax } = cfg;
-      const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
-      const Y = y => mT + (yMax - y) / (yMax - yMin) * ph;
-      ctx.font = '11px Inter, sans-serif';
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = cssVar('--plot-grid');
-      ctx.fillStyle = cssVar('--plot-tick');
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'top';
-      cfg.xTicks.forEach(t => {
-        const px = X(t);
-        ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
-        ctx.fillText(String(t), px, mT + ph + 6);
-      });
-      ctx.textAlign = 'right';
-      ctx.textBaseline = 'middle';
-      cfg.yTicks.forEach(t => {
-        const py = Y(t);
-        ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
-        ctx.fillText(String(t), mL - 8, py);
-      });
-      ctx.save();
-      ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
-      ctx.lineJoin = 'round';
-      cfg.series.forEach(s => {
-        ctx.beginPath();
-        ctx.lineWidth = s.width || 2;
-        ctx.strokeStyle = cssVar(s.color);
-        const N = 260;
-        for (let i = 0; i <= N; i++) {
-          const x = xMin + (xMax - xMin) * i / N;
-          const px = X(x), py = Y(s.fn(x));
-          i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
-        }
-        ctx.stroke();
-      });
-      ctx.restore();
-    }
-    const plots = [];
-    const c = document.getElementById('plot-roofline');
-    if (c) plots.push([c, {
-      xMin: 0, xMax: 40, yMin: 0, yMax: 22,
-      xTicks: [0, 10, 20, 30, 40],
-      yTicks: [0, 5, 10, 15, 20],
-      series: [
-        { fn: I => Math.min(20, I), color: '--plot-orange', width: 2.75 },
-        { fn: I => Math.min(10, I), color: '--plot-teal', width: 2.75 }
-      ]
-    }]);
-    function renderAll() { plots.forEach(([cv, cfg]) => drawPlot(cv, cfg)); }
-    renderAll();
-    let raf;
-    window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(renderAll); });
-    onSchemeChange(renderAll);
-  })();
 </script>
 
 </body>
