@@ -63,7 +63,8 @@ CUDA SIMT model (threads/warps/coalescing/occupancy), cuBLAS (BLAS levels, cubla
 batched GEMM, determinism), Triton kernels, CUTLASS (the GEMM
 tiling hierarchy, collectives, stream-K, epilogue fusion), CuTe DSL (CUTLASS 4's
 layout algebra and thread-level Python kernels), cuTile (CUDA 13.1's tile-level model and the
-Tile IR virtual ISA), and the chunkwise
+Tile IR virtual ISA), the Blackwell kernel model (tcgen05, TMEM, CTA pairs, block-scaled
+NVFP4/MX MMA), and the chunkwise
 linear-attention kernels (FLA) — sharding & collectives
 (NCCL), tensor/pipeline/sequence/MoE parallelism, the ZeRO/FSDP distributed-training ladder, and
 the training-framework landscape (Megatron-LM vs. DeepSpeed vs. FSDP/TorchTitan).
