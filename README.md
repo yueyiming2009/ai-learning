@@ -58,7 +58,8 @@ and Lightning — the 30B whose generation bump is pure training).
 
 ### 04 · Systems & Scaling — [docs/systems/](docs/systems/), [triton/](triton/)
 The engineering substrate that trains it across many devices, built bottom-up — MFU, the PyTorch
-execution model (operators, dispatch, eager vs. graph), Triton kernels and the chunkwise
+execution model (operators, dispatch, eager vs. graph), Triton kernels, CuTe DSL (CUTLASS 4's
+layout algebra and thread-level Python kernels), the chunkwise
 linear-attention kernels (FLA), sharding & collectives
 (NCCL), tensor/pipeline/sequence/MoE parallelism, the ZeRO/FSDP distributed-training ladder, and
 the training-framework landscape (Megatron-LM vs. DeepSpeed vs. FSDP/TorchTitan).

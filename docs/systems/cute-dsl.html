@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>GPU Kernels in CuTe DSL — Layouts, Tiling &amp; Thread-Level Control in Python</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #ffffff; --surface: #f8f9fa; --border: #e8eaed;
+      --text: #1a1a2e; --muted: #6b7280;
+      --accent: #15803d; --accent-light: #dcfce7;
+      --warning-bg: #fffbeb; --warning-border: #f59e0b;
+      --step-bg: #f9fafb; --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4; --boxed-border: #22c55e;
+      --compare-bg: #eff6ff; --compare-border: #3b82f6;
+      --code-bg: #1e1b4b; --code-text: #e2e8f0;
+      --nav-bg: rgba(255,255,255,0.92);
+      --ink: #374151;
+      --icode-bg: #f1f5f9;
+      --kw-fg: #c084fc;
+      --fn-fg: #60a5fa;
+      --cm-fg: #94a3b8;
+      --str-fg: #86efac;
+      --num-fg: #fbbf24;
+      --dec-fg: #f9a8d4;
+      --row-hover: #fafafa;
+      --good-fg: #16a34a;
+      --bad-fg: #dc2626;
+      --compare-fg: #2563eb;
+      --green-border: #86efac;
+      --note-fg: #78350f;
+      --fig-bg: #fcfcfd;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #4ade80;
+        --accent-light: #0d2117;
+        --warning-bg: #251c0b;
+        --warning-border: #b45309;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --compare-bg: #101a2b;
+        --compare-border: #1e40af;
+        --code-bg: #221f3d;
+        --code-text: #e2e8f0;
+        --nav-bg: rgba(15,17,21,0.9);
+        --ink: #cbd5e1;
+        --icode-bg: #1c2531;
+        --kw-fg: #c084fc;
+        --fn-fg: #60a5fa;
+        --cm-fg: #94a3b8;
+        --str-fg: #86efac;
+        --num-fg: #fbbf24;
+        --dec-fg: #f9a8d4;
+        --row-hover: #191e25;
+        --good-fg: #4ade80;
+        --bad-fg: #f87171;
+        --compare-fg: #60a5fa;
+        --green-border: #14532d;
+        --note-fg: #fcd34d;
+        --fig-bg: #12161c;
+      }
+    }
+
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 0; line-height: 1.75; font-size: 16px; }
+    nav { position: sticky; top: 0; z-index: 100; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 52px; }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 0.9rem; color: var(--accent); text-decoration: none; white-space: nowrap; }
+    .nav-links { display: flex; gap: 4px; overflow-x: auto; flex: 1; }
+    .nav-links a { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; white-space: nowrap; transition: color 0.15s, background 0.15s; }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .nav-back { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); white-space: nowrap; transition: color 0.15s; margin-left: auto; flex-shrink: 0; }
+    .nav-back:hover { color: var(--text); }
+    .hero { background: linear-gradient(135deg, #14532d 0%, #15803d 100%); color: white; padding: 56px 24px 48px; text-align: center; }
+    .hero h1 { font-size: clamp(1.5rem, 4vw, 2.2rem); font-weight: 600; margin: 0 0 12px; letter-spacing: -0.02em; }
+    .hero p { margin: 0 auto; opacity: 0.85; font-size: 0.97rem; max-width: 640px; }
+    .hero-pill { display: inline-block; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 100px; font-size: 0.78rem; padding: 3px 12px; margin-bottom: 16px; letter-spacing: 0.04em; text-transform: uppercase; }
+    .page-wrap { max-width: 820px; margin: 0 auto; padding: 48px 24px 80px; }
+    h2 { font-size: 1.15rem; font-weight: 600; margin: 2.8em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); color: var(--text); }
+    h3 { font-size: 0.97rem; font-weight: 600; margin: 1.6em 0 0.4em; color: var(--ink); }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    code { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
+    p code, li code, td code { background: var(--icode-bg); padding: 1px 6px; border-radius: 4px; font-size: 0.88em; color: var(--accent); }
+    pre { background: var(--code-bg); color: var(--code-text); border-radius: 10px; padding: 20px 24px; overflow-x: auto; font-size: 0.85rem; line-height: 1.6; margin: 1.2em 0; }
+    pre code { background: none; padding: 0; font-size: inherit; color: inherit; }
+    .kw  { color: var(--kw-fg); }
+    .fn  { color: var(--fn-fg); }
+    .cm  { color: var(--cm-fg); font-style: italic; }
+    .str { color: var(--str-fg); }
+    .num { color: var(--num-fg); }
+    .dec { color: var(--dec-fg); }
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
+    th, td { border: 1px solid var(--border); padding: 9px 16px; text-align: left; vertical-align: top; }
+    th { background: var(--surface); font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+    tr:hover td { background: var(--row-hover); }
+    td.good { color: var(--good-fg); font-weight: 600; }
+    td.bad  { color: var(--bad-fg); }
+    td.ctr, th.ctr { text-align: center; }
+    .step { background: var(--step-bg); border: 1px solid var(--step-border); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 1.2em 0; }
+    .step-label { font-weight: 600; font-size: 0.88rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+    .step-label::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+    .note { background: var(--warning-bg); border-left: 3px solid var(--warning-border); border-radius: 0 8px 8px 0; padding: 10px 16px; margin: 1em 0; font-size: 0.92em; color: var(--note-fg); }
+    .result { background: var(--boxed-bg); border: 1.5px solid var(--boxed-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; text-align: center; }
+    .result-label { font-size: 0.8rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+    .compare { background: var(--compare-bg); border: 1.5px solid var(--compare-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; }
+    .compare-label { font-size: 0.8rem; font-weight: 600; color: var(--compare-fg); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
+    .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 1.2em 0; }
+    .summary-card { background: var(--accent-light); border: 1px solid var(--green-border); border-radius: 8px; padding: 14px 16px; }
+    .summary-card-label { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+    .xref { background: var(--accent-light); border: 1px solid var(--green-border); border-radius: 8px; padding: 12px 18px; margin: 1.4em 0; font-size: 0.92rem; }
+    .xref a { color: var(--accent); font-weight: 600; text-decoration: none; }
+    .xref a:hover { text-decoration: underline; }
+
+    /* ── Figure / plot ───────────────────────── */
+    .figure {
+      background: var(--fig-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 16px 14px;
+      margin: 1.6em 0;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .figure canvas {
+      width: 100%;
+      height: 300px;
+      display: block;
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      justify-content: center;
+      margin-top: 12px;
+      font-size: 0.82rem;
+      color: var(--text);
+    }
+    .legend-item { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.sw { width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--border); }
+    .figure-caption {
+      font-size: 0.85rem;
+      color: var(--muted);
+      line-height: 1.6;
+      margin: 14px 4px 2px;
+    }
+    .layout-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+    .layout-controls button {
+      font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+      font-size: 0.76rem; padding: 5px 12px; border-radius: 100px;
+      border: 1px solid var(--border); background: var(--surface); color: var(--muted);
+      cursor: pointer; transition: color 0.15s, background 0.15s, border-color 0.15s;
+    }
+    .layout-controls button:hover { color: var(--accent); }
+    .layout-controls button.active { background: var(--accent-light); color: var(--accent); border-color: var(--accent); font-weight: 600; }
+    .figure-formula {
+      text-align: center; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+      font-size: 0.79rem; color: var(--ink); margin-top: 10px; min-height: 1.4em;
+    }
+
+    /* ── TV-partition figure ─────────────────── */
+    .tv-wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin: 6px 0 2px; }
+    .tv-panel h4 { font-size: 0.83rem; font-weight: 600; margin: 0 0 8px; letter-spacing: 0.02em; }
+    .tv-good h4 { color: var(--good-fg); }
+    .tv-bad h4 { color: var(--bad-fg); }
+    .tv-grid { display: grid; grid-template-columns: repeat(16, 1fr); gap: 2px; }
+    .tv-cell { aspect-ratio: 1; display: flex; align-items: center; justify-content: center; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.5rem; font-weight: 600; color: #1f2937; border-radius: 3px; }
+    .tv-sub { font-size: 0.78rem; color: var(--muted); margin: 8px 0 0; }
+
+    footer { border-top: 1px solid var(--border); padding: 28px 24px; text-align: center; font-size: 0.82rem; color: var(--muted); }
+    @media (max-width: 600px) { .hero { padding: 40px 16px 36px; } .page-wrap { padding: 32px 16px 60px; } .tv-wrap { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>CuTe DSL</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#why-cute">Why CuTe</a>
+    <a href="#layouts">Layouts</a>
+    <a href="#algebra">Algebra</a>
+    <a href="#tensors">Tensors</a>
+    <a href="#dsl">The DSL</a>
+    <a href="#worked-kernel">Worked kernel</a>
+    <a href="#gemm">GEMM</a>
+    <a href="#vs-triton">vs Triton</a>
+  </div>
+  <a class="nav-back" href="../index.html">Home</a>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">GPU Kernels · CuTe DSL</span>
+  <h1>GPU Kernels in CuTe DSL</h1>
+  <p>CUTLASS 4's Python-native kernel language — layouts as functions, the algebra that turns tiling into arithmetic, thread–value partitioning, and hardware atoms down to the tensor-core instruction.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="xref">
+    <strong>Pre-reading:</strong> <a href="../hardware/gpu-hardware.html">GPU Hardware for ML</a> for the memory hierarchy (HBM → L2 → shared memory → registers) and tensor cores; <a href="pytorch-execution.html">The PyTorch Execution Model</a> for why hand-written kernels exist at all; and <a href="triton-kernels.html">GPU Kernels in Triton</a> for the block-level DSL this page contrasts against — CuTe DSL sits one level of control <em>below</em> Triton.
+  </div>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="why-cute">Why another kernel DSL?</h2>
+
+  <p>The hard part of a high-performance GPU kernel is not the arithmetic. It is the <strong>bookkeeping</strong>: which thread holds which element, in which memory space, at which pipeline stage — and whether the resulting access pattern is coalesced in global memory, bank-conflict-free in shared memory, and shaped exactly the way the tensor-core instruction demands. In raw CUDA C++ this bookkeeping is hand-rolled index arithmetic, and it is where the bugs and the lost bandwidth live.</p>
+
+  <p><strong>CuTe</strong> (the core abstraction layer of CUTLASS since 3.0) makes that bookkeeping a first-class mathematical object: the <em>layout</em>, a function from logical coordinates to memory offsets, with an algebra for composing, tiling, and partitioning layouts. The catch was the packaging — C++ template metaprogramming, with minutes-long compiles per instantiation and error messages measured in screens.</p>
+
+  <p><strong>CuTe DSL</strong> (CUTLASS 4.x, 2025, <code>pip install nvidia-cutlass-dsl</code>) lifts the <em>same</em> abstractions into Python. Kernels are Python functions that JIT-compile through MLIR to native GPU code in seconds instead of minutes, interoperate zero-copy with PyTorch via DLPack, and keep full thread-level control — including the newest hardware instructions (TMA, <code>wgmma</code>, Blackwell's <code>tcgen05</code>) that block-level compilers take time to learn. Because the abstractions match C++ CuTe one-for-one, kernels port between the two almost line-by-line.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th></th><th>CUDA C++</th><th>CUTLASS / CuTe C++</th><th>Triton</th><th>CuTe DSL</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Language</strong></td><td>C++</td><td>C++ templates</td><td>Python</td><td>Python</td></tr>
+        <tr><td><strong>Unit of abstraction</strong></td><td>thread</td><td>thread + layout algebra</td><td>block ("program")</td><td>thread + layout algebra</td></tr>
+        <tr><td><strong>Thread↔data mapping</strong></td><td class="bad">hand-rolled index math</td><td>explicit, algebra-checked</td><td>compiler decides</td><td class="good">explicit, algebra-checked</td></tr>
+        <tr><td><strong>Compile time</strong></td><td>seconds (nvcc)</td><td class="bad">minutes per instantiation</td><td>seconds (JIT)</td><td class="good">seconds (JIT via MLIR)</td></tr>
+        <tr><td><strong>Tensor-core access</strong></td><td>PTX / <code>wmma</code></td><td>MMA atoms</td><td><code>tl.dot</code></td><td>same MMA atoms as C++</td></tr>
+        <tr><td><strong>Performance ceiling</strong></td><td>peak, huge effort</td><td class="good">peak</td><td>high; gap on frontier GEMM/attention</td><td class="good">peak (CUTLASS-class)</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Adoption made the case quickly: <strong>FlashAttention-4</strong> — the Blackwell rewrite — is written in CuTe DSL Python rather than C++; Tri Dao's <strong>QuACK</strong> library ships memory-bound kernels (RMSNorm, softmax, cross-entropy) in pure CuTe DSL that reach near-peak HBM bandwidth on H100; and the Blackwell GEMM / MLA kernels behind vLLM and SGLang increasingly come from this stack.</p>
+
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">What CuTe DSL hides</div>
+      <p>C++ templates, index arithmetic (folded away by the layout algebra at compile time), PTX spelling of copy/MMA instructions.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">What you still control</div>
+      <p>Everything Triton decides for you: per-thread data assignment, vector widths, shared-memory staging and swizzles, pipeline depth, which hardware instruction executes each copy and each MMA.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">The price</div>
+      <p>You must think in layouts. This page is mostly about learning to do that.</p>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="layouts">The core abstraction: Layout = Shape : Stride</h2>
+
+  <p>A <strong>layout</strong> is a pair written <code>Shape:Stride</code>, and it <em>is a function</em> — it maps a logical coordinate to a linear memory offset by a dot product with the strides:</p>
+
+  \[
+    L = (s_0, s_1, \dots) : (d_0, d_1, \dots), \qquad
+    L(c_0, c_1, \dots) = \sum_i c_i \, d_i .
+  \]
+
+  <p>A 4×8 matrix stored column-major is <code>(4,8):(1,4)</code>: moving down a column steps 1 element in memory, moving across a row steps 4. Row-major is <code>(4,8):(8,1)</code>. CuTe's default (<code>cute.make_layout((4,8))</code>) is compact column-major — "LayoutLeft," with the <em>leftmost</em> mode fastest — the opposite of PyTorch's row-major convention, which is why the worked kernel below builds its layouts with an explicit <code>order</code>.</p>
+
+  <p>Two things make this more than a strided-tensor rerun. First, shapes can be <strong>hierarchical</strong>: any mode can itself be a (shape, stride) pair, so <code>((2,2),(2,4)):((1,4),(2,8))</code> is a 4×8 matrix whose rows and columns are each split into a within-tile and an across-tile sub-mode — tiling expressed <em>inside</em> the type, not as loop bounds. Second, strides are unconstrained: overlapping, padded, and repeating layouts are all legal functions, which is exactly what broadcasting, leading-dimension padding, and swizzled shared-memory patterns need.</p>
+
+  <div class="figure">
+    <div class="layout-controls" id="layout-controls" role="group" aria-label="Layout preset selector">
+      <button data-preset="colmajor" class="active">(4,8):(1,4) col-major</button>
+      <button data-preset="rowmajor">(4,8):(8,1) row-major</button>
+      <button data-preset="tiled">((2,2),(2,4)):((1,4),(2,8)) tiled</button>
+      <button data-preset="padded">(4,8):(1,8) padded</button>
+    </div>
+    <canvas id="plot-layout" aria-label="Grid showing how each layout maps 2-D coordinates to linear memory offsets"></canvas>
+    <div class="figure-formula" id="layout-formula"></div>
+    <div class="legend">
+      <span class="legend-item"><span class="lg sw" style="--c:#dcfce7"></span> offset 0</span>
+      <span class="legend-item"><span class="lg sw" style="--c:#14532d"></span> highest offset</span>
+      <span class="legend-item"><span class="lg" style="--c:rgba(22,163,74,0.55)"></span> memory-order walk</span>
+    </div>
+    <p class="figure-caption">
+      <strong>A layout is a function, not a storage format.</strong> The same 4×8 logical grid under four coordinate→offset functions; each cell shows its offset \(L(m,n)\), and the line walks linear memory in order. Column-major snakes down columns; the hierarchical layout fills each 2×2 tile before moving to the next — the shape a per-thread value fragment or a swizzled shared-memory tile wants; the padded layout (leading dimension 8 for 4 rows) leaves holes at offsets 4–7 of every column. Hover any cell to see its offset computed as the stride dot product.
+    </p>
+  </div>
+
+  <p>In code, layouts are ordinary Python objects — buildable, printable, callable:</p>
+
+<pre><code>a = cute.make_layout((<span class="num">4</span>, <span class="num">8</span>))                      <span class="cm"># (4,8):(1,4) — compact column-major</span>
+b = cute.make_layout((<span class="num">4</span>, <span class="num">8</span>), stride=(<span class="num">8</span>, <span class="num">1</span>))       <span class="cm"># (4,8):(8,1) — row-major, spelled out</span>
+c = cute.make_ordered_layout((<span class="num">4</span>, <span class="num">8</span>), order=(<span class="num">1</span>, <span class="num">0</span>)) <span class="cm"># row-major via mode order (rightmost fastest)</span>
+d = cute.make_layout(((<span class="num">2</span>, <span class="num">2</span>), (<span class="num">2</span>, <span class="num">4</span>)),
+                     stride=((<span class="num">1</span>, <span class="num">4</span>), (<span class="num">2</span>, <span class="num">8</span>)))      <span class="cm"># the tiled layout from the figure</span>
+
+a((<span class="num">2</span>, <span class="num">3</span>))          <span class="cm"># 14 = 2·1 + 3·4 — layouts are functions of coordinates</span>
+cute.size(a)       <span class="cm"># 32 — number of logical elements</span>
+cute.cosize(a)     <span class="cm"># 32 — highest offset + 1 (60 for the padded layout: holes count)</span>
+</code></pre>
+
+  <div class="result">
+    <div class="result-label">Why this wins at compile time</div>
+    <p style="margin:0;">Layout shapes and strides are <strong>static</strong> by default. Every dot product, tile slice, and partition below is evaluated during compilation and folds into immediate offsets in the generated SASS — the elaborate algebra costs <em>zero</em> instructions at runtime.</p>
+  </div>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="algebra">The layout algebra: tiling as arithmetic</h2>
+
+  <p>Because layouts are functions, they compose — and CuTe builds its entire tiling vocabulary out of a handful of operations on them. These four are the load-bearing ones:</p>
+
+  <h3>Composition: gather one layout through another</h3>
+
+  <p><code>composition(A, B)</code> is function composition \((A \circ B)(c) = A(B(c))\): <em>B</em> selects which of <em>A</em>'s elements, in <em>B</em>'s order; <em>A</em> supplies the addresses.</p>
+
+<pre><code>A = cute.make_layout(<span class="num">20</span>, stride=<span class="num">2</span>)     <span class="cm"># 20:2 — every 2nd element</span>
+B = cute.make_layout(<span class="num">5</span>,  stride=<span class="num">4</span>)     <span class="cm"># 5:4  — every 4th index</span>
+cute.composition(A, B)                 <span class="cm"># 5:8  — every 4th of every 2nd</span>
+</code></pre>
+
+  <h3>Complement: everything the tile doesn't cover</h3>
+
+  <p><code>complement(B, n)</code> builds the layout of "the rest": the elements of a size-<em>n</em> space that <em>B</em> does not touch, arranged to tile it. For a tile <code>4:1</code> inside 24 elements, the complement is <code>6:4</code> — six tile-starting-points, 4 apart. Complement is the piece that turns a tile shape into a <em>partitioning</em> of the whole space.</p>
+
+  <h3>Divide: split into (within-tile, across-tiles)</h3>
+
+  <p><code>logical_divide(A, B)</code> = <code>composition(A, (B, complement(B)))</code> — it reshapes <em>A</em> into two groups of modes: coordinates <em>inside</em> one tile, and the index of <em>which</em> tile.</p>
+
+<pre><code>A = cute.make_layout(<span class="num">24</span>)                      <span class="cm"># 24:1</span>
+cute.logical_divide(A, cute.make_layout(<span class="num">4</span>))   <span class="cm"># (4,6):(1,4) — (elem-in-tile, tile-idx)</span>
+
+<span class="cm"># the 2-D workhorse: tile a matrix by (bM, bN)</span>
+M = cute.make_layout((<span class="num">16</span>, <span class="num">256</span>), stride=(<span class="num">1</span>, <span class="num">16</span>))
+cute.zipped_divide(M, (<span class="num">4</span>, <span class="num">32</span>))   <span class="cm"># ((4,32),(4,8)) : ((1,16),(4,512))</span>
+                                 <span class="cm"># mode 0 = coords in one 4×32 tile</span>
+                                 <span class="cm"># mode 1 = which of the 4×8 tiles</span>
+</code></pre>
+
+  <p><code>zipped_divide</code> is <code>logical_divide</code> with the modes regrouped into exactly two: <code>((TileM,TileN), (RestM,RestN))</code>. Index it with a tile coordinate and you hold that tile; this is how a CTA grabs its piece of the problem — <em>indexing, not pointer arithmetic</em>. Its inverse, <code>logical_product</code>, stamps a tile across a grid of repetitions; its <code>blocked_</code>/<code>raked_</code> variants are precisely the two thread-assignment pictures in the figure further down.</p>
+
+  <div class="step">
+    <div class="step-label">The tiled layout in the figure is a divide</div>
+    <p style="margin:0;">Preset 3 above, <code>((2,2),(2,4)):((1,4),(2,8))</code>, is exactly <code>zipped_divide</code> of the column-major 4×8 layout by a (2,2) tiler: mode 0 walks one 2×2 tile, mode 1 walks the 2×4 grid of tiles. What reads as "blocking to fit tensor cores / shared memory" in a paper is one call in the algebra — and since it's all static, it compiles to nothing.</p>
+  </div>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="tensors">Tensors: a pointer with a layout</h2>
+
+  <p>A CuTe <strong>tensor</strong> is an engine (pointer, or register storage) paired with a layout: <code>make_tensor(ptr, layout)</code>. Every algebra operation on layouts lifts to tensors — <code>zipped_divide</code> on a tensor tiles its <em>view</em>, slicing with a partial coordinate peels off modes:</p>
+
+<pre><code>gA = cute.zipped_divide(mA, (<span class="num">16</span>, <span class="num">128</span>))   <span class="cm"># ((16,128), (M/16, N/128)) view of A</span>
+blkA = gA[((<span class="kw">None</span>, <span class="kw">None</span>), bidx)]          <span class="cm"># keep mode 0, fix tile = bidx → (16,128)</span>
+</code></pre>
+
+  <p>The <code>None</code>s work like NumPy's <code>:</code> — keep that mode. Three tensor species matter in practice:</p>
+
+  <ul>
+    <li><strong>Global-memory tensors</strong> — created on the host from PyTorch arrays via DLPack (<code>from_dlpack(t)</code>), zero-copy.</li>
+    <li><strong>Shared-memory tensors</strong> — a shared-memory pointer plus a (often swizzled) layout; same algebra, different engine.</li>
+    <li><strong>Fragments</strong> — per-thread register arrays, usually built to mirror a partition: <code>make_fragment_like(thrA)</code>. Loading a fragment gives a <em>TensorSSA</em> value supporting vectorized elementwise math (<code>frgA.load() + frgB.load()</code>).</li>
+  </ul>
+
+  <p>One more tensor deserves a name: the <strong>identity tensor</strong>, <code>make_identity_tensor(shape)</code>, whose value at coordinate \((m,n)\) is the coordinate itself. Tile and partition it alongside the data and every thread ends up holding the <em>logical coordinates</em> of its values — compare them against the true extent (<code>elem_less(coord, shape)</code>) and you have out-of-bounds predication that survives every layout transformation. This is CuTe's answer to Triton's <code>mask=</code>.</p>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="dsl">The DSL machinery: Python that compiles away</h2>
+
+  <p>Two decorators split a program: <code>@cute.jit</code> marks host-side functions (set up layouts, tile tensors, launch), <code>@cute.kernel</code> marks device kernels. Calling the kernel object inside a jit function and chaining <code>.launch(grid=…, block=…)</code> issues the launch.</p>
+
+<pre><code><span class="kw">import</span> torch
+<span class="kw">import</span> cutlass
+<span class="kw">import</span> cutlass.cute <span class="kw">as</span> cute
+<span class="kw">from</span> cutlass.cute.runtime <span class="kw">import</span> from_dlpack
+
+a = torch.randn(<span class="num">2048</span>, <span class="num">2048</span>, device=<span class="str">"cuda"</span>)
+b = torch.randn(<span class="num">2048</span>, <span class="num">2048</span>, device=<span class="str">"cuda"</span>)
+c = torch.zeros_like(a)
+
+<span class="cm"># zero-copy views: DLPack pointer + a CuTe layout read off shape/stride</span>
+mA = from_dlpack(a).mark_layout_dynamic()   <span class="cm"># dynamic layout: one compile, any size</span>
+mB = from_dlpack(b).mark_layout_dynamic()
+mC = from_dlpack(c).mark_layout_dynamic()
+
+elementwise_add(mA, mB, mC)      <span class="cm"># first call: trace → MLIR → PTX (~a second)</span>
+
+add = cute.compile(elementwise_add, mA, mB, mC)   <span class="cm"># or compile explicitly once…</span>
+add(mA, mB, mC)                  <span class="cm"># …then launch with microseconds of Python overhead</span>
+</code></pre>
+
+  <p>The semantics to internalize: the Python body runs <strong>once, at trace time</strong>. Layout algebra, plain <code>print</code>, Python <code>for</code> loops over static ranges — all execute during compilation (loops unroll; <code>print</code> shows you the inferred types and layouts, which is the standard way to debug partitioning). Only operations on runtime values — tensor elements, thread indices — become GPU instructions; for runtime inspection there are <code>cute.printf</code> and <code>cute.print_tensor</code>. Parameters annotated <code>cutlass.Constexpr</code> are compile-time constants, so a Python <code>int</code> like a vector width specializes the kernel the way a C++ template parameter would.</p>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="worked-kernel">Worked kernel: vectorized elementwise add</h2>
+
+  <p>The canonical first CuTe DSL kernel (this section follows <code>examples/python/CuTeDSL</code> in the CUTLASS repo, lightly trimmed). The job: \(C = A + B\) over row-major fp32 matrices, saturating HBM bandwidth. The interesting part is not the add — it's the <strong>thread–value (TV) layout</strong>, the layout that answers "which thread holds which elements of a tile."</p>
+
+  <h3>The TV layout: choosing who holds what</h3>
+
+  <p>Pick a tile of 16×128 elements for a 128-thread CTA. Arrange the threads as <code>(4,32)</code> row-major — 32 threads spanning a row, matching the row-major data — and give each thread a <code>(4,4)</code> row-major patch of values. Each thread's row of 4 fp32 values is 16 contiguous bytes: one 128-bit load. Adjacent threads hold adjacent 16-byte chunks, so a warp's loads merge into full-width coalesced transactions. Both properties are <em>choices encoded in two small layouts</em>:</p>
+
+<pre><code>thr_layout = cute.make_ordered_layout((<span class="num">4</span>, <span class="num">32</span>), order=(<span class="num">1</span>, <span class="num">0</span>))  <span class="cm"># 128 threads, row-major</span>
+val_layout = cute.make_ordered_layout((<span class="num">4</span>, <span class="num">4</span>),  order=(<span class="num">1</span>, <span class="num">0</span>))  <span class="cm"># 4×4 values per thread</span>
+tiler_mn, tv_layout = cute.make_layout_tv(thr_layout, val_layout) <span class="cm"># tile = (16, 128)</span>
+</code></pre>
+
+  <div class="figure">
+    <div class="tv-wrap">
+      <div class="tv-panel tv-good">
+        <h4>✓ value-major matches data-major → vectorized</h4>
+        <div class="tv-grid" id="tv-blocked" aria-label="Tile where each thread owns contiguous 4-element vectors"></div>
+        <p class="tv-sub">Toy version (4×16 tile, 8 threads, 8 values each): every thread's row-chunk is contiguous → one 128-bit load per row.</p>
+      </div>
+      <div class="tv-panel tv-bad">
+        <h4>✗ values raked across columns → scalar loads</h4>
+        <div class="tv-grid" id="tv-raked" aria-label="Tile where each thread owns column-strided elements"></div>
+        <p class="tv-sub">Same elements per thread, but strided in the major dimension → eight separate 32-bit loads.</p>
+      </div>
+    </div>
+    <p class="figure-caption">
+      <strong>The TV layout is a performance decision, stated as data.</strong> Each cell is one tile element, colored by the thread that owns it. Both assignments are legal and touch identical bytes; only the left one lets each thread issue 128-bit vectorized loads (its values are contiguous in the tensor's major dimension), which is the difference between saturating HBM and being instruction-issue-bound. In CuTe you write this choice down as <code>val_layout</code>; in Triton the compiler makes it for you.
+    </p>
+  </div>
+
+  <h3>Host side: tile the problem</h3>
+
+<pre><code><span class="dec">@cute.jit</span>
+<span class="kw">def</span> <span class="fn">elementwise_add</span>(mA, mB, mC, copy_bits: cutlass.Constexpr = <span class="num">128</span>):
+    vector_size = copy_bits // mA.element_type.width          <span class="cm"># 4 fp32 per 128-bit load</span>
+
+    thr_layout = cute.make_ordered_layout((<span class="num">4</span>, <span class="num">32</span>), order=(<span class="num">1</span>, <span class="num">0</span>))
+    val_layout = cute.make_ordered_layout((<span class="num">4</span>, vector_size), order=(<span class="num">1</span>, <span class="num">0</span>))
+    tiler_mn, tv_layout = cute.make_layout_tv(thr_layout, val_layout)
+
+    gA = cute.zipped_divide(mA, tiler_mn)   <span class="cm"># ((TileM,TileN), (RestM,RestN))</span>
+    gB = cute.zipped_divide(mB, tiler_mn)
+    gC = cute.zipped_divide(mC, tiler_mn)
+
+    <span class="cm"># identity tensor, tiled identically: each value is its own (m, n) coordinate</span>
+    cC = cute.zipped_divide(cute.make_identity_tensor(mC.shape), tiler=tiler_mn)
+
+    elementwise_add_kernel(gA, gB, gC, cC, mC.shape, thr_layout, val_layout).launch(
+        grid=[cute.size(gC, mode=[<span class="num">1</span>]), <span class="num">1</span>, <span class="num">1</span>],           <span class="cm"># one CTA per tile</span>
+        block=[cute.size(tv_layout, mode=[<span class="num">0</span>]), <span class="num">1</span>, <span class="num">1</span>],   <span class="cm"># 128 threads</span>
+    )
+</code></pre>
+
+  <h3>Device side: slice, partition, copy, add</h3>
+
+<pre><code><span class="dec">@cute.kernel</span>
+<span class="kw">def</span> <span class="fn">elementwise_add_kernel</span>(
+    gA: cute.Tensor, gB: cute.Tensor, gC: cute.Tensor,
+    cC: cute.Tensor,            <span class="cm"># coordinate tensor for predication</span>
+    shape: cute.Shape,          <span class="cm"># true (M, N)</span>
+    thr_layout: cute.Layout, val_layout: cute.Layout,
+):
+    tidx, _, _ = cute.arch.thread_idx()
+    bidx, _, _ = cute.arch.block_idx()
+
+    <span class="cm"># 1 · CTA level: index out this block's (TileM, TileN) tile</span>
+    blk_coord = ((<span class="kw">None</span>, <span class="kw">None</span>), bidx)
+    blkA, blkB, blkC = gA[blk_coord], gB[blk_coord], gC[blk_coord]
+    blkCrd = cC[blk_coord]
+
+    <span class="cm"># 2 · thread level: a tiled copy built from a 128-bit copy atom + the TV layout</span>
+    atom = cute.make_copy_atom(cute.nvgpu.CopyUniversalOp(), gA.element_type)
+    tiled_copy = cute.make_tiled_copy_tv(atom, thr_layout, val_layout)
+    thr_copy = tiled_copy.get_slice(tidx)
+
+    thrA = thr_copy.partition_S(blkA)     <span class="cm"># this thread's slice of the tile</span>
+    thrB = thr_copy.partition_S(blkB)
+    thrC = thr_copy.partition_S(blkC)
+    thrCrd = thr_copy.partition_S(blkCrd)
+
+    <span class="cm"># 3 · registers shaped like the per-thread slice</span>
+    frgA = cute.make_fragment_like(thrA)
+    frgB = cute.make_fragment_like(thrB)
+    frgC = cute.make_fragment_like(thrC)
+
+    <span class="cm"># 4 · predication: is each of my coordinates inside the real (M, N)?</span>
+    frgPred = cute.make_rmem_tensor(thrCrd.shape, cutlass.Boolean)
+    <span class="kw">for</span> i <span class="kw">in</span> range(cute.size(frgPred)):          <span class="cm"># unrolls at compile time</span>
+        frgPred[i] = cute.elem_less(thrCrd[i], shape)
+
+    <span class="cm"># 5 · gmem → registers (vectorized), add, registers → gmem</span>
+    cute.copy(atom, thrA, frgA, pred=frgPred)
+    cute.copy(atom, thrB, frgB, pred=frgPred)
+    frgC.store(frgA.load() + frgB.load())
+    cute.copy(atom, frgC, thrC, pred=frgPred)
+</code></pre>
+
+  <div class="step">
+    <div class="step-label">The partitioning cascade — the pattern every CuTe kernel follows</div>
+    <ol style="margin:0;">
+      <li><strong>Problem → CTA tiles:</strong> <code>zipped_divide</code> on the host; the kernel indexes its tile with <code>bidx</code>. No pointer arithmetic anywhere.</li>
+      <li><strong>Tile → per-thread slices:</strong> a copy (or MMA) atom plus the TV layout builds a tiled operation; <code>get_slice(tidx).partition_S(...)</code> hands each thread a tensor <em>view</em> of exactly its values.</li>
+      <li><strong>Slices → registers:</strong> fragments mirror the slice shape; <code>cute.copy</code> with the atom becomes vectorized (here 128-bit) load/store instructions.</li>
+    </ol>
+  </div>
+
+  <p>Note what is <em>absent</em>: no index arithmetic, no bounds if-statements (the predicate fragment rides along through the same partitioning as the data), and no explicit vectorization — the 128-bit width lives in the copy atom and the val layout's contiguity makes it legal. Run with <code>--benchmark</code> and this kernel reports HBM-bandwidth-limited throughput, matching <code>torch.add</code> — the same "nothing to fuse" ceiling as the <a href="triton-kernels.html">Triton vector add</a>, reached from one level of abstraction lower.</p>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="gemm">Scaling up: the GEMM pattern and hardware atoms</h2>
+
+  <p>Elementwise kernels use one memory space. Real kernels — GEMM, attention — stage tiles through the whole hierarchy, and the same cascade simply repeats per level with an <strong>atom</strong> at each step. An atom wraps one hardware instruction together with the layout it imposes on the threads and values that execute it; the algebra then tiles that atom across a CTA:</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Generation</th><th>Copy atoms</th><th>MMA atoms</th><th>What changed</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Ampere</strong> (sm_80)</td><td><code>cp.async</code> gmem→smem, <code>ldmatrix</code> smem→reg</td><td><code>mma.sync</code> — warp-wide, e.g. 16×8×16 fp16</td><td>async global loads; operands in registers</td></tr>
+        <tr><td><strong>Hopper</strong> (sm_90)</td><td>TMA — bulk tensor copies from a descriptor</td><td><code>wgmma</code> — warpgroup (128 threads), async, reads smem</td><td>copies and MMAs both become async engines</td></tr>
+        <tr><td><strong>Blackwell</strong> (sm_100)</td><td>TMA (+ cluster multicast)</td><td><code>tcgen05.mma</code> — accumulates in dedicated tensor memory (TMEM)</td><td>accumulators leave the register file</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>This table is the practical argument for thread-level control: each generation's flagship instruction imposes <em>stranger</em> layouts (wgmma's smem operand descriptors, TMEM accumulators), and the layout algebra is the tool that keeps them composable. The canonical GEMM skeleton, condensed from the CUTLASS examples (<code>sgemm.py</code> shows the full Ampere version):</p>
+
+<pre><code><span class="cm"># one CTA owns tile (bidx, bidy) of C and marches over K — shapes in comments</span>
+gA = cute.local_tile(mA, (bM, bK), (bidx, <span class="kw">None</span>))    <span class="cm"># (bM, bK, K/bK)</span>
+gB = cute.local_tile(mB, (bN, bK), (bidy, <span class="kw">None</span>))    <span class="cm"># (bN, bK, K/bK)</span>
+gC = cute.local_tile(mC, (bM, bN), (bidx, bidy))    <span class="cm"># (bM, bN)</span>
+
+<span class="cm"># stage tiles through shared memory with a gmem→smem tiled copy (cp.async / TMA atom)</span>
+thr_g2s = tiled_copy_g2s.get_slice(tidx)
+tAgA = thr_g2s.partition_S(gA)                      <span class="cm"># source: this thread's gmem pieces</span>
+tAsA = thr_g2s.partition_D(sA)                      <span class="cm"># dest:   its smem pieces (swizzled layout)</span>
+
+<span class="cm"># partition smem across the tiled MMA; accumulate in registers</span>
+thr_mma = tiled_mma.get_slice(tidx)
+tCsA = thr_mma.partition_A(sA)
+tCrA = thr_mma.make_fragment_A(tCsA)                <span class="cm"># register operands, MMA-shaped</span>
+acc  = thr_mma.make_fragment_C(thr_mma.partition_C(gC))
+
+<span class="kw">for</span> k <span class="kw">in</span> cutlass.range(num_k_tiles):                <span class="cm"># the mainloop</span>
+    cute.copy(atom_g2s, tAgA[<span class="kw">None</span>, k], tAsA[<span class="kw">None</span>, k % STAGES])  <span class="cm"># prefetch next stage</span>
+    ...                                              <span class="cm"># commit / wait async group, barrier</span>
+    cute.copy(atom_s2r, tCsA_k, tCrA)                <span class="cm"># smem → registers (ldmatrix)</span>
+    cute.gemm(tiled_mma, acc, tCrA, tCrB, acc)       <span class="cm"># tensor-core MMAs</span>
+</code></pre>
+
+  <p>Every arrow in the dataflow — gmem→smem, smem→reg, reg→tensor core — is the same three-step cascade as the elementwise kernel with a different atom plugged in, and multi-stage pipelining is just a <code>STAGES</code>-deep smem layout plus an async-copy schedule. FlashAttention in CuTe DSL is this skeleton with two MMAs, an online-softmax rescale between them, and the <a href="../inference/flash-attention.html">tiling logic</a> expressed as — of course — layouts.</p>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="vs-triton">CuTe DSL vs. Triton: choosing your altitude</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th></th><th>Triton</th><th>CuTe DSL</th></tr></thead>
+      <tbody>
+        <tr><td><strong>You write</strong></td><td>block-level array ops (<code>tl.load</code>, <code>tl.dot</code>)</td><td>per-thread partitions via layouts and atoms</td></tr>
+        <tr><td><strong>Compiler decides</strong></td><td>thread mapping, vectorization, smem staging, swizzles</td><td class="good">nothing — every mapping is yours, algebra-checked</td></tr>
+        <tr><td><strong>Bounds handling</strong></td><td><code>mask=</code> on load/store</td><td>coordinate tensors + <code>elem_less</code> predicates</td></tr>
+        <tr><td><strong>Autotuning</strong></td><td><code>@triton.autotune</code> built in</td><td>plain Python sweeps over configs (layouts are just objects)</td></tr>
+        <tr><td><strong>New hardware</strong></td><td>when the compiler learns it</td><td class="good">day-0 atoms: TMA, <code>wgmma</code>, <code>tcgen05</code>, clusters, mbarriers</td></tr>
+        <tr><td><strong>Effort for a fused softmax</strong></td><td class="good">~30 lines, an afternoon</td><td>more — you place every value</td></tr>
+        <tr><td><strong>Frontier GEMM / attention</strong></td><td>good, with a gap on the newest parts</td><td class="good">CUTLASS-class — FA4, Blackwell GEMM/MLA kernels</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="compare">
+    <div class="compare-label">Rule of thumb</div>
+    <p style="margin:0;">Fusing memory-bound chains (softmax, norms, activations, dequant epilogues): <strong>Triton</strong> — the compiler's choices are close enough to optimal and you ship the same day. Peak tensor-core throughput on current-generation silicon, exact control of shared memory and pipelines, or an instruction the compiler doesn't emit yet: <strong>CuTe DSL</strong> — the control of CUDA C++ with compile times and ergonomics that make iteration feel like Triton. The two coexist in most serious stacks.</p>
+  </div>
+
+  <!-- ══════════════════════════════════════════ -->
+  <h2 id="where-next">Where this leads</h2>
+
+  <ul>
+    <li><strong><a href="../inference/flash-attention.html">FlashAttention</a></strong> — the tiling and online-softmax algorithm whose Blackwell implementation (FA4) is written in this DSL.</li>
+    <li><strong><a href="../hardware/gpu-hardware.html">GPU Hardware for ML</a></strong> — the memory hierarchy and tensor-core organization that every layout on this page is shaped around.</li>
+    <li><strong><a href="fla-chunkwise.html">Chunkwise Linear Attention</a></strong> — a Triton-based production kernel family, for contrast with the CuTe partitioning style.</li>
+    <li><strong>CUTLASS repo</strong> — <code>examples/python/CuTeDSL/</code> walks from this page's elementwise add through sgemm, tensor-op GEMM, and full FMHA on Ampere/Hopper/Blackwell; the CuTe DSL notebooks under <code>docs</code> cover the layout algebra interactively.</li>
+    <li><strong>QuACK</strong> (Dao-AILab) — readable production examples of memory-bound CuTe DSL kernels hitting near-peak HBM bandwidth.</li>
+  </ul>
+
+</div>
+
+<footer>Personal ML notes · <a href="https://github.com/yueyiming2009/ai-learning" style="color:inherit;text-decoration:underline;">source on GitHub</a></footer>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ── Layout explorer ───────────────────────────────── */
+  var canvas = document.getElementById('plot-layout');
+  var formulaEl = document.getElementById('layout-formula');
+  var controls = document.getElementById('layout-controls');
+  if (!canvas || !formulaEl || !controls) return;
+  var ctx = canvas.getContext('2d');
+
+  // modes: [size, stride] pairs, leftmost mode fastest-varying (CuTe colex order)
+  var PRESETS = {
+    colmajor: {
+      rows: [[4, 1]], cols: [[8, 4]],
+      formula: 'offset(m,n) = m·1 + n·4 — memory walks down each column (CuTe’s default)'
+    },
+    rowmajor: {
+      rows: [[4, 8]], cols: [[8, 1]],
+      formula: 'offset(m,n) = m·8 + n·1 — memory walks across each row (C / PyTorch order)'
+    },
+    tiled: {
+      rows: [[2, 1], [2, 4]], cols: [[2, 2], [4, 8]],
+      formula: 'offset = i₀·1 + j₀·2 + i₁·4 + j₁·8 — each 2×2 tile fills before the walk moves on'
+    },
+    padded: {
+      rows: [[4, 1]], cols: [[8, 8]],
+      formula: 'offset(m,n) = m·1 + n·8 — leading dimension 8 for 4 rows: offsets 4–7 of every column are padding'
+    }
+  };
+  var current = 'colmajor';
+  var hover = null; // {m, n}
+  var geom = null;  // cached cell geometry from last draw
+
+  function decompose(idx, modes) {
+    var digits = [], off = 0, rem = idx, i;
+    for (i = 0; i < modes.length; i++) {
+      var d = rem % modes[i][0];
+      rem = Math.floor(rem / modes[i][0]);
+      digits.push(d);
+      off += d * modes[i][1];
+    }
+    return { digits: digits, off: off };
+  }
+  function dims(p) {
+    var nR = 1, nC = 1, i;
+    for (i = 0; i < p.rows.length; i++) nR *= p.rows[i][0];
+    for (i = 0; i < p.cols.length; i++) nC *= p.cols[i][0];
+    return { nR: nR, nC: nC };
+  }
+  function offsetAt(p, m, n) {
+    return decompose(m, p.rows).off + decompose(n, p.cols).off;
+  }
+  function lerpColor(t) {
+    // #dcfce7 -> #14532d
+    var c0 = [220, 252, 231], c1 = [20, 83, 45];
+    var r = Math.round(c0[0] + (c1[0] - c0[0]) * t);
+    var g = Math.round(c0[1] + (c1[1] - c0[1]) * t);
+    var b = Math.round(c0[2] + (c1[2] - c0[2]) * t);
+    return 'rgb(' + r + ',' + g + ',' + b + ')';
+  }
+  function cssVar(name, fallback) {
+    var v = getComputedStyle(document.body).getPropertyValue(name).trim();
+    return v || fallback;
+  }
+
+  function draw() {
+    var p = PRESETS[current];
+    var d = dims(p);
+    var dpr = window.devicePixelRatio || 1;
+    var W = canvas.clientWidth, H = canvas.clientHeight;
+    if (W === 0 || H === 0) return;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+
+    var muted = cssVar('--muted', '#6b7280');
+    var top = 24, left = 28;
+    var cell = Math.min((W - left - 8) / d.nC, (H - top - 8) / d.nR);
+    var ox = left + (W - left - cell * d.nC) / 2;
+    var oy = top;
+
+    // max offset for the color scale
+    var maxOff = 0, m, n;
+    for (m = 0; m < d.nR; m++) for (n = 0; n < d.nC; n++) {
+      var o = offsetAt(p, m, n);
+      if (o > maxOff) maxOff = o;
+    }
+
+    // coordinate labels
+    ctx.fillStyle = muted;
+    ctx.font = '10px ui-monospace, Menlo, monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (n = 0; n < d.nC; n++) ctx.fillText('n=' + n, ox + n * cell + cell / 2, oy - 11);
+    ctx.textAlign = 'right';
+    for (m = 0; m < d.nR; m++) ctx.fillText('m=' + m, ox - 6, oy + m * cell + cell / 2);
+
+    // cells
+    var pad = Math.max(1.5, cell * 0.04);
+    for (m = 0; m < d.nR; m++) {
+      for (n = 0; n < d.nC; n++) {
+        var off = offsetAt(p, m, n);
+        var t = maxOff > 0 ? off / maxOff : 0;
+        var x = ox + n * cell, y = oy + m * cell;
+        ctx.fillStyle = lerpColor(t);
+        ctx.beginPath();
+        ctx.roundRect(x + pad, y + pad, cell - 2 * pad, cell - 2 * pad, 4);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.14)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = t > 0.55 ? '#f0fdf4' : '#14532d';
+        ctx.font = '600 ' + Math.max(10, Math.round(cell * 0.3)) + 'px ui-monospace, Menlo, monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(String(off), x + cell / 2, y + cell / 2 + 0.5);
+      }
+    }
+
+    // memory-order walk: connect cell centers in ascending offset order
+    var order = [];
+    for (m = 0; m < d.nR; m++) for (n = 0; n < d.nC; n++) order.push([offsetAt(p, m, n), m, n]);
+    order.sort(function (a, b) { return a[0] - b[0]; });
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(ox, oy, cell * d.nC, cell * d.nR);
+    ctx.clip();
+    ctx.beginPath();
+    var i;
+    for (i = 0; i < order.length; i++) {
+      var cx = ox + order[i][2] * cell + cell / 2;
+      var cy = oy + order[i][1] * cell + cell / 2;
+      if (i === 0) ctx.moveTo(cx, cy); else ctx.lineTo(cx, cy);
+    }
+    ctx.strokeStyle = 'rgba(22,163,74,0.5)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    // mark offset 0
+    ctx.beginPath();
+    ctx.arc(ox + order[0][2] * cell + cell / 2, oy + order[0][1] * cell + cell / 2, 4, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(22,163,74,0.9)';
+    ctx.fill();
+    ctx.restore();
+
+    // hover highlight
+    if (hover && hover.m < d.nR && hover.n < d.nC) {
+      ctx.strokeStyle = cssVar('--accent', '#15803d');
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.roundRect(ox + hover.n * cell + pad, oy + hover.m * cell + pad, cell - 2 * pad, cell - 2 * pad, 4);
+      ctx.stroke();
+    }
+
+    geom = { ox: ox, oy: oy, cell: cell, nR: d.nR, nC: d.nC };
+  }
+
+  function hoverText(p, m, n) {
+    var dr = decompose(m, p.rows), dc = decompose(n, p.cols);
+    var terms = [], i;
+    for (i = 0; i < dr.digits.length; i++) terms.push(dr.digits[i] + '·' + p.rows[i][1]);
+    for (i = 0; i < dc.digits.length; i++) terms.push(dc.digits[i] + '·' + p.cols[i][1]);
+    var pre = (p.rows.length > 1 || p.cols.length > 1)
+      ? '(m,n)=(' + m + ',' + n + ') → i=(' + dr.digits.join(',') + '), j=(' + dc.digits.join(',') + ') → '
+      : '(m,n)=(' + m + ',' + n + ') → ';
+    return pre + terms.join(' + ') + ' = ' + (dr.off + dc.off);
+  }
+
+  controls.addEventListener('click', function (e) {
+    var btn = e.target.closest('button');
+    if (!btn) return;
+    current = btn.getAttribute('data-preset');
+    var bs = controls.querySelectorAll('button'), i;
+    for (i = 0; i < bs.length; i++) bs[i].classList.toggle('active', bs[i] === btn);
+    hover = null;
+    formulaEl.textContent = PRESETS[current].formula;
+    draw();
+  });
+
+  canvas.addEventListener('mousemove', function (e) {
+    if (!geom) return;
+    var r = canvas.getBoundingClientRect();
+    var x = e.clientX - r.left, y = e.clientY - r.top;
+    var n = Math.floor((x - geom.ox) / geom.cell);
+    var m = Math.floor((y - geom.oy) / geom.cell);
+    if (m >= 0 && m < geom.nR && n >= 0 && n < geom.nC) {
+      if (!hover || hover.m !== m || hover.n !== n) {
+        hover = { m: m, n: n };
+        formulaEl.textContent = hoverText(PRESETS[current], m, n);
+        draw();
+      }
+    } else if (hover) {
+      hover = null;
+      formulaEl.textContent = PRESETS[current].formula;
+      draw();
+    }
+  });
+  canvas.addEventListener('mouseleave', function () {
+    if (hover) {
+      hover = null;
+      formulaEl.textContent = PRESETS[current].formula;
+      draw();
+    }
+  });
+
+  var raf = null;
+  window.addEventListener('resize', function () {
+    if (raf) cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(draw);
+  });
+  if (window.matchMedia) {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', draw);
+  }
+
+  formulaEl.textContent = PRESETS.colmajor.formula;
+  draw();
+
+  /* ── TV-partition figure ───────────────────────────── */
+  var TV_COLORS = ['#bfdbfe', '#bbf7d0', '#fde68a', '#fecaca', '#ddd6fe', '#99f6e4', '#fbcfe8', '#d1d5db'];
+  function fillTV(id, ownerFn) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    var m, n;
+    for (m = 0; m < 4; m++) {
+      for (n = 0; n < 16; n++) {
+        var t = ownerFn(m, n);
+        var c = document.createElement('div');
+        c.className = 'tv-cell';
+        c.style.background = TV_COLORS[t];
+        c.textContent = 'T' + t;
+        el.appendChild(c);
+      }
+    }
+  }
+  // 8 threads as a (2,4) grid over a 4×16 tile
+  fillTV('tv-blocked', function (m, n) { return (m >> 1) * 4 + (n >> 2); }); // 1×4 contiguous chunks
+  fillTV('tv-raked', function (m, n) { return (m >> 1) * 4 + (n % 4); });    // column-strided values
+})();
+</script>
+
+</body>
+</html>
