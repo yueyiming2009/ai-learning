@@ -183,6 +183,19 @@
       font-size: 0.79rem; color: var(--ink); margin-top: 10px; min-height: 1.4em;
     }
 
+    /* ── Hierarchical-shape anatomy ──────────── */
+    .anatomy { background: var(--fig-bg); border: 1px solid var(--border); border-radius: 10px; padding: 18px 18px 10px; margin: 1.4em 0; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+    .anatomy-expr { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 0.97rem; text-align: center; margin-bottom: 14px; }
+    .anatomy-lab { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin: 0 3px; }
+    .ma { display: inline-block; min-width: 1.45em; text-align: center; padding: 0 4px; margin: 0 1px; border-radius: 5px; font-weight: 600; color: #1f2937; }
+    .ma-i0 { background: #bfdbfe; } .ma-i1 { background: #60a5fa; }
+    .ma-j0 { background: #fde68a; } .ma-j1 { background: #fbbf24; }
+    .anatomy-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+    .anatomy-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 0.82rem; line-height: 1.5; }
+    .anatomy-card .ma { font-size: 0.82rem; }
+    .anatomy-ss { font-family: ui-monospace, Menlo, monospace; font-size: 0.75rem; color: var(--muted); margin-left: 5px; white-space: nowrap; }
+    .anatomy-card p { margin: 6px 0 0; color: var(--ink); }
+
     /* ── TV-partition figure ─────────────────── */
     .tv-wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin: 6px 0 2px; }
     .tv-panel h4 { font-size: 0.83rem; font-weight: 600; margin: 0 0 8px; letter-spacing: 0.02em; }
@@ -278,7 +291,31 @@
 
   <p>A 4×8 matrix stored column-major is <code>(4,8):(1,4)</code>: moving down a column steps 1 element in memory, moving across a row steps 4. Row-major is <code>(4,8):(8,1)</code>. CuTe's default (<code>cute.make_layout((4,8))</code>) is compact column-major — "LayoutLeft," with the <em>leftmost</em> mode fastest — the opposite of PyTorch's row-major convention, which is why the worked kernel below builds its layouts with an explicit <code>order</code>.</p>
 
-  <p>Two things make this more than a strided-tensor rerun. First, shapes can be <strong>hierarchical</strong>: any mode can itself be a (shape, stride) pair, so <code>((2,2),(2,4)):((1,4),(2,8))</code> is a 4×8 matrix whose rows and columns are each split into a within-tile and an across-tile sub-mode — tiling expressed <em>inside</em> the type, not as loop bounds. Second, strides are unconstrained: overlapping, padded, and repeating layouts are all legal functions, which is exactly what broadcasting, leading-dimension padding, and swizzled shared-memory patterns need.</p>
+  <p>Two things make this more than a strided-tensor rerun. First, shapes can be <strong>hierarchical</strong>: any mode can itself be a (shape, stride) pair. The notation is dense on first sight, so build the tiled layout <code>((2,2),(2,4)):((1,4),(2,8))</code> up in two moves — it is still the same 4×8 matrix, just counted differently:</p>
+
+  <ol>
+    <li><strong>Split each flat mode in two.</strong> The 4 rows become <code>(2,2)</code>: a counter i₀ for the row <em>inside</em> a 2×2 tile and a counter i₁ for <em>which</em> tile-row. The 8 columns become <code>(2,4)</code>: j₀ inside the tile, j₁ across the four tile-columns. Nothing has moved in memory — the same 32 cells are now addressed by four small counters instead of two, with m = i₀ + 2·i₁ and n = j₀ + 2·j₁.</li>
+    <li><strong>Give each sub-mode its own stride.</strong> The within-tile counters get small strides (1 and 2), so a tile's four cells sit at consecutive offsets; the across-tile counters get large ones (4 and 8), so each tile begins where the previous one ends. The offset is the same stride dot product as before — just with four terms.</li>
+  </ol>
+
+  <p>That is the whole trick: memory now fills one 2×2 tile completely before moving to the next — the blocking every GEMM diagram draws, expressed <em>inside the type</em> instead of as loop bounds. Decoded sub-mode by sub-mode:</p>
+
+  <div class="anatomy" aria-label="Anatomy of the hierarchical layout ((2,2),(2,4)):((1,4),(2,8))">
+    <div class="anatomy-expr">
+      <span class="anatomy-lab">shape</span>((<span class="ma ma-i0">2</span>,<span class="ma ma-i1">2</span>),(<span class="ma ma-j0">2</span>,<span class="ma ma-j1">4</span>))&nbsp;:&nbsp;<span class="anatomy-lab">stride</span>((<span class="ma ma-i0">1</span>,<span class="ma ma-i1">4</span>),(<span class="ma ma-j0">2</span>,<span class="ma ma-j1">8</span>))
+    </div>
+    <div class="anatomy-cards">
+      <div class="anatomy-card"><span class="ma ma-i0">i₀</span><span class="anatomy-ss">size 2 · stride 1</span><p>row inside a tile — the cell below is the very next offset</p></div>
+      <div class="anatomy-card"><span class="ma ma-i1">i₁</span><span class="anatomy-ss">size 2 · stride 4</span><p>which tile-row — the tile below starts one whole tile (4 cells) later</p></div>
+      <div class="anatomy-card"><span class="ma ma-j0">j₀</span><span class="anatomy-ss">size 2 · stride 2</span><p>column inside a tile — a step right skips the tile's 2-cell column</p></div>
+      <div class="anatomy-card"><span class="ma ma-j1">j₁</span><span class="anatomy-ss">size 4 · stride 8</span><p>which tile-column — the next one starts 8 cells later (a stack of two tiles)</p></div>
+    </div>
+    <p class="figure-caption" style="text-align:center;">
+      offset = i₀·1 + i₁·4 + j₀·2 + j₁·8. Try (m,n) = (3,5): m = 3 → i = (1,1), n = 5 → j = (1,2), so offset = 1·1 + 1·4 + 1·2 + 2·8 = 23 — hover that cell in the tiled preset below and the same arithmetic appears.
+    </p>
+  </div>
+
+  <p>Second, strides are unconstrained: overlapping, padded, and repeating layouts are all legal functions, which is exactly what broadcasting, leading-dimension padding, and swizzled shared-memory patterns need.</p>
 
   <div class="figure">
     <div class="layout-controls" id="layout-controls" role="group" aria-label="Layout preset selector">
@@ -293,9 +330,10 @@
       <span class="legend-item"><span class="lg sw" style="--c:#dcfce7"></span> offset 0</span>
       <span class="legend-item"><span class="lg sw" style="--c:#14532d"></span> highest offset</span>
       <span class="legend-item"><span class="lg" style="--c:rgba(22,163,74,0.55)"></span> memory-order walk</span>
+      <span class="legend-item"><span class="lg" style="--c:#3b82f6"></span> 2×2 tile boundary (tiled preset)</span>
     </div>
     <p class="figure-caption">
-      <strong>A layout is a function, not a storage format.</strong> The same 4×8 logical grid under four coordinate→offset functions; each cell shows its offset \(L(m,n)\), and the line walks linear memory in order. Column-major snakes down columns; the hierarchical layout fills each 2×2 tile before moving to the next — the shape a per-thread value fragment or a swizzled shared-memory tile wants; the padded layout (leading dimension 8 for 4 rows) leaves holes at offsets 4–7 of every column. Hover any cell to see its offset computed as the stride dot product.
+      <strong>A layout is a function, not a storage format.</strong> The same 4×8 logical grid under four coordinate→offset functions; each cell shows its offset \(L(m,n)\), and the line walks linear memory in order. Column-major snakes down columns; the tiled layout fills each blue-outlined 2×2 tile before moving to the next — the shape a per-thread value fragment or a swizzled shared-memory tile wants; the padded layout (leading dimension 8 for 4 rows) leaves holes at offsets 4–7 of every column. Hover any cell to see its offset computed as the stride dot product.
     </p>
   </div>
 
@@ -617,7 +655,7 @@ acc  = thr_mma.make_fragment_C(thr_mma.partition_C(gC))
     },
     tiled: {
       rows: [[2, 1], [2, 4]], cols: [[2, 2], [4, 8]],
-      formula: 'offset = i₀·1 + j₀·2 + i₁·4 + j₁·8 — each 2×2 tile fills before the walk moves on'
+      formula: 'offset = i₀·1 + i₁·4 + j₀·2 + j₁·8 — fills a 2×2 tile, then the tile below, then the next tile-column'
     },
     padded: {
       rows: [[4, 1]], cols: [[8, 8]],
@@ -711,6 +749,20 @@ acc  = thr_mma.make_fragment_C(thr_mma.partition_C(gC))
         ctx.font = '600 ' + Math.max(10, Math.round(cell * 0.3)) + 'px ui-monospace, Menlo, monospace';
         ctx.textAlign = 'center';
         ctx.fillText(String(off), x + cell / 2, y + cell / 2 + 0.5);
+      }
+    }
+
+    // tile boundaries for hierarchical presets: one box per (inner-row-mode × inner-col-mode) tile
+    if (p.rows.length > 1 || p.cols.length > 1) {
+      var tR = p.rows[0][0], tC = p.cols[0][0];
+      ctx.strokeStyle = '#3b82f6';
+      ctx.lineWidth = 2;
+      for (m = 0; m < d.nR; m += tR) {
+        for (n = 0; n < d.nC; n += tC) {
+          ctx.beginPath();
+          ctx.roundRect(ox + n * cell + 1, oy + m * cell + 1, cell * tC - 2, cell * tR - 2, 6);
+          ctx.stroke();
+        }
       }
     }
 
