@@ -348,8 +348,9 @@
     <strong>NVIDIA H100 SXM5</strong> as the running example) can compute, how fast it can feed that compute from
     each level of memory, and how fast it can talk to other GPUs. Three numbers per level, and almost every
     performance question reduces to comparing two of them. The last two sections carry the same mental model onto
-    <strong>Blackwell</strong> and compare the <strong>H100 / H200 / B200 / B300</strong> SKUs you’ll actually be
-    scheduled on.
+    <strong>Blackwell</strong>, compare the <strong>H100 / H200 / B200 / B300</strong> SKUs you’ll actually be
+    scheduled on, and split the <strong>B300-vs-GB300</strong> decision — the same chip in two very different
+    machines.
   </p>
 
   <div class="spec-grid">
@@ -932,9 +933,11 @@
   <h3>10.3 · NVL72 — the rack as one NVLink domain</h3>
   <p>
     5th-generation NVLink doubles per-GPU bandwidth to <strong>1.8 TB/s</strong>. The structural change is what it
-    enables: in a <strong>GB200 NVL72</strong> rack, NVLink Switch trays wire <strong>72 GPUs into a single, all-to-all
-    NVLink domain</strong> (~130 TB/s aggregate) — every GPU talks to every other at NVLink speed, not just the 8 in a
-    box. It is the same non-blocking crossbar from <a href="#nvlink">§7</a>, scaled from one baseboard to a whole rack.
+    enables: in a <strong>GB200 / GB300 NVL72</strong> rack, NVLink Switch trays wire <strong>72 GPUs into a single,
+    all-to-all NVLink domain</strong> (~130 TB/s aggregate) — every GPU talks to every other at NVLink speed, not just
+    the 8 in a box. It is the same non-blocking crossbar from <a href="#nvlink">§7</a>, scaled from one baseboard to a
+    whole rack. Note the 72-GPU domain is a property of the Grace-based rack product, not of the chip: the same
+    B200/B300 on an HGX baseboard still lives in an 8-GPU domain (<a href="#b300-vs-gb300">§11.3</a>).
   </p>
   <p>
     That moves the <a href="#network">cliff from §8</a> outward. On H100 the NVLink domain <em>is</em> the node — about
@@ -976,7 +979,7 @@
       <tr><td>HBM capacity</td><td>80 GB HBM3</td><td><strong>141 GB</strong> HBM3e</td><td><strong>192 GB</strong> HBM3e</td><td><strong>288 GB</strong> HBM3e</td></tr>
       <tr><td>HBM bandwidth</td><td>3.35 TB/s</td><td><strong>4.8 TB/s</strong></td><td><strong>~8 TB/s</strong></td><td>~8 TB/s</td></tr>
       <tr><td>NVLink / GPU</td><td>0.9 TB/s (gen 4)</td><td>0.9 TB/s (gen 4)</td><td><strong>1.8 TB/s</strong> (gen 5)</td><td>1.8 TB/s (gen 5)</td></tr>
-      <tr><td>NVLink domain</td><td>8 (HGX)</td><td>8 (HGX)</td><td><strong>72</strong> (NVL72)</td><td>72 (NVL72)</td></tr>
+      <tr><td>NVLink domain</td><td>8 (HGX)</td><td>8 (HGX)</td><td>8 (HGX) · <strong>72</strong> (GB200 NVL72)</td><td>8 (HGX) · 72 (GB300 NVL72)</td></tr>
       <tr><td>TDP (approx.)</td><td>700 W</td><td>~700 W</td><td>~1,000 W</td><td>~1,400 W</td></tr>
     </tbody>
   </table>
@@ -1017,8 +1020,54 @@
       cards at 94 GB each for inference.</li>
     <li><strong>Grace-X superchips</strong> pair an Arm CPU with the GPU(s) over a 900 GB/s NVLink-C2C link:
       <em>GH200</em> (Grace + H200), <em>GB200</em> (Grace + 2×B200), <em>GB300</em> (Grace + 2×B300). The GB200/GB300
-      modules are the literal building blocks of the <a href="#blackwell">NVL72</a> rack.</li>
+      modules are the literal building blocks of the <a href="#blackwell">NVL72</a> rack — and for a training cluster
+      that G prefix changes more than any row of the SKU table; <a href="#b300-vs-gb300">§11.3</a> unpacks it.</li>
   </ul>
+
+  <h3 id="b300-vs-gb300">11.3 · B300 vs. GB300 — same silicon, two different machines</h3>
+  <p>
+    The table in §11 describes the <em>chip</em>. “B300 or GB300?” is not a chip question — the GPU package, its
+    FLOPs, and its 288 GB of HBM are identical — it is a question about the <em>machine built around the chip</em>.
+    <strong>B300</strong> in practice means an <strong>HGX B300</strong> baseboard: eight SXM packages plus two x86
+    host CPUs, a node that slots into a conventional datacenter. <strong>GB300</strong> means the Grace superchip,
+    which only ships inside the liquid-cooled <strong>GB300 NVL72</strong> rack: 72 GPUs and 36 Grace CPUs behaving
+    as one machine. Three differences matter for training:
+  </p>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th></th><th>HGX B300 (x86 node)</th><th>GB300 NVL72 (Grace rack)</th></tr></thead>
+    <tbody>
+      <tr><td>Unit you deploy</td><td>a node: 8 B300 + 2 x86 CPUs</td><td>a rack: 72 B300 + 36 Grace</td></tr>
+      <tr><td>NVLink domain</td><td><strong>8 GPUs</strong> — the baseboard</td><td><strong>72 GPUs</strong> — the rack (§10.3)</td></tr>
+      <tr><td>CPU ↔ GPU link</td><td>PCIe Gen5 ×16, ~64 GB/s, separate address space</td><td>NVLink-C2C, <strong>900 GB/s</strong>, cache-coherent</td></tr>
+      <tr><td>Memory beyond HBM</td><td>host DDR — a staging area you DMA through</td><td>~480 GB LPDDR5X per Grace, coherently addressable: <strong>~17 TB per rack</strong> on top of ~21 TB HBM</td></tr>
+      <tr><td>Scale-out NIC</td><td>ConnectX-8, 800 Gb/s per GPU</td><td>ConnectX-8, 800 Gb/s per GPU — the same</td></tr>
+      <tr><td>Power &amp; cooling</td><td>node-level, air or liquid</td><td>liquid only, ~130–140 kW per rack</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <ul>
+    <li><strong>Where the network cliff sits.</strong> Per-GPU scale-out bandwidth is the same on both, so the real
+      delta is the fast domain’s size. On HGX B300 the <a href="#network">cliff from §8</a> is at the node: TP caps at
+      8-way, and everything wider — DP, PP, MoE AlltoAll — crosses the 800 Gb/s network. On GB300 the cliff moves to
+      the rack: <a href="../systems/tensor-parallelism.html#cap">TP</a> and
+      <a href="../systems/moe-parallelism.html">EP</a> can go up to 72-way on NVLink, and the network carries only the
+      DP/PP axes. Same chip, different parallelism plan.</li>
+    <li><strong>Offload becomes a real memory tier.</strong> Over PCIe, host RAM is where
+      <a href="../systems/training-frameworks.html#deepspeed">ZeRO-Offload</a> pays a steep step-time tax — ~64 GB/s,
+      explicit copies. Grace’s coherent 900 GB/s link is ~14× that, about a quarter of HBM bandwidth, so parking
+      optimizer state, EMA weights, or spilled activations in LPDDR5X stops being a last resort and becomes part of
+      the memory budget: ~38 TB of addressable fast memory per rack instead of ~21 TB.</li>
+    <li><strong>The roofline doesn’t move.</strong> Per-GPU FLOPs, HBM bandwidth, and the §6 ridge point are identical
+      — kernels don’t care which machine they run in. What you buy with GB300 is communication topology and memory
+      capacity; what you pay is a rack-scale, liquid-cooled commitment, where HGX B300 deploys node by node in an
+      existing facility.</li>
+  </ul>
+  <div class="note">
+    Naming trap: NVIDIA’s GPU counting changed with Blackwell Ultra. The HGX board is branded <em>HGX B300 NVL16</em>
+    — eight dual-die packages, each <em>die</em> counted as a GPU — while <em>NVL72</em> counts the 72 packages
+    (36 superchips × 2). When comparing domain sizes, count packages: 8 vs. 72.
+  </div>
 
   <!-- ════════════════════════ SUMMARY ════════════════════════ -->
   <h2 id="summary">12 · Summary</h2>
@@ -1062,6 +1111,10 @@
     <div class="summary-card">
       <div class="summary-card-label">NVL72</div>
       <p>The NVSwitch crossbar scales from 8 GPUs to 72 — moving the network cliff outward so TP/EP fit on NVLink.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Chip vs. machine</div>
+      <p>B300 vs. GB300 is the machine, not the chip: HGX = 8-GPU domain + PCIe hosts; GB300 NVL72 = 72-GPU domain + coherent Grace memory.</p>
     </div>
   </div>
 
