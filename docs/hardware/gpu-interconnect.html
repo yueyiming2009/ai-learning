@@ -354,13 +354,10 @@
   <h2 id="nvlink">1 · Inside a node: NVLink and the NVSwitch crossbar</h2>
   <p>
     Eight H100s in a server (an HGX/DGX baseboard) are wired together not by a ring or a mesh but by a set of
-    <strong>NVSwitch</strong> chips that form a <strong>non-blocking all-to-all crossbar</strong>. Each GPU has
-    <strong>18 NVLink-4 links</strong> (each ~50 GB/s, a few 100 Gbps lanes), totalling
-    <strong>900 GB/s bidirectional</strong> (≈450 GB/s each way) into the switch fabric, and — crucially —
-    <em>every</em> GPU can drive that full bandwidth to <em>every</em> other GPU at the same time. There is no
-    shared bottleneck and no notion of “distance” between GPUs in a node. Those 18 links are not one fat pipe: they
-    <strong>fan out across the 4 NVSwitches</strong>, which is exactly what lets the fabric stay non-blocking — and
-    they set the ceiling on how many parallel <a href="../systems/nccl.html#selection">NCCL channels</a> can run at once.
+    <strong>NVSwitch</strong> chips forming a <strong>non-blocking all-to-all crossbar</strong>. Each GPU drives
+    <strong>18 NVLink-4 links</strong> — <strong>900 GB/s bidirectional</strong> (≈450 GB/s each way), fanned out
+    across the 4 switch chips — and, crucially, <em>every</em> GPU can push that full bandwidth to <em>every</em>
+    other GPU at the same time. No shared bottleneck, no notion of “distance” inside the node.
   </p>
 
   <div class="diagram">
@@ -420,13 +417,9 @@
 
   <h3>How NVSwitch really builds one</h3>
   <p>
-    NVSwitch is not a grid of analog crosspoints flipping on and off. Since 2018, NVLink has been a
-    <strong>packet-switched</strong> fabric, so an NVSwitch chip is a small high-speed router that <em>behaves
-    like</em> a non-blocking crossbar. Inside one chip: input ports buffer arriving NVLink packets (using
-    <em>virtual output queues</em> — a queue per destination — to avoid head-of-line blocking); an
-    <strong>arbiter</strong> solves a bipartite matching each cycle to decide which inputs cross to which outputs;
-    the crossbar datapath carries that permutation; and packets are routed by physical address (a host-side
-    <em>fabric manager</em> programs the tables). The “closing of crosspoints” is done in logic, every cycle.
+    NVSwitch is not a grid of analog crosspoints — NVLink is a <strong>packet-switched</strong> fabric, and an
+    NVSwitch chip is a small router that <em>behaves like</em> a non-blocking crossbar: input ports queue arriving
+    packets per destination, and an arbiter picks a fresh input→output permutation every cycle.
   </p>
   <div class="table-wrap">
     <table>
@@ -440,9 +433,9 @@
     </table>
   </div>
   <p>
-    That last row is the hardware behind <a href="../systems/nccl.html#nvls">NVLS</a>: because the switch has an ALU, it can
-    <em>sum</em> data from many GPUs and multicast the result — so an AllReduce can be done <em>in the switch</em>
-    instead of circulating partial sums around a ring.
+    The last row matters: because the switch has an ALU, an AllReduce can be summed and multicast <em>in the
+    switch</em> instead of circulating partial sums around a ring — the hardware behind NCCL’s
+    <a href="../systems/nccl.html#nvls">NVLS</a> algorithm.
   </p>
 
   <h3>Why the crossbar stops at the node</h3>
@@ -473,7 +466,7 @@
   </p>
   <ul>
     <li><strong>One NIC per GPU.</strong> A DGX H100 has <strong>8 ConnectX-7 adapters at 400 Gb/s (≈50 GB/s)</strong>,
-      one dedicated to each GPU (plus separate NICs for storage). The 1-NIC-per-GPU ratio holds on NVL72 too.</li>
+      one per GPU — a ratio that holds on NVL72 too.</li>
     <li><strong>GPU and its NIC under the same PCIe switch</strong>, so the GPU reaches the wire without crossing the CPU.</li>
     <li><strong>A fabric of switches</strong> wiring the NICs together (next).</li>
   </ul>
@@ -487,8 +480,7 @@
   </div>
   <p>
     What makes this fast is <strong>GPUDirect RDMA</strong>: the NIC reads and writes <em>GPU HBM directly</em> over
-    PCIe, bypassing the CPU and host memory entirely. NIC&nbsp;B performs a remote DMA straight into GPU&nbsp;B’s
-    HBM — no CPU copy, no staging in system RAM. Without it, every inter-node byte would detour through the CPU and
+    PCIe — no CPU copy, no staging in system RAM. Without it, every inter-node byte would detour through the CPU and
     the effective bandwidth would collapse. (The GPU↔NIC PCIe Gen5 ×16 link is ~64 GB/s, which is why a 50 GB/s NIC
     fits comfortably under it.)
   </p>
@@ -504,9 +496,9 @@
     The GPU-specific twist is <strong>rail optimization</strong>: with 8 GPUs/8 NICs per node, NIC&nbsp;\(i\) of
     <em>every</em> node connects to the same “rail” (leaf switch \(i\)) — so there are 8 parallel rails. GPU&nbsp;\(i\)
     on any node reaches GPU&nbsp;\(i\) on any other node by <strong>staying on its rail — one leaf-switch hop</strong>,
-    never touching the contended spine. NCCL leans on this: it structures collectives so same-rank GPUs talk on their
-    own rail. Cross-rail traffic either climbs to the spine, or first hops over <em>NVLink inside the node</em> to the
-    GPU on the right rail — combining both networks.
+    never touching the contended spine. Cross-rail traffic either climbs to the spine or first hops over NVLink to
+    the right-rail GPU inside the node; how <a href="../systems/nccl.html">NCCL</a> schedules collectives around
+    this is its own page.
   </p>
 
   <div class="diagram">
@@ -519,12 +511,11 @@
 
   <h3>InfiniBand vs Ethernet</h3>
   <p>
-    Two transport flavors carry this: <strong>InfiniBand</strong> (NVIDIA Quantum) — lossless, RDMA-native,
-    hardware congestion control, and the default in most large training clusters; its switches can even do
-    in-network reduction (<strong>SHARP</strong> → NCCL’s CollNet, the InfiniBand analogue of NVLS). And
-    <strong>RoCE / Ethernet</strong> (RDMA over Converged Ethernet; NVIDIA Spectrum-X) — RDMA over Ethernet, needing
-    careful PFC/ECN tuning to stay lossless, favored by some hyperscalers. Either way the transport is RDMA: the
-    point is to move GPU memory to GPU memory without the CPUs in the loop.
+    Two transport flavors carry this: <strong>InfiniBand</strong> (NVIDIA Quantum) — lossless, RDMA-native, with
+    in-network reduction (<strong>SHARP</strong>), the default in most large training clusters — and
+    <strong>RoCE / Ethernet</strong> (NVIDIA Spectrum-X) — RDMA over Ethernet, needing careful tuning to stay
+    lossless, favored by some hyperscalers. Either way the transport is RDMA: GPU memory to GPU memory without the
+    CPUs in the loop.
   </p>
 
   <div class="result">
@@ -578,7 +569,7 @@
     </div>
     <div class="summary-card">
       <div class="summary-card-label">NVSwitch reality</div>
-      <p>Packet-switched: virtual output queues + a per-cycle arbiter emulate the crossbar; the SHARP ALU sums and multicasts — AllReduce in the switch.</p>
+      <p>Packet-switched: per-destination queues + a per-cycle arbiter emulate the crossbar; the SHARP ALU sums and multicasts — AllReduce in the switch.</p>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">GPUDirect RDMA</div>
