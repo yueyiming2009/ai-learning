@@ -679,7 +679,8 @@ DP rank 1: EP group B  (GPUs 2,3,6,7)</code></pre>
       </div>
       <div>
         <div class="compare-col-label">FSDP / FSDP2</div>
-        <p style="margin:.3em 0; font-size:.92rem">FSDP is a DP-family <em>sharder</em>, not a mesh planner. FSDP2 composes cleanly with TP (per-parameter <code>DTensor</code> on a 2-D mesh) — but it has no first-class EP axis: no expert process groups, no dispatch AlltoAll, no expert-sharded optimizer state. It treats expert weights as ordinary parameters sharded over DP, so every rank all-gathers the <em>full expert table</em> to compute its local tokens — the §3 arithmetic-intensity win never materializes, and the AllGather traffic scales with total (not activated) expert parameters.</p>
+        <p style="margin:.3em 0; font-size:.92rem">FSDP is a DP-family <em>sharder</em> — the API itself has no EP concept: no expert process groups, no dispatch AlltoAll, no expert-sharded optimizer state. Wrapped around a stock MoE model, it shards expert weights over DP and every rank all-gathers the <em>full expert table</em> to compute its local tokens — the §3 arithmetic-intensity win never materializes, and AllGather traffic scales with total (not activated) expert parameters.</p>
+        <p style="margin:.3em 0; font-size:.92rem">EP <em>can</em> be assembled around FSDP: <a href="https://pytorch.org/blog/enabling-up-to-41-faster-pre-training-mxfp8-and-deepep-for-deepseek-v3-on-b200-with-torchtitan/">torchtitan composes an EP mesh axis (DTensor) with FSDP2 and TP</a> — the DeepSeek-V3 pre-training recipe — and <a href="https://pytorch.org/blog/training-moes/">MegaBlocks-style expert layers compose with FSDP/HSDP via DeviceMesh</a> (the DBRX lineage); DeepSpeed-MoE ships its own <code>ep_size</code> axis. In every such case the EP axis comes from <em>the MoE layer implementation plus an explicit mesh plan</em> — never from FSDP itself.</p>
       </div>
     </div>
   </div>
@@ -693,9 +694,11 @@ DP rank 1: EP group B  (GPUs 2,3,6,7)</code></pre>
 
   <div class="result">
     <div class="result-label">Practical consequence</div>
-    If a profile of an FSDP training run says the fix is <code>EP=8, TP=1–2</code>, the lever is not a config
-    change — it is a framework migration. Plan the move to Megatron (or an equivalent EP-native stack) as the
-    prerequisite, not as an optimization inside the current one.
+    If a profile of a stock FSDP fine-tune stack (e.g. a Transformers MoE model wrapped in FSDP) says the fix is
+    <code>EP=8, TP=1–2</code>, the lever is not a config change — it is a migration to an EP-native stack:
+    Megatron-Core (the most integrated EP × TP × PP planner), torchtitan, DeepSpeed-MoE, or a MegaBlocks-style
+    integration. Which one is a stack decision to plan as the prerequisite, not an optimization inside the
+    current run.
   </div>
 
   <!-- ════════════════════════ SUMMARY ════════════════════════ -->
@@ -723,7 +726,7 @@ DP rank 1: EP group B  (GPUs 2,3,6,7)</code></pre>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">Framework support</div>
-      <p>EP is first-class in Megatron-family stacks (EP × TP × DP × PP, grouped GEMM, dispatch built in). FSDP/FSDP2 compose with TP but have no EP axis — reaching EP on an FSDP run means a framework migration, not a config change.</p>
+      <p>EP comes from the MoE stack, not the sharder: first-class in Megatron-Core, DeepSpeed-MoE, torchtitan (EP + FSDP2 + TP on DTensor), MegaBlocks. Plain FSDP has no EP axis — reaching EP on a stock FSDP run is a stack migration, not a config change.</p>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">Throughput ceiling</div>
