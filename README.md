@@ -69,9 +69,10 @@ Tile IR virtual ISA), the Blackwell kernel model (tcgen05, TMEM, CTA pairs, bloc
 NVFP4/MX MMA), and the chunkwise
 linear-attention kernels (FLA) — sharding & collectives
 (NCCL), tensor/pipeline/sequence/MoE parallelism, the ZeRO/FSDP distributed-training ladder, and
-the training-framework landscape (Megatron-LM vs. DeepSpeed vs. FSDP/TorchTitan), and a
-TorchTitan deep dive (the DTensor/DeviceMesh substrate, the per-block wrapping order, async TP,
-float8, reshardable checkpoints).
+the training-framework landscape (the cross-framework comparison and crossover) with per-framework
+deep dives into Megatron-LM (the vertically integrated NVIDIA stack: fusion, overlap, FP8, EP),
+DeepSpeed (the ZeRO ladder, Offload/Infinity, ZeRO++), and TorchTitan (the DTensor/DeviceMesh
+substrate, the per-block wrapping order, async TP, float8, reshardable checkpoints).
 
 ### 05 · Reinforcement Learning — [docs/rl/](docs/rl/), [rl/](rl/)
 From first-principles RL theory to LLM post-training and the systems that run it.

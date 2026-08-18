@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Megatron-LM — Vertically Integrated Model Parallelism</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #0d9488;
+      --accent-light: #f0fdfa;
+      --warning-bg: #fffbeb;
+      --warning-border: #f59e0b;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --compare-bg: #eff6ff;
+      --compare-border: #3b82f6;
+      --ink: #374151;
+      --code-bg: #f1f5f9;
+      --code-fg: #0f766e;
+      --row-hover: #fafafa;
+      --note-fg: #78350f;
+      --result-fg: #16a34a;
+      --compare-fg: #2563eb;
+      --teal-border: #99f6e4;
+      --fig-bg: #ffffff;
+      --nav-bg: rgba(255,255,255,0.92);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #2dd4bf;
+        --accent-light: #10201e;
+        --warning-bg: #251c0b;
+        --warning-border: #b45309;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --compare-bg: #101a2b;
+        --compare-border: #1e40af;
+        --ink: #cbd5e1;
+        --code-bg: #1c2531;
+        --code-fg: #5eead4;
+        --row-hover: #191e25;
+        --note-fg: #fcd34d;
+        --result-fg: #4ade80;
+        --compare-fg: #60a5fa;
+        --teal-border: #134e4a;
+        --fig-bg: #14181e;
+        --nav-bg: rgba(15,17,21,0.9);
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .nav-back {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      white-space: nowrap;
+      transition: color 0.15s;
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+    .nav-back:hover { color: var(--text); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #0d9488 0%, #0891b2 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.85;
+      font-size: 0.97rem;
+      max-width: 620px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+
+    /* ── Code ────────────────────────────────── */
+    pre {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      line-height: 1.55;
+      margin: 1.2em 0;
+    }
+    code {
+      font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    p code, li code, td code {
+      background: var(--code-bg);
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 0.88em;
+      color: var(--code-fg);
+    }
+    pre code { background: none; padding: 0; color: var(--text); }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+    td.ctr, th.ctr { text-align: center; }
+
+    /* ── Step boxes ──────────────────────────── */
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    /* ── Callout / note ──────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+    .note::before { content: '⚠ '; }
+
+    /* ── Result / boxed statement ────────────── */
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Comparison box ──────────────────────── */
+    .compare {
+      background: var(--compare-bg);
+      border: 1.5px solid var(--compare-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .compare-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--compare-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 10px;
+    }
+    .compare-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 600px) { .compare-grid { grid-template-columns: 1fr; } }
+    .compare-col-label {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--ink);
+      margin-bottom: 4px;
+    }
+
+    /* ── Summary card ────────────────────────── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .summary-card {
+      background: var(--accent-light);
+      border: 1px solid var(--teal-border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .summary-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    /* ── Cross-link banner ───────────────────── */
+    .xref {
+      background: var(--accent-light);
+      border: 1px solid var(--teal-border);
+      border-radius: 8px;
+      padding: 12px 18px;
+      margin: 1.4em 0;
+      font-size: 0.92rem;
+    }
+    .xref a { color: var(--accent); font-weight: 600; text-decoration: none; }
+    .xref a:hover { text-decoration: underline; }
+
+    /* ── Footer ──────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Megatron-LM</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#stack">The stack</a>
+    <a href="#strategy">Strategy layer</a>
+    <a href="#fusion">Fusion</a>
+    <a href="#overlap">Overlap</a>
+    <a href="#te">Transformer Engine</a>
+    <a href="#moe">MoE / EP</a>
+    <a href="#costs">The costs</a>
+    <a href="#ecosystem">Ecosystem</a>
+    <a href="#summary">Summary</a>
+  </div>
+  <a class="nav-back" href="../index.html">Home</a>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Systems · Distributed</span>
+  <h1>Megatron-LM — Vertically Integrated Model Parallelism</h1>
+  <p>Megatron's bargain: express your model in its transformer blocks, and in exchange every layer of the stack is co-designed — the parallelism knows the model, the kernels know the parallelism, and the communication schedule knows both. This page is the deep dive: the 5-D strategy layer, the fused-kernel and overlap engineering that make it fast even at TP&nbsp;=&nbsp;1, FP8 via Transformer Engine, and what the bargain costs.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="xref">
+    One of three framework deep dives — the others are <a href="deepspeed.html">DeepSpeed →</a> and
+    <a href="torchtitan.html">TorchTitan →</a>; the cross-framework comparison, throughput crossover, and decision
+    guide live on <a href="training-frameworks.html">Training Frameworks →</a>. The parallelism math itself is on
+    <a href="tensor-parallelism.html">TP →</a>, <a href="sequence-parallelism.html">SP →</a>,
+    <a href="pipeline-parallelism.html">PP →</a>, <a href="moe-parallelism.html">EP →</a>, and
+    <a href="torch-distributed.html">the ZeRO ladder →</a>.
+  </div>
+
+  <!-- ════════════════════════ THE STACK ════════════════════════ -->
+  <h2 id="stack">1 · What "Megatron" names — four layers of one NVIDIA stack</h2>
+  <p>
+    Megatron began as the 2019 NVIDIA paper (Shoeybi et al.) that introduced <em>intra-layer</em> model parallelism —
+    what everyone now calls tensor parallelism — for transformers, demonstrated on an 8.3B GPT-2 when "large" meant
+    1.5B. Since then it has accreted the rest of the modern parallelism toolbox and split into a small family of
+    names worth keeping straight:
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th style="width:26%;">Name</th><th>What it is</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>Megatron-Core</strong></td>
+          <td>The library: parallelism engine (TP/SP/PP/CP/EP process groups and schedules), transformer building
+            blocks, the distributed optimizer, distributed checkpointing, and dataset/dataloader utilities. This is
+            what other systems build on — NVIDIA's NeMo, and verl's Megatron backend.</td>
+        </tr>
+        <tr>
+          <td><strong>Megatron-LM</strong></td>
+          <td>The reference pretraining scripts on top of Megatron-Core — the <code>pretrain_gpt.py</code> entry
+            point, argument parsing, training loop. What most people mean by "training with Megatron."</td>
+        </tr>
+        <tr>
+          <td><strong>Transformer Engine (TE)</strong></td>
+          <td>The kernel layer underneath: fused attention, fused norms, and above all FP8/MXFP8 GEMMs with scaling
+            management (§5). Usable independently, but co-designed with Megatron-Core.</td>
+        </tr>
+        <tr>
+          <td><strong>NeMo</strong></td>
+          <td>The enterprise wrapper: Megatron-Core plus recipes, data curation, checkpoint conversion
+            (Megatron-Bridge for the Hugging Face boundary), and deployment tooling.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    The design philosophy across all four layers is <strong>vertical integration on NVIDIA hardware</strong>. The
+    model must be expressed in Megatron's own transformer blocks — you don't bring an arbitrary
+    <code>nn.Module</code> — and in exchange the whole stack is co-designed top to bottom. That bargain is exactly
+    what a compiler can't yet give you across TP/PP boundaries, and it is the source of both everything in §3–5
+    and everything in §7.
+  </p>
+
+  <!-- ════════════════════════ STRATEGY ════════════════════════ -->
+  <h2 id="strategy">2 · The strategy layer — 5-D parallelism + distributed optimizer</h2>
+  <p>
+    Strategy-wise, Megatron is the reference implementation of everything on the parallelism pages, composed out of
+    the box with the process-group bookkeeping done for you:
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th style="width:22%;">Axis</th><th style="width:34%;">Megatron's implementation</th><th>Placement logic</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>TP</strong> <a href="tensor-parallelism.html">→</a></td>
+          <td><code>--tensor-model-parallel-size</code>; column→row sandwich per attention/MLP</td>
+          <td>Intra-node, on NVLink — its all-reduces sit on the critical path of every layer</td>
+        </tr>
+        <tr>
+          <td><strong>SP</strong> <a href="sequence-parallelism.html">→</a></td>
+          <td><code>--sequence-parallel</code>; shards the norms/dropouts TP leaves replicated, turning TP's all-reduces into all-gather + reduce-scatter pairs</td>
+          <td>Rides the TP group; enables selective activation recomputation</td>
+        </tr>
+        <tr>
+          <td><strong>PP</strong> <a href="pipeline-parallelism.html">→</a></td>
+          <td><code>--pipeline-model-parallel-size</code> + <code>--num-layers-per-virtual-pipeline-stage</code>; interleaved 1F1B</td>
+          <td>Across nodes — only skinny activations cross the slow links</td>
+        </tr>
+        <tr>
+          <td><strong>CP</strong></td>
+          <td><code>--context-parallel-size</code>; ring-attention sharding of the sequence dim for long context</td>
+          <td>Between TP and DP in the hierarchy</td>
+        </tr>
+        <tr>
+          <td><strong>EP</strong> <a href="moe-parallelism.html">→</a></td>
+          <td><code>--expert-model-parallel-size</code>; token dispatch + grouped GEMM (§6)</td>
+          <td>Orthogonal to TP for expert weights; all-to-all across the EP group</td>
+        </tr>
+        <tr>
+          <td><strong>DP + dist-opt</strong> <a href="torch-distributed.html">→</a></td>
+          <td><code>--use-distributed-optimizer</code>; optimizer state and fp32 master weights sharded over the DP group — ZeRO-1 in Megatron's dialect</td>
+          <td>Outermost; gradient buckets reduce-scatter, parameters all-gather (§4)</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    What makes it "Megatron" is not any one axis but that all of them compose — the canonical frontier recipe
+    (TP×SP intra-node, PP across nodes, CP for long context, EP for MoE, sharded DP outermost) is a command-line
+    flag combination, not an integration project.
+  </p>
+
+  <!-- ════════════════════════ FUSION ════════════════════════ -->
+  <h2 id="fusion">3 · Fusion — why it's fast even at TP = 1</h2>
+  <p>
+    Run Megatron-LM with <code>--tensor-model-parallel-size 1</code> — pure data parallelism — and it can still beat
+    a naive PyTorch loop on the same model. That advantage is the step-implementation layer: hand-written kernels
+    that starve the memory bus. A transformer step is matmuls interleaved with bandwidth-bound pointwise ops, each
+    of which normally costs a full HBM read + write of an activation tensor; Megatron fuses the standard chains:
+  </p>
+  <div class="step">
+    <div class="step-label">The fusion inventory</div>
+    <ul style="margin:0;">
+      <li><strong>Bias + activation</strong> (GeLU / SwiGLU) in the MLP — one kernel forward, one backward.</li>
+      <li><strong>Bias + dropout + residual-add</strong> after attention and MLP — three ops, one kernel.</li>
+      <li><strong>Persistent LayerNorm/RMSNorm</strong> — the row stays in registers/shared memory across the whole reduction.</li>
+      <li><strong>Scaled masked softmax</strong> — scaling, <em>implicit</em> causal masking (the triangular kernel never materializes a mask tensor), and the max-subtraction trick fused, in fp16/bf16 end-to-end. Superseded by FlashAttention / TE fused attention, which Megatron selects automatically — see <a href="../inference/flash-attention.html">FlashAttention</a>.</li>
+      <li><strong>Fused RoPE</strong> and a <strong>vocab-parallel fused cross-entropy</strong> that never materializes the full softmax over the vocabulary — the largest single activation in a small model.</li>
+      <li><strong>Gradient-accumulation fusion</strong>: the weight-gradient GEMM accumulates <em>directly into</em> the persistent fp32 main-grad buffer via the GEMM epilogue (see <a href="cublas.html">cublasLt epilogues</a>), instead of emitting a bf16 gradient and launching a separate cast-and-add. With gradient accumulation this saves a full read+write of every weight gradient per micro-batch.</li>
+      <li><strong>Fused optimizer + multi-tensor apply</strong>: Adam updates, grad-norm computation, and clipping batched across all parameter tensors into a handful of launches — thousands of small kernels removed per step, which matters most precisely when the model is small.</li>
+    </ul>
+  </div>
+  <p>
+    Note what this list is: each item is something <code>torch.compile</code> can now produce for an eager model
+    (the TorchTitan bet), but Megatron had them years earlier and still holds the edge where fusion must cross a
+    collective — which is the subject of the next section.
+  </p>
+
+  <!-- ════════════════════════ OVERLAP ════════════════════════ -->
+  <h2 id="overlap">4 · Overlap — never let a collective idle the SMs</h2>
+  <p>
+    The second half of the implementation layer is hiding communication behind compute. Each flag attacks a
+    different exposure:
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th style="width:34%;">Mechanism</th><th>What it hides</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>--overlap-grad-reduce</code></td>
+          <td>DP gradient communication: gradients live in one contiguous, bucketed buffer; each bucket's
+            reduce-scatter launches the moment backward fills it, hiding the reduction behind the rest of backward.</td>
+        </tr>
+        <tr>
+          <td><code>--overlap-param-gather</code></td>
+          <td>The distributed optimizer's parameter all-gather: updated parameters for layer \(n{+}1\) prefetch
+            while layer \(n\) computes forward.</td>
+        </tr>
+        <tr>
+          <td><code>--tp-comm-overlap</code></td>
+          <td>The one that attacks TP's <em>intrinsic</em> critical-path cost: GEMMs are split into chunks and the
+            TP all-gather/reduce-scatter ring-pipelines against the compute chunks — "userbuffers," direct NVLink
+            writes bypassing NCCL's staging. TorchTitan's async TP is the compiler-generated version of this idea.</td>
+        </tr>
+        <tr>
+          <td><strong>Interleaved 1F1B</strong></td>
+          <td>The pipeline bubble: the virtual-pipeline schedule shrinks it by the interleave factor — see
+            <a href="pipeline-parallelism.html">Pipeline Parallelism</a>.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ════════════════════════ TE / FP8 ════════════════════════ -->
+  <h2 id="te">5 · Transformer Engine — turnkey FP8</h2>
+  <p>
+    On top of the fusion/overlap layer sits <strong>Transformer Engine</strong>: FP8 GEMMs on Hopper and Blackwell
+    with the numerics managed for you. The hard part of FP8 training is not the GEMM — it is <em>scaling</em>:
+    e4m3/e5m2 have so little range that every tensor needs a scale factor, tracked and updated as magnitudes drift
+    during training. TE owns that bookkeeping (delayed scaling from an amax history on Hopper; per-block scaling in
+    the MXFP8 formats on Blackwell — see <a href="blackwell-kernels.html">the Blackwell kernel model</a>), keeps the
+    accumulations and master weights in higher precision, and exposes the result as drop-in transformer modules.
+  </p>
+  <div class="result">
+    <div class="result-label">Why it matters</div>
+    For large-model pretraining FP8 is routinely another <strong>1.3–1.6×</strong> step-time win —<br>
+    and for a long time Megatron was the only stack where it was turnkey.
+  </div>
+  <p>
+    That exclusivity has eroded — torchao float8 gives the PyTorch-native stack the same GEMMs — but TE still moves
+    first on each hardware generation's formats and keeps the deepest integration with Megatron's fused kernels
+    (the FP8 cast fuses into adjacent operations rather than costing its own memory pass).
+  </p>
+
+  <!-- ════════════════════════ MOE ════════════════════════ -->
+  <h2 id="moe">6 · MoE — the most battle-hardened EP planner</h2>
+  <p>
+    Megatron-Core is the reference for large-scale MoE training (the full math is on
+    <a href="moe-parallelism.html">MoE Parallelism</a>). The pieces it owns:
+  </p>
+  <ul>
+    <li><strong>An explicit EP axis</strong> (<code>--expert-model-parallel-size</code>) composed with TP, PP, CP,
+      and DP in one planner — expert weights can be simultaneously expert-parallel and tensor-parallel, with
+      separate process groups for each.</li>
+    <li><strong>Token dispatchers</strong> — all-gather-based for small EP degrees, all-to-all for large; the
+      permute/unpermute machinery that routes each token to its experts and restores order afterward, with
+      DeepEP-style kernels available for the all-to-all at scale.</li>
+    <li><strong>Grouped GEMM</strong> expert compute, so E experts' small matmuls run as one batched kernel instead
+      of E launches — the difference between an MoE layer that is bandwidth-bound and one that isn't.</li>
+    <li><strong>The operational toolbox</strong>: aux-loss and aux-free load balancing, capacity factors and
+      token dropping (or dropless), and upcycling dense checkpoints into MoE.</li>
+  </ul>
+  <p>
+    This is the corner of the landscape where Megatron's lead is largest: EP-native alternatives exist
+    (TorchTitan's dp2ep, DeepSpeed-MoE, MegaBlocks), but the EP × TP × PP composition at frontier scale is
+    Megatron's home turf.
+  </p>
+
+  <!-- ════════════════════════ COSTS ════════════════════════ -->
+  <h2 id="costs">7 · The costs — the mirror image of the benefits</h2>
+  <ul>
+    <li><strong>NVIDIA-only in practice.</strong> The kernel layer and TE are CUDA; the ROCm forks trail. The
+      vertical integration that buys the MFU is an integration <em>with one vendor's hardware</em>.</li>
+    <li><strong>A rigid model zoo.</strong> Anything that isn't a Megatron transformer block is a porting project —
+      new attention variants, novel layer types, or research architectures mean writing Megatron-dialect modules,
+      not just an eager <code>nn.Module</code>.</li>
+    <li><strong>Checkpoint friction.</strong> Its own distributed checkpoint format; conversion to/from Hugging
+      Face is a perennial friction point that dedicated bridge tooling (Megatron-Bridge, verl's model merger)
+      exists to paper over.</li>
+    <li><strong>A large, research-hostile codebase.</strong> The price of hand-written layer 3: the code that
+      makes it fast is the code that makes it hard to modify. This is the single strongest argument that routes
+      researchers to <a href="torchtitan.html">TorchTitan</a> and fine-tuners to
+      <a href="deepspeed.html">DeepSpeed</a>/FSDP.</li>
+  </ul>
+
+  <!-- ════════════════════════ ECOSYSTEM ════════════════════════ -->
+  <h2 id="ecosystem">8 · Ecosystem — where you meet Megatron</h2>
+  <p>
+    Directly, in frontier pretraining: it is the default engine for dense and MoE pretraining at ≳10B on NVIDIA
+    clusters, chasing MFU. Indirectly, in two places: <strong>NeMo</strong>, which packages Megatron-Core for
+    enterprise training; and <strong>RL post-training</strong>, where verl exposes a Megatron-Core backend for
+    the actor/critic's training half — the standard choice once the policy model outgrows the FSDP backend
+    (see <a href="../rl/verl-architecture.html">verl</a>). In both cases what's being reused is Megatron-Core the
+    library, not the pretraining scripts — the four-layer split of §1 doing its job.
+  </p>
+
+  <div class="compare">
+    <div class="compare-label">The one-paragraph verdict</div>
+    <div class="compare-grid">
+      <div>
+        <div class="compare-col-label">Choose Megatron when</div>
+        Pretraining dense or MoE models ≳10B on NVIDIA clusters where the last 10–20% of MFU pays for itself;
+        MoE at large EP degrees; FP8/MXFP8 on the newest hardware; or scaling verl RL training past what FSDP
+        handles.
+      </div>
+      <div>
+        <div class="compare-col-label">Look elsewhere when</div>
+        The model doesn't fit Megatron's blocks and porting isn't worth it (→ <a href="deepspeed.html">DeepSpeed</a>,
+        FSDP); you need to modify the training system itself (→ <a href="torchtitan.html">TorchTitan</a>); or the
+        run is a fine-tune where framework overhead dwarfs kernel wins (→ HF Trainer/Accelerate).
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════ SUMMARY ════════════════════════ -->
+  <h2 id="summary">Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">The bargain</div>
+      <p>Express the model in Megatron's blocks; get a co-designed stack (Core → LM → TE → NeMo) where parallelism, kernels, and schedules know each other. Vertical integration on NVIDIA hardware.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Strategy layer</div>
+      <p>TP + SP + interleaved-1F1B PP + CP + EP + distributed-optimizer DP (ZeRO-1), all first-class and composable by flag — the reference implementation of the parallelism pages.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Implementation layer</div>
+      <p>Hand-fused kernels (norms, softmax, cross-entropy, grad-accumulation epilogues) plus overlap everywhere (bucketed grad reduce, param prefetch, TP userbuffers) — fast even at TP=1; FP8 turnkey via TE.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">The price</div>
+      <p>NVIDIA-only, a rigid model zoo, checkpoint-format friction, and a codebase that resists modification — the exact trade TorchTitan and DeepSpeed exist to refuse.</p>
+    </div>
+  </div>
+
+</div>
+
+<footer>Personal ML notes · <a href="https://github.com/yueyiming2009/ai-learning" style="color:inherit;text-decoration:underline;">source on GitHub</a></footer>
+
+</body>
+</html>

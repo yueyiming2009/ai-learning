@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light dark">
-  <title>Training Frameworks — Megatron-LM, DeepSpeed, and FSDP/TorchTitan</title>
+  <title>Training Frameworks — The Landscape, the Crossover, and Choosing</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -439,9 +439,7 @@
   <div class="nav-links">
     <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
     <a href="#layers">Three layers</a>
-    <a href="#megatron">Megatron-LM</a>
-    <a href="#deepspeed">DeepSpeed</a>
-    <a href="#fsdp">FSDP / TorchTitan</a>
+    <a href="#bets">Three bets</a>
     <a href="#compare">Head to head</a>
     <a href="#crossover">The crossover</a>
     <a href="#choosing">Choosing</a>
@@ -453,14 +451,16 @@
 
 <div class="hero">
   <span class="hero-pill">Systems · Distributed</span>
-  <h1>Training Frameworks — Megatron-LM, DeepSpeed, and FSDP/TorchTitan</h1>
-  <p>The parallelism math is public and identical everywhere. What frameworks actually sell is an <em>implementation</em>: which state they shard, which kernels they fuse, and what they overlap behind compute. This page compares the three main pretraining stacks — and locates the throughput crossover between them.</p>
+  <h1>Training Frameworks — The Landscape, the Crossover, and Choosing</h1>
+  <p>The parallelism math is public and identical everywhere. What frameworks actually sell is an <em>implementation</em>: which state they shard, which kernels they fuse, and what they overlap behind compute. This is the cross-framework page — the three-layer model for comparing stacks honestly, the head-to-head, the throughput crossover, and the decision guide. Each framework's deep dive is its own page.</p>
 </div>
 
 <div class="page-wrap">
 
   <div class="xref">
-    This page assumes the strategy pages: <a href="torch-distributed.html">Data Parallelism &amp; the ZeRO ladder →</a>,
+    The per-framework deep dives: <a href="megatron-lm.html">Megatron-LM →</a>, <a href="deepspeed.html">DeepSpeed →</a>,
+    and <a href="torchtitan.html">TorchTitan (FSDP2) →</a>. This page assumes the strategy pages:
+    <a href="torch-distributed.html">Data Parallelism &amp; the ZeRO ladder →</a>,
     <a href="tensor-parallelism.html">Tensor Parallelism →</a>, <a href="pipeline-parallelism.html">Pipeline Parallelism →</a>,
     and <a href="sequence-parallelism.html">Sequence Parallelism →</a>. RL post-training frameworks (verl, TRL, slime) are a
     layer <em>above</em> these — see <a href="../rl/rl-frameworks-landscape.html">the RL framework landscape →</a> and
@@ -504,179 +504,54 @@
     </table>
   </div>
   <p>
-    The three stacks stake out different corners: <strong>Megatron-LM</strong> is model-parallelism-first (a vertically
-    integrated NVIDIA stack where layer 3 is hand-written), <strong>DeepSpeed</strong> is memory-first (the ZeRO ladder
-    plus offload, attachable to any PyTorch model), and <strong>FSDP/TorchTitan</strong> is composability-first
-    (sharded data parallelism as a native PyTorch primitive, with the compiler doing the fusion). None dominates:
-    which one is fastest depends on where your run sits on the model-size × cluster-size plane.
+    The three stacks stake out different corners of that three-layer space, and none dominates: which one is
+    fastest depends on where your run sits on the model-size × cluster-size plane.
   </p>
 
-  <!-- ════════════════════════ MEGATRON ════════════════════════ -->
-  <h2 id="megatron">2 · Megatron-LM — model parallelism first</h2>
+  <!-- ════════════════════════ THREE BETS ════════════════════════ -->
+  <h2 id="bets">2 · The three bets — capsule summaries</h2>
   <p>
-    Megatron began as the 2019 NVIDIA paper that introduced tensor parallelism for transformers, and accreted the rest of
-    the modern parallelism toolbox: interleaved-1F1B pipeline parallelism, sequence parallelism with selective
-    recomputation, expert and context parallelism, and a ZeRO-1-style <em>distributed optimizer</em>. Today the
-    parallelism engine and transformer building blocks live in <strong>Megatron-Core</strong> (a library others build on —
-    NVIDIA's NeMo, and verl's Megatron backend), with Megatron-LM proper being the reference pretraining scripts on top.
-  </p>
-  <p>
-    The design philosophy is <strong>vertical integration on NVIDIA hardware</strong>. The model must be expressed in
-    Megatron's own transformer blocks — you don't bring an arbitrary <code>nn.Module</code> — and in exchange every layer
-    of the stack is co-designed: the parallelism knows the model structure, the kernels know the parallelism, and the
-    communication schedule knows both. That bargain is exactly what a compiler can't yet give you across TP/PP boundaries.
-  </p>
-
-  <h3>2.1 The strategy layer: 4-D parallelism + distributed optimizer</h3>
-  <p>
-    Strategy-wise, Megatron is the reference implementation of everything on the parallelism pages:
-    <a href="tensor-parallelism.html">TP</a> within a node, <a href="sequence-parallelism.html">SP</a> to shard the
-    norms/dropouts TP leaves replicated, <a href="pipeline-parallelism.html">interleaved 1F1B PP</a> across nodes,
-    and DP outermost — with the distributed optimizer sharding optimizer state and fp32 master weights over the DP
-    group (ZeRO-1 in Megatron's dialect). What makes it "Megatron" is not any one axis but that all of them compose
-    out of the box, with the process-group bookkeeping done for you.
-  </p>
-
-  <h3>2.2 The implementation layer: why it's fast even at TP = 1</h3>
-  <p>
-    Run Megatron-LM with <code>--tensor-model-parallel-size 1</code> — pure data parallelism — and it can still beat a
-    naive PyTorch loop on the same model. That advantage is the step-implementation layer, and it decomposes into
-    fusion and overlap.
+    Each framework is one coherent bet about where the engineering leverage lives. The capsules below are the
+    whole argument in miniature; each links to its deep-dive page.
   </p>
 
   <div class="step">
-    <div class="step-label">Fusion — starve the memory bus</div>
-    <p style="margin-top:0;">
-      A transformer step is matmuls interleaved with bandwidth-bound pointwise ops, each of which normally costs a full
-      HBM read + write of an activation tensor. Megatron fuses the standard chains into single kernels:
+    <div class="step-label">Megatron-LM — model parallelism, vertically integrated</div>
+    <p style="margin:0;">
+      Express the model in Megatron's transformer blocks, and every layer of the stack is co-designed on NVIDIA
+      hardware: 5-D parallelism (TP+SP+PP+CP+EP, plus a ZeRO-1 distributed optimizer) composable by flag,
+      hand-fused kernels that make it fast even at TP=1, overlap machinery for every collective, and turnkey FP8
+      via Transformer Engine. The price: NVIDIA-only, a rigid model zoo, checkpoint friction, and a codebase that
+      resists modification. <a href="megatron-lm.html">Read the Megatron-LM deep dive →</a>
     </p>
-    <ul style="margin-bottom:0;">
-      <li><strong>Bias + activation</strong> (GeLU / SwiGLU) in the MLP — one kernel forward, one backward.</li>
-      <li><strong>Bias + dropout + residual-add</strong> after attention and MLP — three ops, one kernel.</li>
-      <li><strong>Persistent LayerNorm/RMSNorm</strong> — the row stays in registers/shared memory across the whole reduction.</li>
-      <li><strong>Scaled masked softmax</strong> — scaling, <em>implicit</em> causal masking (the triangular kernel never materializes a mask tensor), and the max-subtraction trick fused, in fp16/bf16 end-to-end. Superseded by FlashAttention / Transformer Engine fused attention, which Megatron selects automatically — see <a href="../inference/flash-attention.html">FlashAttention</a>.</li>
-      <li><strong>Fused RoPE</strong> and a <strong>vocab-parallel fused cross-entropy</strong> that never materializes the full softmax over the vocabulary — the largest single activation in a small model.</li>
-      <li><strong>Gradient-accumulation fusion</strong>: the weight-gradient GEMM accumulates <em>directly into</em> the persistent fp32 main-grad buffer via the GEMM epilogue, instead of emitting a bf16 gradient and launching a separate cast-and-add. With gradient accumulation this saves a full read+write of every weight gradient per micro-batch.</li>
-      <li><strong>Fused optimizer + multi-tensor apply</strong>: Adam updates, grad-norm computation, and clipping batched across all parameter tensors into a handful of launches — thousands of small kernels removed per step, which matters most precisely when the model is small.</li>
-    </ul>
   </div>
 
   <div class="step">
-    <div class="step-label">Overlap — never let a collective idle the SMs</div>
-    <ul style="margin:0;">
-      <li><code>--overlap-grad-reduce</code> — gradients live in one contiguous, bucketed buffer; each bucket's reduce-scatter launches the moment backward fills it, hiding DP communication behind the rest of backward.</li>
-      <li><code>--overlap-param-gather</code> — with the distributed optimizer, the all-gather of updated parameters for layer \(n{+}1\) prefetches while layer \(n\) computes forward.</li>
-      <li><code>--tp-comm-overlap</code> — the one that attacks TP's <em>intrinsic</em> critical-path cost: GEMMs are split into chunks and the TP all-gather/reduce-scatter ring-pipelines against the compute chunks ("userbuffers", direct NVLink writes).</li>
-      <li><strong>Interleaved 1F1B</strong> — the virtual-pipeline schedule shrinks the bubble by the interleave factor; see <a href="pipeline-parallelism.html">Pipeline Parallelism</a>.</li>
-    </ul>
+    <div class="step-label">DeepSpeed — memory first, wrap anything</div>
+    <p style="margin:0;">
+      Stop replicating state: the ZeRO ladder shards optimizer state, gradients, and parameters over the DP group,
+      then Offload moves the optimizer to CPU RAM and Infinity pages to NVMe — capacity bounded by disk, not HBM —
+      while ZeRO++ compresses stage-3's communication for thin networks. It attaches to any unmodified
+      <code>nn.Module</code> via a JSON config, which is why it became the scaling engine inside HF
+      Trainer/Accelerate. The caveats: TP isn't native, the ZeRO-3 hook machinery fights <code>torch.compile</code>,
+      and offload trades step time for capacity. <a href="deepspeed.html">Read the DeepSpeed deep dive →</a>
+    </p>
   </div>
 
-  <p>
-    On top sits <strong>Transformer Engine</strong>: FP8 GEMMs on Hopper/Blackwell with per-tensor scaling handled for
-    you — for large-model pretraining this is routinely another 1.3–1.6× step-time win, and for a long time Megatron was
-    the only stack where FP8 was turnkey.
-  </p>
-  <p>
-    The costs are the mirror image of the benefits: NVIDIA-only in practice, a rigid model zoo (anything that isn't a
-    Megatron transformer block is a porting project), its own checkpoint format (conversion tooling to/from Hugging Face
-    is a perennial friction point), and a large, research-hostile codebase — the price of hand-written layer 3.
-  </p>
-
-  <!-- ════════════════════════ DEEPSPEED ════════════════════════ -->
-  <h2 id="deepspeed">3 · DeepSpeed — memory first</h2>
-  <p>
-    DeepSpeed's organizing idea is the <strong>ZeRO ladder</strong> — it is the framework that introduced it
-    (see <a href="torch-distributed.html">the ZeRO ladder</a> for the math). Where Megatron asks "how do I split the
-    <em>computation</em>," DeepSpeed asks "how do I stop <em>replicating state</em>," and then pushes that question
-    further than anyone else:
-  </p>
-  <div class="table-wrap">
-    <table>
-      <thead><tr><th style="width:30%;">Rung</th><th>What it shards / moves</th></tr></thead>
-      <tbody>
-        <tr><td><strong>ZeRO-1 / 2 / 3</strong></td><td>Optimizer state → + gradients → + parameters, sharded over the DP group. Stage 3 ≈ FSDP.</td></tr>
-        <tr><td><strong>ZeRO-Offload</strong></td><td>Optimizer state and the update step move to CPU RAM — a 10B-parameter fine-tune on one GPU.</td></tr>
-        <tr><td><strong>ZeRO-Infinity</strong></td><td>Parameters, gradients, and optimizer state page between GPU, CPU, and NVMe — capacity bounded by disk, not HBM.</td></tr>
-        <tr><td><strong>ZeRO++</strong></td><td>Attacks stage 3's communication bill: quantized all-gather/reduce-scatter and hierarchical (intra-node secondary) partitioning to cut inter-node volume.</td></tr>
-      </tbody>
-    </table>
+  <div class="step">
+    <div class="step-label">FSDP2 / TorchTitan — composable native primitives + compiler</div>
+    <p style="margin:0;">
+      Sharded data parallelism as a core PyTorch type: FSDP2 shards per-parameter as <code>DTensor</code> on a
+      device mesh, TP/SP/PP/CP/EP compose as layouts on the same mesh, and the fused kernels come from
+      <code>torch.compile</code>, SDPA/FlexAttention, and torchao float8 rather than hand-written CUDA. TorchTitan
+      is the reference pretraining stack assembled from these parts — a few thousand readable lines, best read as
+      "Megatron rebuilt from composable PyTorch primitives," still chasing Megatron's last few MFU points at the
+      largest scales. <a href="torchtitan.html">Read the TorchTitan deep dive →</a>
+    </p>
   </div>
-  <p>
-    The second defining trait is the <strong>adoption model</strong>: DeepSpeed wraps your existing
-    <code>nn.Module</code> — no rewrite — and is driven by a JSON config, which is why it became the default scaling
-    engine inside Hugging Face <code>Trainer</code>/<code>Accelerate</code>. The typical DeepSpeed user never calls
-    DeepSpeed directly:
-  </p>
-  <pre><code>{
-  "train_micro_batch_size_per_gpu": 4,
-  "bf16": { "enabled": true },
-  "zero_optimization": {
-    "stage": 3,
-    "offload_optimizer": { "device": "cpu" },
-    "overlap_comm": true
-  }
-}</code></pre>
-  <p>
-    DeepSpeed also ships a pipeline engine, MoE support, and inference kernels, but its center of gravity has always
-    been memory: it is the stack you reach for when the model doesn't fit and you can't (or won't) restructure it.
-    The honest caveats: tensor parallelism is not a first-class native axis the way it is in Megatron (you bring
-    Megatron-style TP to it, or go without), the hooks-based ZeRO-3 machinery interacts awkwardly with
-    <code>torch.compile</code>, and offload trades step time for capacity — NVMe paging keeps a run alive, not fast.
-  </p>
-
-  <div class="compare">
-    <div class="compare-label">DeepSpeed ZeRO-3 vs. FSDP — same math, different engineering</div>
-    <div class="compare-grid">
-      <div>
-        <div class="compare-col-label">DeepSpeed ZeRO-3</div>
-        Per-parameter partitioning via Python hooks that intercept module access; JSON-config driven; richest offload
-        story (CPU/NVMe); turnkey inside HF Trainer. External library with its own runtime and optimizer wrappers.
-      </div>
-      <div>
-        <div class="compare-col-label">FSDP2</div>
-        Per-parameter sharding as <code>DTensor</code> — a core PyTorch type. Composes natively with
-        <code>torch.compile</code>, TP, and device meshes. Leaner offload (CPU only), but no impedance mismatch with
-        the rest of the PyTorch stack. One axis it does not provide: expert parallelism — EP comes from an
-        EP-native MoE stack (Megatron-Core, DeepSpeed-MoE, torchtitan, MegaBlocks), with torchtitan showing EP
-        composed with FSDP2 + TP on DTensor (see <a href="moe-parallelism.html#frameworks">MoE Parallelism →</a>).
-      </div>
-    </div>
-  </div>
-
-  <!-- ════════════════════════ FSDP / TORCHTITAN ════════════════════════ -->
-  <h2 id="fsdp">4 · FSDP &amp; TorchTitan — composability first</h2>
-  <p>
-    FSDP is PyTorch's answer to ZeRO-3, and its second generation is the interesting one. <strong>FSDP1</strong> flattened
-    each wrapped module's parameters into one <code>FlatParameter</code> — efficient, but a monolith that fought the
-    compiler and made anything per-parameter (partial freezing, mixed dtypes, TP composition) painful.
-    <strong>FSDP2</strong> (<code>fully_shard</code>) re-implements the same collective schedule with
-    <strong>per-parameter <code>DTensor</code> sharding</strong>: every parameter is individually a distributed tensor
-    carrying its own sharding spec on a device mesh.
-  </p>
-  <pre><code>from torch.distributed.fsdp import fully_shard
-
-for block in model.layers:
-    fully_shard(block, mesh=dp_mesh)   # each block = one all-gather / reshard unit
-fully_shard(model, mesh=dp_mesh)
-model = torch.compile(model)           # fusion comes from the compiler, not hand-written kernels</code></pre>
-  <p>
-    That last line is the philosophy: where Megatron hand-writes its fused kernels, the PyTorch stack expects
-    <code>torch.compile</code> to fuse the pointwise chains, FlashAttention/SDPA to cover attention, and
-    <code>torch.optim.AdamW(fused=True)</code> to cover the optimizer — the individual Megatron advantages of §2.2,
-    delivered by a compiler over an unmodified model.
-  </p>
-  <p>
-    <strong>TorchTitan</strong> is PyTorch's reference pretraining stack built from these parts: FSDP2 for the DP axis
-    (including HSDP hybrid sharding), TP/SP expressed as DTensor layouts on the same device mesh, pipeline parallelism,
-    <code>torch.compile</code>, float8 training, async TP (compiler-driven micro-pipelining of TP communication against
-    GEMMs — the same idea as Megatron's userbuffers), and distributed checkpointing. It is best read as
-    <em>"Megatron rebuilt from composable, native PyTorch parts"</em> — a few thousand lines of readable code rather
-    than a monolith, at the cost of being younger, Llama-shaped, and still chasing Megatron's last few MFU points at
-    the largest scales.
-  </p>
 
   <!-- ════════════════════════ HEAD TO HEAD ════════════════════════ -->
-  <h2 id="compare">5 · Head to head</h2>
+  <h2 id="compare">3 · Head to head</h2>
   <div class="table-wrap">
     <table>
       <thead>
@@ -736,7 +611,7 @@ model = torch.compile(model)           # fusion comes from the compiler, not han
   </div>
 
   <!-- ════════════════════════ CROSSOVER ════════════════════════ -->
-  <h2 id="crossover">6 · Where the crossover lives</h2>
+  <h2 id="crossover">4 · Where the crossover lives</h2>
   <p>
     "Is Megatron faster than FSDP?" has no context-free answer, but it has a clean structure. The two families pay for
     fundamentally different things:
@@ -789,7 +664,7 @@ model = torch.compile(model)           # fusion comes from the compiler, not han
     <li><strong>Criticality beats volume at small scale.</strong> FSDP's communication is asynchronous — bucketed,
       prefetched, hidden behind backward. TP's all-reduces are synchronous walls inside every layer (userbuffers/async-TP
       chip at this, they don't remove it). A model that fits comfortably under sharded DP should stay there: for
-      small models FSDP ≥ Megatron on throughput, and the residual gap is §2.2's kernels, not the parallelism.</li>
+      small models FSDP ≥ Megatron on throughput, and the residual gap is <a href="megatron-lm.html#fusion">Megatron's fused kernels</a>, not the parallelism.</li>
     <li><strong>Memory pressure flips the sign.</strong> When per-GPU state forces tiny micro-batches or full activation
       recomputation, sharded DP throughput collapses — you burn ~⅓ of compute re-running forward. TP/PP restore
       arithmetic intensity, and their byte bill (already sub-FSDP at large \(h\)) is worth paying.
@@ -801,7 +676,7 @@ model = torch.compile(model)           # fusion comes from the compiler, not han
   </ul>
 
   <!-- ════════════════════════ CHOOSING ════════════════════════ -->
-  <h2 id="choosing">7 · Choosing — a decision guide</h2>
+  <h2 id="choosing">5 · Choosing — a decision guide</h2>
   <ol>
     <li><strong>Model + optimizer state fits one GPU with headroom?</strong> DDP (or single-GPU). No sharding tax at all.</li>
     <li><strong>Fits when sharded across your GPUs?</strong> FSDP2 — add HSDP across nodes, <code>torch.compile</code>
@@ -822,7 +697,7 @@ model = torch.compile(model)           # fusion comes from the compiler, not han
   </div>
 
   <!-- ════════════════════════ LANDSCAPE ════════════════════════ -->
-  <h2 id="landscape">8 · The wider landscape</h2>
+  <h2 id="landscape">6 · The wider landscape</h2>
   <p>
     Around the big three sits a ring of frameworks that mostly <em>compose</em> or <em>repackage</em> them:
   </p>
