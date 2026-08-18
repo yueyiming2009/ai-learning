@@ -187,6 +187,7 @@
     <a href="#dp">DP interaction</a>
     <a href="#worked">Worked example</a>
     <a href="#ceiling">Throughput ceiling</a>
+    <a href="#frameworks">Framework support</a>
     <a href="#summary">Summary</a>
   </div>
   <a class="nav-back" href="../index.html">Home</a>
@@ -660,8 +661,45 @@ DP rank 1: EP group B  (GPUs 2,3,6,7)</code></pre>
     in RL fine-tuning (small rollout batches), AlltoAll latency is almost always the binding constraint.
   </div>
 
+  <!-- ════════════════════════ FRAMEWORKS ════════════════════════ -->
+  <h2 id="frameworks">9 · Framework support — where EP × TP actually runs</h2>
+  <p>
+    Everything above is framework-agnostic; support for it is not. The EP axis needs three things managed
+    as first-class state: expert-sharded parameters with their own process groups, the dispatch/combine
+    AlltoAll wired into the layer's forward and backward, and an optimizer + checkpoint layout that
+    understands a parameter existing on only one EP rank.
+  </p>
+
+  <div class="compare">
+    <div class="compare-label">Megatron-family vs. FSDP-family on the EP axis</div>
+    <div class="compare-grid">
+      <div>
+        <div class="compare-col-label">Megatron-LM / Megatron-Core</div>
+        <p style="margin:.3em 0; font-size:.92rem">EP is a first-class mesh axis: <code>EP × TP × DP × PP</code> configured together, grouped-GEMM expert execution, token dispatch built into the MoE layer, expert-aware distributed checkpointing. The TP-intra-node / EP-across-TP-groups layout of §7 is the shipped default, not an integration project.</p>
+      </div>
+      <div>
+        <div class="compare-col-label">FSDP / FSDP2</div>
+        <p style="margin:.3em 0; font-size:.92rem">FSDP is a DP-family <em>sharder</em>, not a mesh planner. FSDP2 composes cleanly with TP (per-parameter <code>DTensor</code> on a 2-D mesh) — but it has no first-class EP axis: no expert process groups, no dispatch AlltoAll, no expert-sharded optimizer state. It treats expert weights as ordinary parameters sharded over DP, so every rank all-gathers the <em>full expert table</em> to compute its local tokens — the §3 arithmetic-intensity win never materializes, and the AllGather traffic scales with total (not activated) expert parameters.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="note">
+    Hybrid architectures sharpen the gap: a model interleaving MoE FFN blocks with linear-attention layers
+    wants <em>different sharding per layer family</em> — EP for the experts, TP or plain DP for the
+    linear-attention state. That is a heterogeneous device mesh: natural to express in Megatron-Core's
+    per-layer specs, and outside what FSDP's wrap-and-shard model was designed to say.
+  </div>
+
+  <div class="result">
+    <div class="result-label">Practical consequence</div>
+    If a profile of an FSDP training run says the fix is <code>EP=8, TP=1–2</code>, the lever is not a config
+    change — it is a framework migration. Plan the move to Megatron (or an equivalent EP-native stack) as the
+    prerequisite, not as an optimization inside the current one.
+  </div>
+
   <!-- ════════════════════════ SUMMARY ════════════════════════ -->
-  <h2 id="summary">9 · Summary</h2>
+  <h2 id="summary">10 · Summary</h2>
   <div class="summary-grid">
     <div class="summary-card">
       <div class="summary-card-label">The MoE change</div>
@@ -682,6 +720,10 @@ DP rank 1: EP group B  (GPUs 2,3,6,7)</code></pre>
     <div class="summary-card">
       <div class="summary-card-label">TP in MoE</div>
       <p>TP still handles dense attention layers (unchanged from the dense case). For experts: EP, not TP. TP-within-expert only if a single expert exceeds NVLink capacity — rare.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Framework support</div>
+      <p>EP is first-class in Megatron-family stacks (EP × TP × DP × PP, grouped GEMM, dispatch built in). FSDP/FSDP2 compose with TP but have no EP axis — reaching EP on an FSDP run means a framework migration, not a config change.</p>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">Throughput ceiling</div>
