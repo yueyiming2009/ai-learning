@@ -398,6 +398,7 @@
     <a href="#moe">MoE / EP</a>
     <a href="#costs">The costs</a>
     <a href="#ecosystem">Ecosystem</a>
+    <a href="#bridge">HF bridge</a>
     <a href="#summary">Summary</a>
   </div>
   <a class="nav-back" href="../index.html">Home</a>
@@ -451,7 +452,8 @@
         <tr>
           <td><strong>NeMo</strong></td>
           <td>The enterprise wrapper: Megatron-Core plus recipes, data curation, checkpoint conversion
-            (Megatron-Bridge for the Hugging Face boundary), and deployment tooling.</td>
+            (<a href="#bridge">Megatron-Bridge</a> for the Hugging Face boundary — elaborated in §8), and
+            deployment tooling.</td>
         </tr>
       </tbody>
     </table>
@@ -628,8 +630,8 @@
       new attention variants, novel layer types, or research architectures mean writing Megatron-dialect modules,
       not just an eager <code>nn.Module</code>.</li>
     <li><strong>Checkpoint friction.</strong> Its own distributed checkpoint format; conversion to/from Hugging
-      Face is a perennial friction point that dedicated bridge tooling (Megatron-Bridge, verl's model merger)
-      exists to paper over.</li>
+      Face is a perennial friction point that dedicated bridge tooling (<a href="#bridge">Megatron-Bridge, §8</a>,
+      verl's model merger) exists to paper over.</li>
     <li><strong>A large, research-hostile codebase.</strong> The price of hand-written layer 3: the code that
       makes it fast is the code that makes it hard to modify. This is the single strongest argument that routes
       researchers to <a href="torchtitan.html">TorchTitan</a> and fine-tuners to
@@ -645,6 +647,53 @@
     the actor/critic's training half — the standard choice once the policy model outgrows the FSDP backend
     (see <a href="../rl/verl-architecture.html">verl</a>). In both cases what's being reused is Megatron-Core the
     library, not the pretraining scripts — the four-layer split of §1 doing its job.
+  </p>
+
+  <h3 id="bridge">The Hugging Face boundary — Megatron-Bridge</h3>
+  <p>
+    Almost every real Megatron run touches the Hugging Face ecosystem on one side or the other: post-training and
+    continued pretraining start <em>from</em> an HF checkpoint, and whatever you train has to come back <em>out</em>
+    as an HF checkpoint before vLLM, SGLang, or anyone else downstream can serve it. That boundary is harder than
+    "rename some tensors," for three stacked reasons:
+  </p>
+  <ul>
+    <li><strong>The formats disagree.</strong> An HF checkpoint is a set of <code>safetensors</code> files describing
+      one logical model, one named tensor at a time. A Megatron distributed checkpoint is sharded the way the
+      <em>training job</em> was sharded — a weight may be split column-wise across the TP group, live on one PP
+      stage's ranks, and (for experts) belong to one EP rank.</li>
+    <li><strong>The layouts disagree.</strong> Megatron fuses and rearranges weights for kernel efficiency: QKV
+      projections stored as one interleaved matrix, SwiGLU's gate and up projections concatenated, embeddings padded
+      to a vocab size divisible by the TP degree. Conversion has to un-fuse, de-interleave, and un-pad — per
+      architecture, and wrong-but-plausible layouts fail silently as a model that trains but is subtly broken.</li>
+    <li><strong>The scale forbids the naive fix.</strong> The obvious script — gather everything to rank 0, fix it
+      up, save — needs the whole model in one host's memory. At the ≳10B sizes where Megatron is the right tool,
+      that is exactly what you can't do.</li>
+  </ul>
+  <p>
+    <strong>Megatron-Bridge</strong> (the <code>NVIDIA-NeMo/Megatron-Bridge</code> library) is NVIDIA's official
+    answer, replacing the ad-hoc conversion scripts that used to circulate. Its <code>AutoBridge</code> API detects
+    the architecture from the HF config and converts in both directions —
+    <code>AutoBridge.from_hf_pretrained(...)</code> to materialize a Megatron-Core model from HF weights,
+    <code>bridge.save_hf_pretrained(model, ...)</code> to export back, emitting the full HF folder (weights, config,
+    tokenizer). The design points target exactly the three problems above:
+  </p>
+  <ul>
+    <li><strong>Parallelism-aware</strong>: conversion runs against the live sharded model, aware of TP/PP/VPP/CP/EP
+      layouts, so each rank contributes only its shard — no gather-to-rank-0 step.</li>
+    <li><strong>Streaming, per-parameter</strong>: tensors are imported/exported one at a time with no intermediate
+      full checkpoint on disk or in memory, so conversion cost stays flat as the model grows.</li>
+    <li><strong>A per-architecture bridge registry</strong>: the fuse/unfuse/rename rules live in maintained
+      per-model-family bridges (30+ families — Llama, Qwen dense and MoE, DeepSeek, Gemma, Mistral, and others)
+      rather than in everyone's private conversion script, and conversions can be round-trip verified.</li>
+  </ul>
+  <p>
+    Two footnotes complete the picture. First, Megatron-Bridge has outgrown the converter role: it is the refactor
+    of NeMo's training stack, wrapping Megatron-Core in a PyTorch-native training loop with pretraining/SFT/LoRA
+    recipes — so "NeMo" in the §1 table increasingly means this library. Second, the same boundary is why RL
+    infrastructure grows equivalent machinery: in a verl run with a Megatron backend, the actor's weights must reach
+    the vLLM rollout engine (which speaks HF layouts) <em>every step</em>, so the resharding problem Megatron-Bridge
+    solves at checkpoint granularity reappears as the weight-sync path — see
+    <a href="../rl/verl-architecture.html">verl's architecture</a>.
   </p>
 
   <div class="compare">
