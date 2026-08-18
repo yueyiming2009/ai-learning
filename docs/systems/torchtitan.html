@@ -1,0 +1,855 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>TorchTitan — PyTorch-Native Pretraining, Inside Out</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #0d9488;
+      --accent-light: #f0fdfa;
+      --warning-bg: #fffbeb;
+      --warning-border: #f59e0b;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --compare-bg: #eff6ff;
+      --compare-border: #3b82f6;
+      --ink: #374151;
+      --code-bg: #f1f5f9;
+      --code-fg: #0f766e;
+      --row-hover: #fafafa;
+      --note-fg: #78350f;
+      --result-fg: #16a34a;
+      --compare-fg: #2563eb;
+      --teal-border: #99f6e4;
+      --fig-bg: #ffffff;
+      --nav-bg: rgba(255,255,255,0.92);
+      --onion-tp: #ede9fe;
+      --onion-tp-bd: #8b5cf6;
+      --onion-ac: #fef3c7;
+      --onion-ac-bd: #f59e0b;
+      --onion-compile: #dbeafe;
+      --onion-compile-bd: #3b82f6;
+      --onion-fsdp: #ccfbf1;
+      --onion-fsdp-bd: #0d9488;
+      --onion-pp: #f3f4f6;
+      --onion-pp-bd: #9ca3af;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #2dd4bf;
+        --accent-light: #10201e;
+        --warning-bg: #251c0b;
+        --warning-border: #b45309;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --compare-bg: #101a2b;
+        --compare-border: #1e40af;
+        --ink: #cbd5e1;
+        --code-bg: #1c2531;
+        --code-fg: #5eead4;
+        --row-hover: #191e25;
+        --note-fg: #fcd34d;
+        --result-fg: #4ade80;
+        --compare-fg: #60a5fa;
+        --teal-border: #134e4a;
+        --fig-bg: #14181e;
+        --nav-bg: rgba(15,17,21,0.9);
+        --onion-tp: #241b3a;
+        --onion-tp-bd: #8b5cf6;
+        --onion-ac: #2a2110;
+        --onion-ac-bd: #b45309;
+        --onion-compile: #14213a;
+        --onion-compile-bd: #2563eb;
+        --onion-fsdp: #0e2622;
+        --onion-fsdp-bd: #14b8a6;
+        --onion-pp: #1a1e25;
+        --onion-pp-bd: #4b5563;
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Top nav ─────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .nav-back {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      white-space: nowrap;
+      transition: color 0.15s;
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+    .nav-back:hover { color: var(--text); }
+
+    /* ── Hero ────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #0d9488 0%, #0891b2 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.85;
+      font-size: 0.97rem;
+      max-width: 620px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Main layout ─────────────────────────── */
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    /* ── Prose ───────────────────────────────── */
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+
+    /* ── Code ────────────────────────────────── */
+    pre {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      line-height: 1.55;
+      margin: 1.2em 0;
+    }
+    code {
+      font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    p code, li code, td code {
+      background: var(--code-bg);
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 0.88em;
+      color: var(--code-fg);
+    }
+    pre code { background: none; padding: 0; color: var(--text); }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+    td.ctr, th.ctr { text-align: center; }
+
+    /* ── Step boxes ──────────────────────────── */
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    /* ── Callout / note ──────────────────────── */
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+    .note::before { content: '⚠ '; }
+
+    /* ── Result / boxed statement ────────────── */
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── Comparison box ──────────────────────── */
+    .compare {
+      background: var(--compare-bg);
+      border: 1.5px solid var(--compare-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .compare-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--compare-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 10px;
+    }
+    .compare-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 600px) { .compare-grid { grid-template-columns: 1fr; } }
+    .compare-col-label {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--ink);
+      margin-bottom: 4px;
+    }
+
+    /* ── Summary card ────────────────────────── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .summary-card {
+      background: var(--accent-light);
+      border: 1px solid var(--teal-border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .summary-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    /* ── Cross-link banner ───────────────────── */
+    .xref {
+      background: var(--accent-light);
+      border: 1px solid var(--teal-border);
+      border-radius: 8px;
+      padding: 12px 18px;
+      margin: 1.4em 0;
+      font-size: 0.92rem;
+    }
+    .xref a { color: var(--accent); font-weight: 600; text-decoration: none; }
+    .xref a:hover { text-decoration: underline; }
+
+    /* ── Figure ──────────────────────────────── */
+    .figure {
+      background: var(--fig-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 16px 14px;
+      margin: 1.6em 0;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .figure-caption {
+      font-size: 0.85rem;
+      color: var(--muted);
+      line-height: 1.6;
+      margin: 14px 4px 2px;
+    }
+
+    /* ── Onion diagram (wrapping order) ──────── */
+    .onion { display: flex; flex-direction: column; gap: 10px; }
+    .onion-layer {
+      border-radius: 10px;
+      border: 1.5px solid;
+      padding: 10px 14px 14px;
+      font-size: 0.85rem;
+    }
+    .onion-title {
+      font-weight: 600;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 2px;
+    }
+    .onion-sub { color: var(--muted); font-size: 0.8rem; margin-bottom: 8px; }
+    .onion-pp      { background: var(--onion-pp);      border-color: var(--onion-pp-bd); }
+    .onion-fsdp    { background: var(--onion-fsdp);    border-color: var(--onion-fsdp-bd); }
+    .onion-compile { background: var(--onion-compile); border-color: var(--onion-compile-bd); }
+    .onion-ac      { background: var(--onion-ac);      border-color: var(--onion-ac-bd); }
+    .onion-tp      { background: var(--onion-tp);      border-color: var(--onion-tp-bd); }
+    .onion-pp    > .onion-title { color: var(--onion-pp-bd); }
+    .onion-fsdp  > .onion-title { color: var(--onion-fsdp-bd); }
+    .onion-compile > .onion-title { color: var(--onion-compile-bd); }
+    .onion-ac    > .onion-title { color: var(--onion-ac-bd); }
+    .onion-tp    > .onion-title { color: var(--onion-tp-bd); }
+    .onion-core {
+      background: var(--surface);
+      border: 1px dashed var(--step-border);
+      border-radius: 8px;
+      padding: 8px 12px;
+      color: var(--ink);
+      font-size: 0.84rem;
+    }
+
+    /* ── Footer ──────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>TorchTitan</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#what">What it is</a>
+    <a href="#substrate">DTensor mesh</a>
+    <a href="#fsdp2">FSDP2</a>
+    <a href="#tp">TP / SP</a>
+    <a href="#pp">Pipeline</a>
+    <a href="#cp-ep">CP &amp; EP</a>
+    <a href="#order">Wrapping order</a>
+    <a href="#compiler">Compiler layer</a>
+    <a href="#production">Production</a>
+    <a href="#summary">Summary</a>
+  </div>
+  <a class="nav-back" href="../index.html">Home</a>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Systems · Distributed</span>
+  <h1>TorchTitan — PyTorch-Native Pretraining, Inside Out</h1>
+  <p>TorchTitan is PyTorch's answer to "what if the whole Megatron feature list were rebuilt from composable, native primitives?" This page walks the stack from the inside: the DTensor/DeviceMesh substrate, each parallelism axis as Titan actually applies it, the wrapping order that makes them compose, and the compiler + production layers on top.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="xref">
+    This is the deep dive behind the TorchTitan column of <a href="training-frameworks.html">Training Frameworks →</a>.
+    It leans on the strategy pages — <a href="torch-distributed.html">Data Parallelism &amp; ZeRO →</a>,
+    <a href="tensor-parallelism.html">Tensor Parallelism →</a>, <a href="sequence-parallelism.html">Sequence
+    Parallelism →</a>, <a href="pipeline-parallelism.html">Pipeline Parallelism →</a>, and
+    <a href="moe-parallelism.html">MoE Parallelism →</a> — for the math of each axis; here the subject is how one
+    codebase composes all of them.
+  </div>
+
+  <!-- ════════════════════════ WHAT IT IS ════════════════════════ -->
+  <h2 id="what">1 · What TorchTitan actually is</h2>
+  <p>
+    <strong>TorchTitan</strong> (<code>pytorch/torchtitan</code>, the 2024 paper <em>"TorchTitan: One-stop PyTorch
+    native solution for production ready LLM pre-training"</em>) is PyTorch's reference pretraining stack — and,
+    just as importantly, the <em>forcing function</em> for PyTorch's distributed APIs. Every feature it ships must be
+    expressible in public <code>torch.distributed</code> primitives; when it can't be, the primitive gets built
+    (FSDP2, async TP, zero-bubble pipeline schedules, and DTensor itself all matured this way). Three design
+    commitments follow:
+  </p>
+  <ul>
+    <li><strong>The model is a plain <code>nn.Module</code>.</strong> Llama-style transformers written in ordinary
+      eager PyTorch, with no parallelism awareness inside the modeling code. Every distribution decision is applied
+      <em>from outside</em>, after construction — the opposite of Megatron, whose blocks are born parallel.</li>
+    <li><strong>Every parallelism is a DTensor layout on one device mesh.</strong> FSDP, TP, PP, CP, and EP are not
+      five subsystems; they are five ways of assigning shardings to tensors over axes of a single
+      <code>DeviceMesh</code>. Composition is mesh algebra, not glue code.</li>
+    <li><strong>Small and legible.</strong> The core is on the order of ten thousand lines. It is meant to be read,
+      forked, and benchmarked against — a reference implementation in the literal sense, with production runs
+      (Llama 3.1 8B→405B-class, and MoE recipes for DeepSeek-V3-style models) as the proof it isn't a toy.</li>
+  </ul>
+  <p>
+    A run looks like this — a TOML config selecting a model recipe and parallelism degrees, launched with
+    <code>torchrun</code> under the hood:
+  </p>
+  <pre><code>NGPU=64 CONFIG_FILE=./torchtitan/models/llama3/train_configs/llama3_70b.toml \
+  ./run_train.sh \
+  --parallelism.tensor_parallel_degree 8 \
+  --parallelism.pipeline_parallel_degree 2</code></pre>
+
+  <!-- ════════════════════════ SUBSTRATE ════════════════════════ -->
+  <h2 id="substrate">2 · The substrate — one DeviceMesh, DTensor everywhere</h2>
+  <p>
+    Titan's first act at startup is to fold every parallelism degree into a single <strong>world mesh</strong> — an
+    n-dimensional view of the ranks, ordered outermost → innermost roughly as:
+  </p>
+  <div class="result">
+    <div class="result-label">The world mesh</div>
+    <code>["pp", "dp_replicate", "dp_shard", "cp", "tp"]</code><br>
+    <span style="font-size:0.9rem;">product of degrees = world size; each named axis is a communicator; EP for MoE layers is carved out of the <code>dp_shard × cp</code> ranks (§6)</span>
+  </div>
+  <p>
+    The ordering encodes the network hierarchy from <a href="tensor-parallelism.html">the parallelism pages</a>:
+    <code>tp</code> innermost so its latency-critical collectives stay on NVLink within a node; <code>pp</code>
+    outermost so only skinny activations cross the slowest links; the data-parallel axes in between, split into
+    <code>dp_replicate</code> (DDP-style replication) and <code>dp_shard</code> (FSDP-style sharding) so that
+    <strong>HSDP</strong> — shard within a group, replicate across groups — is just "both axes &gt; 1" rather than
+    a separate mode.
+  </p>
+  <p>
+    On this mesh, <strong><code>DTensor</code></strong> is the common currency. A DTensor is a global logical tensor
+    plus a <em>placement</em> per mesh axis — <code>Shard(dim)</code>, <code>Replicate()</code>, or
+    <code>Partial()</code> (values that still need a reduction, e.g. a matmul's unsummed partial products). The
+    DTensor dispatcher knows, for each ATen op, what communication converts input placements into valid output
+    placements — so "run this layer under TP" becomes "declare its weights <code>Shard(0)</code> on the
+    <code>tp</code> axis" and the all-gathers/reduce-scatters follow from the placement rules rather than from
+    hand-inserted collective calls. One type system carries every axis, which is exactly why the axes compose:
+    a single weight can simultaneously be <code>Shard(0)</code> on <code>dp_shard</code> (FSDP) and
+    <code>Shard(0)</code> on <code>tp</code> (column parallel), and checkpointing (§9) can reason about the global
+    tensor behind any such layout.
+  </p>
+
+  <!-- ════════════════════════ FSDP2 ════════════════════════ -->
+  <h2 id="fsdp2">3 · The DP axis — FSDP2, per-parameter sharding</h2>
+  <p>
+    The data-parallel workhorse is <strong>FSDP2</strong> (<code>fully_shard</code>), whose ZeRO-3 math is derived in
+    <a href="torch-distributed.html">the ZeRO ladder page</a>. What Titan showcases is the second-generation
+    <em>representation</em>: instead of FSDP1's flat-parameter monolith, every parameter is individually a DTensor
+    sharded <code>Shard(0)</code> over <code>dp_shard</code>. Titan applies it bottom-up, one transformer block at a
+    time, then to the root:
+  </p>
+  <pre><code>for block in model.layers:
+    fully_shard(block, mesh=dp_mesh, mp_policy=MixedPrecisionPolicy(
+        param_dtype=torch.bfloat16, reduce_dtype=torch.float32))
+fully_shard(model, mesh=dp_mesh)   # root: embeddings, norm, output head</code></pre>
+  <p>
+    Each <code>fully_shard</code> call defines one <strong>communication group</strong>: the unit whose parameters
+    all-gather together before compute and reshard after. Blockwise wrapping is the standard bandwidth/memory
+    compromise — big enough gathers to saturate the interconnect, small enough that only ~one block's full
+    parameters are ever resident. Around that structure FSDP2 runs the classic overlap schedule: implicit
+    <em>prefetch</em> (all-gather block \(n{+}1\) while block \(n\) computes), gradient reduce-scatter issued as soon
+    as each block's backward completes, and fp32 gradient reduction under bf16 compute via the mixed-precision
+    policy. Two knobs recur in Titan configs:
+  </p>
+  <ul>
+    <li><code>reshard_after_forward</code> — freeing gathered parameters after forward (true ZeRO-3) re-gathers them
+      in backward; keeping them (ZeRO-2-like) spends memory to halve parameter communication. Titan sets this
+      per-block, e.g. not resharding the last block since backward begins there immediately.</li>
+    <li><strong>HSDP</strong> — with <code>dp_replicate</code> &gt; 1, sharding stays inside a replica group
+      (typically ≤ a few nodes) and gradients all-reduce across groups, capping the all-gather ring size that pure
+      FSDP would otherwise stretch across the whole cluster.</li>
+  </ul>
+
+  <!-- ════════════════════════ TP/SP ════════════════════════ -->
+  <h2 id="tp">4 · The TP/SP axis — a parallelism <em>plan</em>, not a parallel model</h2>
+  <p>
+    Tensor parallelism in Titan is a dictionary. The model stays untouched; a <em>plan</em> maps submodule names to
+    DTensor layouts, and <code>parallelize_module</code> rewrites the weights in place:
+  </p>
+  <pre><code>parallelize_module(block, tp_mesh, {
+    "attention_norm": SequenceParallel(),
+    "attention.wq":   ColwiseParallel(),
+    "attention.wk":   ColwiseParallel(),
+    "attention.wv":   ColwiseParallel(),
+    "attention.wo":   RowwiseParallel(output_layouts=Shard(1)),
+    "ffn_norm":       SequenceParallel(),
+    "feed_forward.w1": ColwiseParallel(),
+    "feed_forward.w2": RowwiseParallel(output_layouts=Shard(1)),
+    "feed_forward.w3": ColwiseParallel(),
+})</code></pre>
+  <p>
+    This is exactly the Megatron sandwich from <a href="tensor-parallelism.html">Tensor Parallelism</a> — column-split
+    into row-split with one reduction per sandwich — plus <a href="sequence-parallelism.html">sequence parallelism</a>
+    on the norms, expressed declaratively: <code>SequenceParallel()</code> means "activations are
+    <code>Shard(1)</code> (sequence dim) here," and the placement rules turn the SP↔TP boundary into the
+    all-gather / reduce-scatter pair automatically. Two refinements matter in practice:
+  </p>
+  <ul>
+    <li><strong>Loss parallel.</strong> The output projection stays <code>ColwiseParallel</code> — logits remain
+      vocab-sharded — and cross-entropy is computed directly on the shards, never materializing the full
+      \([T \times V]\) logits tensor. For a 128k vocabulary this is one of the largest single activations in the
+      step; Megatron hand-writes a fused vocab-parallel loss kernel for the same reason.</li>
+    <li><strong>Async TP</strong> (§8) attacks the sandwich's critical-path collectives by micro-pipelining them
+      against the GEMMs — the compiler-era version of Megatron's userbuffers.</li>
+  </ul>
+
+  <!-- ════════════════════════ PP ════════════════════════ -->
+  <h2 id="pp">5 · The PP axis — <code>torch.distributed.pipelining</code></h2>
+  <p>
+    Pipeline parallelism is the one axis that can't be a per-tensor layout — it partitions the <em>module graph</em>
+    and needs a runtime schedule (see <a href="pipeline-parallelism.html">Pipeline Parallelism</a> for the bubble
+    math). Titan splits the model structurally: each pipeline rank instantiates the full model skeleton with meta
+    tensors, deletes the layers it doesn't own, and wraps the remainder as one or more
+    <code>PipelineStage</code>s. The schedule is then a config choice from
+    <code>torch.distributed.pipelining</code>: <strong>GPipe</strong>, <strong>1F1B</strong>,
+    <strong>interleaved 1F1B</strong> (multiple stages per rank to divide the bubble), and the
+    <strong>zero-bubble</strong> family (splitting weight-gradient from input-gradient backward to fill the bubble,
+    including the V-schedule variant). Because schedules consume stages through a generic interface, a new schedule
+    is a new class, not a new fork of the training loop — Titan even accepts schedules described in a CSV of
+    per-rank actions for research on custom ones.
+  </p>
+  <p>
+    The consequence of splitting first: everything downstream (§3–4, §7–8) is applied <em>per stage</em>. Each
+    stage's submodule is independently TP-planned, checkpointed, compiled, and FSDP-wrapped — PP is the outermost
+    factorization, and the SPMD axes operate inside it.
+  </p>
+
+  <!-- ════════════════════════ CP & EP ════════════════════════ -->
+  <h2 id="cp-ep">6 · The long-context and MoE axes — CP and EP</h2>
+  <p>
+    <strong>Context parallelism</strong> shards the <em>sequence</em> dimension across the <code>cp</code> mesh axis
+    for the entire step, so a million-token context's activations never sit on one GPU. Feed-forward and norms are
+    embarrassingly parallel over tokens; attention is the hard part — every query must see all keys/values — and is
+    handled ring-style: KV shards rotate around the <code>cp</code> group while each rank accumulates partial
+    attention with online-softmax corrections (the same trick that makes <a href="../inference/flash-attention.html">FlashAttention</a>
+    tile-able). Titan wraps this as a context manager over SDPA, with load-balancing that deals shard pairs from both
+    ends of the sequence so causal masking doesn't starve the ranks holding early tokens.
+  </p>
+  <p>
+    <strong>Expert parallelism</strong> arrived with the MoE recipes (DeepSeek-V3-style models, Llama 4). Titan's
+    design is <em>dp2ep</em>: expert layers borrow their parallelism from ranks the dense layers already use for
+    <code>dp_shard × cp</code> — dense weights stay fully sharded over that whole axis, while each expert lives whole
+    (or TP-sharded) on a slice of it, with token all-to-alls routing between slices. It is the
+    EP × FSDP × TP composition on one DeviceMesh described in
+    <a href="moe-parallelism.html">MoE Parallelism</a>, plus grouped-GEMM expert kernels; the B200-generation
+    recipes add MXFP8 grouped GEMMs and DeepEP-style all-to-all optimizations. The notable fact is architectural:
+    EP required no new framework machinery — it is one more set of DTensor placements plus a routing layer.
+  </p>
+
+  <!-- ════════════════════════ ORDER ════════════════════════ -->
+  <h2 id="order">7 · The wrapping order — why it composes</h2>
+  <p>
+    The heart of the codebase is one function per model family (e.g. <code>parallelize_llama</code>) that applies
+    the axes in a fixed order. The order is not stylistic — each layer must see the form of the model the previous
+    layer produced:
+  </p>
+
+  <div class="figure">
+    <div class="onion">
+      <div class="onion-layer onion-pp">
+        <div class="onion-title">0 · Pipeline split — before everything</div>
+        <div class="onion-sub">partition the module graph into stages; all following steps run per stage</div>
+        <div class="onion-layer onion-fsdp">
+          <div class="onion-title">4 · fully_shard (FSDP2 / HSDP) — outermost</div>
+          <div class="onion-sub">per-parameter Shard(0) on dp_shard; must wrap last so it governs the final parameters and hooks</div>
+          <div class="onion-layer onion-compile">
+            <div class="onion-title">3 · torch.compile — per TransformerBlock</div>
+            <div class="onion-sub">regional compilation: one graph per block, reused across layers</div>
+            <div class="onion-layer onion-ac">
+              <div class="onion-title">2 · Activation checkpointing</div>
+              <div class="onion-sub">full or selective (per-op / every-k-blocks) recompute policy</div>
+              <div class="onion-layer onion-tp">
+                <div class="onion-title">1 · TP / SP plan — innermost</div>
+                <div class="onion-sub">parallelize_module swaps weights to DTensor layouts on the tp axis</div>
+                <div class="onion-core">plain eager <code>TransformerBlock</code> — attention + FFN, no parallelism awareness</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="figure-caption">
+      <strong>Titan's composition onion.</strong> The pipeline split happens first (it changes <em>which</em> modules
+      exist on this rank); then, innermost to outermost per block: TP/SP layouts, activation checkpointing,
+      regional <code>torch.compile</code>, and FSDP2. Each wrapper only has to understand the interface of the layer
+      beneath it — DTensor is what makes that true.
+    </p>
+  </div>
+
+  <ul>
+    <li><strong>TP before AC/compile:</strong> the checkpointing wrapper and the compiler should see the
+      already-sharded module, so recompute and the captured graph operate on local shards (smaller, and correct
+      under the placement rules).</li>
+    <li><strong>Compile before FSDP:</strong> FSDP2's all-gather/reshard machinery lives in pre/post-forward hooks
+      <em>around</em> each block; compiling the block's interior keeps the graph free of communication runtime,
+      while the hooks fire between compiled regions. (Whole-model compilation with communication <em>inside</em> the
+      graph is the SimpleFSDP experiment — see §8.)</li>
+    <li><strong>FSDP outermost:</strong> it must own the final parameter storage to shard it, and its hooks must be
+      the outermost so prefetch/reshard bracket everything else the block does.</li>
+  </ul>
+  <div class="result">
+    <div class="result-label">The one-line thesis</div>
+    Parallelisms compose when they are <strong>data layouts</strong>, not module rewrites —<br>
+    Titan's job is mostly to apply five layout systems to one eager model in the right order.
+  </div>
+
+  <!-- ════════════════════════ COMPILER LAYER ════════════════════════ -->
+  <h2 id="compiler">8 · The compiler layer — where Megatron's kernels come from</h2>
+  <p>
+    Titan ships almost no custom CUDA. The fused kernels Megatron hand-writes (see
+    <a href="training-frameworks.html">Training Frameworks §2.2</a>) are expected to come from the compiler stack:
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th style="width:30%;">Piece</th><th>What it replaces</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>Regional <code>torch.compile</code></strong></td>
+          <td>Pointwise-chain fusion (bias+activation, residual+norm chains) via Inductor. Compiling per-block
+            instead of whole-model means one graph compiled once and reused for every layer — near-full-model
+            speedup at a fraction of the compile time, and no graph breaks at FSDP hook boundaries.
+            (See <a href="pytorch-execution.html">the PyTorch execution model</a> for how capture works.)</td>
+        </tr>
+        <tr>
+          <td><strong>SDPA / FlexAttention</strong></td>
+          <td>Fused attention — FlashAttention through a stock API, with FlexAttention generating fused kernels for
+            attention variants (document masking, soft-capping) that would otherwise need hand-written CUDA.</td>
+        </tr>
+        <tr>
+          <td><strong>Float8 via torchao</strong></td>
+          <td>Transformer Engine's FP8 GEMMs: linear layers swapped for float8 modules (tensorwise or rowwise
+            scaling), composing with FSDP2 so parameters all-gather <em>already in fp8</em> — halving parameter
+            comm bytes, not just speeding GEMMs. MX formats (MXFP8) follow on Blackwell.</td>
+        </tr>
+        <tr>
+          <td><strong>Async TP</strong></td>
+          <td>Megatron's userbuffers: the compiler decomposes each TP collective into chunks micro-pipelined
+            against the matching GEMM chunks, over <code>SymmetricMemory</code> (direct-mapped peer NVLink buffers)
+            — hiding the TP sandwich's critical-path communication.</td>
+        </tr>
+        <tr>
+          <td><strong>Fused optimizer</strong></td>
+          <td>Megatron's multi-tensor Adam: <code>torch.optim.AdamW(fused=True, foreach=…)</code>.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    The frontier of this bet lives in Titan's <code>experiments/</code> folder: <strong>SimpleFSDP</strong>
+    re-expresses FSDP itself as a few hundred lines of DTensor redistributions inside a whole-model
+    <code>torch.compile</code> graph, letting the compiler — not hand-scheduled hooks — reorder, bucket, and
+    overlap the collectives. That is the fully-compiled endpoint (the XLA/GSPMD position) approached incrementally
+    from eager PyTorch.
+  </p>
+
+  <!-- ════════════════════════ PRODUCTION ════════════════════════ -->
+  <h2 id="production">9 · The production ring — checkpointing, fault tolerance, config</h2>
+  <h3>9.1 Distributed checkpointing (DCP)</h3>
+  <p>
+    Because every parameter is a DTensor with a known global shape and placement, checkpointing is
+    layout-independent: each rank saves its shards plus metadata, and <strong>load-time resharding</strong> lets a
+    checkpoint written on one parallelism layout (say FSDP×TP = 16×8) restore onto another (say 64×2) — the saved
+    unit is the <em>global</em> tensor, not any rank's view of it. On top, Titan runs <strong>async checkpointing</strong>:
+    the step blocks only to copy state to host memory (seconds), while serialization and upload proceed on
+    background threads under the next steps' compute. Conversion tooling bridges DCP ↔ Hugging Face safetensors at
+    the edges of the run.
+  </p>
+  <h3>9.2 Fault tolerance</h3>
+  <p>
+    For debugging collective hangs there is Flight Recorder integration (a flight log of recent NCCL ops — see
+    <a href="nccl.html">NCCL</a>); for surviving failures, <strong>torchft</strong> integration replicates the run at
+    the <code>dp_replicate</code> axis and reconciles optimizer steps across replica groups with a lighthouse
+    server, so losing a replica group costs its in-flight step rather than a cluster-wide restart-from-checkpoint.
+  </p>
+  <h3>9.3 Config and codebase shape</h3>
+  <p>
+    One TOML file per recipe, every field overridable from the CLI. The layout mirrors the concepts of this page —
+    which is the real sense in which Titan is "readable": the file names are the architecture.
+  </p>
+  <pre><code>torchtitan/
+  train.py                     # the training loop (~500 lines, readable top to bottom)
+  distributed/                 # ParallelDims → world mesh; utils for each axis
+  components/                  # checkpoint, float8, optimizer, lr scheduler, loss
+  models/llama3/
+    model/                     # plain eager nn.Module
+    infra/parallelize.py       # the wrapping order of §7 for this family
+    infra/pipeline.py          # stage splitting
+    train_configs/*.toml       # 8B / 70B / 405B recipes
+  experiments/                 # SimpleFSDP, flux, ...</code></pre>
+  <p>
+    A new model family registers a <code>TrainSpec</code> — model class + its parallelize and pipeline functions +
+    component builders — and inherits the whole stack. That is the practical payoff of §7's discipline: supporting a
+    new architecture means writing its eager module and its plan, not porting it into a framework dialect.
+  </p>
+
+  <!-- ════════════════════════ POSITION ════════════════════════ -->
+  <div class="compare">
+    <div class="compare-label">Where this leaves Titan vs. Megatron — one paragraph, not a rematch</div>
+    <div class="compare-grid">
+      <div>
+        <div class="compare-col-label">What the composition buys</div>
+        Any eager model, ~10k readable lines, checkpoint resharding across layouts, compiler-supplied kernels, and
+        new axes (EP, CP) arriving as layouts rather than rewrites. The stack of choice when you need to
+        <em>modify</em> the training system — research forks, and verl's FSDP backend lineage.
+      </div>
+      <div>
+        <div class="compare-col-label">What vertical integration still buys</div>
+        Megatron's co-designed kernels + schedules keep the last few MFU points at frontier scale, and its
+        EP × TP × PP MoE planner is more battle-hardened. The full comparison — including where the crossover
+        sits — is on <a href="training-frameworks.html">Training Frameworks →</a>.
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════ SUMMARY ════════════════════════ -->
+  <h2 id="summary">Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">One substrate</div>
+      <p>A single DeviceMesh (<code>pp, dp_replicate, dp_shard, cp, tp</code>) and DTensor placements (<code>Shard</code>/<code>Replicate</code>/<code>Partial</code>) carry every axis; composition is mesh algebra.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">One order</div>
+      <p>Pipeline-split first; then per block, inside-out: TP/SP plan → activation checkpointing → regional <code>torch.compile</code> → <code>fully_shard</code>. Each wrapper sees only the layer beneath it.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Kernels from the compiler</div>
+      <p>Inductor fuses the pointwise chains, SDPA/FlexAttention covers attention, torchao float8 halves GEMM and comm bytes, async TP micro-pipelines the sandwich — Megatron's §2.2 list, without custom CUDA.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Production by construction</div>
+      <p>DTensor metadata makes checkpoints reshardable across parallelism layouts; async DCP hides save latency; torchft turns <code>dp_replicate</code> into a fault-tolerance boundary.</p>
+    </div>
+  </div>
+
+</div>
+
+<footer>Personal ML notes · <a href="https://github.com/yueyiming2009/ai-learning" style="color:inherit;text-decoration:underline;">source on GitHub</a></footer>
+
+</body>
+</html>
