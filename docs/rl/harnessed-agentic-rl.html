@@ -1,0 +1,1332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Decoupling the Trainer from the Agent Graph — Harnessed Agentic RL</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #0d9488;
+      --accent-light: #f0fdfa;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --note-fg: #1e40af;
+      --result-fg: #16a34a;
+      --nav-bg: rgba(255,255,255,0.92);
+      --tok-model: #6d28d9;
+      --tok-model-bg: #ede9fe;
+      --tok-tool: #d97706;
+      --tok-tool-bg: #fef3c7;
+      --tok-tmpl: #6b7280;
+      --tok-tmpl-bg: #f3f4f6;
+      --tok-bad: #dc2626;
+      --tok-bad-bg: #fee2e2;
+      --tok-frozen-bg: #e5e7eb;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #2dd4bf;
+        --accent-light: #10201e;
+        --warning-bg: #101a2b;
+        --warning-border: #1e40af;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --note-fg: #93c5fd;
+        --result-fg: #4ade80;
+        --nav-bg: rgba(15,17,21,0.9);
+        --tok-model: #c4b5fd;
+        --tok-model-bg: #2e1f5e;
+        --tok-tool: #fcd34d;
+        --tok-tool-bg: #3d2c08;
+        --tok-tmpl: #9aa1ab;
+        --tok-tmpl-bg: #1f242c;
+        --tok-bad: #fca5a5;
+        --tok-bad-bg: #4a1414;
+        --tok-frozen-bg: #262b33;
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    .hero {
+      background: linear-gradient(135deg, #064e3b 0%, #065f46 55%, #0d9488 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.9;
+      font-size: 0.97rem;
+      max-width: 700px;
+    }
+    .hero code {
+      background: rgba(255,255,255,0.15);
+      border-color: rgba(255,255,255,0.3);
+      color: #fff;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .page-wrap {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+    a { color: var(--accent); }
+    code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+    pre {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      line-height: 1.55;
+      margin: 1.2em 0;
+    }
+    pre code { background: none; padding: 0; border: none; color: var(--text); }
+    blockquote {
+      margin: 1em 0; padding: 6px 16px;
+      border-left: 3px solid var(--border);
+      color: var(--ink); font-size: 0.94em;
+    }
+
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.9rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 14px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+    td strong { color: var(--text); }
+    table.dense { font-size: 0.82rem; }
+    table.dense th, table.dense td { padding: 7px 10px; }
+
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    /* ── diagram ── */
+    .figure {
+      margin: 1.4em 0;
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface);
+    }
+    .figure svg { width: 100%; height: auto; display: block; }
+    .figure-caption { font-size: 0.88em; color: var(--muted); margin: 10px 0 0; line-height: 1.55; }
+    .figure-caption strong { color: var(--text); }
+    .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.82rem; color: var(--muted); margin: 8px 0 0; }
+    .legend-item { display: inline-flex; align-items: center; gap: 6px; }
+    .lg { display: inline-block; width: 14px; height: 10px; border-radius: 2px; background: var(--c); }
+
+    /* ── stitcher widget ── */
+    .controls { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 0.85rem; margin-bottom: 12px; align-items: center; }
+    .controls label { display: inline-flex; align-items: center; gap: 6px; color: var(--ink); }
+    .controls select, .controls input[type=checkbox] { font: inherit; font-size: 0.85rem; }
+    .seg-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; flex-wrap: wrap; }
+    .seg-label { width: 84px; flex: none; font-size: 0.78rem; color: var(--muted); text-align: right; }
+    .seg-strip { display: flex; gap: 2px; flex-wrap: nowrap; overflow-x: auto; flex: 1; padding: 2px 0; }
+    .seg {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.72rem; line-height: 1.3;
+      padding: 3px 6px; border-radius: 4px; white-space: nowrap;
+      border: 1px solid transparent;
+    }
+    .seg.model { background: var(--tok-model-bg); color: var(--tok-model); border-color: var(--tok-model); }
+    .seg.tool  { background: var(--tok-tool-bg);  color: var(--tok-tool);  border-color: var(--tok-tool); }
+    .seg.tmpl  { background: var(--tok-tmpl-bg);  color: var(--tok-tmpl); }
+    .seg.bad   { background: var(--tok-bad-bg);   color: var(--tok-bad);   border-color: var(--tok-bad); }
+    .seg.frozen { background: var(--tok-frozen-bg); color: var(--muted); border-style: dashed; border-color: var(--step-border); }
+    .seg.mask0 { opacity: 0.55; }
+    .seg sup { font-size: 0.6rem; margin-left: 2px; }
+    .samples { margin-top: 14px; border-top: 1px dashed var(--border); padding-top: 10px; }
+    .stat-row { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 0.84rem; margin-top: 10px; color: var(--ink); }
+    .stat-row b { color: var(--text); }
+    .verdict { font-size: 0.86rem; margin-top: 8px; padding: 8px 12px; border-radius: 6px; background: var(--warning-bg); color: var(--note-fg); }
+
+    /* ── matrix filter ── */
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px; }
+    .chip {
+      font-size: 0.78rem; padding: 3px 10px; border-radius: 100px; cursor: pointer;
+      border: 1px solid var(--border); background: var(--surface); color: var(--ink);
+    }
+    .chip.on { background: var(--accent-light); color: var(--accent); border-color: var(--accent); }
+    tr.hide { display: none; }
+    .gen-badge { display: inline-block; font-size: 0.7rem; font-weight: 600; padding: 1px 7px; border-radius: 100px; margin-right: 4px; }
+    .g1 { background: var(--tok-tmpl-bg); color: var(--tok-tmpl); }
+    .g2 { background: var(--tok-tool-bg); color: var(--tok-tool); }
+    .g3 { background: var(--tok-model-bg); color: var(--tok-model); }
+
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+      .seg-label { width: 100%; text-align: left; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Harnessed Agentic RL</a>
+  <div class="nav-links">
+    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="#seam">The seam</a>
+    <a href="#generations">Three generations</a>
+    <a href="#text">Why not text</a>
+    <a href="#contract">The contract</a>
+    <a href="#stitch">Stitching</a>
+    <a href="#advantage">Advantage</a>
+    <a href="#behavior">Behavior logprobs</a>
+    <a href="#async">Async</a>
+    <a href="#matrix">Matrix</a>
+    <a href="#choose">Choosing</a>
+    <a href="#refs">References</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Agentic RL · Systems Design</span>
+  <h1>Decoupling the Trainer from the Agent Graph</h1>
+  <p>When the harness owns the loop and the trainer only sees LLM calls: the token-in/token-out
+  seam, the five-field payload that must flow back (<code>prompt_ids</code>,
+  <code>response_ids</code>, <code>loss_mask</code>, <code>rollout_logprobs</code>,
+  <code>reward</code>), how proxies stitch calls into training samples, why the proxy's logprobs
+  become the behavior policy, and where verl Uni-Agent, AReaL 2.0, slime, SkyRL, PRIME-RL,
+  Polar, Agent Lightning and Tinker each sit.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="note">
+    Fourth page of the Agentic RL series. It generalises §10–§11 of
+    <a href="verl-agentic-training.html#custom">Agentic RL Training in verl</a> (which introduced
+    the "port your agent vs. wrap your agent" question and the token-prefix predicate) across the
+    whole 2026 framework landscape. It assumes <a href="agentic-rl.html">agentic RL</a>,
+    the <a href="async-rl.html#is">importance-sampling correction</a> math, and the
+    <a href="verl-agentic-training.html#tito">token-in/token-out</a> argument. State of the
+    world as of August 2026; the field moves monthly, so treat version numbers as dated.
+  </div>
+
+  <!-- ── §1 ─────────────────────────────────────── -->
+  <h2 id="seam">1. The Seam: Who Owns the Loop?</h2>
+
+  <p>A multi-turn RL rollout has two loops nested inside each other. The <em>outer</em> loop is
+  the trainer's: sample tasks, generate trajectories, score, compute advantages, update, sync
+  weights. The <em>inner</em> loop is the agent's: build a prompt, call the model, parse the
+  output, run tools, append observations, decide whether to stop. For single-turn RLHF the inner
+  loop is one call and nobody notices it exists. For a coding agent it is the product — the
+  system prompt, the tool schema, the context-compaction policy, the retry logic, the subagent
+  fan-out. Cursor, Claude Code, Codex, OpenHands, mini-SWE-agent: each is an inner loop that
+  someone spent a year tuning.</p>
+
+  <p>The question this page is about is where the inner loop <em>lives</em>. Two answers:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th></th><th>Trainer owns the agent graph</th><th>Harness owns the agent graph</th></tr>
+      <tr>
+        <td><strong>Shape</strong></td>
+        <td>The agent is re-implemented inside the trainer's rollout worker (verl <code>AgentLoopBase</code>, slime custom-generate fn, OpenRLHF <code>AgentExecutorBase</code>). It calls the engine with token ids and builds the training sample as it goes.</td>
+        <td>The agent runs unchanged, as a process that speaks an OpenAI/Anthropic-compatible API. A proxy sits between it and the inference engine, records every call, and reconstructs training samples afterwards.</td>
+      </tr>
+      <tr>
+        <td><strong>What you get</strong></td>
+        <td>Exact tokens and masks for free — the loop <em>is</em> the tokenizer.</td>
+        <td><strong>Harness parity</strong>: you train the policy that you ship, including every quirk of its prompt and tool handling. The harness is swappable.</td>
+      </tr>
+      <tr>
+        <td><strong>What you pay</strong></td>
+        <td>A second copy of the agent that drifts from production; every harness feature (compaction, subagents, streaming tool calls) must be re-ported.</td>
+        <td>The trainer no longer sees the trajectory — only a bag of request/response pairs. Recovering tokens, masks, logprobs and the causal chain between calls becomes the central engineering problem.</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>Microsoft's Agent Lightning v1.0 paper (August 2026) gives the second shape its name —
+  <strong>harnessed agentic RL</strong> — and states the consequence precisely:</p>
+
+  <blockquote>"In harnessed agentic RL, the harness owns this loop, while the training engine
+  observes only a sequence of LLM request-response pairs. How to model and assemble these calls
+  into training samples remains an open question."</blockquote>
+
+  <p>The rest of this page is about that open question, and the one constraint that every
+  surviving design shares: <strong>decoupling does not mean the interface becomes text.</strong>
+  The harness talks text to the proxy, but what crosses from the proxy to the trainer is still
+  tokens — plus masks, plus the logprobs the engine assigned when it sampled them, plus the
+  reward. §3 is why; §4 is the exact contract.</p>
+
+  <!-- ── §2 ─────────────────────────────────────── -->
+  <h2 id="generations">2. Three Generations of Interface</h2>
+
+  <p>Read the open-source frameworks in release order and three interface generations fall out.
+  They coexist — most frameworks now ship all three — but each was a response to the last one's
+  limitation.</p>
+
+  <div class="figure">
+    <svg viewBox="0 0 860 330" role="img" aria-label="Three generations of trainer–agent interface: trainer-owned token loop, OpenAI-compatible chat with token capture, and black-box harness behind a proxy">
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0 0L10 5L0 10z" fill="currentColor"/>
+        </marker>
+      </defs>
+      <g font-family="Inter, sans-serif" font-size="12" fill="currentColor">
+        <!-- Gen 1 -->
+        <text x="20" y="22" font-weight="600">Gen 1 · trainer-owned token loop</text>
+        <rect x="20" y="34" width="250" height="72" rx="8" fill="none" stroke="var(--tok-tmpl)" stroke-width="1.5"/>
+        <text x="32" y="54" font-size="11" fill="var(--muted)">trainer rollout worker</text>
+        <rect x="32" y="62" width="106" height="34" rx="6" fill="var(--tok-model-bg)" stroke="var(--tok-model)"/>
+        <text x="85" y="83" text-anchor="middle" font-size="11">AgentLoop.run()</text>
+        <rect x="160" y="62" width="98" height="34" rx="6" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="209" y="78" text-anchor="middle" font-size="10">engine</text>
+        <text x="209" y="91" text-anchor="middle" font-size="9" fill="var(--muted)">generate(ids)</text>
+        <line x1="138" y1="74" x2="158" y2="74" stroke="currentColor" marker-end="url(#arr)"/>
+        <line x1="158" y1="86" x2="140" y2="86" stroke="currentColor" marker-end="url(#arr)"/>
+        <text x="20" y="126" font-size="10.5" fill="var(--muted)">ids in · ids + logprobs out · tool tokens appended with mask 0</text>
+        <text x="20" y="142" font-size="10.5" fill="var(--muted)">verl AgentLoop · slime /generate · OpenRLHF · NeMo-RL · Tinker Env</text>
+
+        <!-- Gen 2 -->
+        <text x="310" y="22" font-weight="600">Gen 2 · chat API + token capture</text>
+        <rect x="310" y="34" width="250" height="72" rx="8" fill="none" stroke="var(--tok-tool)" stroke-width="1.5"/>
+        <rect x="322" y="44" width="96" height="52" rx="6" fill="var(--tok-model-bg)" stroke="var(--tok-model)"/>
+        <text x="370" y="66" text-anchor="middle" font-size="11">agent code</text>
+        <text x="370" y="81" text-anchor="middle" font-size="9" fill="var(--muted)">openai.OpenAI(...)</text>
+        <rect x="440" y="44" width="108" height="52" rx="6" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="494" y="62" text-anchor="middle" font-size="10">vLLM / SGLang</text>
+        <text x="494" y="76" text-anchor="middle" font-size="9" fill="var(--muted)">/chat/completions</text>
+        <text x="494" y="89" text-anchor="middle" font-size="9" fill="var(--tok-tool)">return_token_ids</text>
+        <line x1="418" y1="62" x2="438" y2="62" stroke="currentColor" marker-end="url(#arr)"/>
+        <line x1="438" y1="80" x2="420" y2="80" stroke="currentColor" marker-end="url(#arr)"/>
+        <text x="310" y="126" font-size="10.5" fill="var(--muted)">text in · text + ids + logprobs out · stitched by prefix check</text>
+        <text x="310" y="142" font-size="10.5" fill="var(--muted)">SkyRL step-wise · rLLM gateway · ART · ROLL Proxy · NeMo Gym</text>
+
+        <!-- Gen 3 -->
+        <text x="600" y="22" font-weight="600">Gen 3 · black-box harness + proxy</text>
+        <rect x="600" y="34" width="250" height="72" rx="8" fill="none" stroke="var(--tok-model)" stroke-width="1.5"/>
+        <rect x="608" y="44" width="70" height="52" rx="6" fill="var(--tok-model-bg)" stroke="var(--tok-model)"/>
+        <text x="643" y="66" text-anchor="middle" font-size="10">Claude Code</text>
+        <text x="643" y="80" text-anchor="middle" font-size="9" fill="var(--muted)">Codex · Pi · …</text>
+        <rect x="692" y="44" width="70" height="52" rx="6" fill="var(--tok-tool-bg)" stroke="var(--tok-tool)"/>
+        <text x="727" y="66" text-anchor="middle" font-size="10">proxy</text>
+        <text x="727" y="80" text-anchor="middle" font-size="9" fill="var(--muted)">records calls</text>
+        <rect x="776" y="44" width="66" height="52" rx="6" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="809" y="72" text-anchor="middle" font-size="10">engine</text>
+        <line x1="678" y1="64" x2="690" y2="64" stroke="currentColor" marker-end="url(#arr)"/>
+        <line x1="690" y1="80" x2="680" y2="80" stroke="currentColor" marker-end="url(#arr)"/>
+        <line x1="762" y1="64" x2="774" y2="64" stroke="currentColor" marker-end="url(#arr)"/>
+        <line x1="774" y1="80" x2="764" y2="80" stroke="currentColor" marker-end="url(#arr)"/>
+        <text x="600" y="126" font-size="10.5" fill="var(--muted)">Anthropic / Responses / Chat normalised · per-call (ids, logprobs)</text>
+        <text x="600" y="142" font-size="10.5" fill="var(--muted)">verl Uni-Agent · AReaL 2.0 · slime v0.3 · Polar · Agent Lightning</text>
+
+        <!-- shared bottom: what flows back -->
+        <line x1="145" y1="150" x2="145" y2="200" stroke="var(--muted)" stroke-dasharray="3 3"/>
+        <line x1="435" y1="150" x2="435" y2="200" stroke="var(--muted)" stroke-dasharray="3 3"/>
+        <line x1="725" y1="150" x2="725" y2="200" stroke="var(--muted)" stroke-dasharray="3 3"/>
+        <rect x="20" y="204" width="830" height="66" rx="8" fill="var(--boxed-bg)" stroke="var(--boxed-border)" stroke-width="1.5"/>
+        <text x="435" y="228" text-anchor="middle" font-weight="600" font-size="12.5">what reaches the trainer in every generation</text>
+        <text x="435" y="250" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="11.5">prompt_ids · response_ids · loss_mask · rollout_logprobs · reward  (+ weight_version, routed_experts)</text>
+        <text x="435" y="296" text-anchor="middle" font-size="11" fill="var(--muted)">The harness boundary moved outward three times. The trainer's input never became text.</text>
+      </g>
+    </svg>
+  </div>
+
+  <h3>Gen 1 — the trainer-owned token loop (2025)</h3>
+  <p>A user coroutine runs inside the trainer's rollout worker and calls the engine directly with
+  <code>input_ids</code>: verl's <code>AgentLoopBase.run()</code> (v0.5, July 2025), slime's
+  <code>--custom-generate-function-path</code> against SGLang's <code>/generate</code>,
+  OpenRLHF's <code>AgentExecutorBase</code> loaded <em>inside</em> the vLLM actor, NeMo-RL's
+  <code>run_multi_turn_rollout</code>, ROLL's <code>TrajEnvManager</code>, RL2. Tool and
+  observation text is tokenized by the loop and appended with <code>loss_mask=0,
+  logprob=0.0</code>. Tinker belongs here too, even though its loop runs on the client: its
+  <code>Env.step(action: list[int])</code> is token-typed by construction, and the
+  <code>Datum</code> it sends to <code>forward_backward</code> carries
+  <code>target_tokens</code>, <code>logprobs</code>, and <code>advantages</code> (zero = masked).
+  This generation gets tokenization exactly right and harness parity exactly wrong — it is
+  <a href="verl-agentic-training.html#custom">verl §10's first row</a>.</p>
+
+  <h3>Gen 2 — OpenAI-compatible chat with token capture (late 2025)</h3>
+  <p>The agent is ordinary application code holding an <code>openai.OpenAI(base_url=…)</code>
+  client, but the endpoint is the trainer's engine and returns <code>prompt_token_ids</code> and
+  per-choice <code>token_ids</code> alongside the text — vLLM's <code>return_token_ids</code>
+  (merged for v0.10.2, PR #22587, with the Agent Lightning team as the motivating user). The
+  trainer-side adapter groups calls by session and stitches consecutive calls whose prompt ids
+  are an exact prefix extension of the last call. SkyRL's step-wise mode, rLLM's model gateway,
+  ART's httpx hooks, Trinity-RFT's patched client, ROLL's <code>ProxyEnvManager</code> and NeMo
+  Gym all work this way. The agent code is untouched; the <em>transport</em> is trainer-aware.</p>
+
+  <h3>Gen 3 — the black-box harness behind a proxy (2026)</h3>
+  <p>The 2026 wave drops even the requirement that the agent be Python you can import. A proxy
+  process exposes OpenAI Chat, OpenAI Responses <em>and</em> Anthropic Messages dialects; the
+  harness is launched with <code>OPENAI_BASE_URL</code> / <code>ANTHROPIC_BASE_URL</code>
+  pointed at it; the proxy normalises the request, forwards it to the engine with token-id and
+  logprob capture on, and records <code>(prompt_ids, response_ids, logprobs)</code> keyed by a
+  rollout id embedded in the URL path or bearer token. Claude Code, Codex CLI, Gemini CLI, Pi,
+  OpenHands and mini-SWE-agent have all been trained this way in public work. The entries: verl's
+  <strong>Uni-Agent Gateway</strong> (v0.8–0.9, "request string in, training tokens out", 1,000+
+  concurrent stateful sessions), <strong>AReaL 2.0</strong>'s agent service
+  (<code>rollout.agent.mode=online</code> — "the agent code lives outside of AReaL"),
+  <strong>slime v0.3</strong>'s <code>AnthropicAdapter</code>/<code>OpenAIAdapter</code> plus
+  <code>TrajectoryManager</code>, <strong>Miles</strong>' TITO session server, NVIDIA's
+  <strong>Polar</strong> (May 2026, the ProRL-Agent-Server), Prime Intellect's
+  <strong>verifiers v1</strong> interception server, Microsoft's <strong>Agent Lightning
+  v1.0</strong> and <strong>OpenForgeRL</strong>. Binfeng Xu, Polar's author, states the design
+  rule: "the training loop and the agent loop have to live in different processes, talk through a
+  stable interface."</p>
+
+  <div class="result">
+    <div class="result-label">The pattern</div>
+    Each generation moved the harness boundary one step further from the trainer — from a
+    coroutine the trainer calls, to a client the trainer's engine serves, to a process the trainer
+    never imports. What <em>never</em> moved is the trainer's input format. Token ids, masks and
+    sampling-time logprobs are captured at whichever boundary the design puts closest to the
+    engine, because that is the only place they exist.
+  </div>
+
+  <!-- ── §3 ─────────────────────────────────────── -->
+  <h2 id="text">3. Why Text Cannot Cross the Seam</h2>
+
+  <p>The tempting version of decoupling is "the harness sends messages, the trainer re-renders
+  them through the chat template and tokenizes." It is what most harnesses do by default and
+  SkyRL's docs rank it first as "simplest — works almost out of the box." It is also wrong in
+  four independent ways, each now documented with a primary source. The
+  <a href="verl-agentic-training.html#tito">verl page</a> made the BPE-seam argument
+  \(T(a\Vert b) \neq T(a)\Vert T(b)\); Agent Lightning v1.0 and the Hugging Face TITO post
+  (May 2026) decompose it further.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Mechanism</th><th>What happens</th><th>Canonical example</th></tr>
+      <tr>
+        <td><strong>1. Decoding is not injective</strong></td>
+        <td>Many token sequences decode to one string. Retokenizing the string need not return the sampled sequence.</td>
+        <td>The model samples <code>h</code>+<code>aving</code>; re-encoding the same text inside a later prompt yields <code>hav</code>+<code>ing</code>. The trainer then evaluates \(\log\pi_\theta\) on tokens the policy never produced.</td>
+      </tr>
+      <tr>
+        <td><strong>2. Chat templates don't compose</strong></td>
+        <td>\(\mathrm{Template}(A\Vert B) \neq \mathrm{Template}(A)\Vert\mathrm{Template}(B)\). Re-rendering the full history rewrites earlier turns.</td>
+        <td>Qwen templates strip <code>&lt;think&gt;</code> blocks from <em>previous</em> assistant turns. The trajectory the model actually sampled is gone from the training prompt. Prime Intellect: this "destroys the actual trajectory the model sampled."</td>
+      </tr>
+      <tr>
+        <td><strong>3. Outputs are transformed at inference time</strong></td>
+        <td>Tool-call parsers "parse, normalize, repair, and reserialize" the sampled response before it is stored in the message history.</td>
+        <td>JSON whitespace and key ordering change; <code>false</code> becomes <code>False</code>; malformed JSON is auto-repaired. The text itself now differs from what was sampled, so even a perfect tokenizer cannot recover it.</td>
+      </tr>
+      <tr>
+        <td><strong>4. The harness rewrites history</strong></td>
+        <td>Compaction, summarisation, subagent fan-out, and reasoning-stripping produce a prompt that is not an extension of any earlier call.</td>
+        <td>Claude Code compacts context at a threshold; the post-compaction prompt shares no token prefix with the pre-compaction one. This is a <em>legitimate</em> behaviour of the harness, not a bug, and the stitcher must handle it.</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>Why this matters beyond hygiene: the whole PPO/GRPO machinery evaluates
+  \(\pi_\theta(a_t\mid s_t)/\pi_{\text{old}}(a_t\mid s_t)\) <em>on the sampled tokens</em>. If
+  the trainer's \(a_t\) is not the engine's \(a_t\), the ratio is meaningless; if \(s_t\) has
+  been rewritten, the policy is being updated on a context it never saw. And — the point SkyRL's
+  docs make explicitly — you "cannot do rollout correction like TIS reliably, so you cannot do
+  fully async training with proper staleness correction." Text-level decoupling silently forbids
+  the async designs of <a href="async-rl.html">the async RL page</a>.</p>
+
+  <div class="note">
+    <strong>The consensus statement.</strong> Prime Intellect's renderers post: "For RL, the
+    inference server should be a simple token-only endpoint." Xu: "anything that round-trips
+    through text decode/encode will silently corrupt the gradient." Hugging Face's TITO: keep
+    "a running buffer of sampled tokens that never gets re-tokenized." The only template property
+    TITO actually needs is <em>prefix-preservation for tool messages</em> — render the history
+    with and without the tool result, take the delta, and append it by id concatenation; 18 of 19
+    model families tested already satisfy it (Qwen3 needed a one-line Jinja fix).
+  </div>
+
+  <!-- ── §4 ─────────────────────────────────────── -->
+  <h2 id="contract">4. The Payload Contract</h2>
+
+  <p>Strip away the framework-specific names and every design in §2 moves the same record from
+  the rollout side to the trainer. Calling it a contract is not a stretch — the field lists of
+  verl's <code>AgentLoopOutput</code>, SkyRL's <code>GeneratorOutput</code>, slime's
+  <code>Sample</code>, AReaL's batch dict, Polar's <code>Trace</code>, PRIME-RL's
+  <code>TrainingSample</code>, Agent Lightning's <code>model_request</code> event and Tinker's
+  <code>Datum</code> are one-to-one up to naming.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Field</th><th>Type</th><th>Who produces it</th><th>What the trainer does with it</th></tr>
+      <tr>
+        <td><code>prompt_ids</code></td>
+        <td>\(\mathbb{Z}^{P}\)</td>
+        <td>Engine, <em>after</em> chat-template processing (vLLM's <code>prompt_token_ids</code>); never the trainer's tokenizer.</td>
+        <td>Conditioning context; no loss. Also the thing checked for prefix continuity across calls (§5).</td>
+      </tr>
+      <tr>
+        <td><code>response_ids</code></td>
+        <td>\(\mathbb{Z}^{R}\)</td>
+        <td>Engine's sampled ids, verbatim.</td>
+        <td>The action sequence \(a_{1:R}\); the only tokens whose \(\log\pi_\theta\) enters the loss.</td>
+      </tr>
+      <tr>
+        <td><code>loss_mask</code></td>
+        <td>\(\{0,1\}^{R}\) (or over \(P{+}R\))</td>
+        <td>Stitcher: 1 on model-sampled spans, 0 on tool outputs, template glue, boundary tokens, and anything that arrived by re-tokenization.</td>
+        <td>Multiplies the per-token loss. Tinker encodes it as <code>advantages=0</code> rather than a separate mask — same effect.</td>
+      </tr>
+      <tr>
+        <td><code>rollout_logprobs</code></td>
+        <td>\(\mathbb{R}^{R}\)</td>
+        <td>Engine, at sampling time, under the <em>actual</em> sampling distribution (verl: <code>logprobs_mode=processed_logprobs</code> so temperature/top-p are reflected). <code>0.0</code> where mask is 0.</td>
+        <td>Becomes \(\log\mu(a_t\mid s_t)\), the behavior policy, in every off-policy correction (§7). Tinker's RL losses <em>refuse</em> a <code>Datum</code> without it.</td>
+      </tr>
+      <tr>
+        <td><code>reward</code></td>
+        <td>scalar, or per-step / per-token</td>
+        <td>Env / verifier / harness, delivered via a side channel (AReaL <code>/rl/set_reward</code>, Agent Lightning spans, verl <code>reward_score</code> on the last token).</td>
+        <td>Advantage computation — and the granularity question of §6.</td>
+      </tr>
+      <tr>
+        <td><code>weight_version</code></td>
+        <td>\(\mathbb{Z}\) per sample or per segment</td>
+        <td>Engine / proxy stamps the policy version that produced each span (AReaL <code>versions[B,T]</code>, slime <code>weight_versions</code>).</td>
+        <td>Staleness gating and per-segment IS when a rollout spans a weight update (§8).</td>
+      </tr>
+      <tr>
+        <td><code>routed_experts</code></td>
+        <td>ids per token per layer</td>
+        <td>Engine (MoE only).</td>
+        <td>Rollout routing replay (R3) so the trainer's forward reuses the engine's expert choices — eliminates the largest MoE mismatch source.</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>Two things the contract deliberately <em>excludes</em>. It never carries the message list —
+  the trainer does not know or care what the system prompt said. And it never carries the
+  trainer-side \(\log\pi_{\text{old}}\): that is either recomputed by the trainer (the classic
+  three-policy form) or replaced by <code>rollout_logprobs</code> (the "bypass" form), but it is
+  not something the harness side can supply.</p>
+
+  <pre><code># verl — AgentLoopOutput (v0.9)
+prompt_ids, response_ids, response_mask, response_logprobs, reward_score,
+routed_experts, num_turns, extra_fields
+
+# SkyRL — GeneratorOutput
+prompt_token_ids, response_ids, loss_masks, rollout_logprobs, rewards (scalar | per-token),
+rollout_expert_indices, is_last_step
+
+# slime / Miles — Sample
+tokens, response_length, loss_mask, rollout_log_probs, rollout_routed_experts,
+weight_versions, status, reward
+#  append_response_tokens(trainable=True) asserts rollout log-probs are present
+
+# Tinker — Datum
+model_input (ints), loss_fn_inputs = {target_tokens, logprobs, advantages}
+#  advantages == 0 is the mask; RL losses reject `weights`
+
+# Agent Lightning v1.0 — model_request event, one per LLM call
+prompt token IDs, response token IDs, response log probabilities
+#  keyed by /proxy/rollout/{rollout_id}/attempt/{attempt_id}/…</code></pre>
+
+  <!-- ── §5 ─────────────────────────────────────── -->
+  <h2 id="stitch">5. Stitching Calls into Samples</h2>
+
+  <p>A gen-1 loop produces one training sample per trajectory because it builds the tape
+  incrementally. A proxy produces \(N\) independent <code>(prompt_ids, response_ids)</code>
+  records for an \(N\)-call trajectory and has to decide how many training samples those become.
+  The naive answers bracket the design space: <em>one sample per call</em> is always correct but
+  costs \(O(T^2)\) tokens of forward/backward for a \(T\)-turn trajectory (every call re-includes
+  the full history as prompt); <em>one sample per trajectory</em> is \(O(T)\) but only valid if
+  call \(n\)'s prompt ids are literally <code>prompt_{n-1} ‖ response_{n-1} ‖ tool_n</code>.</p>
+
+  <p>The test is the <strong>token-prefix predicate</strong> from the verl page, now applied
+  between calls rather than turns:</p>
+  \[
+    \texttt{prompt\_ids}_{n}[\,:\,|\texttt{prompt\_ids}_{n-1}| + |\texttt{response\_ids}_{n-1}|\,]
+    \;\stackrel{?}{=}\;
+    \texttt{prompt\_ids}_{n-1}\,\Vert\,\texttt{response\_ids}_{n-1}
+  \]
+  <p>When it holds, the calls can be merged and the new bytes between the old response and the
+  new response are tool/template tokens with mask 0. When it fails — any of §3's four mechanisms
+  — the frameworks split into two camps, which Agent Lightning v1.0 is the first to name
+  side by side:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Strategy</th><th>Mechanism</th><th>Cost</th><th>Who</th></tr>
+      <tr>
+        <td><strong>Per-call</strong></td>
+        <td>Every call is its own sample; no merging.</td>
+        <td>Always correct; \(O(T^2)\).</td>
+        <td>SkyRL step-wise (mitigated by <code>merge_stepwise_output</code>), AReaL <code>export_style: individual</code> (tree-deduplicated), Trinity-RFT</td>
+      </tr>
+      <tr>
+        <td><strong>Buffer-and-replace</strong></td>
+        <td>The proxy keeps a buffer of what it sampled. When the harness sends a prompt whose text contains an earlier response, the proxy <em>overwrites</em> that span of <code>prompt_ids</code> with the buffered sampled ids before forwarding, so continuity is restored by force.</td>
+        <td>\(O(T)\); but the model is now conditioned on a prompt the harness never sent — "training it under the stitched prompt therefore introduces an off-policy discrepancy" (AL v1.0). Assumes linear history.</td>
+        <td>AReaL <code>concat</code>, verl Continuous Token (v0.9), NeMo-RL <code>replace_prefix_tokens</code>, Miles TITO session server</td>
+      </tr>
+      <tr>
+        <td><strong>Best-effort merge, fork on break</strong></td>
+        <td>Merge only when the predicate holds exactly. On failure, close the current sample and open a new one whose prompt is frozen (mask 0) context.</td>
+        <td>\(O(T)\) when templates behave, degrading toward \(O(T^2)\) when they don't; never changes what the harness saw.</td>
+        <td>slime <code>TrajectoryManager</code> (CLEAN / REALIGN / FORK), Polar <code>prefix_merging</code>, PRIME-RL <code>MessageNode</code> graph ("fork at the first divergence"), Tinker <code>has_extension_property</code>, Agent Lightning v1.0 (<code>ids_startswith</code>), ROLL <code>MessageTracker</code> hash-chain</td>
+      </tr>
+      <tr>
+        <td><strong>Tree-structured</strong></td>
+        <td>Train on the shared-prefix tree directly with a custom attention mask.</td>
+        <td>Optimal tokens; needs non-standard kernels. Discussed, not shipped.</td>
+        <td>AL v1.0 (analysis only)</td>
+      </tr>
+    </table>
+  </div>
+
+  <h3>Interactive: what a 4-call session becomes</h3>
+
+  <p>Below, a harness makes four LLM calls. Each call's prompt is the previous history plus a tool
+  result. Pick what the harness does to the history between calls and how the stitcher responds;
+  watch how many training samples come out, how many tokens carry loss, and where the
+  off-policy risk appears.</p>
+
+  <div class="figure" id="stitcher">
+    <div class="controls">
+      <label>History between calls
+        <select id="s-drift">
+          <option value="clean">clean extension (prefix holds)</option>
+          <option value="retok">retokenised response (BPE drift at call 3)</option>
+          <option value="think">template strips &lt;think&gt; (call 3 rewrites call 1)</option>
+          <option value="compact">harness compacts context before call 4</option>
+        </select>
+      </label>
+      <label>Stitcher
+        <select id="s-strategy">
+          <option value="percall">per-call</option>
+          <option value="replace">buffer-and-replace</option>
+          <option value="fork" selected>best-effort merge, fork on break</option>
+          <option value="text">text re-tokenisation (no token capture)</option>
+        </select>
+      </label>
+    </div>
+    <div id="s-calls"></div>
+    <div class="samples" id="s-samples"></div>
+    <div class="stat-row" id="s-stats"></div>
+    <div class="verdict" id="s-verdict"></div>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--tok-model)"></span> model-sampled, mask 1</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--tok-tool)"></span> tool / observation, mask 0</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--tok-tmpl)"></span> template glue, mask 0</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--tok-bad)"></span> tokens that differ from what was sampled</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--tok-frozen-bg)"></span> frozen prompt context, mask 0</span>
+    </div>
+    <p class="figure-caption">
+      <strong>The strategies differ only when the predicate breaks.</strong> On a clean history all
+      three token-faithful stitchers produce one \(O(T)\) sample. Under drift, per-call pays
+      \(O(T^2)\) for safety, buffer-and-replace keeps one sample by conditioning on a prompt the
+      harness never sent, and fork-on-break pays extra prompt tokens only from the break onward.
+      Text re-tokenisation produces one tidy sample whose "sampled" tokens are partly fiction — the
+      one outcome you cannot detect from the sample alone.
+    </p>
+  </div>
+
+  <!-- ── §6 ─────────────────────────────────────── -->
+  <h2 id="advantage">6. Advantage Granularity</h2>
+
+  <p>Once one rollout can become a variable number of samples, GRPO's group baseline has to be
+  defined somewhere. Two choices are in production:</p>
+
+  <ul>
+    <li><strong>Rollout-level</strong> — compute \(\hat A\) over the \(G\) rollouts of a task
+    exactly as in single-turn GRPO, then broadcast each rollout's advantage to all the samples it
+    was split into. verl Uni-Agent, Polar and Agent Lightning do this. AL v1.0's argument:
+    "Retokenization is an incidental phenomenon, and advantage assignment should not change simply
+    because retokenization happened to split a rollout into more samples."</li>
+    <li><strong>Sample-level</strong> — treat each training sample as a group member, so a rollout
+    that forked into three samples contributes three entries to the baseline. slime and AReaL do
+    this. It is simpler to implement (the trainer never needs to know which samples share a
+    rollout) and it coincides with rollout-level when no forking happens — but it reweights tasks
+    toward whichever rollouts happened to fork more.</li>
+  </ul>
+
+  <p>Related and equally unsettled: how a scalar trajectory reward becomes per-sample
+  signal. Most proxies broadcast the terminal reward to every sample of the rollout (AReaL adds
+  a <code>turn_discount</code>); OpenRLHF sums step rewards into one scalar; SkyRL and Tinker
+  allow per-step rewards from the env. Loss normalisation — per-token over the trajectory vs per
+  sample vs per rollout — interacts with both and is where AL v1.0 reports the most
+  inconsistency between frameworks. The <a href="agentic-rl.html">agentic RL page</a> covers why
+  credit assignment across long horizons is hard in principle; here the difficulty is purely
+  bookkeeping, but it changes the gradient.</p>
+
+  <!-- ── §7 ─────────────────────────────────────── -->
+  <h2 id="behavior">7. The Proxy's Logprobs Are the Behavior Policy</h2>
+
+  <p>The <a href="async-rl.html#tim">async RL page</a> treats the rollout-engine-vs-trainer logprob
+  gap as an <em>engine numerics</em> problem: vLLM and FSDP compute different
+  \(\log\pi\) on the same weights because of kernel, batch-size and TP accumulation order, and the
+  fix is truncated importance sampling with the engine's logprob in the denominator (Yao et al.,
+  "Your Efficient RL Framework Secretly Brings You Off-Policy RL Training"). Harnessed RL adds
+  two more reasons the sampled distribution is not the trained one:</p>
+
+  <ol>
+    <li><strong>Stitching is itself off-policy.</strong> Buffer-and-replace conditions on a
+    rewritten prompt; forked samples are trained with a frozen prompt that may contain retokenised
+    history. Either way \(s_t^{\text{train}} \neq s_t^{\text{sample}}\) for some tokens.</li>
+    <li><strong>Staleness is per-call, not per-trajectory.</strong> A coding agent's 200 calls
+    span tens of minutes; with in-flight weight updates, calls 1–80 came from \(\theta_{k}\) and
+    81–200 from \(\theta_{k+1}\). The trajectory has no single \(\pi_{\text{old}}\).</li>
+  </ol>
+
+  <p>Both are handled by the same move: stop pretending \(\pi_{\text{old}}\) is something the
+  trainer recomputes, and use the logprobs the engine returned when it sampled. Write the three
+  policies explicitly — \(\mu\) the behavior policy (engine, at sampling time),
+  \(\pi_{\text{prox}}\) the proximal policy (trainer's recompute at the start of the update,
+  if any), and \(\pi_\theta\) the policy being updated:</p>
+  \[
+    \underbrace{\frac{\pi_\theta(a_t\mid s_t)}{\pi_{\text{prox}}(a_t\mid s_t)}}_{\text{PPO ratio, clipped}}
+    \;\cdot\;
+    \underbrace{\min\!\Big(\frac{\pi_{\text{prox}}(a_t\mid s_t)}{\mu(a_t\mid s_t)},\,C\Big)}_{\text{behavior correction, stop-grad}}
+    \;\cdot\; \hat A_t \;\cdot\; m_t
+  \]
+  <p>with \(m_t\) the loss mask. Every framework in §9 now exposes this in one of two forms:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Form</th><th>What \(\pi_{\text{prox}}\) is</th><th>Flags</th></tr>
+      <tr>
+        <td><strong>Decoupled / three-policy</strong></td>
+        <td>Recomputed by the trainer; the engine's \(\mu\) enters only through a stop-gradient TIS / masked-IS / IcePop coefficient.</td>
+        <td>verl <code>rollout_correction</code> (token / sequence TIS, <code>low_high</code> IcePop, k1/k2/k3 rejection sampling); AReaL decoupled PPO <code>RejectionSamplingConfig</code> (TIS = clamp, IcePop = mask, KPop = binary KL); slime <code>--use-rollout-correction</code>; ROLL <code>TrainInferISWeightConfig</code>; NeMo-RL <code>truncated_importance_sampling_type tis|icepop|seq-mask-tis</code></td>
+      </tr>
+      <tr>
+        <td><strong>Bypass / two-policy</strong></td>
+        <td>The engine's \(\mu\) <em>is</em> \(\pi_{\text{old}}\); the old-logprob forward pass is skipped.</td>
+        <td>verl <code>bypass_mode</code> (default in fully-async: "old_log_prob must use the log_probs corresponding to the rollout parameters and tokens"); slime/Miles <code>--use-rollout-logprobs</code>; SkyRL <code>policy_loss_type rollout_is|dppo</code>; Tinker <code>importance_sampling</code> / <code>ppo</code> / <code>cispo</code> losses (the <code>logprobs</code> field is \(\mu\)); PRIME-RL DPPO + KL, IcePop for INTELLECT-3</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>The bypass form is what makes harnessed RL affordable: a trajectory of 200 calls does not
+  need a 200-call recompute of \(\pi_{\text{old}}\) before the update. It is only sound because
+  the proxy captured \(\mu\) per token — and it is exactly the thing SkyRL's docs say is lost
+  under re-tokenisation. A 2026 paper, "Missing Old Logits in Asynchronous Agentic RL"
+  (arXiv 2605.12070), formalises the failure: async pipelines that drop the sampling-time logits
+  end up entangling mismatch repair with staleness correction and have no clean estimator for
+  either.</p>
+
+  <div class="note">
+    <strong>The zero-mismatch alternative.</strong> Miles' <code>--true-on-policy-mode</code>
+    makes SGLang's and Megatron's logprobs bitwise equal via batch-invariant kernels, so
+    \(\mu \equiv \pi_{\text{prox}}\) and the correction term is identically 1. It is currently
+    Qwen3-only and incompatible with fully-async training, which is why it eliminates the numerics
+    source but not the stitching or staleness sources above. See
+    <a href="async-rl.html#tim">TIM fix families</a>.
+  </div>
+
+  <!-- ── §8 ─────────────────────────────────────── -->
+  <h2 id="async">8. Async, Weight Versions, and Pausing a Harness You Don't Control</h2>
+
+  <p>The <a href="verl-async-training.html">verl async page</a> describes staleness gating, partial
+  rollouts and the checkpoint-engine weight sync for a trainer that owns its rollout workers. A
+  black-box harness changes three things:</p>
+
+  <ul>
+    <li><strong>You cannot pause the agent, only the engine.</strong> SkyRL states it plainly:
+    "the in-flight weight update is implemented by the inference engines, not the generator /
+    agent harness … the <code>/chat/completions</code> endpoint is simply blocked and not
+    returning." Polar exposes <code>/admin/inference/pause|resume</code>; Agent Lightning's gateway
+    drains with an <code>X-Agl-Paused</code> header; SkyRL's <code>PauseMode keep</code> resumes
+    in-flight requests "from the same token position with the new policy." The harness sees a slow
+    API call and nothing else.</li>
+    <li><strong>Versions are per segment.</strong> Because a single call can straddle an update
+    under <code>keep</code>-style resumption, AReaL stamps <code>versions[B,T]</code> per token and
+    slime per sample; "each segment must be attributed to the version that actually generated it."
+    This is what the §7 correction consumes.</li>
+    <li><strong>Admission control replaces batch size.</strong> AReaL's <code>StalenessManager</code>
+    grants capacity via <code>/grant_capacity</code> and answers HTTP 429 when too many
+    rollouts would be more than <code>max_head_offpolicyness</code> versions behind; SkyRL's
+    <code>AsyncStalenessManager</code> caps in-flight work at \((S + \text{step}) \times B\);
+    PRIME-RL fixed the trainer at exactly one step ahead of inference and bounds
+    <code>max_off_policy_steps</code> (default 8). The knob has moved from "how many rollouts per
+    step" to "how stale may a rollout be when it lands."</li>
+  </ul>
+
+  <p>Weight sync itself is unchanged by the harness — NCCL broadcast, CUDA-IPC, NIXL, or
+  disk-delta (verl <code>delta_sharded</code>, slime <code>--update-weight-mode delta</code>,
+  Miles' RDMA p2p path that took Kimi-K2's 1T sync "from 53.3 s to 7.2 s") — because the proxy
+  is not a party to it. That is the one part of the loop the decoupling leaves alone.</p>
+
+  <!-- ── §9 ─────────────────────────────────────── -->
+  <h2 id="matrix">9. The Framework Matrix (August 2026)</h2>
+
+  <p>Filter by interface generation or by the design choices from §5–§7. Rows are frameworks;
+  versions are the latest release at time of writing. "Loop owner" is the answer to §1; "merge"
+  and "advantage" are §5–§6; "correction" is §7.</p>
+
+  <div class="chips" id="m-chips">
+    <span class="chip on" data-f="all">all</span>
+    <span class="chip" data-f="g1">gen 1 · token loop</span>
+    <span class="chip" data-f="g2">gen 2 · chat + capture</span>
+    <span class="chip" data-f="g3">gen 3 · harness proxy</span>
+    <span class="chip" data-f="fork">fork-on-break</span>
+    <span class="chip" data-f="replace">buffer-and-replace</span>
+    <span class="chip" data-f="anthropic">speaks Anthropic API</span>
+    <span class="chip" data-f="bypass">bypass (engine μ as π_old)</span>
+    <span class="chip" data-f="fullasync">fully async</span>
+  </div>
+
+  <div class="table-wrap">
+    <table class="dense" id="m-table">
+      <tr><th>Framework</th><th>Loop owner</th><th>Engine ↔ agent</th><th>Merge</th><th>Adv.</th><th>Correction</th><th>Async / sync</th></tr>
+
+      <tr data-tags="g1 g3 replace bypass fullasync anthropic">
+        <td><strong>verl</strong> v0.9.0<br><span class="gen-badge g1">G1</span><span class="gen-badge g3">G3</span></td>
+        <td><code>AgentLoopBase.run()</code> coroutine; external harness via <strong>Uni-Agent Gateway</strong> (OpenAI + Anthropic)</td>
+        <td>vLLM/SGLang server, <code>generate(prompt_ids)</code> or chat; "request string in, training tokens out"</td>
+        <td>Continuous Token (buffer-and-replace, per-family wiring); legacy <code>tokenization_sanity_check_mode</code></td>
+        <td>rollout</td>
+        <td><code>rollout_correction</code>: token/seq TIS, IcePop, RS; <code>bypass_mode</code></td>
+        <td>one-step-off · fully async (<code>staleness_threshold</code>, partial rollout) · NCCL/NIXL/checkpoint-engine/<code>delta_sharded</code></td>
+      </tr>
+
+      <tr data-tags="g1 g2 fork bypass fullasync">
+        <td><strong>SkyRL</strong> v0.3.0<br><span class="gen-badge g1">G1</span><span class="gen-badge g2">G2</span></td>
+        <td><code>GeneratorInterface</code> inside trainer; <code>HarborGenerator</code>; SkyRL-Agent layer (OpenHands)</td>
+        <td>vLLM only; OpenAI HTTP with session header, or token <code>generate</code>; three documented strategies (retokenise / TITO / step-wise)</td>
+        <td>step-wise per-call + <code>merge_stepwise_output</code></td>
+        <td>sample/step</td>
+        <td><code>off_policy_correction.*</code>: token/seq TIS, geometric seq mask (recommended), IcePop; <code>rollout_is|dppo</code> skip old-logprob pass</td>
+        <td>fully async (<code>AsyncStalenessManager</code>) · <code>PauseMode keep</code> · vLLM native weight-update API</td>
+      </tr>
+
+      <tr data-tags="g1 g3 fork bypass fullasync anthropic">
+        <td><strong>slime</strong> v0.3.1<br><span class="gen-badge g1">G1</span><span class="gen-badge g3">G3</span></td>
+        <td>user fn (<code>--custom-generate-function-path</code>); <code>AnthropicAdapter</code>/<code>OpenAIAdapter</code> — "message history in, sampled tokens out"</td>
+        <td>SGLang <code>/generate</code> with <code>input_ids</code>, <code>return_logprob</code>; sgl-router</td>
+        <td><code>TrajectoryManager</code> CLEAN / REALIGN / FORK; no prompt rewrite</td>
+        <td>sample</td>
+        <td><code>--use-tis</code> (token/seq/geo + RS veto); <code>--use-rollout-logprobs</code>; 3-policy <code>--use-rollout-correction</code></td>
+        <td>one-step-off · partial rollout · fully-async example · NCCL / disk-delta</td>
+      </tr>
+
+      <tr data-tags="g1 g3 replace bypass fullasync">
+        <td><strong>Miles</strong> v0.1<br><span class="gen-badge g1">G1</span><span class="gen-badge g3">G3</span></td>
+        <td>slime plug-points + <code>--custom-agent-function-path run_agent(base_url)</code> with <code>--use-session-server --tito-model</code></td>
+        <td>SGLang token path, or TITO session server proxying <code>/v1/chat/completions</code> while injecting Miles-owned <code>input_ids</code></td>
+        <td>session server splices prior tokens; "turn n−1 is a bit-perfect prefix of turn n"</td>
+        <td>sample</td>
+        <td>TIS / IcePop / MIS; <code>--use-rollout-logprobs</code>; <code>--true-on-policy-mode</code> (bitwise, Qwen3)</td>
+        <td><code>--fully-async</code> (<code>--max-weight-staleness</code>) · IPC / NCCL / RDMA p2p / disk-delta</td>
+      </tr>
+
+      <tr data-tags="g1 g3 replace bypass fullasync anthropic">
+        <td><strong>AReaL</strong> 2.0<br><span class="gen-badge g1">G1</span><span class="gen-badge g3">G3</span></td>
+        <td>any <code>async run(data) → reward</code> via <code>OpenAIProxyWorkflow</code>; <code>rollout.agent.mode=online</code> (Chat / Responses / Anthropic)</td>
+        <td><code>agenerate(ModelRequest{input_ids}) → ModelResponse{output_tokens, output_logprobs, output_versions}</code></td>
+        <td><code>export_style individual</code> (default, tree-dedup) or <code>concat</code> (buffer-and-replace, linear only)</td>
+        <td>sample</td>
+        <td>decoupled PPO: \(\pi_\theta/\pi_{\text{prox}} \times\) <code>behave_imp_weight</code>; <code>RejectionSamplingConfig</code> (TIS / IcePop / KPop); <code>prox_logp_method loglinear</code></td>
+        <td><code>max_head_offpolicyness</code>, <code>StalenessManager</code> 429 · per-segment <code>versions</code> · xccl / disk / awex</td>
+      </tr>
+
+      <tr data-tags="g1 g2 fork">
+        <td><strong>ROLL</strong> v0.3.0<br><span class="gen-badge g1">G1</span><span class="gen-badge g2">G2</span></td>
+        <td><code>TrajEnvManager</code> / <code>AgentNativeStepEnvManager</code>; <code>ProxyEnvManager</code> + <code>AgentRunner</code> (OpenAI only)</td>
+        <td>router token-in/out; <code>ProxyServer /v1/chat/completions</code> keyed by <code>Bearer {env_id}</code></td>
+        <td><code>MessageTracker</code> hash-chain reuses engine <code>response_ids</code>; fork on edited history</td>
+        <td>rollout</td>
+        <td>\(\text{ratio} \times \text{detach}(\text{clamp}(\pi_{\text{old}}/\pi_{\text{infer}}, 1.2))\); <code>pg_variant tis|topr|cispo</code></td>
+        <td><code>async_generation_ratio</code> · suspend→abort→update→resume · NCCL / CUDA-IPC</td>
+      </tr>
+
+      <tr data-tags="g1 g2 replace fullasync">
+        <td><strong>NeMo-RL</strong> v0.7.0 + NeMo Gym<br><span class="gen-badge g1">G1</span><span class="gen-badge g2">G2</span></td>
+        <td>native <code>run_multi_turn_rollout</code>; Gym Agent Server (CPU-only, external) via OpenAI endpoint; Polar registered as a Gym env</td>
+        <td>native <code>generate(input_ids)</code>; Gym: per-DP vLLM <code>/v1/chat/completions</code> + <code>/tokenize</code> with <code>required_prefix_token_ids</code></td>
+        <td><code>replace_prefix_tokens</code> splices prior tokens; hard assert on prefix</td>
+        <td>rollout</td>
+        <td><code>truncated_importance_sampling_type tis|icepop|seq-mask-tis</code>; "Async GRPO requires IS correction enabled"</td>
+        <td><code>async_grpo{max_trajectory_age_steps, in_flight_weight_updates}</code> · NCCL / CUDA-IPC / NIXL</td>
+      </tr>
+
+      <tr data-tags="g1">
+        <td><strong>OpenRLHF</strong> v0.11.0<br><span class="gen-badge g1">G1</span></td>
+        <td><code>AgentExecutorBase.execute()</code> loaded inside the vLLM actor; OpenAI-server executor example</td>
+        <td>in-process <code>AsyncLLM.generate(token_ids)</code>; env feedback re-tokenised and appended</td>
+        <td>append with <code>add_special_tokens=False</code>; "prefix stability is assumed"</td>
+        <td>rollout (summed scalar)</td>
+        <td><code>is_correction_type tis|icepop|seq-mask-tis</code></td>
+        <td><code>async_enable</code> + Ray queue · partial rollout via vLLM pause/resume · NCCL / CUDA-IPC</td>
+      </tr>
+
+      <tr data-tags="g2 g3 fork bypass fullasync anthropic">
+        <td><strong>PRIME-RL</strong> v0.8 + verifiers v1<br><span class="gen-badge g2">G2</span><span class="gen-badge g3">G3</span></td>
+        <td>arbitrary harness in a <code>Runtime</code> (claude_code, codex, pi, mini-swe-agent…); model traffic via an <strong>interception server</strong></td>
+        <td>client-side <strong>renderers</strong> POST <code>{token_ids, sampling_params}</code> to vLLM <code>/inference/v1/generate</code>; intermediate <code>openai_chat_completions_token</code> dialect</td>
+        <td><code>MessageNode</code> graph: "fork at the first divergence"; extension property</td>
+        <td>rollout</td>
+        <td>DPPO + KL default; IcePop masking (INTELLECT-3, α=0.5, β=5)</td>
+        <td>trainer exactly one step ahead; <code>max_off_policy_steps</code> 8 · ZMQ rollouts · filesystem / NCCL / NIXL</td>
+      </tr>
+
+      <tr data-tags="g3 fork anthropic">
+        <td><strong>Polar</strong> (NVIDIA, 2026-05)<br><span class="gen-badge g3">G3</span></td>
+        <td>unmodified harness (codex_cli, claude_code, gemini_cli, qwen_code, opencode, pi)</td>
+        <td>gateway injects <code>OPENAI_BASE_URL</code>/<code>ANTHROPIC_BASE_URL</code>/<code>GOOGLE_API_URL</code>; normalises to Chat Completions with <code>logprobs</code></td>
+        <td><code>per_request</code> or <code>prefix_merging</code> (strict prefix, new chain on break)</td>
+        <td>rollout</td>
+        <td>trainer's concern (slime bridge, "TIS: Enabled")</td>
+        <td><code>/admin/inference/pause|resume</code> · trainer bridges: slime today, NeMo-RL / verl roadmap</td>
+      </tr>
+
+      <tr data-tags="g2 g3 fork">
+        <td><strong>Agent Lightning</strong> v1.0 (2026-08)<br><span class="gen-badge g2">G2</span><span class="gen-badge g3">G3</span></td>
+        <td>"the harness, rather than the training engine, owns the environment interaction loop"; Rollout Controller (subprocess / K8s Job)</td>
+        <td><code>agl-server</code> OpenAI proxy with <code>return_token_ids=True, logprobs=True</code>; rollout id in the URL path</td>
+        <td>best-effort merge on <code>ids_startswith</code>, else new row; <code>trace_aggregator.level trajectory|transition</code></td>
+        <td>rollout</td>
+        <td>via verl: <code>rollout_is: token</code>, threshold 2</td>
+        <td>collocated carry-over groups · gateway drains (<code>X-Agl-Paused</code>) · verl hybrid engine</td>
+      </tr>
+
+      <tr data-tags="g2 fork">
+        <td><strong>rLLM</strong> / AWS agentcore-rl-toolkit<br><span class="gen-badge g2">G2</span></td>
+        <td>user workflow; "Your agent runs as-is"</td>
+        <td>model gateway "captures LLM calls (token IDs + logprobs) by URL-routed sessions"</td>
+        <td>Episode → Trajectory → Step (one step per call)</td>
+        <td>rollout</td>
+        <td>inherited from backend (verl / Tinker / Fireworks)</td>
+        <td>backend-defined; AgentCore microVM rollouts</td>
+      </tr>
+
+      <tr data-tags="g1 fork bypass">
+        <td><strong>Tinker</strong> + cookbook<br><span class="gen-badge g1">G1</span></td>
+        <td>user process: <code>Env.initial_observation() / step(action: list[int])</code>, <code>do_group_rollout</code></td>
+        <td>pure token API: <code>sample → SampledSequence(tokens, logprobs)</code>; <code>forward_backward(Datum)</code>; client-side Renderer</td>
+        <td><code>trajectory_to_data</code> merges on prefix; <code>has_extension_property</code> false for think-stripping renderers</td>
+        <td>rollout (group)</td>
+        <td><code>importance_sampling</code> (unbounded), <code>ppo</code>, <code>cispo</code>, <code>dro</code>; <code>logprobs</code> required</td>
+        <td><code>AsyncConfig(max_steps_off_policy)</code> drops stale; no in-flight weight changes; server-managed weights</td>
+      </tr>
+
+      <tr data-tags="g2">
+        <td><strong>ART</strong> (OpenPipe)<br><span class="gen-badge g2">G2</span></td>
+        <td>user <code>rollout(model, scenario) → art.Trajectory</code> via <code>model.openai_client()</code></td>
+        <td>OpenAI-compatible with <code>return_token_ids</code>; <code>TokenFlag.EXACT</code>; RULER LLM-judge rewards</td>
+        <td>per-Choice <code>assistant_mask</code>; misaligned boundaries return <code>None</code></td>
+        <td>rollout (group)</td>
+        <td>CISPO-style default; <code>truncated_importance_sampling</code> token/seq/geo</td>
+        <td>sync colocated LoRA swap (Unsloth)</td>
+      </tr>
+
+      <tr data-tags="g1">
+        <td><strong>TRL</strong> (TITO, 2026-05)<br><span class="gen-badge g1">G1</span></td>
+        <td><code>GRPOTrainer(environment_factory=…)</code> runs the tool loop in-trainer (<a href="openenv.html#training">OpenEnv page</a>)</td>
+        <td>vLLM server / colocate; running token buffer, tool-response delta appended by id concatenation</td>
+        <td>history rewrite ⇒ everything before it frozen prompt</td>
+        <td>rollout (group)</td>
+        <td>truncated IS; OPSM zero-out for off-policy samples</td>
+        <td>sync by default; async staleness per HF's March 2026 survey</td>
+      </tr>
+    </table>
+  </div>
+
+  <p style="font-size:0.86rem;color:var(--muted)">Omitted for brevity or lack of code: RL2 (SGLang
+  token loop, sync), Trinity-RFT (one <code>Experience</code> per call), torchforge (paused,
+  folded into torchtitan), Laminar (trajectory-level asynchrony, paper only), Atropos (archived
+  July 2026; env-side tokenisation into <code>ScoredDataGroup</code>), OpenForgeRL (proxy + K8s
+  orchestrator on verl; OSWorld). OpenEnv and MCP operate at the structured-action level and
+  delegate token fidelity to whichever trainer drives them.</p>
+
+  <!-- ── §10 ────────────────────────────────────── -->
+  <h2 id="choose">10. How to Place — or Build — Anything New</h2>
+
+  <p>Five questions classify any trainer–harness design, in the order they constrain each other:</p>
+
+  <ol>
+    <li><strong>Where is the boundary?</strong> Coroutine in the trainer (gen 1), client of the
+    trainer's engine (gen 2), or process behind a proxy (gen 3). Harness parity requires gen 3;
+    gen 3 requires answers to the next four.</li>
+    <li><strong>Where are token ids captured?</strong> At the engine (vLLM <code>return_token_ids</code>,
+    SGLang <code>/generate</code> <code>meta_info</code>) or at a token-only endpoint the client
+    renders for (Tinker, PRIME-RL renderers). If the answer is "the trainer re-tokenises," the
+    design is text-level and §3 applies in full — including losing TIS.</li>
+    <li><strong>What happens when the prefix predicate breaks?</strong> Per-call, buffer-and-replace,
+    or fork-on-break (§5). The honest default for an arbitrary harness is fork-on-break: it never
+    rewrites what the harness saw and it degrades gracefully. Buffer-and-replace is the right
+    choice when you control the harness and know its history is linear.</li>
+    <li><strong>Where is the advantage baseline?</strong> Rollout-level unless you have a reason
+    (§6). If the framework only offers sample-level, expect task reweighting under heavy forking.</li>
+    <li><strong>Which policy is \(\pi_{\text{old}}\)?</strong> If sampling-time logprobs are in
+    the payload, bypass mode is available and the 200-call recompute disappears (§7). If they are
+    not, the design is limited to synchronous, near-on-policy training.</li>
+  </ol>
+
+  <div class="result">
+    <div class="result-label">One-sentence summary</div>
+    Decoupling the trainer from the agent graph moves the <em>harness</em> out of the trainer but
+    never moves the <em>tokens</em> out of the payload: every surviving design captures
+    <code>(prompt_ids, response_ids, loss_mask, rollout_logprobs, reward)</code> at the engine
+    boundary, stitches calls into samples by a strict token-prefix test, and uses the captured
+    logprobs as the behavior policy — which is what lets the same trainer accept any harness and
+    still train off-policy safely.
+  </div>
+
+  <!-- ── §11 ────────────────────────────────────── -->
+  <h2 id="refs">11. References</h2>
+
+  <ul>
+    <li>Agent Lightning v1.0: <a href="https://arxiv.org/abs/2608.17528">"Towards Harnessed Agentic RL"</a> (arXiv 2608.17528, Aug 2026) — names the paradigm; the retokenisation taxonomy, merge strategies and the advantage-granularity comparison of §5–§6. Original: <a href="https://arxiv.org/abs/2508.03680">arXiv 2508.03680</a> (Aug 2025); <a href="https://vllm.ai/blog/2025-10-22-agent-lightning">vLLM blog</a> on <code>return_token_ids</code> and retokenization drift.</li>
+    <li>Hugging Face, <a href="https://huggingface.co/blog/huggingface/tito">"Agentic RL: Token-In, Token-Out Done Right"</a> (May 2026) — prefix-preservation, tool-response delta, 18/19 template survey; and <a href="https://huggingface.co/blog/async-rl-training-landscape">"Keep the Tokens Flowing: Lessons from 16 Open-Source RL Libraries"</a> (Mar 2026).</li>
+    <li>Prime Intellect: <a href="https://www.primeintellect.ai/blog/renderers">renderers</a> (May 2026, "the inference server should be a simple token-only endpoint"), <a href="https://www.primeintellect.ai/blog/verifiers-v1">verifiers v1</a> (Jul 2026, taskset × harness × runtime, interception server), <a href="https://github.com/PrimeIntellect-ai/prime-rl">prime-rl</a>, <a href="https://arxiv.org/abs/2512.16144">INTELLECT-3</a>.</li>
+    <li>NVIDIA: <a href="https://arxiv.org/abs/2605.24220">Polar</a> (May 2026) and the <a href="https://github.com/NVIDIA-NeMo/ProRL-Agent-Server">ProRL-Agent-Server</a>; <a href="https://arxiv.org/abs/2603.18815">ProRL Agent</a> ("token IDs as the canonical representation throughout"); B. Xu, <a href="https://billxbf.github.io/posts/agent-rl-infra/">"Rethinking RL Infra for Agents"</a> (May 2026). NeMo-RL <a href="https://github.com/NVIDIA-NeMo/RL">repo</a> and NeMo Gym on-policy-corrections docs.</li>
+    <li>verl: <a href="https://verl.readthedocs.io/en/latest/advance/agent_loop.html">Agent Loop</a>, <a href="https://verl.readthedocs.io/en/latest/algo/rollout_corr.html">Rollout Correction</a>, <a href="https://verl.readthedocs.io/en/latest/advance/fully_async.html">Fully Async</a>, <a href="https://github.com/verl-project/uni-agent">Uni-Agent</a>; issue <a href="https://github.com/verl-project/verl/issues/2618">#2618</a> (serve-mode migration).</li>
+    <li>SkyRL: <a href="https://docs.skyrl.ai/docs/tutorials/agent-integration">Agent Integration</a> (the retokenise / TITO / step-wise taxonomy); <a href="https://arxiv.org/abs/2511.16108">SkyRL-Agent</a> (Nov 2025).</li>
+    <li>slime: <a href="https://github.com/THUDM/slime">repo</a>, <code>docs/en/agent.md</code> and the <code>TrajectoryManager</code>; Miles: <a href="https://www.lmsys.org/blog/2026-05-13-no-token-left-behind/">"No Token Left Behind: TITO"</a> (May 2026), <a href="https://www.lmsys.org/blog/2026-08-18-miles-v0-1/">v0.1</a>, and the <a href="https://github.com/zhaochenyang20/Awesome-ML-SYS-Tutorial/blob/main/rlhf/slime/mismatch/blog-en.md">mismatch blog</a>.</li>
+    <li>AReaL: <a href="https://arxiv.org/abs/2607.01120">AReaL 2.0</a> (Jul 2026, microservice architecture, step-level trajectory protocol), <a href="https://arxiv.org/abs/2505.24298">AReaL</a> (decoupled PPO, May 2025).</li>
+    <li>ROLL: <a href="https://github.com/alibaba/ROLL">repo</a>, <a href="https://arxiv.org/abs/2510.11345">ROLL Flash</a>. OpenRLHF: <a href="https://github.com/OpenRLHF/OpenRLHF">repo</a>.</li>
+    <li>Tinker: <a href="https://tinker-docs.thinkingmachines.ai/tinker/losses/">Losses</a> (the <code>Datum</code> contract), <a href="https://github.com/thinking-machines-lab/tinker-cookbook">tinker-cookbook</a> <code>rl/types.py</code>.</li>
+    <li>rLLM <a href="https://github.com/rllm-org/rllm">repo</a>; AWS <a href="https://github.com/awslabs/agentcore-rl-toolkit">agentcore-rl-toolkit</a>; OpenPipe <a href="https://github.com/OpenPipe/ART">ART</a>; <a href="https://arxiv.org/abs/2607.21557">OpenForgeRL</a> (Jul 2026).</li>
+    <li>Importance-sampling correction lineage: Yao et al., <a href="https://fengyao.notion.site/off-policy-rl">"Your Efficient RL Framework Secretly Brings You Off-Policy RL Training"</a> (Aug 2025; peer-reviewed as <a href="https://opt-ml.org/papers/2025/paper116.pdf">"On the Rollout-Training Mismatch"</a>); <a href="https://arxiv.org/abs/2506.13585">MiniMax-M1 / CISPO</a>; <a href="https://arxiv.org/abs/2510.13786">ScaleRL</a>; <a href="https://arxiv.org/abs/2510.26788">FP16 mismatch fix</a>; <a href="https://arxiv.org/abs/2605.12070">"Missing Old Logits in Asynchronous Agentic RL"</a> (May 2026); <a href="https://arxiv.org/abs/2512.23075">Trust Region Masking</a>.</li>
+    <li>Engine plumbing: vLLM <a href="https://github.com/vllm-project/vllm/pull/22587">PR #22587</a> (<code>return_token_ids</code>), SGLang issue <a href="https://github.com/sgl-project/sglang/issues/18378">#18378</a> (chat-endpoint token ids; merge status unverified at time of writing).</li>
+  </ul>
+
+</div>
+
+<script>
+(function () {
+  // ── Session stitcher ────────────────────────────────────────────────────
+  // A tiny symbolic model: each call has a prompt made of segments and a sampled response.
+  // Segments: {t:'tmpl'|'tool'|'model'|'bad'|'frozen', n: token count, id: origin call}
+  const BASE = [
+    { prompt: [['tmpl', 'sys', 40], ['tool', 'task', 30]], resp: ['r1', 24] },
+    { prompt: [['tmpl', 'glue', 4], ['tool', 'obs1', 60]], resp: ['r2', 18] },
+    { prompt: [['tmpl', 'glue', 4], ['tool', 'obs2', 90]], resp: ['r3', 30] },
+    { prompt: [['tmpl', 'glue', 4], ['tool', 'obs3', 50]], resp: ['r4', 12] },
+  ];
+
+  function seg(t, label, n, extra) { return Object.assign({ t, label, n }, extra || {}); }
+
+  // Build the full prompt the harness actually sends for call i, given drift mode.
+  function harnessPrompts(drift) {
+    const calls = [];
+    let hist = []; // segments of history as the harness holds them
+    for (let i = 0; i < BASE.length; i++) {
+      const b = BASE[i];
+      let prompt;
+      if (drift === 'compact' && i === 3) {
+        // compaction: replace everything with a summary, then new obs
+        prompt = [seg('tmpl', 'sys', 40), seg('tool', 'summary', 45), ...b.prompt.map(p => seg(p[0], p[1], p[2]))];
+      } else {
+        prompt = hist.concat(b.prompt.map(p => seg(p[0], p[1], p[2])));
+      }
+      // retokenisation drift: at call 3 the harness's copy of r2 retokenises differently
+      if (drift === 'retok' && i === 2) {
+        prompt = prompt.map(s => (s.label === 'r2') ? seg('bad', 'r2′', s.n + 1, { broken: true }) : s);
+      }
+      // think-stripping: at call 3, template re-render strips <think> out of r1 (history rewritten far back)
+      if (drift === 'think' && i >= 2) {
+        prompt = prompt.map(s => (s.label === 'r1') ? seg('bad', 'r1−think', Math.max(6, s.n - 14), { broken: true }) : s);
+      }
+      const resp = seg('model', b.resp[0], b.resp[1], { sampled: true, call: i });
+      calls.push({ prompt, resp });
+      // harness history after this call: prompt + response (as text; the model segment is the response)
+      // the harness's later history keeps any 'bad' spans it introduced
+      hist = prompt.concat([seg('model', b.resp[0], b.resp[1], { sampled: true, call: i })]);
+    }
+    return calls;
+  }
+
+  // Does call i's prompt begin with (prompt_{i-1} ‖ response_{i-1}) exactly?
+  function prefixHolds(prev, cur) {
+    const want = prev.prompt.concat([prev.resp]);
+    if (cur.prompt.length < want.length) return false;
+    for (let k = 0; k < want.length; k++) {
+      const a = want[k], b = cur.prompt[k];
+      if (a.label !== b.label || a.n !== b.n || !!a.broken !== !!b.broken) return false;
+    }
+    return true;
+  }
+
+  function stitch(calls, strategy) {
+    // returns {samples:[{segs:[...]}], offpolicy: string|null}
+    const samples = [];
+    let offpolicy = null;
+    if (strategy === 'percall') {
+      calls.forEach(c => samples.push({ segs: c.prompt.map(s => Object.assign({}, s, { frozen: true })).concat([c.resp]) }));
+      return { samples, offpolicy };
+    }
+    if (strategy === 'text') {
+      // one sample from re-rendered final history: every response re-tokenised; broken ones silently kept
+      const last = calls[calls.length - 1];
+      const segs = last.prompt.map(s => {
+        if (s.t === 'model') return Object.assign({}, s, { t: 'bad', label: s.label + '*', retok: true });
+        return Object.assign({}, s);
+      }).concat([Object.assign({}, last.resp, { t: 'bad', label: last.resp.label + '*', retok: true })]);
+      samples.push({ segs, text: true });
+      offpolicy = 'every "sampled" span was re-tokenised from text — no rollout logprobs line up, TIS is unavailable, and nothing in the sample reveals it';
+      return { samples, offpolicy };
+    }
+    // replace / fork
+    let cur = { segs: calls[0].prompt.map(s => Object.assign({}, s, { frozen: true })).concat([calls[0].resp]) };
+    for (let i = 1; i < calls.length; i++) {
+      const prev = calls[i - 1], c = calls[i];
+      if (prefixHolds(prev, c)) {
+        const extra = c.prompt.slice(prev.prompt.length + 1);
+        cur.segs = cur.segs.concat(extra.map(s => Object.assign({}, s))).concat([c.resp]);
+      } else if (strategy === 'replace') {
+        // Overwrite the harness's broken spans with the buffered sampled ids, keep one sample.
+        const fixed = c.prompt.map(s => s.broken ? Object.assign({}, s, { t: 'model', label: s.label.replace(/[′−].*|\*/, '') + '↺', broken: false, replaced: true }) : s);
+        const isCompact = fixed.some(s => s.label === 'summary');
+        if (isCompact) {
+          // nothing to replace; linear-history assumption fails → must start a new sample anyway
+          samples.push(cur);
+          cur = { segs: c.prompt.map(s => Object.assign({}, s, { frozen: true })).concat([c.resp]) };
+          offpolicy = offpolicy || 'compaction is not a linear history — buffer-and-replace has nothing to splice and must fork';
+        } else {
+          const extra = fixed.slice(prev.prompt.length + 1);
+          cur.segs = cur.segs.concat(extra.map(s => Object.assign({}, s))).concat([c.resp]);
+          offpolicy = 'the model sampled r' + (i + 1) + ' conditioned on the harness\'s prompt, but it is trained under the spliced prompt — an off-policy discrepancy TIS does not see';
+        }
+      } else { // fork
+        samples.push(cur);
+        cur = { segs: c.prompt.map(s => Object.assign({}, s, { frozen: true })).concat([c.resp]) };
+      }
+    }
+    samples.push(cur);
+    return { samples, offpolicy };
+  }
+
+  function render() {
+    const drift = document.getElementById('s-drift').value;
+    const strategy = document.getElementById('s-strategy').value;
+    const calls = harnessPrompts(drift);
+    const out = stitch(calls, strategy);
+
+    const callsEl = document.getElementById('s-calls');
+    callsEl.innerHTML = '<div style="font-size:0.8rem;color:var(--muted);margin-bottom:4px">What the proxy records (per LLM call)</div>';
+    calls.forEach((c, i) => {
+      const row = document.createElement('div'); row.className = 'seg-row';
+      const lab = document.createElement('div'); lab.className = 'seg-label'; lab.textContent = 'call ' + (i + 1);
+      const strip = document.createElement('div'); strip.className = 'seg-strip';
+      c.prompt.forEach(s => strip.appendChild(mkSeg(s, true)));
+      const arrow = document.createElement('span'); arrow.textContent = '→'; arrow.style.cssText = 'color:var(--muted);font-size:0.8rem;padding:0 4px';
+      strip.appendChild(arrow);
+      strip.appendChild(mkSeg(c.resp, false));
+      row.appendChild(lab); row.appendChild(strip); callsEl.appendChild(row);
+    });
+
+    const sEl = document.getElementById('s-samples');
+    sEl.innerHTML = '<div style="font-size:0.8rem;color:var(--muted);margin-bottom:4px">Training samples the stitcher emits</div>';
+    let lossTok = 0, totalTok = 0, badTok = 0, badCtx = 0;
+    out.samples.forEach((smp, i) => {
+      const row = document.createElement('div'); row.className = 'seg-row';
+      const lab = document.createElement('div'); lab.className = 'seg-label'; lab.textContent = 'sample ' + (i + 1);
+      const strip = document.createElement('div'); strip.className = 'seg-strip';
+      smp.segs.forEach(s => {
+        // in text mode every re-tokenised assistant span carries loss — on tokens that may not be what was sampled
+        let isLoss = s.t === 'model' && !s.frozen;
+        if (smp.text) isLoss = !!s.retok;
+        totalTok += s.n;
+        if (isLoss) lossTok += s.n;
+        if (s.t === 'bad') { if (isLoss) badTok += s.n; else badCtx += s.n; }
+        const el = mkSeg(s, !isLoss);
+        if (s.replaced) { el.classList.add('model'); el.title = 'buffered sampled ids spliced in by the proxy'; }
+        strip.appendChild(el);
+      });
+      row.appendChild(lab); row.appendChild(strip); sEl.appendChild(row);
+    });
+
+    const sampled = calls.reduce((a, c) => a + c.resp.n, 0);
+    document.getElementById('s-stats').innerHTML =
+      '<span>samples: <b>' + out.samples.length + '</b></span>' +
+      '<span>tokens through fwd/bwd: <b>' + totalTok + '</b></span>' +
+      '<span>tokens carrying loss: <b>' + lossTok + '</b> of ' + sampled + ' sampled</span>' +
+      '<span>loss-bearing tokens ≠ sampled: <b style="color:' + (badTok ? 'var(--tok-bad)' : 'inherit') + '">' + badTok + '</b></span>' +
+      '<span>re-tokenised tokens in frozen prompt (mask 0): <b>' + badCtx + '</b></span>';
+
+    const v = document.getElementById('s-verdict');
+    if (out.offpolicy) { v.style.display = ''; v.textContent = '⚠ ' + out.offpolicy + '.'; }
+    else if (strategy === 'percall') { v.style.display = ''; v.textContent = '✓ exact, but every call re-pays its full prompt: O(T²) forward/backward tokens.'; }
+    else { v.style.display = ''; v.textContent = '✓ every loss-bearing token is exactly what the engine sampled, and rollout logprobs line up with it.'; }
+  }
+
+  function mkSeg(s, mask0) {
+    const el = document.createElement('span');
+    el.className = 'seg ' + (s.frozen ? 'frozen' : s.t) + (mask0 ? ' mask0' : '');
+    el.innerHTML = s.label + '<sup>' + s.n + '</sup>';
+    return el;
+  }
+
+  ['s-drift', 's-strategy'].forEach(id => document.getElementById(id).addEventListener('change', render));
+  render();
+
+  // ── Matrix filter ───────────────────────────────────────────────────────
+  const chips = document.querySelectorAll('#m-chips .chip');
+  const rows = document.querySelectorAll('#m-table tr[data-tags]');
+  chips.forEach(ch => ch.addEventListener('click', () => {
+    chips.forEach(c => c.classList.remove('on'));
+    ch.classList.add('on');
+    const f = ch.dataset.f;
+    rows.forEach(r => {
+      const tags = r.dataset.tags.split(' ');
+      r.classList.toggle('hide', f !== 'all' && !tags.includes(f));
+    });
+  }));
+})();
+</script>
+
+</body>
+</html>
