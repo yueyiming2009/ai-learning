@@ -613,30 +613,35 @@
   <code>TrainingSample</code>, Agent Lightning's <code>model_request</code> event and Tinker's
   <code>Datum</code> are one-to-one up to naming.</p>
 
+  <p style="font-size:0.88em;color:var(--muted)">Type notation: \(\mathbb{Z}\) the integers (token ids), \(\mathbb{R}\) the reals
+  (log-probs), \(\{0,1\}\) bits; the superscript is a sequence <em>length</em> — \(L_p\) prompt
+  tokens, \(L_r\) response tokens — not an exponent. See
+  <a href="../foundations/math-notation.html#misc">math notation §9</a>.</p>
+
   <div class="table-wrap">
     <table>
       <tr><th>Field</th><th>Type</th><th>Who produces it</th><th>What the trainer does with it</th></tr>
       <tr>
         <td><code>prompt_ids</code></td>
-        <td>\(\mathbb{Z}^{P}\)</td>
+        <td>\(\mathbb{Z}^{L_p}\)</td>
         <td>Engine, <em>after</em> chat-template processing (vLLM's <code>prompt_token_ids</code>); never the trainer's tokenizer.</td>
         <td>Conditioning context; no loss. Also the thing checked for prefix continuity across calls (§5).</td>
       </tr>
       <tr>
         <td><code>response_ids</code></td>
-        <td>\(\mathbb{Z}^{R}\)</td>
+        <td>\(\mathbb{Z}^{L_r}\)</td>
         <td>Engine's sampled ids, verbatim.</td>
-        <td>The action sequence \(a_{1:R}\); the only tokens whose \(\log\pi_\theta\) enters the loss.</td>
+        <td>The action sequence \(a_{1:L_r}\); the only tokens whose \(\log\pi_\theta\) enters the loss.</td>
       </tr>
       <tr>
         <td><code>loss_mask</code></td>
-        <td>\(\{0,1\}^{R}\) (or over \(P{+}R\))</td>
+        <td>\(\{0,1\}^{L_r}\) (or over \(L_p{+}L_r\))</td>
         <td>Stitcher: 1 on model-sampled spans, 0 on tool outputs, template glue, boundary tokens, and anything that arrived by re-tokenization.</td>
         <td>Multiplies the per-token loss. Tinker encodes it as <code>advantages=0</code> rather than a separate mask — same effect.</td>
       </tr>
       <tr>
         <td><code>rollout_logprobs</code></td>
-        <td>\(\mathbb{R}^{R}\)</td>
+        <td>\(\mathbb{R}^{L_r}\)</td>
         <td>Engine, at sampling time, under the <em>actual</em> sampling distribution (verl: <code>logprobs_mode=processed_logprobs</code> so temperature/top-p are reflected). <code>0.0</code> where mask is 0.</td>
         <td>Becomes \(\log\mu(a_t\mid s_t)\), the behavior policy, in every off-policy correction (§7). Tinker's RL losses <em>refuse</em> a <code>Datum</code> without it.</td>
       </tr>
@@ -700,14 +705,20 @@ prompt token IDs, response token IDs, response log probabilities
   call \(n\)'s prompt ids are literally <code>prompt_{n-1} ‖ response_{n-1} ‖ tool_n</code>.</p>
 
   <p>The test is the <strong>token-prefix predicate</strong> from the verl page, now applied
-  between calls rather than turns:</p>
+  between calls rather than turns. Write \(p_n\) for the prompt ids of call \(n\), \(r_n\) for its
+  sampled response ids, and \(a \Vert b\) for concatenation. Call \(n\) <em>extends</em> call
+  \(n-1\) when everything the model saw and said last time reappears, token for token, at the
+  start of the new prompt:</p>
   \[
-    \texttt{prompt\_ids}_{n}[\,:\,|\texttt{prompt\_ids}_{n-1}| + |\texttt{response\_ids}_{n-1}|\,]
-    \;\stackrel{?}{=}\;
-    \texttt{prompt\_ids}_{n-1}\,\Vert\,\texttt{response\_ids}_{n-1}
+    p_{n-1}\,\Vert\,r_{n-1}\;\text{ is a prefix of }\;p_n
+    \qquad\Longleftrightarrow\qquad
+    p_n[\,:\,|p_{n-1}| + |r_{n-1}|\,] \;=\; p_{n-1}\,\Vert\,r_{n-1}
   \]
-  <p>When it holds, the calls can be merged and the new bytes between the old response and the
-  new response are tool/template tokens with mask 0. When it fails — any of §3's four mechanisms
+  <pre><code>prev = prompt_ids[n-1] + response_ids[n-1]      # what the engine saw + what it sampled
+extends = prompt_ids[n][:len(prev)] == prev       # exact id-for-id match, no decode/encode
+tail    = prompt_ids[n][len(prev):]               # if extends: the new tool/template tokens</code></pre>
+  <p>When it holds, the calls can be merged and the \(\texttt{tail}\) between the old response and
+  the new response is tool/template tokens with mask 0. When it fails — any of §3's four mechanisms
   — the frameworks split into two camps, which Agent Lightning v1.0 is the first to name
   side by side:</p>
 
