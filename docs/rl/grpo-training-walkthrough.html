@@ -818,14 +818,27 @@ actor_trainer.broadcast_weights_to_rollout_server()
   <!-- ── §6 Dr.GRPO ──────────────────────────── -->
   <h2 id="drgrpo">6. Dr.GRPO — Loss Aggregation in Practice</h2>
 
-  <p>Standard GRPO averages the per-token clipped term over each sequence's response tokens,
-  then averages over sequences. Longer correct sequences contribute proportionally more gradient
-  — a length bias that can push the policy toward verbosity.</p>
+  <p>Original GRPO averages the per-token clipped term over each sequence's response tokens,
+  then averages over sequences — <strong>seq-mean-token-mean</strong>. Every sequence gets equal
+  weight regardless of length, so each token of a long response carries \(1/|o_i|\) of the
+  gradient a short response's tokens carry. That is the length bias Dr.GRPO identifies: a long
+  <em>wrong</em> answer is penalized less per token than a short one, and a short <em>right</em>
+  answer is rewarded more per token than a long one, which nudges the policy toward verbosity
+  when it is failing.</p>
 
-  <h4>Standard GRPO loss (token-mean)</h4>
+  <h4>Original GRPO loss (seq-mean-token-mean)</h4>
   <pre><code># per_token : (8, 512)  — already masked
 loss_per_seq = per_token.sum(dim=-1) / response_mask.sum(dim=-1)  # (8,) token-mean per seq
-loss = -loss_per_seq.mean()                                        # scalar</code></pre>
+loss = -loss_per_seq.mean()                                        # scalar: mean over sequences</code></pre>
+
+  <p>Naming matters here because verl's <code>loss_agg_mode</code> uses <code>token-mean</code>
+  for a <em>different</em> formula — the global batch average
+  <code>per_token.sum() / response_mask.sum()</code> from §6b, which DAPO popularized and which
+  weights every token equally across the batch (so longer sequences contribute proportionally
+  more). The original GRPO form above is verl's <code>seq-mean-token-mean</code>. A third
+  option, <em>rollout-level token-mean</em>, only matters once one rollout can become several
+  training rows; see <a href="harnessed-agentic-rl.html#lossnorm">loss normalisation under
+  dynamic sample counts</a>.</p>
 
   <h4>Dr.GRPO loss (token-sum, constant divisor)</h4>
   <pre><code>D = 1000.0  # constant — e.g. mean sequence length at start of training
@@ -849,7 +862,7 @@ adv_g = rewards_g - mean_r              # mean-centered only, no std division</c
       <tr><th>Setting</th><th>verl config</th><th>Miles config</th></tr>
       <tr>
         <td>Standard GRPO</td>
-        <td><code>algorithm.adv_estimator: grpo</code><br><code>algorithm.norm_adv_by_std_in_grpo: true</code><br><code>actor_rollout_ref.actor.loss_agg_mode: token-mean</code></td>
+        <td><code>algorithm.adv_estimator: grpo</code><br><code>algorithm.norm_adv_by_std_in_grpo: true</code><br><code>actor_rollout_ref.actor.loss_agg_mode: seq-mean-token-mean</code> (original GRPO) — verl's default <code>token-mean</code> is the DAPO batch average of §6b</td>
         <td><code>--advantage-estimator grpo</code><br>(std-norm on by default)</td>
       </tr>
       <tr>

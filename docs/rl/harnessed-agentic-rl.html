@@ -752,6 +752,15 @@ tail    = prompt_ids[n][len(prev):]               # if extends: the new tool/tem
     </table>
   </div>
 
+  <p>How often does the predicate break in practice? Often enough to design around: in AL v1.0's
+  coding-agent run (mini-SWE-agent, Qwen3.5-9B) only <strong>36%</strong> of rollouts survive as a
+  single merged row, and the mean is <strong>2.41 training samples per rollout</strong>. Two
+  bookkeeping rules follow. Every flattened row must keep its rollout id and prompt-group id, so a
+  rollout gains no statistical weight from having more rows (§6); and all rows of one rollout must
+  land in the <em>same optimizer update</em> — splitting them across updates evaluates parts of
+  one rollout under different policy versions, a within-rollout staleness that the §7 correction
+  never sees.</p>
+
   <h3>Interactive: what a 4-call session becomes</h3>
 
   <p>Below, a harness makes four LLM calls. Each call's prompt is the previous history plus a tool
@@ -821,11 +830,55 @@ tail    = prompt_ids[n][len(prev):]               # if extends: the new tool/tem
   <p>Related and equally unsettled: how a scalar trajectory reward becomes per-sample
   signal. Most proxies broadcast the terminal reward to every sample of the rollout (AReaL adds
   a <code>turn_discount</code>); OpenRLHF sums step rewards into one scalar; SkyRL and Tinker
-  allow per-step rewards from the env. Loss normalisation — per-token over the trajectory vs per
-  sample vs per rollout — interacts with both and is where AL v1.0 reports the most
-  inconsistency between frameworks. The <a href="agentic-rl.html">agentic RL page</a> covers why
+  allow per-step rewards from the env. The <a href="agentic-rl.html">agentic RL page</a> covers why
   credit assignment across long horizons is hard in principle; here the difficulty is purely
   bookkeeping, but it changes the gradient.</p>
+
+  <h3 id="lossnorm">Loss normalisation under dynamic sample counts</h3>
+
+  <p>The baseline is half of the story; the other half is how per-token losses are averaged once a
+  batch of \(R\) rollouts contains a variable number of rows. Write \(N_\rho\) for the samples of
+  rollout \(\rho\), \(L_{\rho,j}\) for the response tokens of sample \(j\), and
+  \(\ell_{\rho,j,t}\) for the per-token loss. Three normalisers are in production:</p>
+  \[
+  \begin{aligned}
+  \mathcal L_{\text{token-mean}} &= \frac{\sum_{\rho}\sum_{j}\sum_{t}\ell_{\rho,j,t}}{\sum_{\rho}\sum_{j}L_{\rho,j}}
+    &&\text{DAPO; verl } \texttt{loss\_agg\_mode: token-mean}\\[4pt]
+  \mathcal L_{\text{seq-mean}} &= \frac{1}{\sum_{\rho}N_\rho}\sum_{\rho}\sum_{j}\frac{1}{L_{\rho,j}}\sum_{t}\ell_{\rho,j,t}
+    &&\text{original GRPO (seq-mean-token-mean)}\\[4pt]
+  \mathcal L_{\text{rollout-mean}} &= \frac{1}{R}\sum_{\rho}\frac{\sum_{j}\sum_{t}\ell_{\rho,j,t}}{\sum_{j}L_{\rho,j}}
+    &&\text{slime; rollout-level token-mean}
+  \end{aligned}
+  \]
+
+  <p>AL v1.0's worked example makes the difference tangible: rollout A splits into two rows of 50
+  and 100 tokens, B into three rows of 30, C stays one row of 40. Seq-mean hands B half the
+  batch's weight (three of six rows) for an accident of forking; token-mean weights by tokens
+  (A gets 150 of 280); rollout-mean gives each rollout exactly one third. By the same principle
+  as the advantage — sample count is incidental — seq-mean is the wrong choice here. Token-mean
+  is principled, but in AL's runs it turned unstable late in training whenever a batch filled
+  with long negative samples, so rollout-level token-mean is their default.</p>
+
+  <p>The ablation is the one result in the paper that the framing does not predict. Same GRPO
+  objective, same coding setup (Qwen3.5-9B, mini-SWE-agent, SWE-smith), three settings:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Setting</th><th>Advantage</th><th>Loss</th><th>Best val reward</th><th>Policy entropy</th></tr>
+      <tr><td>Baseline</td><td>sample-level</td><td>token-mean</td><td>35.0%</td><td>—</td></tr>
+      <tr><td>Advantage fix only</td><td>rollout-level</td><td>token-mean</td><td><strong>33.1%</strong> (worse)</td><td>grows fastest</td></tr>
+      <tr><td>Both fixes</td><td>rollout-level</td><td>rollout-level token-mean</td><td><strong>38.2%</strong> (step 128)</td><td>slowest, most stable</td></tr>
+    </table>
+  </div>
+
+  <div class="note">
+    <strong>The fixes are a pair.</strong> Correcting the baseline alone <em>hurts</em>: the
+    corrected advantages push entropy up and token-mean does nothing to contain it. Adding the
+    rollout-level normaliser is what "controls the entropy increase introduced by the corrected
+    rollout advantages while improving validation reward." The both-fixes checkpoint is the one
+    reported at <strong>41.8% → 56.4%</strong> on SWE-bench Verified (step 208). If a framework only
+    lets you move one of the two knobs, moving neither may be safer than moving the baseline alone.
+  </div>
 
   <!-- ── §7 ─────────────────────────────────────── -->
   <h2 id="behavior">7. The Proxy's Logprobs Are the Behavior Policy</h2>
@@ -918,6 +971,13 @@ tail    = prompt_ids[n][len(prev):]               # if extends: the new tool/tem
     PRIME-RL fixed the trainer at exactly one step ahead of inference and bounds
     <code>max_off_policy_steps</code> (default 8). The knob has moved from "how many rollouts per
     step" to "how stale may a rollout be when it lands."</li>
+    <li><strong>Retries need an idempotent control plane.</strong> Two network hops can fail and
+    be retried — trainer/controller → gateway, and harness → proxy. AL v1.0 makes every rollout-API
+    endpoint idempotent so control-plane retries are free; a retried LLM call, though, is a fresh
+    sample, so its trainer drops earlier <code>model_request</code> events that share an identical
+    prompt and keeps only the last. Correct for transport retries; wrong for a harness that
+    deliberately re-sends the same prompt (a parse-failure retry whose first response it did
+    see). Know which of the two your harness does before adopting the rule.</li>
   </ul>
 
   <p>Weight sync itself is unchanged by the harness — NCCL broadcast, CUDA-IPC, NIXL, or
@@ -1145,7 +1205,7 @@ tail    = prompt_ids[n][len(prev):]               # if extends: the new tool/tem
   <h2 id="refs">11. References</h2>
 
   <ul>
-    <li>Agent Lightning v1.0: <a href="https://arxiv.org/abs/2608.17528">"Towards Harnessed Agentic RL"</a> (arXiv 2608.17528, Aug 2026) — names the paradigm; the retokenisation taxonomy, merge strategies and the advantage-granularity comparison of §5–§6. Original: <a href="https://arxiv.org/abs/2508.03680">arXiv 2508.03680</a> (Aug 2025); <a href="https://vllm.ai/blog/2025-10-22-agent-lightning">vLLM blog</a> on <code>return_token_ids</code> and retokenization drift.</li>
+    <li>Agent Lightning v1.0: <a href="https://arxiv.org/abs/2608.17528">"Towards Harnessed Agentic RL"</a> (arXiv 2608.17528, Aug 2026) — names the paradigm; the retokenisation taxonomy, merge strategies, the advantage-granularity comparison and the loss-normalisation ablation of §5–§6. Original: <a href="https://arxiv.org/abs/2508.03680">arXiv 2508.03680</a> (Aug 2025); <a href="https://vllm.ai/blog/2025-10-22-agent-lightning">vLLM blog</a> on <code>return_token_ids</code> and retokenization drift.</li>
     <li>Hugging Face, <a href="https://huggingface.co/blog/huggingface/tito">"Agentic RL: Token-In, Token-Out Done Right"</a> (May 2026) — prefix-preservation, tool-response delta, 18/19 template survey; and <a href="https://huggingface.co/blog/async-rl-training-landscape">"Keep the Tokens Flowing: Lessons from 16 Open-Source RL Libraries"</a> (Mar 2026).</li>
     <li>Prime Intellect: <a href="https://www.primeintellect.ai/blog/renderers">renderers</a> (May 2026, "the inference server should be a simple token-only endpoint"), <a href="https://www.primeintellect.ai/blog/verifiers-v1">verifiers v1</a> (Jul 2026, taskset × harness × runtime, interception server), <a href="https://github.com/PrimeIntellect-ai/prime-rl">prime-rl</a>, <a href="https://arxiv.org/abs/2512.16144">INTELLECT-3</a>.</li>
     <li>NVIDIA: <a href="https://arxiv.org/abs/2605.24220">Polar</a> (May 2026) and the <a href="https://github.com/NVIDIA-NeMo/ProRL-Agent-Server">ProRL-Agent-Server</a>; <a href="https://arxiv.org/abs/2603.18815">ProRL Agent</a> ("token IDs as the canonical representation throughout"); B. Xu, <a href="https://billxbf.github.io/posts/agent-rl-infra/">"Rethinking RL Infra for Agents"</a> (May 2026). NeMo-RL <a href="https://github.com/NVIDIA-NeMo/RL">repo</a> and NeMo Gym on-policy-corrections docs.</li>
