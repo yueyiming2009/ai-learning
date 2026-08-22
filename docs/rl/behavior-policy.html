@@ -228,7 +228,8 @@
 <nav>
   <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Behavior vs Target Policy</a>
   <div class="nav-links">
-    <a href="../index.html" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;">← All notes</a>
+    <a href="../index.html">← All notes</a>
+    <a href="../index.html#rl-rl-theory" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;" title="Back to Reinforcement Learning › RL Theory">↑ RL Theory</a>
     <a href="#notation">Notation</a>
     <a href="#two-policies">Two Policies</a>
     <a href="#why">Why Separate Them</a>
@@ -273,8 +274,11 @@ e \pi\) it is <strong>off-policy</strong>, and every expectation in your update 
       <tr><td>\(\mu(a\mid s)\)</td><td>Behavior policy — the distribution that actually generated the logged actions</td></tr>
       <tr><td>\(\pi(a\mid s)\)</td><td>Target policy — the one being evaluated (prediction) or improved (control)</td></tr>
       <tr><td>\(	au = (s_0,a_0,r_0,\dots,s_T)\)</td><td>A trajectory; \(	au\sim\mu\) means its actions were drawn from \(\mu\)</td></tr>
-      <tr><td>\(ho_t = \pi(a_t\mid s_t)/\mu(a_t\mid s_t)\)</td><td>Per-step importance ratio</td></tr>
-      <tr><td>\(ho_{t:T} = \prod_{k=t}^{T}ho_k\)</td><td>Trajectory (cumulative) importance ratio from step \(t\) onward</td></tr>
+      <tr><td>\(
+ho_t = \pi(a_t\mid s_t)/\mu(a_t\mid s_t)\)</td><td>Per-step importance ratio</td></tr>
+      <tr><td>\(
+ho_{t:T} = \prod_{k=t}^{T}
+ho_k\)</td><td>Trajectory (cumulative) importance ratio from step \(t\) onward</td></tr>
       <tr><td>\(d^\mu(s)\)</td><td>State-visitation distribution induced by \(\mu\)</td></tr>
       <tr><td>\(\pi_{	heta_{	ext{old}}}\)</td><td>The behavior policy in policy-gradient practice: the parameters used for rollout</td></tr>
       <tr><td>\(N_{	ext{eff}}\)</td><td>Effective sample size after importance weighting</td></tr>
@@ -347,13 +351,15 @@ e \pi\))</h4>
     <table class="conv">
       <tr><th>Algorithm</th><th>Behavior \(\mu\)</th><th>Target \(\pi\)</th><th>On/Off</th><th>How the gap is handled</th></tr>
       <tr><td>MC prediction (first-visit)</td><td>\(\pi\)</td><td>\(\pi\)</td><td class="y">On</td><td>—</td></tr>
-      <tr><td>MC prediction with IS</td><td>\(arepsilon\)-soft \(\mu\)</td><td>any \(\pi\) with \(\mu\gg\pi\)</td><td class="n">Off</td><td>Trajectory importance ratio \(ho_{t:T}\)</td></tr>
+      <tr><td>MC prediction with IS</td><td>\(arepsilon\)-soft \(\mu\)</td><td>any \(\pi\) with \(\mu\gg\pi\)</td><td class="n">Off</td><td>Trajectory importance ratio \(
+ho_{t:T}\)</td></tr>
       <tr><td>SARSA</td><td>\(arepsilon\)-greedy</td><td>same \(arepsilon\)-greedy</td><td class="y">On</td><td>—</td></tr>
       <tr><td>Q-learning</td><td>\(arepsilon\)-greedy</td><td>greedy</td><td class="n">Off</td><td>\(\max_{a'}\) in the target — no weights needed</td></tr>
       <tr><td>Expected SARSA</td><td>\(arepsilon\)-greedy</td><td>any \(\pi\)</td><td class="c">Either</td><td>Target takes \(\mathbb{E}_{a'\sim\pi}Q(s',a')\) explicitly</td></tr>
       <tr><td>DQN</td><td>replay buffer (mixture of old \(arepsilon\)-greedy)</td><td>greedy</td><td class="n">Off</td><td>Inherits Q-learning's \(\max\)</td></tr>
       <tr><td>REINFORCE / A2C</td><td>\(\pi_	heta\)</td><td>\(\pi_	heta\)</td><td class="y">On</td><td>—</td></tr>
-      <tr><td>PPO / GRPO</td><td>\(\pi_{	heta_{	ext{old}}}\)</td><td>\(\pi_	heta\)</td><td class="c">Mildly off</td><td>Per-token ratio \(ho_t\), clipped to \([1-\epsilon,1+\epsilon]\)</td></tr>
+      <tr><td>PPO / GRPO</td><td>\(\pi_{	heta_{	ext{old}}}\)</td><td>\(\pi_	heta\)</td><td class="c">Mildly off</td><td>Per-token ratio \(
+ho_t\), clipped to \([1-\epsilon,1+\epsilon]\)</td></tr>
       <tr><td>DDPG / SAC</td><td>replay buffer</td><td>\(\pi_	heta\) (deterministic / max-ent)</td><td class="n">Off</td><td>Q-function target under \(\pi\), like Q-learning</td></tr>
       <tr><td>DPO</td><td>fixed preference dataset</td><td>\(\pi_	heta\)</td><td class="n">Off</td><td>Reparameterises reward; no rollouts at all</td></tr>
       <tr><td>Async LLM RL</td><td>stale \(\pi_{	heta_{k-d}}\) on inference engine</td><td>\(\pi_{	heta_k}\)</td><td class="n">Off</td><td>Ratio + clip, or decoupled PPO, or staleness bound</td></tr>
@@ -383,35 +389,47 @@ e \pi\))</h4>
   <h2 id="is">5. Importance Sampling: The General Correction</h2>
   <p>For any expectation that genuinely must be estimated by sampling under \(\mu\), the fix is the identity from <a href="../foundations/importance-sampling.html" style="color:var(--accent);">importance sampling</a>:</p>
   \[
-    \mathbb{E}_{a\sim\pi}[f(a)] = \sum_a \pi(a) f(a) = \sum_a \mu(a)\,rac{\pi(a)}{\mu(a)}\,f(a) = \mathbb{E}_{a\sim\mu}\!\left[rac{\pi(a)}{\mu(a)}\,f(a)ight],
+    \mathbb{E}_{a\sim\pi}[f(a)] = \sum_a \pi(a) f(a) = \sum_a \mu(a)\,rac{\pi(a)}{\mu(a)}\,f(a) = \mathbb{E}_{a\sim\mu}\!\left[rac{\pi(a)}{\mu(a)}\,f(a)
+ight],
   \]
   <p>valid whenever \(\mu(a)>0\) wherever \(\pi(a)>0\) (the <strong>coverage</strong> or absolute-continuity condition — the behavior policy must be able to produce every action the target would). For a full trajectory, the transition dynamics \(P(s'\mid s,a)\) are the same under both policies and cancel, leaving a product over action probabilities only:</p>
   \[
-    ho_{t:T} \;=\; rac{\Pr_\pi(	au_{t:T})}{\Pr_\mu(	au_{t:T})}
+    
+ho_{t:T} \;=\; rac{\Pr_\pi(	au_{t:T})}{\Pr_\mu(	au_{t:T})}
     \;=\; rac{\prod_k \pi(a_k\mid s_k)\,P(s_{k+1}\mid s_k,a_k)}{\prod_k \mu(a_k\mid s_k)\,P(s_{k+1}\mid s_k,a_k)}
     \;=\; \prod_{k=t}^{T}rac{\pi(a_k\mid s_k)}{\mu(a_k\mid s_k)}.
   \]
   <p>Off-policy Monte Carlo prediction then estimates \(V^\pi\) from returns generated under \(\mu\):</p>
   <div class="result">
     <div class="result-label">Ordinary importance-sampled MC</div>
-    \[ V^\pi(s) pprox rac{1}{N}\sum_{i=1}^{N} ho^{(i)}_{t:T}\, G^{(i)}_t \]
+    \[ V^\pi(s) pprox rac{1}{N}\sum_{i=1}^{N} 
+ho^{(i)}_{t:T}\, G^{(i)}_t \]
   </div>
   <p>This is unbiased. It is also, for any nontrivial horizon, useless in practice — the next section shows why. The usual mitigations are:</p>
   <ul>
-    <li><strong>Weighted (self-normalized) IS</strong>: divide by \(\sum_iho^{(i)}\) instead of \(N\). Biased for finite \(N\), consistent, and dramatically lower variance.</li>
-    <li><strong>Per-decision IS</strong>: reward \(r_k\) only depends on actions up to \(k\), so it only needs \(ho_{t:k}\), not the full \(ho_{t:T}\). Shorter products, less variance, still unbiased.</li>
-    <li><strong>Truncation / clipping</strong>: cap each \(ho_k\) at \(ar c\) (Retrace, V-trace in IMPALA, PPO's clip). Introduces bias in exchange for bounded variance — the trade that every practical algorithm makes.</li>
+    <li><strong>Weighted (self-normalized) IS</strong>: divide by \(\sum_i
+ho^{(i)}\) instead of \(N\). Biased for finite \(N\), consistent, and dramatically lower variance.</li>
+    <li><strong>Per-decision IS</strong>: reward \(r_k\) only depends on actions up to \(k\), so it only needs \(
+ho_{t:k}\), not the full \(
+ho_{t:T}\). Shorter products, less variance, still unbiased.</li>
+    <li><strong>Truncation / clipping</strong>: cap each \(
+ho_k\) at \(ar c\) (Retrace, V-trace in IMPALA, PPO's clip). Introduces bias in exchange for bounded variance — the trade that every practical algorithm makes.</li>
     <li><strong>Keep \(\mu\) close to \(\pi\)</strong>: the only mitigation that attacks the root. PPO's whole design is this.</li>
   </ul>
 
   <h2 id="variance">6. The Variance Problem</h2>
-  <p>The importance weight has mean one under \(\mu\), but its variance is governed by how different the policies are, compounded over the horizon. Take the simplest analytic case — Gaussian action distributions with unit variance whose means differ by \(\Delta\), \(\mu=\mathcal N(0,1)\), \(\pi=\mathcal N(\Delta,1)\). Then \(\mathbb{E}_\mu[ho]=1\) and</p>
+  <p>The importance weight has mean one under \(\mu\), but its variance is governed by how different the policies are, compounded over the horizon. Take the simplest analytic case — Gaussian action distributions with unit variance whose means differ by \(\Delta\), \(\mu=\mathcal N(0,1)\), \(\pi=\mathcal N(\Delta,1)\). Then \(\mathbb{E}_\mu[
+ho]=1\) and</p>
   \[
-    \mathbb{E}_\mu[ho^2] = e^{\Delta^2}, \qquad \operatorname{Var}_\mu[ho] = e^{\Delta^2}-1 .
+    \mathbb{E}_\mu[
+ho^2] = e^{\Delta^2}, \qquad \operatorname{Var}_\mu[
+ho] = e^{\Delta^2}-1 .
   \]
-  <p>Across a horizon of \(T\) independent decisions each with the same gap, the trajectory ratio has \(\mathbb{E}[ho_{1:T}^2]=e^{T\Delta^2}\). A standard way to read this is the <strong>effective sample size</strong> — the number of equally-weighted samples your \(N\) weighted samples are worth:</p>
+  <p>Across a horizon of \(T\) independent decisions each with the same gap, the trajectory ratio has \(\mathbb{E}[
+ho_{1:T}^2]=e^{T\Delta^2}\). A standard way to read this is the <strong>effective sample size</strong> — the number of equally-weighted samples your \(N\) weighted samples are worth:</p>
   \[
-    rac{N_{	ext{eff}}}{N} pprox rac{1}{\mathbb{E}_\mu[ho^2]} = e^{-T\Delta^2}.
+    rac{N_{	ext{eff}}}{N} pprox rac{1}{\mathbb{E}_\mu[
+ho^2]} = e^{-T\Delta^2}.
   \]
   <p>That exponent is the whole story. A per-step gap that is negligible at \(T=1\) is catastrophic at \(T=100\) — and an LLM response is a trajectory of hundreds to thousands of token-level decisions.</p>
 
@@ -456,7 +474,8 @@ e\pi\) in disguise:</p>
 
   <h3>Gap 1 — Multiple gradient steps per batch</h3>
   <p>PPO and GRPO generate a batch with \(\pi_{	heta_{	ext{old}}}\), then take several optimizer steps. From the second step on, \(	heta
-e	heta_{	ext{old}}\). The per-token ratio \(ho_t=\pi_	heta(a_t\mid s_t)/\pi_{	heta_{	ext{old}}}(a_t\mid s_t)\) is the single-step importance weight; clipping bounds its contribution. Because it is per-token rather than per-sequence, the horizon exponent from §6 never appears — this is a deliberate design choice, not an accident.</p>
+e	heta_{	ext{old}}\). The per-token ratio \(
+ho_t=\pi_	heta(a_t\mid s_t)/\pi_{	heta_{	ext{old}}}(a_t\mid s_t)\) is the single-step importance weight; clipping bounds its contribution. Because it is per-token rather than per-sequence, the horizon exponent from §6 never appears — this is a deliberate design choice, not an accident.</p>
 
   <h3>Gap 2 — Inference engine vs trainer</h3>
   <p>Rollouts come from vLLM / SGLang; gradients from FSDP / Megatron. Even with identical weights, the two compute different log-probabilities: different kernels, different precision, different MoE routing decisions, sampling under temperature and top-p. The behavior policy is <em>what the engine actually sampled from</em>. If the trainer recomputes \(\log\pi_{	heta_{	ext{old}}}\) itself and uses that as the denominator, it is silently using the wrong \(\mu\). The fix — and the reason frameworks increasingly insist on the engine's own logprobs — is spelled out in <a href="harnessed-agentic-rl.html#behavior" style="color:var(--accent);">Harnessed Agentic RL §7</a>.</p>
@@ -464,7 +483,9 @@ e	heta_{	ext{old}}\). The per-token ratio \(ho_t=\pi_	heta(a_t\mid s_t)/\pi_{	h
   <h3>Gap 3 — Asynchrony and staleness</h3>
   <p>When generation and training are decoupled, a sample generated at weight version \(k\) is consumed at version \(k+d\). The behavior policy is \(\pi_{	heta_{k}}\), the target is \(\pi_{	heta_{k+d}}\), and \(d\) (the staleness) is a knob that trades throughput for off-policy distance. <a href="async-rl.html" style="color:var(--accent);">Async RL</a> covers the corrections — ratio against the true behavior logprobs, decoupled PPO's separate proximal and behavior policies, and hard bounds on \(d\).</p>
 
-  <div class="note">A practical diagnostic: log \(\mathbb{E}[ho_t]\) and the clip fraction per step. On-policy, \(ho_t\equiv1\) and nothing clips. A mean drifting from one, or a clip fraction rising across epochs, is a direct measurement of how far the behavior policy has fallen from the target. <a href="async-rl-monitoring.html" style="color:var(--accent);">Async RL Monitoring</a> builds a dashboard around this.</div>
+  <div class="note">A practical diagnostic: log \(\mathbb{E}[
+ho_t]\) and the clip fraction per step. On-policy, \(
+ho_t\equiv1\) and nothing clips. A mean drifting from one, or a clip fraction rising across epochs, is a direct measurement of how far the behavior policy has fallen from the target. <a href="async-rl-monitoring.html" style="color:var(--accent);">Async RL Monitoring</a> builds a dashboard around this.</div>
 
   <h2 id="next">What's Next</h2>
   <div class="next-grid">
@@ -517,7 +538,8 @@ e\pi\) → off-policy, something must correct the gap.</p>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">Importance ratio</div>
-      <p>\(ho_t = \pi(a_t\mid s_t)/\mu(a_t\mid s_t)\); dynamics cancel, only action probabilities remain.</p>
+      <p>\(
+ho_t = \pi(a_t\mid s_t)/\mu(a_t\mid s_t)\); dynamics cancel, only action probabilities remain.</p>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">Variance</div>
