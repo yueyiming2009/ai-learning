@@ -195,8 +195,6 @@
     <a href="#mc-estimation">MC Estimation</a>
     <a href="#unbiased">Unbiased</a>
     <a href="#variance">Variance</a>
-    <a href="#reinforce">REINFORCE</a>
-    <a href="#baseline">Baseline</a>
     <a href="#llm">LLMs &amp; Search</a>
     <a href="#next">What's Next</a>
   </div>
@@ -205,7 +203,7 @@
 <div class="hero">
   <span class="hero-pill">RL Foundations</span>
   <h1>Monte Carlo Rollouts</h1>
-  <p>Replace an expectation you cannot compute with an average over episodes you can run. The estimate is exact on average; the cost is variance that grows with the horizon — and baselines, bootstrapping, and search are all ways of paying it down.</p>
+  <p>Replace an expectation you cannot compute with an average over episodes you can run. The estimate is exact on average; the cost is variance that grows with the horizon — and bootstrapping, baselines, and search are all ways of paying it down.</p>
 </div>
 
 <div class="page-wrap">
@@ -214,13 +212,13 @@
     <span class="resource-icon">🎓</span>
     <div>
       <a href="https://www.youtube.com/watch?v=2pWv7GOvuf0&list=PLqYmG7hTraZDM-OYHWgPebj2MfCFzFObQ" target="_blank">David Silver's Reinforcement Learning Course (DeepMind/UCL)</a>
-      <p>Lecture 4 (model-free prediction) covers MC value estimation; Lecture 7 (policy gradient) covers REINFORCE and baselines.</p>
+      <p>Lecture 4 (model-free prediction) covers Monte Carlo value estimation and its comparison with TD.</p>
     </div>
   </div>
 
   <p>The <a href="value-functions.html">Value Functions page</a> ended with a problem: \(V^\pi(s)\) is defined as an expectation over everything the policy and environment might do from \(s\), and the Bellman equations only rearrange that expectation — they do not make it computable without summing over every state and transition. There are two ways out. <strong>Bootstrap</strong>: replace the tail of the expectation with your current guess for it (<a href="td-learning.html">TD learning</a>). Or <strong>sample</strong>: run the policy, record what actually happened, and average. This page is the second route.</p>
 
-  <p>Three things are on this page because other pages lean on them: the rollout primitive that <a href="mcts.html">MCTS</a>, <a href="grpo.html">GRPO</a>, and every LLM trainer call "generation"; the proof that averaging returns is unbiased and why the variance is nonetheless a problem; and REINFORCE with its baseline, which the <a href="policy-gradient.html">Policy Gradient page</a> states and this page derives and works through numerically.</p>
+  <p>This page is about <em>prediction</em> — estimating how good a policy is, not yet improving it. Three things are here because later pages lean on them: the rollout primitive that <a href="mcts.html">MCTS</a>, <a href="grpo.html">GRPO</a>, and every LLM trainer call "generation"; the proof that averaging returns is unbiased; and the reason the variance is nonetheless a problem, which is what <a href="td-learning.html">TD learning</a>, the baselines on the <a href="policy-gradient.html">Policy Gradient page</a>, and tree search each respond to.</p>
 
   <h2 id="notation">Notation</h2>
   <p>Conventions follow the <a href="mdp.html#notation">MDP page</a>: the reward for acting at step \(t\) is \(r_t\), and returns are discounted sums from \(t\) onward.</p>
@@ -231,9 +229,7 @@
       <tr><td>\(G_t\)</td><td>Return from step \(t\): \(\sum_{l \ge 0} \gamma^l r_{t+l}\). In LLM RL the group size is also written \(G\) — on this page a bare \(G\) with no subscript is a group size, \(G_t\) is always a return</td></tr>
       <tr><td>\(V^\pi(s)\)</td><td>True state value \(\mathbb{E}_\pi[G_t \mid s_t = s]\); \(\hat V^\pi(s)\) is its Monte Carlo estimate</td></tr>
       <tr><td>\(N(s)\)</td><td>Number of returns recorded from state \(s\) across all episodes</td></tr>
-      <tr><td>\(\pi_\theta\)</td><td>Policy with parameters \(\theta\); \(J(\theta) = \mathbb{E}_{\tau \sim \pi_\theta}[G_0]\) is the objective</td></tr>
-      <tr><td>\(\hat g\)</td><td>A single-sample Monte Carlo estimate of \(\nabla_\theta J\)</td></tr>
-      <tr><td>\(b(s_t)\)</td><td>A baseline: any function of the state (not the action) subtracted from \(G_t\)</td></tr>
+      <tr><td>\(\alpha\)</td><td>Step size in the incremental form of the estimator</td></tr>
       <tr><td>\(\sigma^2\)</td><td>Per-step reward variance, used in the horizon analysis of §4</td></tr>
     </table>
   </div>
@@ -275,7 +271,7 @@ s ← s₀,  τ ← []
 
   <div class="read">
     <div class="read-label">Where rollouts appear under other names</div>
-    <p><strong>Generation</strong> in LLM RL: one rollout is one sampled response (§7). <strong>Simulation</strong> in MCTS: the third phase of every iteration is a rollout from a leaf to a terminal state (<a href="mcts.html#phases">MCTS §1</a>). <strong>Self-play</strong> in AlphaZero: one game is one rollout whose terminal reward is the result (<a href="alphazero.html#selfplay">AlphaZero §3</a>). The primitive is identical; only what is done with the returns differs.</p>
+    <p><strong>Generation</strong> in LLM RL: one rollout is one sampled response (§5). <strong>Simulation</strong> in MCTS: the third phase of every iteration is a rollout from a leaf to a terminal state (<a href="mcts.html#phases">MCTS §1</a>). <strong>Self-play</strong> in AlphaZero: one game is one rollout whose terminal reward is the result (<a href="alphazero.html#selfplay">AlphaZero §3</a>). The primitive is identical; only what is done with the returns differs.</p>
   </div>
 
   <h2 id="mc-estimation">2. Monte Carlo Value Estimation</h2>
@@ -360,7 +356,7 @@ s ← s₀,  τ ← []
 
   <div class="step">
     <div class="step-label">What the rest of the site does about it</div>
-    <p><strong>Subtract a baseline</strong> (§6, and nothing else on this page): keeps MC, removes the part of \(G_t\) that does not depend on the action. PPO's critic and GRPO's group mean are both baselines.</p>
+    <p><strong>Subtract a baseline</strong> (<a href="policy-gradient.html#baseline">Policy Gradient §2</a>): when the returns are used to weight a gradient, subtracting an estimate of \(V^\pi(s_t)\) from \(G_t\) leaves the expected gradient unchanged and removes the part of the signal that has nothing to do with the action. PPO's critic and GRPO's group mean are both baselines — and both are estimates of the quantity §2 defines.</p>
     <p><strong>Bootstrap</strong> (<a href="td-learning.html#bias-variance">TD Learning §4–6</a>): truncate the sum and fill in the tail with \(\hat V\), accepting bias to cut variance. GAE's \(\lambda\) is the dial between pure MC (\(\lambda = 1\)) and one-step TD (\(\lambda = 0\)).</p>
     <p><strong>Search</strong> (<a href="tree-search-llm.html#beam">Tree Search for LLMs §4–5</a>): instead of one rollout from the root, spend rollouts from intermediate states so that prefixes get their own value estimates. Beam search with a PRM and MCTS are both ways of allocating rollouts to where the estimate is needed.</p>
   </div>
@@ -369,115 +365,7 @@ s ← s₀,  τ ← []
     Do not confuse this with the variance problem on the <a href="behavior-policy.html#variance">Behavior vs. Target Policy page</a>. That one is about importance weights exploding when the sampling policy drifts from the learned policy; it also grows with \(T\), but multiplicatively, and it exists only off-policy. The variance here is present even in the purely on-policy, exactly-weighted case.
   </div>
 
-  <h2 id="reinforce">5. REINFORCE — Monte Carlo on the Gradient</h2>
-  <p>Sections 2–4 estimated a value. The same move estimates a gradient. The <a href="policy-gradient.html#pg">policy gradient theorem</a> gives</p>
-  \[
-    \nabla_\theta J(\theta) = \mathbb{E}_{\tau \sim \pi_\theta}\!\left[ \sum_{t=0}^{T-1} G_t \, \nabla_\theta \log \pi_\theta(a_t \mid s_t) \right],
-  \]
-  <p>an expectation over trajectories — so sample a trajectory and use the bracketed quantity as the estimate. That is <strong>REINFORCE</strong> (Williams, 1992). Every ingredient is Monte Carlo: the trajectory is a rollout, the \(G_t\) are rollout returns, and the whole bracket is a single-sample estimate \(\hat g\) of \(\nabla_\theta J\). It is unbiased by the same argument as §3 — the expectation of one sample of a random variable is its mean.</p>
-
-  <div class="algo">
-    <div class="algo-title">Algorithm — REINFORCE (Williams, 1992)</div>
-    <pre><span class="req">Require:</span> policy π_θ, learning rate α, discount γ
-
-<span class="kw">repeat</span>
-    τ ← Rollout(π_θ, env, s₀)
-    (G₀, …, G_{T−1}) ← Returns(τ, γ)
-    ĝ ← Σₜ Gₜ · ∇_θ log π_θ(aₜ | sₜ)       <span class="cm">▷ one-sample MC estimate of ∇J</span>
-    θ ← θ + α · ĝ
-<span class="kw">until</span> convergence</pre>
-  </div>
-
-  <p>The update reads naturally: if the return after taking \(a_t\) was high, make \(a_t\) more probable in \(s_t\); if low, less. But "high" and "low" are relative to zero, and nothing says returns are centred at zero. That is what the worked example exposes.</p>
-
-  <h3>Worked example</h3>
-  <p>A single state with two actions, \(A\) and \(B\), and a softmax policy with logits \(\theta = (\theta_A, \theta_B)\). The current policy is \(\pi(A) = 0.6\), \(\pi(B) = 0.4\). For a softmax the score is \(\nabla_\theta \log \pi(a) = e_a - \pi\), where \(e_a\) is the one-hot vector for \(a\):</p>
-  \[
-    \nabla_\theta \log \pi(A) = (0.4,\; -0.4), \qquad
-    \nabla_\theta \log \pi(B) = (-0.6,\; 0.6).
-  \]
-  <p>Suppose the environment is deterministic: the episode ends after one step with \(G = 1.0\) for \(A\) and \(G = 0.2\) for \(B\). Action \(A\) is clearly better. The true gradient is</p>
-  \[
-    \nabla_\theta J = 0.6 \cdot 1.0 \cdot (0.4, -0.4) + 0.4 \cdot 0.2 \cdot (-0.6, 0.6) = (0.192,\; -0.192),
-  \]
-  <p>which pushes \(\theta_A\) up and \(\theta_B\) down, as it should. Now look at what a <em>single</em> REINFORCE sample does:</p>
-
-  <div class="table-wrap">
-    <table>
-      <tr><th>Sampled action</th><th>Probability</th><th>\(G\)</th><th>\(\hat g = G \cdot \nabla_\theta \log \pi(a)\)</th><th>Direction for \(\theta_A\)</th></tr>
-      <tr><td>\(A\)</td><td class="num">0.6</td><td class="num">1.0</td><td>\((0.40,\; -0.40)\)</td><td>up ✓</td></tr>
-      <tr><td>\(B\)</td><td class="num">0.4</td><td class="num">0.2</td><td>\((-0.12,\; 0.12)\)</td><td><strong>down ✗</strong></td></tr>
-    </table>
-  </div>
-
-  <p>Forty percent of the time the update moves \(\theta_A\) in the wrong direction. The average is right — \(0.6 \cdot 0.40 + 0.4 \cdot (-0.12) = 0.192\) — but only because the correct pushes are larger than the incorrect ones. The first coordinate of \(\hat g\) has variance</p>
-  \[
-    \operatorname{Var}[\hat g_A] = 0.6 \cdot 0.40^2 + 0.4 \cdot 0.12^2 - 0.192^2 \approx 0.0649,
-  \]
-  <p>a standard deviation of \(0.255\), larger than the gradient it is estimating. The culprit is that both returns are positive: REINFORCE increases the probability of <em>whichever action it happened to take</em>, and relies on the better action being taken more often and pushed harder. Section 6 removes that dependence.</p>
-
-  <h2 id="baseline">6. The Baseline — Derivation and Worked Numbers</h2>
-  <p>Subtract from \(G_t\) any function of the state, \(b(s_t)\), before multiplying by the score:</p>
-  \[
-    \hat g_b = \sum_{t} \big(G_t - b(s_t)\big)\, \nabla_\theta \log \pi_\theta(a_t \mid s_t).
-  \]
-  <p>The claim is that \(\mathbb{E}[\hat g_b] = \mathbb{E}[\hat g] = \nabla_\theta J\) — the baseline changes the variance and nothing else. The <a href="policy-gradient.html#advantage">Policy Gradient page</a> quotes the one-line version; here is the full argument.</p>
-
-  <div class="step">
-    <div class="step-label">Step 1 — the score has zero mean under its own policy</div>
-    <p>For any state \(s\), because \(\pi_\theta(\cdot \mid s)\) is a probability distribution and the gradient passes through the sum,</p>
-    \[
-      \mathbb{E}_{a \sim \pi_\theta}\!\big[\nabla_\theta \log \pi_\theta(a \mid s)\big]
-      = \sum_a \pi_\theta(a \mid s)\, \frac{\nabla_\theta \pi_\theta(a \mid s)}{\pi_\theta(a \mid s)}
-      = \nabla_\theta \sum_a \pi_\theta(a \mid s)
-      = \nabla_\theta 1 = 0 .
-    \]
-    <p>Check it on the example: \(0.6 \cdot (0.4, -0.4) + 0.4 \cdot (-0.6, 0.6) = (0, 0)\).</p>
-  </div>
-
-  <div class="step">
-    <div class="step-label">Step 2 — a state-only baseline factors out of the action expectation</div>
-    <p>Condition the baseline term on \(s_t\). Since \(b(s_t)\) does not depend on \(a_t\), it is a constant inside the expectation over \(a_t\):</p>
-    \[
-      \mathbb{E}\big[b(s_t)\, \nabla_\theta \log \pi_\theta(a_t \mid s_t)\big]
-      = \mathbb{E}_{s_t}\Big[ b(s_t)\, \underbrace{\mathbb{E}_{a_t \sim \pi_\theta}\big[\nabla_\theta \log \pi_\theta(a_t \mid s_t)\big]}_{=\,0 \text{ by Step 1}} \Big] = 0 .
-    \]
-    <p>So the subtracted term contributes zero in expectation at every \(t\), and \(\mathbb{E}[\hat g_b] = \mathbb{E}[\hat g]\). The only requirement was that \(b\) not depend on the action — a baseline that peeks at \(a_t\) breaks Step 2 and biases the gradient.</p>
-  </div>
-
-  <div class="step">
-    <div class="step-label">Step 3 — which baseline minimises variance</div>
-    <p>For a single state, write \(\psi = \nabla_\theta \log \pi(a)\). Minimising \(\operatorname{Var}[(G - b)\,\psi]\) over scalar \(b\) gives</p>
-    \[
-      b^\ast = \frac{\mathbb{E}\big[G \,\|\psi\|^2\big]}{\mathbb{E}\big[\|\psi\|^2\big]},
-    \]
-    <p>a score-weighted average of the return. In practice the weights are dropped and \(b(s) = V^\pi(s) = \mathbb{E}[G \mid s]\) is used: it is close to \(b^\ast\), it is the quantity §2 already knows how to estimate, and it turns \(G_t - b(s_t)\) into a sample of the <a href="value-functions.html#advantage">advantage</a> \(A^\pi(s_t, a_t)\) — "how much better than average was this action" rather than "how good was the episode".</p>
-  </div>
-
-  <h3>Worked example, continued</h3>
-  <p>The value of the state is \(V = 0.6 \cdot 1.0 + 0.4 \cdot 0.2 = 0.68\). Use it as the baseline:</p>
-
-  <div class="table-wrap">
-    <table>
-      <tr><th>Sampled action</th><th>Probability</th><th>\(G - V\)</th><th>\(\hat g_b = (G - V)\cdot\nabla_\theta \log \pi(a)\)</th><th>Direction for \(\theta_A\)</th></tr>
-      <tr><td>\(A\)</td><td class="num">0.6</td><td class="num">+0.32</td><td>\((0.128,\; -0.128)\)</td><td>up ✓</td></tr>
-      <tr><td>\(B\)</td><td class="num">0.4</td><td class="num">−0.48</td><td>\((0.288,\; -0.288)\)</td><td>up ✓</td></tr>
-    </table>
-  </div>
-
-  <p>Now <em>both</em> samples move \(\theta_A\) the right way — sampling the worse action and seeing a below-average return is evidence for the better one. The mean is unchanged, \(0.6 \cdot 0.128 + 0.4 \cdot 0.288 = 0.192\), and the variance of the first coordinate is</p>
-  \[
-    \operatorname{Var}[\hat g_{b,A}] = 0.6 \cdot 0.128^2 + 0.4 \cdot 0.288^2 - 0.192^2 \approx 0.0061,
-  \]
-
-  <div class="result">
-    <div class="result-label">Effect of the baseline on this example</div>
-    <p style="margin:0;">Same expected gradient \((0.192, -0.192)\); variance down from \(0.0649\) to \(0.0061\) — a factor of about \(10\), or the equivalent of running ten times as many rollouts.</p>
-  </div>
-
-  <p>This is the whole argument for critics and group sampling in one table. The catch is that \(V^\pi(s_t)\) is not known — it has to be estimated, either by a learned network (<a href="ppo.html#actor-critic">PPO's critic</a>) or by more rollouts (§7). In the example above even a crude baseline would help: any \(b\) between \(0.2\) and \(1.0\) flips the sign of the \(B\)-sample's push.</p>
-
-  <h2 id="llm">7. Rollouts in LLM RL and in Search</h2>
+  <h2 id="llm">5. Rollouts in LLM RL and in Search</h2>
   <p>Map the primitive onto language models: the start state is the prompt, each action is a token, the episode is one complete response, and the reward arrives once at the end — a verifier result, a reward-model score, a unit test. Three conventions are so standard they usually go unstated: \(\gamma = 1\), so every token's return is the response's reward; no state is ever revisited (§2); and the rollout is produced by an inference engine rather than a training-framework loop, which is why <a href="../inference/rl-inference.html">RL inference</a> has its own page.</p>
 
   <div class="table-wrap">
@@ -486,12 +374,12 @@ s ← s₀,  τ ← []
       <tr>
         <td><strong>REINFORCE / PPO</strong></td>
         <td>One response per prompt</td>
-        <td>Per-token gradient weight; PPO adds a critic as the §6 baseline and GAE to bootstrap (<a href="ppo.html#actor-critic">PPO §4</a>)</td>
+        <td>Per-token gradient weight (<a href="policy-gradient.html#reinforce">Policy Gradient §1</a>); PPO adds a critic as baseline and GAE to bootstrap (<a href="ppo.html#actor-critic">PPO §4</a>)</td>
       </tr>
       <tr>
         <td><strong>GRPO</strong></td>
         <td>A group of \(G\) responses per prompt</td>
-        <td>Group mean is the §2 estimate of \(V^\pi(s_0)\), used as the §6 baseline (<a href="grpo.html#advantage">GRPO §3</a> for the normalised form)</td>
+        <td>Group mean is the §2 estimate of \(V^\pi(s_0)\), used as a baseline (<a href="grpo.html#advantage">GRPO §3</a> for the normalised form)</td>
       </tr>
       <tr>
         <td><strong>Best-of-\(n\)</strong></td>
@@ -512,16 +400,16 @@ s ← s₀,  τ ← []
   </div>
 
   <h3>GRPO: the baseline is also Monte Carlo</h3>
-  <p>GRPO is the §6 derivation with the critic replaced by §2. Sample \(G\) responses to the same prompt, score each, and use the group mean as \(b(s_0)\). That mean is an unbiased MC estimate of \(V^\pi(s_0)\) with standard error \(\operatorname{Std}[r]/\sqrt{G}\), and since it is a function of the prompt and not of any particular response's tokens, Step 2 of §6 applies: subtracting it leaves the expected gradient unchanged. The price is the one §4 predicted — \(G\) rollouts per prompt instead of one — and the limitation is that a start-state baseline is the only one available, so every token in a response receives the same advantage. <a href="value-functions.html#llm">Value Functions §6</a> discusses what that costs and what a critic would add.</p>
+  <p>GRPO replaces PPO's learned critic with §2. Sample \(G\) responses to the same prompt, score each, and use the group mean as the baseline for the prompt. That mean is an unbiased MC estimate of \(V^\pi(s_0)\) with standard error \(\operatorname{Std}[r]/\sqrt{G}\), and because it depends on the prompt and not on any particular response's tokens, it satisfies the one condition a baseline needs (<a href="policy-gradient.html#baseline">Policy Gradient §2</a>). The price is the one §4 predicted — \(G\) rollouts per prompt instead of one — and the limitation is that a start-state estimate is the only one available, so every token in a response receives the same advantage. <a href="value-functions.html#llm">Value Functions §6</a> discusses what that costs and what a critic would add.</p>
 
   <div class="note">
-    A detail that matters at scale: the group mean is unbiased as a baseline, but the per-group <em>normalisation</em> by \(\sigma_r\) that GRPO adds on top is not a baseline in the §6 sense — it rescales the gradient and does introduce a (length- and difficulty-dependent) bias. See <a href="grpo.html#drgrpo">Dr.GRPO</a>.
+    A detail that matters at scale: the group mean is unbiased as a baseline, but the per-group <em>normalisation</em> by \(\sigma_r\) that GRPO adds on top is not a baseline in that sense — it rescales the gradient and does introduce a (length- and difficulty-dependent) bias. See <a href="grpo.html#drgrpo">Dr.GRPO</a>.
   </div>
 
   <h3>Search: spend the rollouts where the variance is</h3>
   <p>Section 4 said the per-token signal in an LLM episode is one scalar stretched over hundreds of decisions. Search methods attack this by running rollouts from <em>intermediate</em> states, so that a prefix gets a value estimate of its own instead of inheriting the whole response's outcome. Best-of-\(n\) is the degenerate case (rollouts from the root only); beam search with a PRM runs them from each candidate step; MCTS allocates them adaptively with UCB. All three are §2 applied at more than one node. What they do not do is change the estimator — every value at every node is still an average of sampled returns, with the \(\sqrt{N}\) error bar of §3.</p>
 
-  <h2 id="next">8. What's Next</h2>
+  <h2 id="next">6. What's Next</h2>
   <div class="next-grid">
     <a class="next-card" href="td-learning.html">
       <div class="next-card-label">Next</div>
@@ -529,9 +417,9 @@ s ← s₀,  τ ← []
       <p>Swap the MC target for a bootstrapped one. Bias for variance, the n-step spectrum, and GAE as the dial between the two.</p>
     </a>
     <a class="next-card" href="policy-gradient.html">
-      <div class="next-card-label">Continues §5–6</div>
+      <div class="next-card-label">Later — the same trick on a gradient</div>
       <div class="next-card-title">Policy Gradient</div>
-      <p>The theorem REINFORCE samples from, reward-to-go, and how the advantage estimate feeds GAE and PPO.</p>
+      <p>REINFORCE is an MC estimate of \(\nabla_\theta J\) built from the returns on this page; the baseline derivation and a worked example showing the ~10× variance cut live there.</p>
     </a>
     <a class="next-card" href="grpo.html">
       <div class="next-card-label">Application</div>
@@ -564,12 +452,12 @@ s ← s₀,  τ ← []
       <p>\(\operatorname{Var}[G_0] = \sigma^2 (1-\gamma^{2T})/(1-\gamma^2)\); linear in \(T\) when \(\gamma = 1\)</p>
     </div>
     <div class="summary-card">
-      <div class="summary-card-label">REINFORCE</div>
-      <p>\(\hat g = \sum_t G_t \nabla_\theta \log \pi_\theta(a_t \mid s_t)\) — MC on the gradient</p>
+      <div class="summary-card-label">Sparse terminal reward</div>
+      <p>\(\gamma = 1\), \(G_t = r_{T-1}\) for every \(t\): one scalar spread over every decision</p>
     </div>
     <div class="summary-card">
-      <div class="summary-card-label">Baseline</div>
-      <p>\(\mathbb{E}_{a}[\nabla \log \pi] = 0\), so \(G_t - b(s_t)\) is unbiased; \(b = V\) gives a ~10× variance cut in the example</p>
+      <div class="summary-card-label">Same primitive everywhere</div>
+      <p>GRPO group mean, best-of-\(n\), PRM labels, MCTS node values — all §2 averages</p>
     </div>
   </div>
 

@@ -145,7 +145,9 @@
     <a href="../index.html#rl-rl-theory" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;" title="Back to Reinforcement Learning › RL Theory">↑ RL Theory</a>
     <a href="#notation">Notation</a>
     <a href="#pg">PG Theorem</a>
+    <a href="#reinforce">REINFORCE</a>
     <a href="#advantage">Advantage</a>
+    <a href="#baseline">Baseline</a>
     <a href="#gae">GAE</a>
     <a href="#summary">Summary</a>
   </div>
@@ -185,7 +187,7 @@
     Unsure about \(\mathbb{E}\), \(\sim\), \(\nabla\), or \(\mid\)? See the <a href="../foundations/math-notation.html" style="color:var(--note-fg);">math notation reference</a>.
   </div>
   <div class="note">
-    This page builds on <a href="value-functions.html" style="color:var(--note-fg);">Value Functions</a> (\(V\), \(Q\), and the advantage decomposition) and <a href="mc-rollouts.html" style="color:var(--note-fg);">Monte Carlo Rollouts</a> (why REINFORCE is unbiased, why baselines work). Section 3 draws on the bias–variance trade-off developed in <a href="td-learning.html" style="color:var(--note-fg);">TD Learning</a>.
+    This page builds on <a href="value-functions.html" style="color:var(--note-fg);">Value Functions</a> (\(V\), \(Q\), and the advantage decomposition) and <a href="mc-rollouts.html" style="color:var(--note-fg);">Monte Carlo Rollouts</a> (sampling a trajectory and why averaging its returns is unbiased — REINFORCE is the same idea applied to a gradient). Section 3 draws on the bias–variance trade-off developed in <a href="td-learning.html" style="color:var(--note-fg);">TD Learning</a>.
   </div>
 
   <h2 id="pg">1. The Policy Gradient Theorem</h2>
@@ -269,7 +271,31 @@ def reinforce(policy, env, optimizer, gamma=0.99):
     optimizer.step()
 </code></pre>
 
-  <p>Each action's <em>score function</em> \(\nabla\log\pi_\theta(a_t\mid s_t)\) points in the direction that makes \(a_t\) more likely; weighting it by the return reinforces actions from good trajectories and suppresses those from bad ones. This is the REINFORCE algorithm — see <a href="mc-rollouts.html#reinforce" style="color:var(--accent);">Monte Carlo Rollouts §5</a> for the algorithm and worked example.</p>
+  <p>Each action's <em>score function</em> \(\nabla\log\pi_\theta(a_t\mid s_t)\) points in the direction that makes \(a_t\) more likely; weighting it by the return reinforces actions from good trajectories and suppresses those from bad ones. This is the <strong>REINFORCE</strong> algorithm (Williams, 1992), and every ingredient in it is Monte Carlo: the trajectory is a <a href="mc-rollouts.html#rollout" style="color:var(--accent);">rollout</a>, the returns are rollout returns, and the whole sum is a single-sample estimate of \(\nabla_\theta J\). It is unbiased for the same reason <a href="mc-rollouts.html#unbiased" style="color:var(--accent);">MC value estimation</a> is — the expectation of one sample is the mean.</p>
+
+  <h3 id="reinforce">Worked example — why raw REINFORCE is noisy</h3>
+  <p>A single state with two actions, \(A\) and \(B\), and a softmax policy with logits \(\theta = (\theta_A, \theta_B)\); currently \(\pi(A) = 0.6\), \(\pi(B) = 0.4\). For a softmax the score is \(\nabla_\theta \log \pi(a) = e_a - \pi\), with \(e_a\) the one-hot vector for \(a\):</p>
+  \[
+    \nabla_\theta \log \pi(A) = (0.4,\; -0.4), \qquad
+    \nabla_\theta \log \pi(B) = (-0.6,\; 0.6).
+  \]
+  <p>The episode ends after one step, deterministically: \(R = 1.0\) for \(A\) and \(R = 0.2\) for \(B\). Action \(A\) is clearly better, and the true gradient agrees:</p>
+  \[
+    \nabla_\theta J = 0.6 \cdot 1.0 \cdot (0.4, -0.4) + 0.4 \cdot 0.2 \cdot (-0.6, 0.6) = (0.192,\; -0.192).
+  \]
+  <p>Now look at what a <em>single</em> REINFORCE sample does:</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Sampled action</th><th>Probability</th><th>\(R\)</th><th>\(\hat g = R \cdot \nabla_\theta \log \pi(a)\)</th><th>Direction for \(\theta_A\)</th></tr>
+      <tr><td>\(A\)</td><td>0.6</td><td>1.0</td><td>\((0.40,\; -0.40)\)</td><td>up ✓</td></tr>
+      <tr><td>\(B\)</td><td>0.4</td><td>0.2</td><td>\((-0.12,\; 0.12)\)</td><td><strong>down ✗</strong></td></tr>
+    </table>
+  </div>
+  <p>Forty percent of the time the update moves \(\theta_A\) the wrong way. The average is right — \(0.6 \cdot 0.40 + 0.4 \cdot (-0.12) = 0.192\) — only because the correct pushes are larger than the incorrect ones. The first coordinate of \(\hat g\) has variance</p>
+  \[
+    \operatorname{Var}[\hat g_A] = 0.6 \cdot 0.40^2 + 0.4 \cdot 0.12^2 - 0.192^2 \approx 0.0649,
+  \]
+  <p>a standard deviation of \(0.255\), larger than the gradient being estimated. The culprit is that both returns are positive: REINFORCE increases the probability of <em>whichever action it happened to take</em>, and relies on the better action being taken more often and pushed harder. The next section fixes exactly this.</p>
 
   <h2 id="advantage">2. Variance Reduction: From Return to Advantage</h2>
   <p>REINFORCE is correct but high-variance — every action is credited with the full trajectory return, including outcomes it had nothing to do with. Three reductions bring it to the form used in practice:</p>
@@ -281,16 +307,64 @@ def reinforce(policy, env, optimizer, gamma=0.99):
   \]
   <p>because the policy at step \(t\) has no influence on what happened before it. This alone can halve the variance on long episodes.</p>
 
-  <h3>Baseline subtraction</h3>
-  <p>Any function \(b(s_t)\) that depends only on the <em>state</em> (not the action) can be subtracted without introducing bias. The score function sums to zero under its own distribution:</p>
+  <h3 id="baseline">Baseline subtraction</h3>
+  <p>Any function \(b(s_t)\) that depends only on the <em>state</em> (not the action) can be subtracted from \(G_t\) without introducing bias:</p>
   \[
-    \mathbb{E}_{a_t\sim\pi}\!\left[\nabla_\theta\log\pi_\theta(a_t\mid s_t)\, b(s_t)\right]
-    = b(s_t)\,\mathbb{E}_{a_t}\!\left[\nabla_\theta\log\pi_\theta(a_t\mid s_t)\right] = 0
+    \hat g_b = \sum_{t} \big(G_t - b(s_t)\big)\, \nabla_\theta \log \pi_\theta(a_t \mid s_t),
+    \qquad \mathbb{E}[\hat g_b] = \nabla_\theta J(\theta).
   \]
-  <p>A good baseline centres the return signal, so that roughly half the actions get a positive push and half a negative one — the gradient is cleaner, and variance drops. See <a href="mc-rollouts.html#baseline" style="color:var(--accent);">Monte Carlo Rollouts §6</a> for the full derivation.</p>
+
+  <div class="step">
+    <div class="step-label">Step 1 — the score has zero mean under its own policy</div>
+    <p>For any state \(s\), because \(\pi_\theta(\cdot \mid s)\) is a probability distribution and the gradient passes through the sum,</p>
+    \[
+      \mathbb{E}_{a \sim \pi_\theta}\!\big[\nabla_\theta \log \pi_\theta(a \mid s)\big]
+      = \sum_a \pi_\theta(a \mid s)\, \frac{\nabla_\theta \pi_\theta(a \mid s)}{\pi_\theta(a \mid s)}
+      = \nabla_\theta \sum_a \pi_\theta(a \mid s)
+      = \nabla_\theta 1 = 0 .
+    \]
+    <p>Check it on the example above: \(0.6 \cdot (0.4, -0.4) + 0.4 \cdot (-0.6, 0.6) = (0, 0)\).</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step 2 — a state-only baseline factors out of the action expectation</div>
+    <p>Condition on \(s_t\). Since \(b(s_t)\) does not depend on \(a_t\), it is a constant inside the expectation over \(a_t\):</p>
+    \[
+      \mathbb{E}\big[b(s_t)\, \nabla_\theta \log \pi_\theta(a_t \mid s_t)\big]
+      = \mathbb{E}_{s_t}\Big[ b(s_t)\, \underbrace{\mathbb{E}_{a_t \sim \pi_\theta}\big[\nabla_\theta \log \pi_\theta(a_t \mid s_t)\big]}_{=\,0 \text{ by Step 1}} \Big] = 0 .
+    \]
+    <p>So the subtracted term contributes zero in expectation at every \(t\). The only requirement was that \(b\) not depend on the action — a baseline that peeks at \(a_t\) breaks Step 2 and biases the gradient.</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Step 3 — which baseline minimises variance</div>
+    <p>For a single state, write \(\psi = \nabla_\theta \log \pi(a)\). Minimising \(\operatorname{Var}[(G - b)\,\psi]\) over scalar \(b\) gives</p>
+    \[
+      b^\ast = \frac{\mathbb{E}\big[G \,\|\psi\|^2\big]}{\mathbb{E}\big[\|\psi\|^2\big]},
+    \]
+    <p>a score-weighted average of the return. In practice the weights are dropped and \(b(s) = V^\pi(s) = \mathbb{E}[G \mid s]\) is used: it is close to \(b^\ast\), it is a quantity we already know how to <a href="mc-rollouts.html#mc-estimation" style="color:var(--accent);">estimate by sampling</a> or <a href="td-learning.html" style="color:var(--accent);">bootstrapping</a>, and it has a clean interpretation — the advantage, below.</p>
+  </div>
+
+  <p><strong>Worked example, continued.</strong> The value of the state is \(V = 0.6 \cdot 1.0 + 0.4 \cdot 0.2 = 0.68\). Subtract it:</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Sampled action</th><th>Probability</th><th>\(R - V\)</th><th>\(\hat g_b = (R - V)\cdot\nabla_\theta \log \pi(a)\)</th><th>Direction for \(\theta_A\)</th></tr>
+      <tr><td>\(A\)</td><td>0.6</td><td>+0.32</td><td>\((0.128,\; -0.128)\)</td><td>up ✓</td></tr>
+      <tr><td>\(B\)</td><td>0.4</td><td>−0.48</td><td>\((0.288,\; -0.288)\)</td><td>up ✓</td></tr>
+    </table>
+  </div>
+  <p>Now <em>both</em> samples move \(\theta_A\) the right way — sampling the worse action and seeing a below-average return is evidence for the better one. The mean is unchanged, \(0.6 \cdot 0.128 + 0.4 \cdot 0.288 = 0.192\), while the variance of the first coordinate is</p>
+  \[
+    \operatorname{Var}[\hat g_{b,A}] = 0.6 \cdot 0.128^2 + 0.4 \cdot 0.288^2 - 0.192^2 \approx 0.0061 .
+  \]
+  <div class="result">
+    <div class="result-label">Effect of the baseline on this example</div>
+    <p style="margin:0;">Same expected gradient \((0.192, -0.192)\); variance down from \(0.0649\) to \(0.0061\) — a factor of about \(10\), the equivalent of running ten times as many rollouts.</p>
+  </div>
+  <p>This table is the whole argument for critics and for group sampling. The catch is that \(V^\pi(s_t)\) is unknown and must be estimated — by a learned network (PPO's critic, §3) or by more rollouts (GRPO's group mean, which is an <a href="mc-rollouts.html#llm" style="color:var(--accent);">MC estimate of \(V^\pi(s_0)\)</a>). Even a crude baseline helps: any \(b\) between \(0.2\) and \(1.0\) flips the sign of the \(B\)-sample's push.</p>
 
   <h3>Advantage</h3>
-  <p>The optimal baseline is the state-value function \(V(s_t) = \mathbb{E}[G_t\mid s_t]\). Subtracting it gives the <strong>advantage</strong>:</p>
+  <p>With the state-value function \(V(s_t) = \mathbb{E}[G_t\mid s_t]\) as the baseline, the weighted quantity becomes the <strong>advantage</strong>:</p>
   \[
     A_t = G_t - V(s_t) = Q(s_t, a_t) - V(s_t)
   \]
@@ -386,7 +460,7 @@ def reinforce(policy, env, optimizer, gamma=0.99):
     <a class="next-card" href="mc-rollouts.html">
       <div class="next-card-label">Prerequisite</div>
       <div class="next-card-title">Monte Carlo Rollouts</div>
-      <p>REINFORCE algorithm, rollout generation, and why baseline subtraction is unbiased.</p>
+      <p>Rollout generation, MC value estimation, and the horizon-variance problem that every reduction on this page is a response to.</p>
     </a>
     <a class="next-card" href="td-learning.html">
       <div class="next-card-label">Prerequisite</div>
