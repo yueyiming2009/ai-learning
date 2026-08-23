@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>NeMo RL — NVIDIA's Scalable Post-Training Framework</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #0d9488;
+      --accent-light: #f0fdfa;
+      --warning-bg: #eff6ff;
+      --warning-border: #3b82f6;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --nav-bg: rgba(255,255,255,0.92);
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --note-fg: #1e40af;
+      --result-fg: #16a34a;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #2dd4bf;
+        --accent-light: #10201e;
+        --warning-bg: #101a2b;
+        --warning-border: #1e40af;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --nav-bg: rgba(15,17,21,0.9);
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --note-fg: #93c5fd;
+        --result-fg: #4ade80;
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    .hero {
+      background: linear-gradient(135deg, #14532d 0%, #166534 55%, #0d9488 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.9;
+      font-size: 0.97rem;
+      max-width: 640px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    h4 {
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin: 1.3em 0 0.3em;
+      color: var(--accent);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+    a { color: var(--accent); }
+    code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+    .hero code { background: rgba(255,255,255,0.18); border-color: rgba(255,255,255,0.35); color: #fff; }
+    pre {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      line-height: 1.55;
+      margin: 1.2em 0;
+    }
+    pre code { background: none; padding: 0; border: none; color: var(--text); }
+
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .col-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .col-card h4 { margin: 0 0 8px; }
+    .col-card ul { padding-left: 1.2em; margin: 0; }
+    .col-card li { font-size: 0.87rem; margin-bottom: 5px; }
+
+    /* layer diagram */
+    .stack { display: flex; flex-direction: column; gap: 6px; margin: 1.2em 0; }
+    .layer {
+      display: grid; grid-template-columns: 150px 1fr; gap: 12px; align-items: center;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px;
+      font-size: 0.9rem;
+    }
+    .layer b { color: var(--accent); font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    .layer span { color: var(--ink); }
+    @media (max-width: 600px) { .layer { grid-template-columns: 1fr; gap: 2px; } }
+
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+      .two-col { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>NeMo RL</a>
+  <div class="nav-links">
+    <a href="../index.html">← All notes</a>
+    <a href="../index.html#rl-rl-frameworks" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;" title="Back to Reinforcement Learning › RL Frameworks">↑ RL Frameworks</a>
+    <a href="#what">What it is</a>
+    <a href="#stack">The stack</a>
+    <a href="#backends">Two backends</a>
+    <a href="#grpo">A GRPO step</a>
+    <a href="#env">Environments</a>
+    <a href="#async">Async &amp; off-policy</a>
+    <a href="#vs-verl">vs verl</a>
+    <a href="#choose">When to choose</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">RL Frameworks · NeMo RL</span>
+  <h1>NeMo RL — NVIDIA's Scalable Post-Training Framework</h1>
+  <p>The Ray-orchestrated successor to NeMo-Aligner: a single-controller driver over isolated worker
+  groups, a <em>swappable</em> training backend (PyTorch DTensor for the small end, Megatron-Core for
+  the large end), vLLM generation that colocates or disaggregates, and an environment interface built
+  for multi-turn RL — plus how it compares to verl.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="note">
+    Read this beside <a href="verl-architecture.html">verl Architecture</a> and <a href="trl.html">TRL</a>.
+    NeMo RL sits at the opposite end of the scale axis from TRL: it is the framework whose whole reason to
+    exist is <em>the same recipe from 1 GPU to a thousand</em>, on the NVIDIA Megatron stack. The
+    <a href="rl-frameworks-landscape.html">Landscape</a> page places it among the rest.
+  </div>
+
+  <!-- ── §1 What it is ─────────────────────────── -->
+  <h2 id="what">1. What NeMo RL Is</h2>
+
+  <p><strong>NeMo RL</strong> (<code>NVIDIA-NeMo/RL</code>) is NVIDIA's open-source library for LLM
+  post-training — SFT, DPO, reward modeling, and online RL (GRPO and friends) — and the replacement for
+  the older <strong>NeMo-Aligner</strong>. Aligner was tightly welded to the NeMo/Megatron model classes;
+  the headline change in NeMo RL is that the <em>model backend is a pluggable detail</em>. A run is
+  described once (a YAML config plus a ~200-line driver script), and the same run can execute through
+  plain PyTorch on a handful of GPUs or through Megatron-Core with TP/PP/EP/CP on a cluster.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Stage</th><th>Entry point</th><th>Notes</th></tr>
+      <tr><td>Supervised fine-tuning</td><td><code>examples/run_sft.py</code></td><td>Sequence packing, chat templates, LoRA</td></tr>
+      <tr><td>Preference (offline)</td><td><code>examples/run_dpo.py</code></td><td>DPO with a reference-model policy copy</td></tr>
+      <tr><td>Reward modeling</td><td><code>examples/run_rm.py</code></td><td>Bradley–Terry reward models</td></tr>
+      <tr><td>Online RL</td><td><code>examples/run_grpo_math.py</code>, <code>run_grpo_sliding_puzzle.py</code>, …</td><td>GRPO with verifiable rewards; multi-turn game environments; async variant</td></tr>
+      <tr><td>On-policy distillation</td><td><code>examples/run_distillation.py</code></td><td>Student samples, teacher scores tokens</td></tr>
+    </table>
+  </div>
+
+  <p>As with the <a href="trl.html">TRL</a> page, this is about the <em>engineering</em>; the algorithms
+  live at <a href="grpo.html">GRPO</a>, <a href="dpo-loss.html">DPO</a>, <a href="ppo.html">PPO</a>,
+  and <a href="distillation.html">Distillation</a>. The thing worth understanding here is how NeMo RL
+  decomposes an RL job into pieces that can each be swapped and placed independently.</p>
+
+  <!-- ── §2 The stack ───────────────────────────── -->
+  <h2 id="stack">2. The Stack — Five Layers</h2>
+
+  <p>NeMo RL is a layered design, and almost every design question maps to one layer:</p>
+
+  <div class="stack">
+    <div class="layer"><b>Algorithm</b><span>A plain Python loop in <code>nemo_rl/algorithms/</code> — <code>grpo_train()</code>, <code>dpo_train()</code>, <code>sft_train()</code>. Runs in the driver process. Calls the layer below through interfaces, never touches GPUs directly.</span></div>
+    <div class="layer"><b>Loss</b><span>A callable object: <code>ClippedPGLossFn</code>, <code>DPOLossFn</code>, <code>NLLLoss</code>, <code>DistillationLossFn</code>. Signature is <code>loss_fn(next_token_logits, data, global_valid_seqs, global_valid_toks)</code> — the global counts let token-level vs sequence-level normalization be exact across data-parallel ranks.</span></div>
+    <div class="layer"><b>Interfaces</b><span><code>PolicyInterface</code> (train / get logprobs / save / refit generation weights), <code>GenerationInterface</code> (generate, sleep/wake), <code>EnvironmentInterface</code> (step). The algorithm only knows these.</span></div>
+    <div class="layer"><b>Workers</b><span>Ray actors implementing the interfaces: <code>DTensorPolicyWorker</code>, <code>MegatronPolicyWorker</code>, <code>VllmGenerationWorker</code>, environment actors. Grouped into a <code>RayWorkerGroup</code> that fans a method call out to every rank and gathers the results.</span></div>
+    <div class="layer"><b>Cluster</b><span><code>RayVirtualCluster</code> — a named slice of the Ray cluster, carved as placement groups (bundles of GPUs per node). Worker groups are created <em>on</em> a virtual cluster; two worker groups on the same cluster are colocated, two on disjoint clusters are disaggregated.</span></div>
+  </div>
+
+  <p>This is the <strong>single-controller</strong> pattern: one driver holds handles to every worker
+  group and writes the dataflow as ordinary sequential Python, while each worker group executes its
+  slice SPMD-style. It is the same split verl calls "hybrid-flow"
+  (<a href="verl-architecture.html">verl Architecture</a>) — NeMo RL arrived at it independently and
+  keeps the two halves cleaner: the driver owns <em>control</em>, the workers own <em>parallelism</em>,
+  and the thing that moves between them is a <code>BatchedDataDict</code> (a dict of padded tensors with
+  shard/gather helpers), never a model.</p>
+
+  <div class="note">
+    <strong>Isolated environments per worker.</strong> Megatron-Core, vLLM, and the plain-PyTorch
+    path pin incompatible dependency sets. NeMo RL sidesteps the usual "one giant image" problem by
+    running under <code>uv</code> and giving each worker type its own virtual environment
+    (<code>py_executable</code> per actor); Ray launches the vLLM actors in a vLLM venv and the
+    Megatron actors in a Megatron venv, on the same node, without either seeing the other's packages.
+  </div>
+
+  <!-- ── §3 Two backends ────────────────────────── -->
+  <h2 id="backends">3. Two Training Backends, One Recipe</h2>
+
+  <p>The policy worker is where the scaling story lives. Both backends expose the same
+  <code>PolicyInterface</code>, so the algorithm loop and the config above the
+  <code>policy.*</code> block are unchanged when you switch:</p>
+
+  <div class="two-col">
+    <div class="col-card">
+      <h4>DTensor backend (<code>policy.dtensor_cfg</code>)</h4>
+      <ul>
+        <li>Loads any HuggingFace model directly; no conversion step.</li>
+        <li>Parallelism via PyTorch native DTensor: <strong>FSDP2</strong> sharding, optional tensor and context parallel, activation checkpointing.</li>
+        <li>Sequence packing for SFT/RL; LoRA via PEFT-style adapters.</li>
+        <li>Sweet spot: prototyping, dense models up to the tens of billions.</li>
+      </ul>
+    </div>
+    <div class="col-card">
+      <h4>Megatron backend (<code>policy.megatron_cfg</code>)</h4>
+      <ul>
+        <li>Megatron-Core model classes; the HF checkpoint is imported on first use (Megatron-Bridge).</li>
+        <li>Full <strong>TP / PP / EP / CP</strong> + data parallel, sequence parallel, distributed optimizer — the 4-D parallelism of <a href="../systems/tensor-parallelism.html">TP</a> / <a href="../systems/pipeline-parallelism.html">PP</a> / <a href="../systems/moe-parallelism.html">EP</a> / <a href="../systems/sequence-parallelism.html">CP</a>.</li>
+        <li>Performance features: fused kernels, FP8 training, MoE token dispatch, pipeline-aware microbatching.</li>
+        <li>Sweet spot: large dense and MoE models (DeepSeek-V3-class, Qwen3-MoE) across many nodes.</li>
+      </ul>
+    </div>
+  </div>
+
+  <p>The practical workflow this enables: bring up a recipe with DTensor on one node while the reward
+  and data are being debugged, then flip <code>policy.megatron_cfg.enabled=true</code> and set the
+  parallel sizes for the real run. Because the loss, the environment, and the generation config are
+  shared, what changes is the arithmetic of where the parameters live — not the experiment.</p>
+
+  <pre><code># same driver, two backends — override YAML keys on the command line
+uv run python examples/run_grpo_math.py \
+    --config examples/configs/grpo_math_1B.yaml \
+    policy.model_name=Qwen/Qwen2.5-1.5B \
+    cluster.gpus_per_node=8 cluster.num_nodes=1
+
+uv run python examples/run_grpo_math.py \
+    --config examples/configs/grpo_math_8B_megatron.yaml \
+    policy.megatron_cfg.enabled=true \
+    policy.megatron_cfg.tensor_model_parallel_size=4 \
+    policy.megatron_cfg.pipeline_model_parallel_size=2 \
+    cluster.gpus_per_node=8 cluster.num_nodes=4</code></pre>
+
+  <!-- ── §4 A GRPO step ─────────────────────────── -->
+  <h2 id="grpo">4. Anatomy of a GRPO Step</h2>
+
+  <p>Here is what <code>grpo_train()</code> does per step, with the worker group each phase lands on.
+  Read it against the generic loop in <a href="grpo.html">GRPO</a>:</p>
+
+  <div class="step">
+    <div class="step-label">1 · Refit — policy → generation</div>
+    <p style="margin:0;">If the policy changed last step, push the new weights into vLLM. Colocated:
+    the policy worker hands over <strong>CUDA IPC handles</strong> to its parameter tensors and vLLM
+    copies them GPU-to-GPU on the same device — no host round-trip. Disaggregated: weights are
+    broadcast over NCCL to the generation nodes. Either way the policy does the
+    FSDP/TP→vLLM-layout reshard, the same problem verl's sharding manager solves
+    (<a href="verl-architecture.html#resharding">resharding</a>).</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">2 · Rollout — generation ⇄ environment</div>
+    <p style="margin:0;">The driver takes a batch of prompts, repeats each <code>num_generations_per_prompt</code>
+    times (the GRPO group), and runs the <em>rollout loop</em>: vLLM generates, the environment's
+    <code>step()</code> returns observations/rewards/done flags, and any unfinished trajectories go back to
+    vLLM for the next turn. For single-turn math this is one generate + one verifier call; for a game
+    environment it is a genuine multi-turn episode. Output: a <code>BatchedDataDict</code> of full
+    token sequences, per-token masks (which tokens are the policy's), and a scalar reward each.</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">3 · Log-probs — policy (and reference)</div>
+    <p style="margin:0;">In colocated mode vLLM goes to <strong>sleep</strong> (frees its KV cache and
+    weights) and the policy worker wakes. It runs a forward pass over the rollouts to get
+    \(\log \pi_{\theta_\text{old}}(y_t \mid y_{&lt;t}, x)\) — the "old" log-probs for the PPO ratio — and,
+    if a KL term is on, the reference model's log-probs (the reference is the policy worker with the
+    initial weights swapped in, not a separate pool).</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">4 · Advantages — driver</div>
+    <p style="margin:0;">Pure CPU tensor math on the driver: for each prompt's group, \(A_i = r_i - \bar r\),
+    optionally divided by the group std (<code>normalize_rewards</code>); the per-sequence scalar is
+    broadcast over the response tokens. Any "leave-one-out"/RLOO baseline variant is a one-line change here.</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">5 · Train — policy</div>
+    <p style="margin:0;">The batch is sharded across data-parallel ranks and microbatched; each microbatch
+    runs through <code>ClippedPGLossFn</code>:
+    \[\mathcal{L} = -\frac{1}{Z}\sum_t \min\!\big(\rho_t A_t,\ \mathrm{clip}(\rho_t, 1-\epsilon_\text{lo}, 1+\epsilon_\text{hi})\,A_t\big) + \beta\,\mathrm{KL}_t\]
+    with \(\rho_t = \pi_\theta/\pi_{\theta_\text{old}}\). The normalizer \(Z\) is <code>global_valid_toks</code>
+    (token-level, DAPO-style) or <code>global_valid_seqs</code> (sequence-level, original GRPO) — computed once
+    globally so that microbatching and DP sharding cannot change the gradient. Multiple optimizer
+    epochs over the same rollouts are allowed (<code>num_epochs</code>), which is where the clip actually bites.</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">6 · Validate / checkpoint — driver</div>
+    <p style="margin:0;">Every <code>val_period</code> steps the generation pool runs the validation
+    prompts greedily; checkpoints save policy + optimizer (DCP/Megatron format) and optionally an
+    HF-format export for serving.</p>
+  </div>
+
+  <p>Notice what is <em>not</em> in the list: there is no critic. NeMo RL's online-RL center of gravity
+  is GRPO-family (group baselines), matching where the field moved after
+  <a href="deepseek-r1.html">DeepSeek-R1</a>; PPO with a learned value head is what NeMo-Aligner
+  offered and is not the primary path here.</p>
+
+  <!-- ── §5 Environments ────────────────────────── -->
+  <h2 id="env">5. The Environment Interface</h2>
+
+  <p>Where TRL takes a <em>reward function</em>, NeMo RL takes an <em>environment</em>. The difference
+  matters once interactions are multi-turn. The contract is deliberately small:</p>
+
+  <pre><code>class EnvironmentInterface(ABC):
+    def step(
+        self,
+        message_log_batch: list[LLMMessageLogType],   # full chat history per sample
+        metadata: list[dict],                          # per-sample state (e.g. ground truth, game board)
+    ) -> EnvironmentReturn:
+        # returns: observations (next user/tool messages), metadata,
+        #          next_stop_strings, rewards (float per sample), terminateds (bool per sample)
+        ...
+
+    def global_post_process_and_metrics(self, batch) -> tuple[BatchedDataDict, dict]:
+        ...   # e.g. compute accuracy over the whole batch for logging</code></pre>
+
+  <p>Environments are themselves Ray actors (often CPU-only, many replicas) so slow verifiers or
+  sandboxed code execution scale out independently of the GPUs — the design argued for in
+  <a href="env-scaling-sandboxing.html">Environment Scaling &amp; Sandboxing</a>. The rollout loop in
+  §4 is generic over this interface: a math verifier returns <code>terminated=True</code> after one
+  step; a sliding-puzzle environment returns a new board observation and keeps the episode open; a
+  tool-using agent environment returns tool output as the next observation. Because the loop tracks the
+  <code>message_log</code> rather than a flat token string, the per-token loss mask (train on assistant
+  tokens only, never on tool/user turns) falls out automatically — the same masking requirement
+  discussed in <a href="agentic-rl.html">Agentic RL</a>.</p>
+
+  <!-- ── §6 Async ───────────────────────────────── -->
+  <h2 id="async">6. Async GRPO and Off-Policy Correction</h2>
+
+  <p>The synchronous step in §4 idles the training GPUs during rollout and the generation GPUs during
+  training; colocation with vLLM sleep/wake hides the <em>memory</em> cost of that but not the
+  <em>time</em>. NeMo RL's async mode (<code>grpo.async_grpo.enabled</code>) disaggregates the two pools
+  and runs them concurrently:</p>
+
+  <ul>
+    <li>Generation workers continuously produce trajectories into a <strong>replay buffer</strong>; the trainer consumes batches from it as soon as enough are ready.</li>
+    <li>Each trajectory is tagged with the policy version that generated it. <code>max_trajectory_age_steps</code> bounds how stale a sample may be before it is discarded — the policy-lag knob from <a href="async-rl.html">Async RL</a>.</li>
+    <li>Weight refits happen on the trainer's schedule; vLLM picks up new weights between requests without draining.</li>
+  </ul>
+
+  <p>Staleness (and, even in sync mode, the vLLM-vs-trainer numerical mismatch) is corrected at the loss:
+  the generation-time log-probs are kept with the sample, and
+  <code>use_importance_sampling_correction</code> multiplies each token's loss by
+  \(\pi_{\theta_\text{old}}^\text{train}/\pi^\text{gen}\) (truncated — the TIS correction), so the gradient is
+  taken with respect to the distribution the trainer actually computes rather than the one the sampler
+  used. This is the same fix the <a href="async-rl.html#tim">Async RL</a> page derives; NeMo RL ships it
+  as a config flag and reports the train/gen log-prob divergence as a standard metric so you can see
+  when it is needed.</p>
+
+  <!-- ── §7 vs verl ─────────────────────────────── -->
+  <h2 id="vs-verl">7. NeMo RL vs verl</h2>
+
+  <p>These are the two frameworks most likely to be compared head-to-head, because they solve the same
+  problem with the same controller model. The differences are in emphasis:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Axis</th><th>NeMo RL</th><th>verl</th></tr>
+      <tr><td>Controller model</td><td>Single-controller driver + Ray worker groups on virtual clusters</td><td>Single-controller <code>fit()</code> + multi-controller WorkerGroups on resource pools</td></tr>
+      <tr><td>Training backends</td><td>PyTorch DTensor (FSDP2/TP/CP) <em>or</em> Megatron-Core</td><td>FSDP/FSDP2 <em>or</em> Megatron-Core</td></tr>
+      <tr><td>Generation</td><td>vLLM; colocated (sleep/wake, IPC refit) or disaggregated</td><td>vLLM or SGLang; colocated (HybridEngine) or disaggregated</td></tr>
+      <tr><td>Dependency isolation</td><td>Per-worker <code>uv</code> venvs — first-class</td><td>One environment; users manage compatible image</td></tr>
+      <tr><td>Reward / interaction</td><td><code>EnvironmentInterface</code> — multi-turn native, env actors scale separately</td><td>Reward managers + agent loop / tool-calling layer (<a href="verl-agentic-training.html">Agentic Training</a>)</td></tr>
+      <tr><td>Algorithms</td><td>SFT, DPO, RM, GRPO (+async), distillation</td><td>PPO, GRPO and many variants (DAPO, RLOO, REINFORCE++, …), SFT; broad community recipe set</td></tr>
+      <tr><td>Async / off-policy</td><td>Async GRPO with replay buffer + age bound + IS correction</td><td>Disaggregated async + IS correction (<a href="verl-async-training.html">Async Training</a>)</td></tr>
+      <tr><td>Performance ownership</td><td>NVIDIA-tuned: FP8, Megatron fused kernels, MoE on the latest GPUs land first</td><td>Community-driven; broad hardware and engine coverage</td></tr>
+      <tr><td>Center of gravity</td><td>Reproducible, scalable recipes on NVIDIA hardware (the Nemotron post-training stack)</td><td>Research velocity — new algorithm papers ship as verl recipes</td></tr>
+    </table>
+  </div>
+
+  <p>A fair summary: verl is where new RL <em>ideas</em> appear first; NeMo RL is where the
+  <em>Megatron-scale, FP8, MoE</em> performance work on NVIDIA's own models appears first. Both read
+  the same papers, and recipes port between them with modest effort because the abstractions rhyme.</p>
+
+  <!-- ── §8 When to choose ──────────────────────── -->
+  <h2 id="choose">8. When to Reach for NeMo RL</h2>
+
+  <div class="two-col">
+    <div class="col-card">
+      <h4>Choose NeMo RL when…</h4>
+      <ul>
+        <li>You are on an all-NVIDIA cluster and want the Megatron-Core path with vendor-tuned kernels, FP8, and MoE support.</li>
+        <li>You want to start small (DTensor, one node) and scale the <em>same config</em> to many nodes.</li>
+        <li>Your task is multi-turn — games, tools, agents — and an environment abstraction fits better than a reward function.</li>
+        <li>You need the full post-training sequence (SFT → DPO/RM → GRPO → distillation) in one codebase with one launch convention.</li>
+      </ul>
+    </div>
+    <div class="col-card">
+      <h4>Look elsewhere when…</h4>
+      <ul>
+        <li>You are on 1–2 GPUs inside the HF ecosystem and want a ten-line script → <a href="trl.html">TRL</a>.</li>
+        <li>You need a specific recent algorithm variant or SGLang rollout that the community has already built → <a href="verl-architecture.html">verl</a>.</li>
+        <li>You want SGLang-native, fully async training with a lighter codebase → slime (<a href="slime-miles-walkthrough.html">walkthrough</a>).</li>
+        <li>You are on non-NVIDIA accelerators — the Megatron path is the point of the framework.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="result">
+    <div class="result-label">The one-line distinction</div>
+    <p style="margin:0;">NeMo RL is <strong>verl's controller model with NVIDIA's training stack
+    underneath and a swappable small-scale backend on top</strong> — pick it when the target is the
+    Megatron-Core end of the scale ladder and you want the path there to be a config change.</p>
+  </div>
+
+  <!-- ── References ─────────────────────────────── -->
+  <h2>References</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><td><a href="https://github.com/NVIDIA-NeMo/RL">NVIDIA-NeMo/RL (GitHub)</a></td><td>Source; <code>examples/</code> drivers and configs; design docs under <code>docs/design-docs/</code></td></tr>
+      <tr><td><a href="https://docs.nvidia.com/nemo/rl/latest/">NeMo RL documentation</a></td><td>Backend guides (DTensor vs Megatron), GRPO/DPO/SFT guides, cluster setup, async GRPO</td></tr>
+      <tr><td><a href="https://github.com/NVIDIA/NeMo-Aligner">NeMo-Aligner</a></td><td>The predecessor this replaces</td></tr>
+      <tr><td><a href="verl-architecture.html">verl Architecture</a></td><td>The closest contemporary design; compare controller models and resharding</td></tr>
+      <tr><td><a href="rl-frameworks-landscape.html">RL Frameworks Landscape</a></td><td>NeMo RL among verl, TRL, OpenRLHF, slime</td></tr>
+      <tr><td><a href="grpo.html">GRPO</a> · <a href="async-rl.html">Async RL</a> · <a href="agentic-rl.html">Agentic RL</a></td><td>The algorithms and systems ideas the framework implements</td></tr>
+    </table>
+  </div>
+
+</div>
+</body>
+</html>
