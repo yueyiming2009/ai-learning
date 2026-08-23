@@ -87,6 +87,7 @@
 
     h2 { font-size: 1.15rem; font-weight: 600; margin: 2.8em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); color: var(--text); }
     h3 { font-size: 0.97rem; font-weight: 600; margin: 1.6em 0 0.4em; color: var(--ink); }
+    h4 { font-size: 0.9rem; font-weight: 600; margin: 1.4em 0 0.3em; color: var(--ink); text-transform: uppercase; letter-spacing: 0.04em; }
     p { margin: 0.6em 0; }
     ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
     li { margin-bottom: 0.4em; }
@@ -458,59 +459,72 @@ def reinforce(policy, env, optimizer, gamma=0.99):
   \[
     \hat A_t = \delta_t + \gamma\lambda\,\hat A_{t+1}
   \]
-  <h3 id="tdlambda-return">The TD(\(\lambda\)) return — the critic's target</h3>
-  <p>The critic needs a regression target for \(V_\psi(s_t)\), and the same backward pass provides one. The advantage was defined as return minus baseline, \(A_t = G_t - V(s_t)\); rearranging, any advantage estimate defines a return estimate by adding the baseline back:</p>
+  <h3 id="tdlambda-return">The TD(\(\lambda\)) return — training the critic</h3>
+  <p>GAE assumed a critic \(V_\psi\); this subsection is where the critic comes from. The advantage was defined as return minus baseline, \(A_t = G_t - V(s_t)\), so rearranging any advantage estimate defines a matching <em>return</em> estimate:</p>
   \[
     \hat R_t \;:=\; \hat A_t + V_\psi(s_t)
   \]
-  <p>This is called the <strong>TD(\(\lambda\)) return</strong>. The name is justified by what it becomes at the two ends of \(\lambda\).</p>
+  <p>called the <strong>TD(\(\lambda\)) return</strong>. It is used in a two-stage pipeline repeated every training iteration — and keeping the two stages separate is the key to reading the formulas below:</p>
+  <ol>
+    <li><strong>Build labels</strong> (no learning): after a rollout, run one backward pass that turns the rewards and the <em>current</em> critic's values into one plain number \(\hat R_t\) per timestep.</li>
+    <li><strong>Regress</strong> (learning): treat those numbers as supervised targets and fit \(V_\psi(s_t) \to \hat R_t\) by gradient descent on a squared error.</li>
+  </ol>
+
+  <h4>Stage 1 — the label factory</h4>
+  <p>Adding \(V_\psi(s_t)\) to both sides of the GAE recursion \(\hat A_t = \delta_t + \gamma\lambda\hat A_{t+1}\) and substituting \(\delta_t\) gives a recursion directly on \(\hat R_t\):</p>
+  \[
+    \hat R_t = r_t + \gamma\Big[(1-\lambda)\,V_\psi(s_{t+1}) + \lambda\,\hat R_{t+1}\Big]
+  \]
+  <p>Read it as: one real reward, then a \(\lambda\)-mixture of "bootstrap now from the critic" and "keep going with the next \(\lambda\)-return." Run backward from the terminal state (\(\hat R_T = 0\)), it is the same \(O(T)\) pass that computes \(\hat A_t\). The two endpoints of \(\lambda\) say what kind of label this produces:</p>
 
   <div class="step">
     <div class="step-label">\(\lambda = 0\): the one-step TD target</div>
-    <p>\(\hat A_t = \delta_t\). Add \(V_\psi(s_t)\) back and the critic terms at \(s_t\) cancel:</p>
-    \[
-      \hat R_t = \big(r_t + \gamma V_\psi(s_{t+1}) - V_\psi(s_t)\big) + V_\psi(s_t) = r_t + \gamma V_\psi(s_{t+1})
-    \]
-    <p>One real reward, then bootstrap from the critic — the ordinary TD(0) target.</p>
+    <p>The recursion keeps only the bootstrap branch: \(\hat R_t = r_t + \gamma V_\psi(s_{t+1})\). One real reward, then the critic's guess — the ordinary TD(0) target. Quietest label, but it inherits whatever error the critic currently has.</p>
   </div>
 
   <div class="step">
     <div class="step-label">\(\lambda = 1\): the Monte Carlo return</div>
-    <p>\(\hat A_t = \sum_{l\ge 0}\gamma^l\delta_{t+l}\). Write out the first terms and watch the critic values cancel in pairs:</p>
-    \[
-    \begin{aligned}
-      \delta_t          &= r_t + \gamma V_\psi(s_{t+1}) - V_\psi(s_t) \\
-      \gamma\delta_{t+1}   &= \gamma r_{t+1} + \gamma^2 V_\psi(s_{t+2}) - \gamma V_\psi(s_{t+1}) \\
-      \gamma^2\delta_{t+2} &= \gamma^2 r_{t+2} + \gamma^3 V_\psi(s_{t+3}) - \gamma^2 V_\psi(s_{t+2}) \\
-                        &\;\;\vdots
-    \end{aligned}
-    \]
-    <p>Each \(+\gamma^{l+1}V_\psi(s_{t+l+1})\) is killed by the next line's \(-\gamma^{l+1}V_\psi(s_{t+l+1})\). Only the leading \(-V_\psi(s_t)\) survives (the final \(\gamma^{T-t}V_\psi(s_T)\) is zero at a terminal state), leaving \(\hat A_t = \sum_l \gamma^l r_{t+l} - V_\psi(s_t) = G_t - V_\psi(s_t)\). Adding \(V_\psi(s_t)\) back gives \(\hat R_t = G_t\): the full Monte Carlo return, with no critic involved at all.</p>
+    <p>The recursion never bootstraps: \(\hat R_t = r_t + \gamma \hat R_{t+1}\), which unrolls to \(\hat R_t = \sum_{l}\gamma^l r_{t+l} = G_t\). Equivalently, in \(\hat A_t = \sum_l \gamma^l \delta_{t+l}\) each \(+\gamma^{l+1}V_\psi(s_{t+l+1})\) cancels against the next term's \(-\gamma^{l+1}V_\psi(s_{t+l+1})\), telescoping to \(G_t - V_\psi(s_t)\). All real rewards, no critic — unbiased, but as noisy as any Monte Carlo return.</p>
   </div>
 
   <div class="step">
     <div class="step-label">\(0 < \lambda < 1\): a geometric average of \(n\)-step returns</div>
-    <p>Define the \(n\)-step return as \(n\) real rewards followed by a bootstrap, \(G_t^{(n)} = r_t + \gamma r_{t+1} + \dots + \gamma^{n-1} r_{t+n-1} + \gamma^n V_\psi(s_{t+n})\). The same telescoping, stopped after \(n\) lines, gives \(\sum_{l=0}^{n-1}\gamma^l\delta_{t+l} = G_t^{(n)} - V_\psi(s_t)\). Now regroup the GAE sum by \(n\). The weight on \(\delta_{t+l}\) is \((\gamma\lambda)^l\), and since \((1-\lambda)\sum_{n>l}\lambda^{n-1} = \lambda^l\), that is the same as weighting the \(n\)-step advantage by \((1-\lambda)\lambda^{n-1}\) and summing over \(n\):</p>
+    <p>Define \(G_t^{(n)} = r_t + \gamma r_{t+1} + \dots + \gamma^{n-1} r_{t+n-1} + \gamma^n V_\psi(s_{t+n})\) — \(n\) real rewards, then bootstrap. Stopping the telescoping after \(n\) lines gives \(\sum_{l=0}^{n-1}\gamma^l\delta_{t+l} = G_t^{(n)} - V_\psi(s_t)\), and regrouping the GAE sum by \(n\) (the weight identity \((1-\lambda)\sum_{n>l}\lambda^{n-1} = \lambda^l\)) yields</p>
     \[
-      \hat A_t^{\text{GAE}} = (1-\lambda)\sum_{n=1}^{\infty}\lambda^{n-1}\,\hat A_t^{(n)}
-      \quad\Longrightarrow\quad
-      \hat R_t = (1-\lambda)\sum_{n=1}^{\infty}\lambda^{n-1}\, G_t^{(n)}
+      \hat R_t = (1-\lambda)\sum_{n=1}^{\infty}\lambda^{n-1}\, G_t^{(n)} .
     \]
-    <p>The weights \((1-\lambda)\lambda^{n-1}\) sum to \(1\), so \(\hat R_t\) is a weighted average of every \(n\)-step return — mostly \(1\)-step, a little less \(2\)-step, and so on, with the tail length set by \(\lambda\). This is Sutton's \(\lambda\)-return, hence the name. At \(\lambda = 0.95\) the effective horizon before bootstrapping dominates is about \(1/(1-\lambda) = 20\) steps.</p>
+    <p>The weights sum to \(1\): \(\hat R_t\) is a weighted average of every \(n\)-step return — mostly \(1\)-step, a little less \(2\)-step, and so on. This is Sutton's \(\lambda\)-return, hence the name. At \(\lambda = 0.95\) the effective horizon before bootstrapping dominates is about \(1/(1-\lambda) = 20\) steps.</p>
   </div>
 
-  <p>The recursion for \(\hat R_t\) follows from the one for \(\hat A_t\): add \(V_\psi(s_t)\) to both sides of \(\hat A_t = \delta_t + \gamma\lambda\hat A_{t+1}\), substitute \(\delta_t\), and write \(\hat A_{t+1} = \hat R_{t+1} - V_\psi(s_{t+1})\):</p>
+  <p><strong>A concrete pass.</strong> Three steps, \(\gamma = 1\), \(\lambda = 0.5\), rewards \((r_0, r_1, r_2) = (0, 0, 1)\), and the current critic says \(V_\psi(s_0, s_1, s_2) = (0.5,\; 0.9,\; 0.2)\). Backward:</p>
   \[
-    \hat R_t = r_t + \gamma\Big[(1-\lambda)\,V_\psi(s_{t+1}) + \lambda\,\hat R_{t+1}\Big]
+  \begin{aligned}
+    \hat R_2 &= r_2 = 1.0 \\
+    \hat R_1 &= r_1 + 0.5\,V_\psi(s_2) + 0.5\,\hat R_2 = 0.5(0.2) + 0.5(1.0) = 0.6 \\
+    \hat R_0 &= r_0 + 0.5\,V_\psi(s_1) + 0.5\,\hat R_1 = 0.5(0.9) + 0.5(0.6) = 0.75
+  \end{aligned}
   \]
-  <p>Read it as: one real reward, then a \(\lambda\)-mixture of "bootstrap now from the critic" and "keep going with the next \(\lambda\)-return." This is the most direct statement of what \(\lambda\) does.</p>
+  <p>Stage 1 is done: the labels are \((0.75,\; 0.6,\; 1.0)\). Plain numbers — nothing has been trained yet.</p>
 
-  <p>Why it is the right critic target: the critic is meant to approximate \(V^\pi(s_t) = \mathbb{E}[G_t \mid s_t]\). The Monte Carlo return \(G_t\) is unbiased but noisy; the TD(0) target is quiet but inherits the critic's own error. \(\hat R_t\) is the same bias–variance compromise for the critic that \(\hat A_t\) is for the actor, and since both come from the same \(\delta\)'s in the same backward pass, it is free. The value loss is</p>
+  <h4>Stage 2 — the regression</h4>
+  <p>Now fit the critic to the labels with ordinary supervised learning:</p>
   \[
     \mathcal{L}_{\text{VF}}(\psi) = \mathbb{E}_t\!\left[ \big(V_\psi(s_t) - \hat R_t\big)^2 \right]
   \]
+  <p>On the example: pull \(V_\psi(s_0)\) from \(0.5 \to 0.75\), \(V_\psi(s_1)\) from \(0.9 \to 0.6\), \(V_\psi(s_2)\) from \(0.2 \to 1.0\). The connection between the two formulas is a pipeline, not a derivation: <em>the recursion builds the dataset, the loss fits the critic to it.</em></p>
+
+  <p>Why this learns \(V^\pi\) — two facts stack:</p>
+  <div class="step">
+    <div class="step-label">Squared error regresses to the conditional mean</div>
+    <p>For fixed labels, the minimiser of \(\mathbb{E}[(V_\psi(s_t) - \hat R_t)^2]\) is \(V_\psi(s_t) = \mathbb{E}[\hat R_t \mid s_t]\) — the same reason the sample mean minimises squared deviations. So the loss drives the critic toward the <em>average label at each state</em>.</p>
+  </div>
+  <div class="step">
+    <div class="step-label">The labels average to \(V^\pi\) at the fixed point</div>
+    <p>\(\hat R_t\) is a \(\lambda\)-mix of \(n\)-step returns, each of which is "real rewards for \(n\) steps, then the critic's guess." If the critic were already correct, \(\mathbb{E}[G_t^{(n)} \mid s_t] = V^\pi(s_t)\) for every \(n\), so \(\mathbb{E}[\hat R_t \mid s_t] = V^\pi(s_t)\): a correct critic generates labels that tell it to stay put — \(V^\pi\) is a <strong>fixed point</strong>. If the critic is wrong, the labels are still anchored by real rewards, so they point back toward \(V^\pi\), and repeating build-labels \(\to\) regress converges toward it. This iterate-to-a-fixed-point loop is exactly <a href="td-learning.html" style="color:var(--accent);">TD learning</a> wearing a regression costume.</p>
+  </div>
+
   <div class="note">
-    \(\hat R_t\) contains \(V_\psi\) evaluated at <em>future</em> states, so it must be treated as a constant (<code>.detach()</code>) in \(\mathcal{L}_{\text{VF}}\). Otherwise gradients flow into the bootstrap targets and the regression chases itself.
+    \(V_\psi\) appears on <em>both</em> sides — inside the labels and as the thing being trained — which looks like the critic grading its own homework. The resolution: at label-building time the critic values are frozen numbers (<code>.detach()</code> in code), so each update is honest supervised learning against fixed targets, and the self-reference only enters <em>across</em> iterations as the fixed-point loop above — the intended mechanism, not a bug. Without the detach, gradient descent could also shrink the loss by bending the labels toward the predictions, and the regression argument collapses.
   </div>
 
   <p>GAE requires a critic \(V_\psi\) trained alongside the policy \(\pi_\theta\) — the <strong>actor–critic</strong> structure that <a href="ppo.html" style="color:var(--accent);">PPO</a> builds on. In LLM RL this is expensive — a second model as large as the policy. GRPO sidesteps it by replacing the learned critic with a group-sampling baseline; see the <a href="grpo.html" style="color:var(--accent);">GRPO page</a>.</p>
