@@ -191,51 +191,68 @@
   </div>
 
   <h2 id="pg">1. The Policy Gradient Theorem</h2>
-  <p>Value-based methods (Q-learning, DQN) learn a value function and derive a policy by acting greedily. <strong>Policy gradient methods</strong> directly differentiate the expected return with respect to the policy parameters and follow the gradient. The key question: how do you compute \(\nabla_\theta J(\theta)\) when the expectation itself is taken under \(\pi_\theta\)?</p>
+  <p>Value-based methods (Q-learning, DQN) learn a value function and act greedily on it. <strong>Policy gradient methods</strong> skip the value function: parameterise the policy \(\pi_\theta(a\mid s)\) directly, define a scalar objective \(J(\theta)\) = expected return, and do gradient ascent on \(\theta\). The policy gradient theorem is the statement of what \(\nabla_\theta J\) actually is, in a form you can estimate from rollouts.</p>
 
-  <p>The objective is the expected return over trajectories sampled from the policy:</p>
+  <h3>Where \(\theta\) sits in the objective</h3>
+  <p>Write the objective as an expectation over trajectories \(\tau = (s_0, a_0, s_1, a_1, \dots)\) sampled by running the policy:</p>
   \[
     J(\theta) = \mathbb{E}_{\tau\sim\pi_\theta}[R(\tau)] = \sum_\tau \pi_\theta(\tau)\, R(\tau)
   \]
+  <p>Compare this to a supervised loss \(\mathbb{E}_{x\sim\text{data}}[\ell_\theta(x)]\). There the distribution is fixed and \(\theta\) is inside the averaged quantity — sample \(x\), backprop through \(\ell_\theta\). Here it is the other way round: the return \(R(\tau)\) is a number handed back by the environment with no \(\theta\) in it (and no gradient through it — the environment is a black box), while all of the \(\theta\) is in \(\pi_\theta(\tau)\), the probability of <em>seeing</em> that trajectory. Sampling \(\tau\) and backpropagating through \(R\) gives exactly zero. The whole theorem is about moving \(\theta\) from "inside the distribution" to "inside the thing being averaged".</p>
 
   <div class="step">
-    <div class="step-label">Step 1 — Differentiate</div>
-    <p>Only the trajectory probability depends on \(\theta\) — the return is a fixed number once \(\tau\) is observed:</p>
+    <div class="step-label">Step 1 — Differentiate the sum</div>
+    <p>\(R(\tau)\) is constant in \(\theta\), so the gradient lands on the probability:</p>
     \[
-      \nabla_\theta J(\theta) = \sum_\tau \nabla_\theta \pi_\theta(\tau)\, R(\tau)
+      \nabla_\theta J(\theta) = \sum_\tau \big[\nabla_\theta \pi_\theta(\tau)\big]\, R(\tau)
     \]
-    <p>This is not yet an expectation. \(\nabla_\theta \pi_\theta(\tau)\) cannot be estimated by sampling — we need to get back to the form \(\sum_\tau \pi_\theta(\tau)[\cdots]\).</p>
+    <p>True, but not usable. A sum over <em>all</em> trajectories is not something we can compute. The only operation available in practice is to run the policy and look at the trajectories that come out, which computes averages of the form \(\sum_\tau \pi_\theta(\tau)\,[\cdots] = \mathbb{E}_{\tau\sim\pi_\theta}[\cdots]\). The expression above has \(\nabla_\theta\pi_\theta(\tau)\) where it would need a bare \(\pi_\theta(\tau)\), so it is not the average of anything. The next step restores that shape.</p>
   </div>
 
   <div class="step">
     <div class="step-label">Step 2 — The log-derivative trick</div>
-    <p>From the identity \(\nabla_\theta \log \pi_\theta(\tau) = \tfrac{\nabla_\theta \pi_\theta(\tau)}{\pi_\theta(\tau)}\), rearrange to \(\nabla_\theta \pi_\theta(\tau) = \pi_\theta(\tau)\,\nabla_\theta \log \pi_\theta(\tau)\) and substitute:</p>
+    <p>The chain rule on \(\log\) gives \(\nabla_\theta \log \pi_\theta(\tau) = \nabla_\theta \pi_\theta(\tau) / \pi_\theta(\tau)\). Rearranged:</p>
+    \[
+      \nabla_\theta \pi_\theta(\tau) = \pi_\theta(\tau)\,\nabla_\theta \log \pi_\theta(\tau)
+    \]
+    <p>Substituting puts a bare \(\pi_\theta(\tau)\) back in front:</p>
     \[
       \nabla_\theta J(\theta)
-        = \sum_\tau \pi_\theta(\tau)\,\nabla_\theta \log \pi_\theta(\tau)\,R(\tau)
-        = \mathbb{E}_{\tau\sim\pi_\theta}\!\big[R(\tau)\,\nabla_\theta \log \pi_\theta(\tau)\big]
+        = \sum_\tau \pi_\theta(\tau)\,\underbrace{\nabla_\theta \log \pi_\theta(\tau)\,R(\tau)}_{\text{averaged quantity}}
+        = \mathbb{E}_{\tau\sim\pi_\theta}\!\big[\nabla_\theta \log \pi_\theta(\tau)\,R(\tau)\big]
     \]
-    <p>An expectation under \(\pi_\theta\) again — and we already sample \(\tau\sim\pi_\theta\) during rollouts, so it is now estimable by Monte Carlo.</p>
+    <p>This is now a sample average: roll out trajectories, compute \(\nabla_\theta \log \pi_\theta(\tau)\,R(\tau)\) for each, take the mean. The estimate is unbiased for the same reason any Monte Carlo average is. The identity is nothing more than multiplying by \(\pi_\theta(\tau)/\pi_\theta(\tau) = 1\), but it changes what gets measured: \(\nabla\log\pi\) is the <em>relative</em> change in a trajectory's probability ("make this one 5% more likely"), and relative changes are what samples can tell you about, because you only ever see trajectories in proportion to their probability.</p>
   </div>
 
   <div class="step">
-    <div class="step-label">Step 3 — Only the policy terms survive</div>
-    <p>The trajectory probability factorises into the initial state, per-step policy, and environment dynamics:</p>
+    <div class="step-label">Step 3 — The environment drops out</div>
+    <p>\(\pi_\theta(\tau)\) is the probability of a whole trajectory, and it contains dynamics we do not know. Factorise it into the initial state, the policy's choices, and the environment's responses:</p>
     \[
       \pi_\theta(\tau) = p(s_0)\prod_{t} \pi_\theta(a_t\mid s_t)\, P(s_{t+1}\mid s_t, a_t)
     \]
-    <p>Taking \(\log\) (product → sum) then \(\nabla_\theta\): the initial-state distribution \(p(s_0)\) and the transition dynamics \(P(s_{t+1}\mid s_t,a_t)\) do not depend on \(\theta\) — the agent controls neither — so they vanish:</p>
+    <p>The log turns the product into a sum of three kinds of terms:</p>
+    \[
+      \log \pi_\theta(\tau) = \log p(s_0) + \sum_t \log \pi_\theta(a_t\mid s_t) + \sum_t \log P(s_{t+1}\mid s_t, a_t)
+    \]
+    <p>Now take \(\nabla_\theta\). The first and third terms contain no \(\theta\) — the environment does not depend on the agent's weights — so their gradient is identically zero. Only the policy terms survive:</p>
     \[
       \nabla_\theta \log \pi_\theta(\tau) = \sum_t \nabla_\theta \log \pi_\theta(a_t\mid s_t)
     \]
+    <p>This is the payoff of the whole derivation: the transition model \(P\) never has to be known or differentiated. Each remaining term is the log-probability of a single action the network output, which is ordinary backprop.</p>
   </div>
 
-  <p>Combining gives the <strong>policy gradient theorem</strong> (REINFORCE form):</p>
+  <p>Putting the three steps together:</p>
   <div class="result">
     <div class="result-label">Policy Gradient Theorem</div>
     \[
-      \nabla_\theta J(\theta) = \mathbb{E}\!\left[\sum_t \nabla_\theta \log \pi_\theta(a_t\mid s_t)\;R(\tau)\right]
+      \nabla_\theta J(\theta) = \mathbb{E}_{\tau\sim\pi_\theta}\!\left[\Big(\sum_t \nabla_\theta \log \pi_\theta(a_t\mid s_t)\Big)\;R(\tau)\right]
     \]
+  </div>
+
+  <p>Read as a recipe: <em>for each trajectory, push up the log-probability of every action taken, scaled by how good the trajectory turned out.</em> A high-return trajectory makes its actions more likely; a low or negative return makes them less likely. The scalar multiplying \(\nabla\log\pi\) is the only place reward enters, and every improvement in the rest of this page (reward-to-go, baselines, advantage, GAE) is a different choice of that scalar — the theorem guarantees the gradient stays unbiased as long as the choice does not depend on the action in a way that biases it.</p>
+
+  <div class="note">
+    Two things that routinely confuse people. <strong>(1)</strong> \(\log\pi_\theta(a_t\mid s_t)\,R\) is not a loss. It is a <em>surrogate</em> whose gradient happens to equal \(\nabla_\theta J\); its value says nothing about how well the policy is doing, so do not plot it as a training curve. <strong>(2)</strong> Every action in a trajectory is multiplied by the <em>same</em> \(R(\tau)\), including actions that had nothing to do with the reward. That is the source of the variance problem Sections 2–3 address.
   </div>
 
   <div class="note">
