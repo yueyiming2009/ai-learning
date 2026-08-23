@@ -333,33 +333,70 @@ def reinforce(policy, env, optimizer, gamma=0.99):
 
   <div class="step">
     <div class="step-label">Step 1 — the score has zero mean under its own policy</div>
-    <p>For any state \(s\), because \(\pi_\theta(\cdot \mid s)\) is a probability distribution and the gradient passes through the sum,</p>
+    <p>Fix a state \(s\) and take the expectation of the score \(\nabla_\theta \log \pi_\theta(a\mid s)\) over actions drawn from the policy itself. Write the expectation as a sum, apply the log-derivative identity in reverse, and notice the \(\pi_\theta\) cancels:</p>
     \[
+    \begin{aligned}
       \mathbb{E}_{a \sim \pi_\theta}\!\big[\nabla_\theta \log \pi_\theta(a \mid s)\big]
-      = \sum_a \pi_\theta(a \mid s)\, \frac{\nabla_\theta \pi_\theta(a \mid s)}{\pi_\theta(a \mid s)}
-      = \nabla_\theta \sum_a \pi_\theta(a \mid s)
-      = \nabla_\theta 1 = 0 .
+      &= \sum_a \pi_\theta(a \mid s)\, \nabla_\theta \log \pi_\theta(a \mid s) \\
+      &= \sum_a \pi_\theta(a \mid s)\, \frac{\nabla_\theta \pi_\theta(a \mid s)}{\pi_\theta(a \mid s)} \\
+      &= \sum_a \nabla_\theta \pi_\theta(a \mid s) .
+    \end{aligned}
     \]
-    <p>Check it on the example above: \(0.6 \cdot (0.4, -0.4) + 0.4 \cdot (-0.6, 0.6) = (0, 0)\).</p>
+    <p>The sum is over a finite set of actions and the gradient is linear, so the two can be exchanged. The sum of the probabilities is \(1\) for every \(\theta\), and the gradient of a constant is zero:</p>
+    \[
+      \sum_a \nabla_\theta \pi_\theta(a \mid s)
+      = \nabla_\theta \sum_a \pi_\theta(a \mid s)
+      = \nabla_\theta 1
+      = 0 .
+    \]
+    <p>Check it on the example above: \(0.6 \cdot (0.4, -0.4) + 0.4 \cdot (-0.6, 0.6) = (0, 0)\). Geometrically, the score vectors of the different actions are arranged so that their probability-weighted average cancels — increasing one action's probability must decrease the others'.</p>
   </div>
 
   <div class="step">
     <div class="step-label">Step 2 — a state-only baseline factors out of the action expectation</div>
-    <p>Condition on \(s_t\). Since \(b(s_t)\) does not depend on \(a_t\), it is a constant inside the expectation over \(a_t\):</p>
+    <p>Take the baseline term at a single timestep, \(\mathbb{E}\big[b(s_t)\, \nabla_\theta \log \pi_\theta(a_t \mid s_t)\big]\), where the expectation is over the whole trajectory. Split it with the law of total expectation: first average over \(a_t\) holding \(s_t\) fixed, then average over \(s_t\):</p>
     \[
       \mathbb{E}\big[b(s_t)\, \nabla_\theta \log \pi_\theta(a_t \mid s_t)\big]
-      = \mathbb{E}_{s_t}\Big[ b(s_t)\, \underbrace{\mathbb{E}_{a_t \sim \pi_\theta}\big[\nabla_\theta \log \pi_\theta(a_t \mid s_t)\big]}_{=\,0 \text{ by Step 1}} \Big] = 0 .
+      = \mathbb{E}_{s_t}\Big[\; \mathbb{E}_{a_t \sim \pi_\theta(\cdot\mid s_t)}\big[\, b(s_t)\, \nabla_\theta \log \pi_\theta(a_t \mid s_t) \,\big] \;\Big] .
     \]
-    <p>So the subtracted term contributes zero in expectation at every \(t\). The only requirement was that \(b\) not depend on the action — a baseline that peeks at \(a_t\) breaks Step 2 and biases the gradient.</p>
+    <p>Inside the inner expectation \(s_t\) is fixed, so \(b(s_t)\) is a constant and can be pulled out — this is the one place the "state-only" assumption is used:</p>
+    \[
+      = \mathbb{E}_{s_t}\Big[\; b(s_t)\, \underbrace{\mathbb{E}_{a_t \sim \pi_\theta(\cdot\mid s_t)}\big[\nabla_\theta \log \pi_\theta(a_t \mid s_t)\big]}_{=\,0 \text{ by Step 1}} \;\Big]
+      = \mathbb{E}_{s_t}\big[\, b(s_t)\cdot 0 \,\big]
+      = 0 .
+    \]
+    <p>Now apply this to the full estimator. It is linear in the weighting, so it separates into the original REINFORCE term minus a sum of baseline terms, each of which is zero:</p>
+    \[
+    \begin{aligned}
+      \mathbb{E}[\hat g_b]
+      &= \mathbb{E}\Big[\sum_t \big(G_t - b(s_t)\big)\, \nabla_\theta \log \pi_\theta(a_t \mid s_t)\Big] \\
+      &= \underbrace{\mathbb{E}\Big[\sum_t G_t\, \nabla_\theta \log \pi_\theta(a_t \mid s_t)\Big]}_{=\;\nabla_\theta J(\theta)}
+       \;-\; \sum_t \underbrace{\mathbb{E}\big[b(s_t)\, \nabla_\theta \log \pi_\theta(a_t \mid s_t)\big]}_{=\;0} \\
+      &= \nabla_\theta J(\theta) .
+    \end{aligned}
+    \]
+    <p>The only requirement was that \(b\) not depend on the action. A baseline that peeks at \(a_t\) cannot be pulled out of the inner expectation, Step 1 no longer applies, and the gradient becomes biased.</p>
   </div>
 
   <div class="step">
     <div class="step-label">Step 3 — which baseline minimises variance</div>
-    <p>For a single state, write \(\psi = \nabla_\theta \log \pi(a)\). Minimising \(\operatorname{Var}[(G - b)\,\psi]\) over scalar \(b\) gives</p>
+    <p>Any state-only \(b\) is unbiased, so choose the one that makes the estimator least noisy. Work at a single state and write \(\psi = \nabla_\theta \log \pi(a)\), a random vector because \(a\) is random, and \(G\) the random return. The estimate is \((G - b)\,\psi\), and its total variance (summed over coordinates) is</p>
     \[
-      b^\ast = \frac{\mathbb{E}\big[G \,\|\psi\|^2\big]}{\mathbb{E}\big[\|\psi\|^2\big]},
+      \operatorname{Var}\big[(G - b)\,\psi\big]
+      = \mathbb{E}\big[(G-b)^2\, \|\psi\|^2\big] \;-\; \big\|\mathbb{E}\big[(G-b)\,\psi\big]\big\|^2 .
     \]
-    <p>a score-weighted average of the return. In practice the weights are dropped and \(b(s) = V^\pi(s) = \mathbb{E}[G \mid s]\) is used: it is close to \(b^\ast\), it is a quantity we already know how to <a href="mc-rollouts.html#mc-estimation" style="color:var(--accent);">estimate by sampling</a> or <a href="td-learning.html" style="color:var(--accent);">bootstrapping</a>, and it has a clean interpretation — the advantage, below.</p>
+    <p>The second term is \(\|\nabla_\theta J\|^2\) — by Step 2 it does not depend on \(b\) — so only the first term needs minimising. Expand the square:</p>
+    \[
+      \mathbb{E}\big[(G-b)^2\, \|\psi\|^2\big]
+      = \mathbb{E}\big[G^2\|\psi\|^2\big] \;-\; 2b\, \mathbb{E}\big[G\,\|\psi\|^2\big] \;+\; b^2\, \mathbb{E}\big[\|\psi\|^2\big] .
+    \]
+    <p>This is a convex quadratic in the scalar \(b\). Differentiate and set to zero:</p>
+    \[
+      \frac{\partial}{\partial b} = -2\,\mathbb{E}\big[G\,\|\psi\|^2\big] + 2b\, \mathbb{E}\big[\|\psi\|^2\big] = 0
+      \quad\Longrightarrow\quad
+      b^\ast = \frac{\mathbb{E}\big[G \,\|\psi\|^2\big]}{\mathbb{E}\big[\|\psi\|^2\big]} .
+    \]
+    <p>So the optimal baseline is a score-weighted average of the return: returns from actions whose score is large (actions whose probability the gradient can move a lot) count more. In practice the weights are dropped and the plain average \(b(s) = V^\pi(s) = \mathbb{E}[G \mid s]\) is used. It is close to \(b^\ast\) whenever \(\|\psi\|^2\) and \(G\) are weakly correlated, it is a quantity we already know how to <a href="mc-rollouts.html#mc-estimation" style="color:var(--accent);">estimate by sampling</a> or <a href="td-learning.html" style="color:var(--accent);">bootstrapping</a>, and it has a clean interpretation — the advantage, below.</p>
   </div>
 
   <p><strong>Worked example, continued.</strong> The value of the state is \(V = 0.6 \cdot 1.0 + 0.4 \cdot 0.2 = 0.68\). Subtract it:</p>
