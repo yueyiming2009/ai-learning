@@ -407,6 +407,17 @@
     </table>
   </div>
 
+  <p>How much the harness itself matters is now measured, not argued. <strong>OpenForgeRL</strong>
+  (Jul 2026) ran the first cross-harness empirical study — the same base model trained through four
+  harnesses on the same tasks — and the harness moves everything: ReACT and ZeroClaw, the two that
+  let custom tools be added directly, reach <strong>45.1 and 48.5</strong> ClawEval pass@1 after
+  SFT+RL, while OpenClaw and Codex land at 20.9 and 32.5 from far weaker bases. Training in one
+  harness (ZeroClaw) transfers to harnesses never seen in training (+3.3 on OpenClaw, +4.6 on
+  Codex), and multi-harness training does best of all (+20.3 over base on Codex). The harness is
+  not plumbing around the policy — it is a <em>training variable</em> with its own learnability,
+  which is the empirical case for training through the harness you ship rather than a trainer-side
+  reimplementation, and for paying §5's bookkeeping costs to do it.</p>
+
   <p>Microsoft's Agent Lightning v1.0 paper (August 2026) gives the second shape its name —
   <strong>harnessed agentic RL</strong> — and states the consequence precisely:</p>
 
@@ -733,7 +744,7 @@ tail    = prompt_ids[n][len(prev):]               # if extends: the new tool/tem
         <td><strong>Per-call</strong></td>
         <td>Every call is its own sample; no merging.</td>
         <td>Always correct; \(O(T^2)\).</td>
-        <td>SkyRL step-wise (mitigated by <code>merge_stepwise_output</code>), AReaL <code>export_style: individual</code> (tree-deduplicated), Trinity-RFT</td>
+        <td>SkyRL step-wise (mitigated by <code>merge_stepwise_output</code>), AReaL <code>export_style: individual</code> (tree-deduplicated), Trinity-RFT, OpenForgeRL (reconstruction at rollout completion)</td>
       </tr>
       <tr>
         <td><strong>Buffer-and-replace</strong></td>
@@ -764,6 +775,17 @@ tail    = prompt_ids[n][len(prev):]               # if extends: the new tool/tem
   land in the <em>same optimizer update</em> — splitting them across updates evaluates parts of
   one rollout under different policy versions, a within-rollout staleness that the §7 correction
   never sees.</p>
+
+  <p><strong>OpenForgeRL</strong> marks the crude-but-safe end of the same design space, with two
+  deliberately simple answers. Reconstruction is deferred to rollout completion: the proxy records
+  each call's prompt–response pair and only assembles training samples when the container returns
+  the terminal reward — one sample per call, each assigned \(r_t = \gamma^{T-t}\, r_T\) with
+  \(\gamma = 1.0\), the terminal reward broadcast undiscounted to every step. And credit
+  assignment on failures is by exclusion: following DAPO, <em>all</em> samples from a trajectory
+  that ended in an error (wall-clock timeout included) are discarded, "since a partial rollout can
+  inject misleading training signal." Where Agent Lightning merges best-effort and keeps what it
+  can, OpenForgeRL refuses to train on anything a broken rollout produced — cheap and never wrong,
+  at the price of the \(O(T)\) savings merging buys and of any signal the failures carried.</p>
 
   <h3>Interactive: what a 4-call session becomes</h3>
 
@@ -1219,7 +1241,8 @@ tail    = prompt_ids[n][len(prev):]               # if extends: the new tool/tem
     <li>AReaL: <a href="https://arxiv.org/abs/2607.01120">AReaL 2.0</a> (Jul 2026, microservice architecture, step-level trajectory protocol), <a href="https://arxiv.org/abs/2505.24298">AReaL</a> (decoupled PPO, May 2025).</li>
     <li>ROLL: <a href="https://github.com/alibaba/ROLL">repo</a>, <a href="https://arxiv.org/abs/2510.11345">ROLL Flash</a>. OpenRLHF: <a href="https://github.com/OpenRLHF/OpenRLHF">repo</a>.</li>
     <li>Tinker: <a href="https://tinker-docs.thinkingmachines.ai/tinker/losses/">Losses</a> (the <code>Datum</code> contract), <a href="https://github.com/thinking-machines-lab/tinker-cookbook">tinker-cookbook</a> <code>rl/types.py</code>.</li>
-    <li>rLLM <a href="https://github.com/rllm-org/rllm">repo</a>; AWS <a href="https://github.com/awslabs/agentcore-rl-toolkit">agentcore-rl-toolkit</a>; OpenPipe <a href="https://github.com/OpenPipe/ART">ART</a>; <a href="https://arxiv.org/abs/2607.21557">OpenForgeRL</a> (Jul 2026).</li>
+    <li>rLLM <a href="https://github.com/rllm-org/rllm">repo</a>; AWS <a href="https://github.com/awslabs/agentcore-rl-toolkit">agentcore-rl-toolkit</a>; OpenPipe <a href="https://github.com/OpenPipe/ART">ART</a>.</li>
+    <li>OpenForgeRL: <a href="https://arxiv.org/abs/2607.21557">"Train Harness-native Agents in Any Environment"</a> (arXiv 2607.21557, Jul 2026) — the §1 cross-harness transfer study; per-call reconstruction at rollout completion + discard-on-error (§5); per-rollout Kubernetes containers (<a href="env-scaling-sandboxing.html">sandboxing page</a>).</li>
     <li>Importance-sampling correction lineage: Yao et al., <a href="https://fengyao.notion.site/off-policy-rl">"Your Efficient RL Framework Secretly Brings You Off-Policy RL Training"</a> (Aug 2025; peer-reviewed as <a href="https://opt-ml.org/papers/2025/paper116.pdf">"On the Rollout-Training Mismatch"</a>); <a href="https://arxiv.org/abs/2506.13585">MiniMax-M1 / CISPO</a>; <a href="https://arxiv.org/abs/2510.13786">ScaleRL</a>; <a href="https://arxiv.org/abs/2510.26788">FP16 mismatch fix</a>; <a href="https://arxiv.org/abs/2605.12070">"Missing Old Logits in Asynchronous Agentic RL"</a> (May 2026); <a href="https://arxiv.org/abs/2512.23075">Trust Region Masking</a>.</li>
     <li>Engine plumbing: vLLM <a href="https://github.com/vllm-project/vllm/pull/22587">PR #22587</a> (<code>return_token_ids</code>), SGLang issue <a href="https://github.com/sgl-project/sglang/issues/18378">#18378</a> (chat-endpoint token ids; merge status unverified at time of writing).</li>
   </ul>
