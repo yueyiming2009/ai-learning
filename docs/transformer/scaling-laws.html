@@ -336,6 +336,7 @@
     <a href="#reconcile">Reconciling</a>
     <a href="#data">Data-constrained</a>
     <a href="#fitting">Fitting pitfalls</a>
+    <a href="#hyperparams">Hyperparameter laws</a>
     <a href="#summary">Summary</a>
   </div>
 </nav>
@@ -489,6 +490,43 @@
     Practical hygiene: fit on the <em>largest</em> models you can afford (extrapolation error grows with the gap), report uncertainty on \(\alpha,\beta\), and sanity-check the prescribed \(D/N\) against an IsoFLOP sweep rather than trusting the parametric fit alone.
   </div>
 
+  <h2 id="hyperparams">6.5 Hyperparameter scaling laws — and when to refit them</h2>
+  <p>Everything above allocates compute: given \(C\), choose \(N\) and \(D\). A second family of laws, fitted the same way (Kaplan-style power laws from a sweep of small models), predicts the <em>training hyperparameters</em> as functions of scale — the optimal peak learning rate \(\eta_\text{opt}(N)\) and batch size \(B_\text{opt}(N)\), in tokens per step. (The \(B\) here is batch size, not the data coefficient of §1.) Frontier labs run production models off these fits rather than sweeping at full scale. The catch that this section is about: <strong>a hyperparameter law is conditional on the architecture and the optimizer it was fitted under</strong>. Change either and the fit is stale — the compute law of §1 barely notices, the hyperparameter law does.</p>
+
+  <p>Qwen3.8-Next is a clean case study, from the Qwen Team's <a href="https://github.com/QwenLM/Qwen3.8-Flash-Next/blob/main/tech_report.pdf" style="color:var(--accent);">"On the Design of Qwen3.8-Next Architecture"</a> (Aug 2026, §3.2). The Qwen3.5 series had its own fitted \(\eta_\text{opt}, B_\text{opt}\) law. The new generation replaced the token-mixing stack with a gated-DeltaNet hybrid, added a gated residual, and swapped AdamW for <a href="../foundations/optimizers.html#muon" style="color:var(--accent);">Muon</a>; under the old recipe the new model trained <em>noticeably more stably</em> than its predecessor, which is the tell that the recipe had become too conservative. Refitting the law on the new stack moved the predictions toward <strong>substantially larger batch sizes and learning rates, with a slower decay of \(\eta_\text{opt}\) in model size</strong>.</p>
+
+  <div class="read">
+    <div class="read-label">Validation rule worth stating on its own</div>
+    <p>A law fitted at small scale is only useful if it extrapolates, so test each prediction <em>separately</em>, in the regime where that prediction is most likely to fail: the <strong>batch size</strong> on a small model trained for many tokens (where a too-large batch would show up as lost data efficiency), and the <strong>learning rate</strong> on a large model trained for few tokens (where instability is the risk). Either test on its own would leave the other prediction unverified.</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Batch size · small model, long budget</div>
+    <p>A 20-layer 10.8B-A0.89B MoE trained on 4T tokens, three batch sizes, each with the learning rate the law prescribes for that batch, all at equal compute. Loss averaged over the final 20B tokens:</p>
+    <div class="table-wrap">
+      <table>
+        <tr><th>Setting</th><th>\(B\) (tokens/step)</th><th>Final loss</th></tr>
+        <tr><td>Qwen3.5 recipe</td><td>12.6M</td><td>1.5774</td></tr>
+        <tr><td>New fit, predicted optimum</td><td>25.2M</td><td><strong>1.5702</strong></td></tr>
+        <tr><td>1.5× the prediction</td><td>37.7M</td><td>1.5707</td></tr>
+      </table>
+    </div>
+    <p>The prediction is worth \(7.2\times10^{-3}\) over the old recipe; going 1.5× past it costs \(4.3\times10^{-4}\), within noise. The shape is the finding: loss rises <em>steeply below</em> the predicted batch and is <em>nearly flat above</em> it — so the prediction sits at the knee, large enough to bank the gain without being excessive.</p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Learning rate · large model, short budget</div>
+    <p>A 48-layer 156B-A7B MoE on 419B tokens, five runs: the predicted optimum (\(B=8.4\text{M},\ \eta=1.76\times10^{-3}\)), \(\eta\) divided and multiplied by \(\sqrt2\), a 25% larger batch (10.5M) with its matched \(\eta\), and the old Qwen3.5 recipe (\(B=4.2\text{M},\ \eta=6.8\times10^{-4}\)). The old recipe ends \(7.8\times10^{-3}\) above the optimum; the four settings near the optimum end within \(7\times10^{-4}\) of each other — a bowl that is flat over at least \(\sqrt2\) in either direction in learning rate and +25% in batch. Downstream, the predicted optimum averages <strong>60.55</strong> across seven benchmarks against <strong>56.41</strong> for the old recipe (the three neighbours: 59.14, 60.10, 60.06). And the law did not over-extrapolate: gradient clipping never engaged after warmup in any of the five runs, and the maximum pre-clip gradient norm reached 28% of the clip threshold at the optimum versus 51% under the old, smaller-batch recipe.</p>
+  </div>
+
+  <h3>A practice the refit retires: batch-size warmup</h3>
+  <p>Large runs conventionally ramp the batch size over early training rather than starting at the target, on the argument that the critical batch size is small early and grows, and that small batches with a scaled learning rate are easier to stabilize at the start. Qwen re-tested this on the same 4T-token setup: ramp from 6.3M in 6.3M increments, reaching the 25.2M target at 524B tokens, in two variants — one keeping the constant-batch peak learning rate, one lowering it to suit the smaller early batches. <strong>Neither helped.</strong> The ramps finish \(2.5\times10^{-4}\) and \(3.5\times10^{-4}\) worse than starting at 25.2M, and the warmup costs <strong>18.8% more optimizer steps</strong> for the same token budget. Stability was not the deciding factor either way: no run in the sweep produced a loss spike, and the p99.9 pre-clip gradient norm stayed between 0.088 and 0.190 against a clip threshold of 0.5.</p>
+  <p>The loss trajectory explains the mechanism. During the ramp the smaller batch means higher gradient noise at the same learning rate, so the ramped run sits <em>above</em> the constant-batch baseline. Just after the batch reaches its target the ramped run may pull briefly ahead, having accumulated more optimizer steps — but as the learning rate decays that step-count advantage is neutralized, and the constant-batch run finishes lower. Three further observations from the report point the same way: decreasing the batch below the predicted optimum costs more than increasing it (the steep-below/flat-above shape); Muon preserves data efficiency at large batch where AdamW's degrades; and a sparse-MoE model wants a large, diverse batch so that every expert sees a sufficient token signal per step. Qwen3.8-Next's production runs use no batch-size warmup.</p>
+
+  <div class="note">
+    <strong>Back to §6.</strong> This is the mis-fitting problem wearing different clothes. The optimal \(\eta\) and \(B\) depend on the architecture and the optimizer, so comparing two architectures — or two optimizers, or two schedules — under <em>shared</em> hyperparameters is structurally unfair: the incumbent runs at its tuned point while the challenger runs at someone else's. The same recipe that made Qwen3.5 competitive left the new stack \(7.8\times10^{-3}\) in loss and four benchmark points on the table. A fair comparison refits the hyperparameter law per candidate, then compares — exactly the discipline §6 demands of the compute law.
+  </div>
+
   <h2 id="summary">7. Summary</h2>
   <div class="summary-grid">
     <div class="summary-card">
@@ -515,6 +553,10 @@
       <div class="summary-card-label">Caveat</div>
       <p>Exponents are noisy regressions — fitting choices move the extrapolated optimum</p>
     </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Hyperparameter laws</div>
+      <p>\(\eta_\text{opt}, B_\text{opt}\) are conditional on architecture + optimizer; refit when either changes (Qwen3.8-Next: larger \(B\), larger \(\eta\), no batch warmup)</p>
+    </div>
   </div>
 
   <div class="table-wrap" style="margin-top: 2em;">
@@ -525,6 +567,7 @@
       <tr><td>\(C \approx 6ND\)</td><td>The FLOP budget linking the two knobs</td></tr>
       <tr><td>Kaplan vs Chinchilla "contradiction"</td><td>A measurement artifact — small-model extrapolation + embedding counting</td></tr>
       <tr><td>Effective-data terms with \(e^{-R/r}\)</td><td>Diminishing returns of repeating tokens under a data constraint</td></tr>
+      <tr><td>Two architectures compared under one shared LR/batch recipe</td><td>An unfair comparison — the hyperparameter law is conditional on the stack it was fitted under (§6.5)</td></tr>
     </table>
   </div>
 
@@ -537,6 +580,7 @@
     <li><a href="https://arxiv.org/abs/2305.16264" style="color:var(--accent);">Muennighoff et al. (2023) — Scaling Data-Constrained Language Models</a></li>
     <li><a href="https://arxiv.org/abs/2404.10102" style="color:var(--accent);">Besiroglu et al. (2024) — Chinchilla Scaling: A Replication Attempt</a></li>
     <li><a href="https://arxiv.org/abs/2303.13506" style="color:var(--accent);">Michaud et al. (2023) — The Quantization Model of Neural Scaling</a></li>
+    <li><a href="https://github.com/QwenLM/Qwen3.8-Flash-Next/blob/main/tech_report.pdf" style="color:var(--accent);">Qwen Team (Aug 2026) — On the Design of Qwen3.8-Next Architecture</a> — §3.2, the refitted hyperparameter law and the batch-warmup re-test (§6.5).</li>
     <li>Pearce &amp; Song (2024) — Reconciling Kaplan and Chinchilla scaling laws · Sharma &amp; Kaplan (2020) — scaling from data-manifold dimension · Lovelace et al. (2026) — repetition overfitting penalty <em>(see the survey for links)</em></li>
   </ul>
 

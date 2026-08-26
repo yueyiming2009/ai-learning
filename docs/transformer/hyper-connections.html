@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light dark">
-  <title>Hyper-Connections &amp; Attention Residuals — Rewiring the Residual Stream</title>
+  <title>Hyper-Connections, Attention Residuals &amp; Gated Residual — Rewiring the Residual Stream</title>
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
   <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
   <link rel="apple-touch-icon" href="../apple-touch-icon.png">
@@ -318,7 +318,8 @@
       grid-template-columns: 1fr 1fr;
       gap: 16px;
     }
-    @media (max-width: 600px) { .compare-grid { grid-template-columns: 1fr; } }
+    .compare-grid.three { grid-template-columns: 1fr 1fr 1fr; }
+    @media (max-width: 600px) { .compare-grid, .compare-grid.three { grid-template-columns: 1fr; } }
     .compare-col-label {
       font-size: 0.82rem;
       font-weight: 600;
@@ -432,6 +433,7 @@
     <a href="#hc">Hyper-connections</a>
     <a href="#mhc">mHC</a>
     <a href="#attnres">AttnRes</a>
+    <a href="#gated-residual">Gated Residual</a>
     <a href="#unified">One idea</a>
     <a href="#why-now">Why now</a>
     <a href="#summary">Summary</a>
@@ -442,7 +444,7 @@
 <div class="hero">
   <span class="hero-pill">Transformer &amp; Pretraining</span>
   <h1>Rewiring the Residual Stream</h1>
-  <p>Hyper-connections, DeepSeek's Sinkhorn-constrained mHC, and Kimi's Attention Residuals: two frontier labs replaced 2017's uniform residual sum in the same half-year — with the same underlying constraint in different clothes.</p>
+  <p>Hyper-connections, DeepSeek's Sinkhorn-constrained mHC, Kimi's Attention Residuals, and Qwen's Gated Residual: three frontier labs replaced 2017's uniform residual sum in the same half-year — two with the same underlying constraint in different clothes, the third by deleting the operator that needed constraining.</p>
 </div>
 
 <div class="page-wrap">
@@ -453,8 +455,9 @@
     61 or 93 times in a row. It is a gradient highway, it needs no parameters, and it has been
     untouched through every attention and FFN revolution — until 2026, when
     <a href="deepseek-v4.html">DeepSeek-V4</a> (mHC) and <a href="kimi-k3.html">Kimi K3</a>
-    (Block AttnRes) both shipped replacements. This page covers what's wrong with the uniform sum, the
-    two fixes, and the one mathematical idea they share.
+    (Block AttnRes) both shipped replacements — and Qwen3.8-Next followed with a third, Gated Residual,
+    whose ablations explain the other two. This page covers what's wrong with the uniform sum, the
+    three fixes, and the one mathematical idea they share.
   </p>
 
   <h2 id="baseline">1. What the Uniform Sum Gets Wrong (and Right)</h2>
@@ -557,11 +560,252 @@
     (<a href="kimi-k3.html">K3 page, §6</a>).
   </p>
 
-  <h2 id="unified">5. One Idea, Two Costumes</h2>
+  <h2 id="gated-residual">4.5 Gated Residual — Spend the Expressiveness on the Read</h2>
+  <p>
+    The third replacement is Qwen's, and it is the most useful to study because the report shows its
+    work: Qwen3.8-Next's <strong>Gated Residual</strong> (GR) starts from the same widened stream as
+    HC/mHC and then asks, operator by operator, which pieces of the machinery pay for themselves
+    (Qwen Team, <a href="https://github.com/QwenLM/Qwen3.8-Flash-Next/blob/main/tech_report.pdf">"On the Design of Qwen3.8-Next Architecture"</a>, Aug 2026, §2.2).
+    The answer reorganizes §2–§4: almost all of the value is in the <em>read</em>, and the operator
+    every earlier design spent its effort constraining — the branch mixing — can simply be deleted.
+  </p>
+
+  <h3>Step 0: width alone</h3>
+  <p>
+    Start with an AltUp-style static widening that fits a pre-norm network. The residual state before
+    block \(\ell\) is \(n_r = 4\) branches \(R^{(\ell)} \in \mathbb{R}^{n_r \times d}\); each block holds
+    \(n_r\) learnable scalars \(h\), reads a weighted sum, and writes its output to a single branch chosen
+    round-robin by depth:
+    \[
+      x^{(\ell)} = \sum_{i=1}^{n_r} h_i R^{(\ell)}_i, \qquad
+      R^{(\ell+1)}_i = R^{(\ell)}_i + \mathbb{1}[\,i = \ell \bmod n_r\,]\; y^{(\ell)}.
+    \]
+    That is \(n_r\) parameters per block, no matrix multiply, and the only cost is the memory traffic of
+    carrying four vectors instead of one. It still lowers the training loss of a 25B-A3B MoE on 400B
+    tokens by roughly 0.01. Width alone is a substantial win; everything below is about how much
+    read/write machinery is worth adding on top of it.
+  </p>
+
+  <h3>HC as three operators</h3>
+  <p>
+    Hyper-connections generalize both equations into three learnable operators — a read
+    \(H_{\text{mix}}\) that forms the block input, a write \(H_{\text{combine}}\) that distributes the
+    output over branches, and a mixing \(H_{\text{res}}\) that exchanges information between branches
+    (\(A_m, B, A_r\) in the HC paper's notation):
+    \[
+      x^{(\ell)} = H_{\text{mix}}^{\top} R^{(\ell)}, \qquad
+      y^{(\ell)} = F^{(\ell)}\big(\mathrm{Norm}(x^{(\ell)})\big), \qquad
+      R^{(\ell+1)} = H_{\text{res}}\, R^{(\ell)} + H_{\text{combine}}\, y^{(\ell)\top},
+    \]
+    with \(H_{\text{mix}}, H_{\text{combine}} \in \mathbb{R}^{n_r}\) and
+    \(H_{\text{res}} \in \mathbb{R}^{n_r \times n_r}\). Each operator is a static term plus a
+    data-dependent term predicted from a normalized view \(\bar R = \mathrm{norm}(R^{(\ell)})\) of the
+    branches:
+    \[
+      H_\star = H^{s}_\star + \lambda_\star \odot \phi\big(\bar R\, W_\star\big),
+      \qquad \star \in \{\text{mix}, \text{combine}, \text{res}\},
+    \]
+    where \(H^{s}_\star\) is learnable and static, \(W_\star\) projects the normalized residual, \(\phi\)
+    is an activation and \(\lambda_\star\) a learnable scale. HC uses \(\phi = \tanh\) with
+    \(\lambda_\star\) initialized to 0.01; mHC uses a sigmoid and additionally pins \(H_{\text{res}}\) to
+    the doubly stochastic manifold of §3. Two limits anchor the family: static terms
+    \(e_{\ell \bmod n_r}, 1, I\) with \(W_\star = 0\) start the widened network exactly at the pre-norm
+    one, and \(\lambda_\star = 0\) throughout keeps every operator static — which is the AltUp variant
+    above, at no extra compute.
+  </p>
+
+  <h3>Five ablation findings</h3>
+  <p>
+    Starting from the static operators, Qwen kept expressiveness only where it paid for itself. The
+    endpoints of that progression (25B-A3B MoE, 560B tokens; \(n_r = 4\) for every widened variant;
+    "static" is \(\lambda_\star = 0\), "dynamic" its data-dependent counterpart):
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Residual</th><th>Loss</th><th>Benchmark avg.</th><th>What changed</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Pre-norm</td><td>1.617</td><td>50.91</td><td>single stream</td></tr>
+        <tr><td>mHC (static)</td><td>1.596</td><td>52.49</td><td>4 branches, static operators</td></tr>
+        <tr><td>mHC (dynamic)</td><td>1.594</td><td>54.47</td><td>+ data-dependent read and write</td></tr>
+        <tr><td><strong>GR</strong></td><td><strong>1.590</strong></td><td><strong>54.66</strong></td><td>elementwise read, no \(H_{\text{res}}\)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <ol>
+    <li>
+      <strong>Bounded positive gates.</strong> A sigmoid beats \(\tanh\) in both loss and training
+      stability — the same finding as mHC, and the same one the report makes for its GDN and attention
+      gates.
+    </li>
+    <li>
+      <strong>Data dependence is cheap in loss, expensive in benchmarks.</strong> Making the read and
+      write data-dependent buys 0.002 of loss over static (against 0.021 for static over pre-norm), but
+      the benchmark gain runs the other way: 1.98 points static → dynamic against 1.58 pre-norm → static.
+      Loss alone would have understated the change.
+    </li>
+    <li>
+      <strong>Read granularity matters; write granularity doesn't.</strong> Refining \(H_{\text{mix}}\)
+      from one scalar per branch to one weight per branch <em>and channel</em> helps. The same refinement
+      of \(H_{\text{combine}}\) gives almost nothing, so the write stays a per-branch scalar.
+    </li>
+    <li>
+      <strong>Predict from all branches.</strong> Better than the last branch alone or a pooled view;
+      normalizing each branch separately — a group RMSNorm over the widened stream — adds a further gain.
+    </li>
+    <li>
+      <strong>\(H_{\text{res}}\) adds nothing.</strong> Once read and write are expressive enough, the
+      \(n_r \times n_r\) mixing brings no significant improvement.
+    </li>
+  </ol>
+
+  <h3>The operator</h3>
+  <p>
+    The read the ablation converges on — elementwise, data-dependent, sigmoid-gated — is the same thing
+    as a stabilizer Qwen had found in separate work (<a href="https://arxiv.org/abs/2601.22966">Qiu et al. 2026</a>): a lightweight
+    elementwise self-gate after RMSNorm, <em>GatedNorm</em>,
+    \(\mathrm{GatedNorm}(u) = \mathrm{RMSNorm}(u) \odot \sigma\big(W_2\, \mathrm{SiLU}(W_1\, \mathrm{RMSNorm}(u))\big)\),
+    with \(W_1, W_2\) a low-rank bottleneck. GR is that gate applied to the widened stream, merged with
+    the read into one operator.
+  </p>
+  <div class="step">
+    <div class="step-label">Gated Residual — read and write</div>
+    <p>
+      Normalize each branch independently with its own gain \(\gamma_i \in \mathbb{R}^d\), predict
+      elementwise gates for every branch and channel from <em>all</em> branches through a bottleneck of
+      rank \(r = d/8\), and average the gated branches into the block input:
+      \[
+      \begin{aligned}
+        \hat R_i &= \mathrm{RMSNorm}(R_i;\, \gamma_i), \qquad i = 1, \dots, n_r, \\
+        G &= \mathrm{unvec}\,\sigma\!\Big(W_u\, \mathrm{SiLU}\big(\tfrac{1}{n_r} W_d\, \mathrm{vec}(\hat R)\big)\Big) \in \mathbb{R}^{n_r \times d}, \\
+        x &= \frac{1}{n_r} \sum_{i=1}^{n_r} G_i \odot \hat R_i,
+      \end{aligned}
+      \]
+      with \(W_d \in \mathbb{R}^{r \times n_r d}\) and \(W_u \in \mathbb{R}^{n_r d \times r}\). The block
+      output \(y = F(x)\) is written to <em>every</em> branch through one data-dependent scalar per branch:
+      \[
+        s = 2\,\sigma\!\big(\tfrac{1}{n_r} W_w\, \mathrm{vec}(\hat R)\big) \in \mathbb{R}^{n_r}, \qquad
+        R'_i = R_i + s_i\, y,
+      \]
+      with \(W_w \in \mathbb{R}^{n_r \times n_r d}\).
+    </p>
+  </div>
+  <p>
+    Read against the HC template: \(\phi = \sigma\), an elementwise \(H_{\text{mix}}\), a per-branch
+    scalar \(H_{\text{combine}}\), \(\bar R\) the group RMSNorm of all branches — and no
+    \(H_{\text{res}}\). The static term \(H^s_\star\) brings no improvement for GR, standard random
+    initialization suffices, and there is a separate GR module for the attention block and the MLP block
+    of every layer. Two consequences fall out. Because the read already normalizes and gates, GR
+    <em>replaces</em> the block's pre-normalization rather than sitting in front of it —
+    \(\mathrm{Norm}\) drops out of \(y = F(\mathrm{Norm}(x))\), and widening adds no normalization
+    layer. And with no mixing, a branch is only ever written by blocks and read through the gate, so the
+    branches stay separate — which is what makes the path analysis below exact.
+  </p>
+
+  <h3>Why dropping \(H_{\text{res}}\) is the inference story</h3>
+  <p>
+    A widened stream costs no FLOPs to speak of; it costs bytes. The inference cost of GR is dominated
+    by the memory traffic of the residual state, and \(H_{\text{res}}\) is a full read of that state per
+    block — the dominant inference cost of a widened stream. HC and mHC keep the read and write as
+    per-branch scalars and spend their capacity on the mixing, which mHC then has to constrain; GR spends
+    the capacity on the read, and the ablation says the mixing costs nothing to drop. Dropping it also
+    removes the one operator that needed separate constraints to stay stable.
+  </p>
+  <p>
+    Two further cuts on the same bill. The gates in GR, gated attention and GDN all bound the magnitude
+    of what is written into the stream, so residual values stay in a narrow range; Qwen stores the
+    branches in <strong>FP8</strong>, halving the bytes moved relative to BF16 with almost no loss in
+    quality. And the read (norm, gate, average) and the write are each fused into a single kernel, with
+    the group RMSNorm folded into the read, so the widened stream is traversed once per block in each
+    direction.
+  </p>
+  <div class="note">
+    The rejected cut: sparse reads. In trained models the write at each GR layer is typically dominated
+    by two branches, so Qwen tried letting each block read only the two branches with the highest gate
+    values instead of all four — from scratch and mid-training. Pre-training loss and benchmarks were
+    almost unaffected; quality degraded clearly after post-training, and varying the sparsity level
+    across layers did not fix it. The report flags this as a case where pre-training metrics alone would
+    have led to the wrong decision.
+  </div>
+
+  <h3>Against Attention Residuals</h3>
+  <p>
+    Qwen also ran K3's design in its own setting: a 28-layer model (\(L = 56\) sublayers), each variant
+    with and without GatedNorm (GN). Full AttnRes attends over every preceding sublayer's output; Block
+    AttnRes sums \(S\) sublayers into one representation and attends over those.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Residual design (28 layers)</th><th>Loss</th><th>Loss + GN</th></tr></thead>
+      <tbody>
+        <tr><td>Pre-norm residual</td><td>1.789</td><td>1.787</td></tr>
+        <tr><td>Block AttnRes, \(S = 4\)</td><td>1.773</td><td>1.768</td></tr>
+        <tr><td>Block AttnRes, \(S = 2\)</td><td>1.770</td><td>1.766</td></tr>
+        <tr><td>Full AttnRes</td><td>1.762</td><td>1.758</td></tr>
+        <tr><td><strong>GR (\(n_r = 4\))</strong></td><td>—</td><td><strong>1.762</strong></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    Full AttnRes, the strongest of that family, lands level with GR at 1.762; summarizing blocks costs
+    0.008 at \(S = 2\) and 0.011 at \(S = 4\). The ordering holds deeper: at 48 layers, Block AttnRes at
+    \(S = 4\) reaches 1.711 against 1.707 for GR. So the block summarization that buys K3 its \(O(Nd)\)
+    memory (§4) is not free — and K3's blocks are 12 layers, far coarser than Qwen's \(S = 4\)
+    sublayers. Note the GN column too: the gate lowers the loss at every setting, by 0.004–0.005 on
+    AttnRes and only 0.002 on plain pre-norm. It helps more when the input a sublayer reads is more
+    complex — and it is the same gate GR carries inside its read.
+  </p>
+
+  <h3>What the branches are actually used for</h3>
+  <p>
+    Because there is no mixing, branch \(c\) before block \(v\) is a plain accumulator,
+    \(R^{(v)}_c = R^{(0)}_c + \sum_{u &lt; v} s^{(u)}_c\, y^{(u)}\), and what block \(v\) reads
+    decomposes <em>exactly</em> into contributions from every earlier block:
+    \[
+      a_{u \to v} = \frac{1}{n_r} \sum_{c=1}^{n_r} G^{(v)}_c \odot \gamma_c \odot
+        \frac{s^{(u)}_c\, y^{(u)}}{\mathrm{rms}\big(R^{(v)}_c\big)},
+      \qquad
+      \pi_{uv} = \frac{\lVert a_{u \to v} \rVert}{\sum_{u' &lt; v} \lVert a_{u' \to v} \rVert},
+    \]
+    evaluated at the gate values the forward pass actually took; every reader's shares sum to one to
+    within \(3 \times 10^{-8}\). Qwen compares a 20-layer hybrid MoE (softmax attention every fourth
+    layer, GDN elsewhere) trained with GR against an otherwise identical reference without it, and
+    reports \(\Delta_{uv} = \pi^{\text{GR}}_{uv} - \pi^{\text{ref}}_{uv}\), which subtracts out the
+    pattern common to every residual network — nearby writers dominate. Fig. 7 of the report draws the
+    21 of 780 ordered pairs with \(\Delta_{uv} \ge 0.05\) over a skip of at least one layer.
+  </p>
+  <ul>
+    <li>
+      <strong>One branch goes long, three stay local.</strong> Across five GR checkpoints, each has
+      exactly one long-range branch, with a typical skip of 10.9 layers against 3.4–3.9 for the rest.
+      Every connection on it originates at layer 0 and lands past layer 10: layer-0 GDN → layer-15
+      attention rises from a 0.020 share in the reference to 0.138 under GR, and holds at 0.072–0.138
+      for every reader from layer 10 to 19 with no downward trend. The branch is written most heavily at
+      layer 0 and barely updated afterwards, so layer-0 information stays addressable at every depth.
+    </li>
+    <li>
+      <strong>The heavy readers are the softmax-attention layers.</strong> That is where the long-range
+      paths land — global attention acts as the hub integrating the long-range context the GDN layers
+      compress away. Short paths gain too (layer-10 GDN → layer-11 attention, \(\Delta_{uv} = 0.117\)),
+      and the same layer-0 MLP output reaches layer 2 on a local branch (0.139 → 0.192) and layer 15 on
+      the long-range one (0.008 → 0.058) — two decay rates for one writer, which a single stream with one
+      decay rate per writer cannot express.
+    </li>
+    <li>
+      <strong>The net effect is redistribution.</strong> Grouping all 780 paths by skip and summing
+      \(\Delta_{uv}\): adjacent paths (skip 1) gain 0.96 in share, long-range paths (skip &gt; 12) gain
+      0.91, and mid-range paths (skip 2–12) lose 3.21. The weighted-average skip barely moves (3.97 vs
+      3.91), so the total cross-layer information is similar; GR selects a few paths and amplifies them
+      at the expense of the middle.
+    </li>
+  </ul>
+
+  <h2 id="unified">5. One Idea, Three Costumes</h2>
 
   <div class="compare">
-    <div class="compare-label">The same constraint, spotted twice</div>
-    <div class="compare-grid">
+    <div class="compare-label">The same constraint, spotted twice — then deleted</div>
+    <div class="compare-grid three">
       <div>
         <div class="compare-col-label">mHC (DeepSeek-V4)</div>
         <p style="font-size:0.88rem; margin:4px 0 0;">Mixing weights constrained doubly stochastic via
@@ -574,19 +818,42 @@
         <em>softmax</em>. Dynamic — input-dependent per token. Flexibility axis:
         <strong>depth</strong> — 8 block sources.</p>
       </div>
+      <div>
+        <div class="compare-col-label">Gated Residual (Qwen3.8-Next)</div>
+        <p style="font-size:0.88rem; margin:4px 0 0;">Read weights bounded in \((0,1)\) via an
+        <em>elementwise sigmoid gate</em> on RMS-normalized branches. Dynamic — per token, per channel.
+        Flexibility axis: <strong>width</strong> — 4 branches, and <strong>no mixing operator at all</strong>.</p>
+      </div>
     </div>
   </div>
 
   <p>
-    Strip the branding and both designs make the identical move: <em>replace uniform accumulation with a
-    learned <strong>convex combination</strong></em>. Softmax outputs and doubly stochastic rows are both
-    points in a probability simplex — non-negative weights summing to one — and that is precisely the
+    Strip the branding and the first two designs make the identical move: <em>replace uniform accumulation
+    with a learned <strong>convex combination</strong></em>. Softmax outputs and doubly stochastic rows are
+    both points in a probability simplex — non-negative weights summing to one — and that is precisely the
     constraint class that re-routes signal without amplifying it (§1's plot). Where they differ is
     which axis gets the flexibility (lanes vs. depth) and whether the weights see the data (static vs.
-    per-token). It is the residual-stream version of a pattern this series keeps meeting: when you make
-    a structural component learnable, you must simultaneously constrain it to conserve — compare
-    <a href="moe-routing.html">routing bias updates</a> that preserve top-\(k\) counts, or the gates
-    in <a href="gated-deltanet.html">Gated DeltaNet</a> bounded in \((0,1)\).
+    per-token).
+  </p>
+  <p>
+    The third design takes the other exit. §1's compounding hazard attaches to one specific thing: an
+    operator that <em>multiplies the state at every layer</em>. mHC keeps that operator and constrains it
+    to be non-expansive; AttnRes never has one (single stream, softmax read); GR keeps the width but drops
+    the operator entirely. Its branches are additive accumulators exactly like the 2017 stream — there
+    are just four of them, and the block output enters each through a bounded scalar — so there is
+    nothing to compound and nothing to project. The flexibility moves to the read, where it is bounded
+    by construction: a per-channel gate in \((0,1)\) on RMS-normalized branches, averaged. Qwen's
+    ablation is the empirical half of the argument — once the read is expressive, the mixing "brings no
+    significant improvement" — and the stress tests in §6 make GR the most stable of the three under
+    load. One detail carries over unchanged: like V4's mHC parameters, GR's two low-rank projections
+    train on AdamW while the backbone runs <a href="../foundations/optimizers.html">Muon</a> — the
+    report attributes it to their very elongated shape.
+  </p>
+  <p>
+    It is the residual-stream version of a pattern this series keeps meeting: when you make
+    a structural component learnable, you must simultaneously constrain it to conserve — or remove it —
+    compare <a href="moe-routing.html">routing bias updates</a> that preserve top-\(k\) counts, or the
+    gates in <a href="gated-deltanet.html">Gated DeltaNet</a> bounded in \((0,1)\).
   </p>
 
   <h2 id="why-now">6. Why This Happened Now</h2>
@@ -606,6 +873,20 @@
       its core architectural bets. Independent adoption in the same generation is the strongest signal
       in architecture research — the same signal that blessed the
       <a href="hybrid-attention.html">3:1 hybrid ratio</a>.
+    </li>
+    <li>
+      <strong>The residual became a stability lever.</strong> Qwen's stress test holds the learning rate
+      constant at a multiple of its optimum on a 28-layer 25B-A3B MoE. At 4×, the Qwen3.5 structure
+      under AdamW spikes 183 times per 10k steps and crosses the clipping threshold on 213 of 19,932
+      steps; Muon + GR never touches the clipper and records zero loss spikes. A single-variable pair
+      isolates the gate: at 3×, with AdamW and the structure fixed, toggling GatedNorm on cuts the spike
+      rate from 32.0 to 3.2 per 10k steps and threshold crossings from 256 to 20. The report's reading
+      (<a href="https://arxiv.org/abs/2601.22966">Qiu et al. 2026</a>): a network trained at a high learning rate needs a
+      rescaling mechanism, and without an explicit gate it grows activation outliers to supply one,
+      leaving it fragile; the multiplicative gate provides the rescaling directly. That is why the gated
+      read stands in for explicit activation control — Qwen3.8-Next trains without qk-clip or
+      SwiGLU-clip
+      (<a href="https://github.com/QwenLM/Qwen3.8-Flash-Next/blob/main/tech_report.pdf">report</a>, §3.3).
     </li>
   </ul>
 
@@ -628,12 +909,16 @@
       <p>Softmax pseudo-query reads over 8 depth-blocks — input-dependent, \(O(Nd)\), reused by the EAGLE drafter.</p>
     </div>
     <div class="summary-card">
+      <div class="summary-card-label">Gated Residual</div>
+      <p>4 branches, no mixing; elementwise sigmoid read gate (rank \(d/8\)) on per-branch RMSNorm, scalar writes. Replaces pre-norm; FP8 state; zero spikes at 4× LR.</p>
+    </div>
+    <div class="summary-card">
       <div class="summary-card-label">The shared idea</div>
-      <p>Learned <em>convex combinations</em> replace uniform sums: re-route mass, never create it.</p>
+      <p>Learned <em>convex combinations</em> or bounded gates replace uniform sums: re-route mass, never create it — and if an operator can amplify, constrain it or drop it.</p>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">Status</div>
-      <p>Two independent frontier deployments in one generation — the block's next contested component.</p>
+      <p>Three independent frontier deployments in one generation — the block's next contested component.</p>
     </div>
   </div>
 
@@ -654,6 +939,11 @@
       <div class="next-card-title">Kimi K3</div>
       <p>Block AttnRes in context — including its second life as the speculative drafter's feature tap.</p>
     </a>
+    <a class="next-card" href="qwen-3-5.html">
+      <div class="next-card-label">Case study</div>
+      <div class="next-card-title">Qwen3.5</div>
+      <p>The structure Qwen3.8-Next's Gated Residual is measured against — the baseline stack in its stress tests.</p>
+    </a>
     <a class="next-card" href="../foundations/backprop.html">
       <div class="next-card-label">Foundation</div>
       <div class="next-card-title">Backpropagation</div>
@@ -664,7 +954,7 @@
 </div>
 
 <footer>
-  Personal ML notes &nbsp;·&nbsp; Hyper-connections &amp; attention residuals — rewiring the residual stream
+  Personal ML notes &nbsp;·&nbsp; Hyper-connections, attention residuals &amp; gated residual — rewiring the residual stream
   &nbsp;·&nbsp; <a href="transformer-block.html" style="color:inherit">← Transformer block page</a>
 </footer>
 

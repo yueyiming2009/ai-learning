@@ -488,16 +488,28 @@
   </p>
   <div class="table-wrap">
     <table>
-      <tr><th>Axis</th><th>Qwen3-Next (Sept 2025)</th><th>Qwen3.5 (Feb 2026)</th></tr>
-      <tr><td>Scale</td><td>80B total / 3B active</td><td>397B / 17B</td></tr>
-      <tr><td>Depth × width</td><td>48 × 2048</td><td>60 × 4096</td></tr>
-      <tr><td>DeltaNet value heads</td><td>32</td><td>64</td></tr>
-      <tr><td>Hybrid ratio, attention config</td><td colspan="2">identical — 3:1, GQA 2 KV heads @ 256, output gates, partial RoPE ¼</td></tr>
-      <tr><td>MoE config</td><td colspan="2">identical — 512 routed, top-10 + 1 shared</td></tr>
-      <tr><td>Modality</td><td>text (separate -VL branch)</td><td>native early-fusion vision, M-RoPE</td></tr>
-      <tr><td>Vocab</td><td>~150K</td><td>248,320 (201 languages)</td></tr>
+      <tr><th>Axis</th><th>Qwen3-Next (Sept 2025)</th><th>Qwen3.5 (Feb 2026)</th><th>Qwen3.8-Flash-Next (Aug 2026)</th></tr>
+      <tr><td>Scale</td><td>80B total / 3B active</td><td>397B / 17B</td><td>125B / 6B, + 51B n-gram tables off-accelerator</td></tr>
+      <tr><td>Depth × width</td><td>48 × 2048</td><td>60 × 4096</td><td>48 layers</td></tr>
+      <tr><td>DeltaNet value heads</td><td>32</td><td>64</td><td>48 (sigmoid output gate)</td></tr>
+      <tr><td>Hybrid ratio, attention config</td><td colspan="2">identical — 3:1, GQA 2 KV heads @ 256, output gates, partial RoPE ¼</td><td>3:1 kept; full layers become <a href="sparse-attention.html#csa">QSA</a> at CPT (top-2048 over 4-token blocks)</td></tr>
+      <tr><td>MoE config</td><td colspan="3">identical — 512 routed, top-10 + 1 shared</td></tr>
+      <tr><td>Residual stream</td><td colspan="2">standard pre-norm</td><td><a href="hyper-connections.html">Gated Residual</a> — 4 branches, elementwise gated read</td></tr>
+      <tr><td>Optimizer</td><td colspan="2">AdamW</td><td>Muon (split per head), refit LR/batch scaling law</td></tr>
+      <tr><td>Modality</td><td>text (separate -VL branch)</td><td colspan="2">native early-fusion vision, M-RoPE</td></tr>
+      <tr><td>Vocab</td><td>~150K</td><td colspan="2">248,320 (201 languages)</td></tr>
     </table>
   </div>
+  <p>
+    The third column is the <em>next</em> testbed. Qwen3.8-Flash-Next (Aug 2026) is released as a
+    preview of the Qwen 4 architecture, and this time the design does change: sparse attention in the
+    full layers, a widened and gated residual stream, an n-gram embedding layer at layer 2, and Muon in
+    place of AdamW — with a report that ablates each one
+    (<a href="https://github.com/QwenLM/Qwen3.8-Flash-Next/blob/main/tech_report.pdf">On the Design of
+    Qwen3.8-Next Architecture</a>). Its headline is the same pattern at a smaller scale: the 125B-A6B
+    testbed matches the 397B-A17B flagship on 8 of 14 pre-training benchmarks at roughly a ninth of
+    the training FLOPs.
+  </p>
   <p>
     The one genuinely new capability is multimodality (§7). Everything else is the testbed recipe with
     more of everything — which is itself the result: the hybrid architecture <em>survived a 5× scale-up
@@ -673,7 +685,9 @@
     on attention: Qwen3.5 and Kimi K3 bet on <em>recurrent state</em> (linear-attention hybrids), while
     DeepSeek-V4 kept softmax everywhere and compressed the sequence it reads. Qwen3.5 is the smallest and
     most conservative of the three — no residual-stream redesign, no exotic router — and the only one
-    shipping one architecture from 0.8B to 397B.
+    shipping one architecture from 0.8B to 397B. That conservatism lasted one generation:
+    Qwen3.8-Flash-Next (§1) adds a four-branch gated residual, replaces the full-attention layers with
+    QSA, and moves to Muon.
   </p>
 
   <div class="table-wrap">

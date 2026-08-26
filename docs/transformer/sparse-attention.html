@@ -629,6 +629,31 @@
     scans along the sequence — by mid-2026, the indexer's linear term is the most-attacked quantity
     in frontier attention design.
   </p>
+  <p>
+    Qwen3.8-Flash-Next's <strong>Qwen Sparse Attention (QSA)</strong> (<a href="https://github.com/QwenLM/Qwen3.8-Flash-Next/blob/main/tech_report.pdf">report</a>, Aug 2026)
+    is the third data point, and the first head-to-head. It takes V4's route — compress what the
+    indexer scans — but applies it to the <em>indexer's keys only</em>: keys are average-pooled in
+    blocks of \(r = 4\) <em>before</em> partial RoPE, so each block is summarized as content first and
+    then given a single block-level position \(p_b\) (averaging tokens with different rotary phases is
+    the thing to avoid), then scored block-causally by a 4-query-head / 1-key-head MQA indexer with
+    ReLU-summed similarities. Core attention still reads raw tokens: the \(K = 2048\) budget becomes
+    \(\lceil K/r \rceil = 512\) blocks plus the tail of the current block. Indexer cost
+    \(O(n^2) \to O(n^2/r)\); kernel-level attention speedups of 7.6× prefill and 4.9× decode at 1M
+    against paged GQA. It was added at continued pretraining on 256K sequences — 1,000 indexer-only
+    steps (≈2B tokens, KL to the max-pooled teacher attention), then 8,000 joint steps (≈200B tokens)
+    — and matches or beats full attention on seven of eight short benchmarks (75.9 → 76.8) while
+    scoring <em>higher</em> than dense past 512K (RULER 90.1 → 93.0; 8-needle MRCR 30.7 → 40.5 at
+    512K, 20.7 → 26.4 at 1M).
+  </p>
+  <p>
+    The result that bears on the depth-axis answer: in a 3:1 GDN hybrid, Qwen ran training-aware
+    IndexShare as the baseline and found it stays <em>below</em> the full-attention RULER score at a
+    relative indexer latency of 0.5, while QSA matches full attention at 0.25. The reason is
+    structural. IndexShare's premise — adjacent layers attend to overlapping sets — holds when the
+    sparse layers <em>are</em> adjacent; in a hybrid they sit three recurrent layers apart, and
+    inter-layer index similarity drops. Amortizing across depth is an all-attention-stack answer;
+    hybrids compress within the layer.
+  </p>
 
   <h2 id="tradeoffs">7. Selection vs. State — the Two Long-Context Bets</h2>
 
@@ -659,6 +684,13 @@
     camp imports the other's insurance: V4 interleaves dense-over-summaries layers (state-like
     unconditional coverage), and the hybrids keep a few exact softmax layers (selection-like precision).
     Neither trusts its own failure mode unhedged.
+  </p>
+  <p>
+    One caveat on the selection column. The miss is discrete, but it need not be <em>net</em>
+    negative: QSA scores higher than its own dense baseline beyond 512K (§6), which reads as a hard
+    top-\(k\) over block summaries also acting as a denoiser at lengths where dense softmax spreads
+    its mass thinly. "Conditional on the indexer" is the right framing for tail risk, not for
+    average accuracy.
   </p>
 
   <h2 id="summary">8. Summary</h2>

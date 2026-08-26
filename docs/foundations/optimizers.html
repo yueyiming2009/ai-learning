@@ -397,9 +397,11 @@
     <a href="#momentum">Momentum / Nesterov</a>
     <a href="#adam">Adam</a>
     <a href="#clipping">Clipping</a>
+    <a href="#stress-test">Stress test</a>
     <a href="#schedule">LR schedule</a>
     <a href="#adamw">Weight decay / AdamW</a>
     <a href="#muon">Muon</a>
+    <a href="#muon-split">Muon in production</a>
     <a href="#summary">Summary</a>
   </div>
   <a class="nav-back" href="../index.html">Home</a>
@@ -677,6 +679,35 @@ optimizer.step()</code></pre>
       total norm, a clean health signal. Steady = healthy; spikes = instability.</li>
   </ul>
 
+  <div class="note" id="stress-test">
+    <strong>Stress-testing stability — turning the clipper into an instrument.</strong> Qwen3.8-Next's
+    report shows how to use that pre-clip norm as a <em>measurement</em> rather than a guardrail. The
+    protocol, after Wortsman et al.'s
+    <a href="https://arxiv.org/abs/2309.14322" style="color:inherit;">small-scale proxies</a>: reproduce
+    large-scale instabilities in a moderate model by <strong>holding the learning rate constant at
+    2× and 4× its optimum</strong> (no decay — this simulates a production run's long stay at peak LR)
+    on a 28-layer MoE, all runs at the same batch size and a clip threshold \(	au=0.5\). Three metrics:
+    <em>loss spikes</em> (a step whose loss exceeds a 201-step rolling median by more than 0.1),
+    the <em>p99.9 pre-clip gradient norm</em> plus the count of threshold crossings, and the
+    <em>per-block maximum activation</em>. Results at 4×: AdamW on the previous (Qwen3.5) structure
+    spikes 183 times per 10k steps and engages the clipper on 213 of 19,932 steps — clipping
+    continuously; Muon on the same structure never crosses the threshold; Muon plus a gated residual
+    records <strong>zero</strong> loss spikes. (At 2× the gap is already visible: 4.3 vs 0.2 spikes per
+    10k steps.) A single-variable pair isolates the gate: at 3× the optimum with AdamW held fixed, the
+    gate alone cuts spikes from 32.0 to 3.2 per 10k steps and threshold crossings from 256 to 20.
+    <br><br>
+    The lesson for this section: <strong>the clipper is a symptom counter, not the fix</strong>. What
+    removed the spikes was architectural — a multiplicative gate on the residual read (see
+    <a href="../transformer/hyper-connections.html" style="color:inherit;">the residual-stream
+    page</a>) — not a tighter \(	au\). The report's reading is that high-LR training needs a rescaling
+    mechanism somewhere: without an explicit gate the network grows activation outliers to supply it,
+    and that is what makes it fragile. In the production-scale learning-rate runs (48-layer 156B-A7B — see
+    <a href="../transformer/scaling-laws.html#hyperparams" style="color:inherit;">hyperparameter
+    scaling laws</a>) clipping never engaged after warmup in any run; the maximum pre-clip norm reached
+    28% of the threshold at the predicted optimum versus 51% under the old, smaller-batch recipe.
+    Source: Qwen Team, <a href="https://github.com/QwenLM/Qwen3.8-Flash-Next/blob/main/tech_report.pdf" style="color:inherit;">"On the Design of Qwen3.8-Next Architecture"</a> (Aug 2026), §3.3.
+  </div>
+
   <!-- ════════════════════════ SCHEDULE ════════════════════════ -->
   <h2 id="schedule">6. The learning-rate schedule — warmup → cosine</h2>
   <h3>Warmup</h3>
@@ -855,6 +886,19 @@ optimizer = torch.optim.AdamW([
     whole orthogonalization costs a handful of \(n\times n\) matmuls — cheap next to the layer's forward/
     backward, and well worth it.
   </p>
+  <p>
+    <strong>What a production run actually sets</strong> (Qwen3.8-Next, §3.1 of the
+    <a href="https://github.com/QwenLM/Qwen3.8-Flash-Next/blob/main/tech_report.pdf" style="color:var(--accent);">report</a>):
+    the momentum is <em>Nesterov</em>-accelerated (§3) with \(\mu = 0.95\); the fixed \((a,b,c)\) above
+    are replaced by the per-step coefficient schedule of
+    <a href="https://arxiv.org/abs/2505.16932" style="color:var(--accent);">Polar Express</a>, which is
+    minimax-optimal for a given step budget; the step budget is <strong>8</strong>, not 5 — chosen not for
+    speed but because the more accurate orthogonalization reduced both the magnitude and the frequency of
+    gradient-norm spikes in the stress test (§5); and the \(\epsilon\) in the Frobenius normalization
+    that precedes the iteration is \(10^{-14}\). After orthogonalization the result is scaled by
+    \(\gamma(A,B) = 0.2\sqrt{\max(A,B)}\) for a parameter of shape \(A\times B\), which makes the RMS
+    of the update independent of the matrix shape — the concrete form of the scale-matching note below.
+  </p>
 
   <h3>Muon is a hybrid: it does not replace AdamW everywhere</h3>
   <p>
@@ -869,6 +913,33 @@ optimizer = torch.optim.AdamW([
       <tr><td>Norm gains, biases (1-D)</td><td>AdamW</td><td>Vectors; no singular-value structure to flatten</td></tr>
     </table>
   </div>
+  <p id="muon-which">
+    That three-row table hides most of the judgment calls. A modern hybrid architecture has a dozen kinds
+    of 2-D tensor, and "is it a matrix?" is not the same question as "does it act as a linear map?".
+    Qwen3.8-Next's report publishes its full assignment, with a reason for each exclusion:
+  </p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Which tensors get Muon — Qwen3.8-Next's list</th><th>Optimizer</th><th>Why</th></tr>
+      <tr><td>Attention q/k/v and output projections</td><td><strong>Muon</strong></td><td rowspan="4">Two-dimensional weights that genuinely act as linear maps — the singular-value structure is real, so flattening it is meaningful</td></tr>
+      <tr><td>GDN (gated DeltaNet) input and output projections</td><td><strong>Muon</strong></td></tr>
+      <tr><td>Expert <code>fc1</code>/<code>fc2</code>, routed <em>and</em> shared</td><td><strong>Muon</strong></td></tr>
+      <tr><td>n-gram embedding key/value projections</td><td><strong>Muon</strong></td></tr>
+      <tr><td>Input embeddings, output head</td><td>AdamW</td><td>As above — per-token rows, a lookup rather than a transform</td></tr>
+      <tr><td>MoE router</td><td>AdamW</td><td>Muon amplifies early-training fluctuations and destabilizes the router (later in training it is stable but gains nothing). Each output dimension is one expert's score and the dimensions are largely independent — there is no shared linear structure for orthogonalization to exploit</td></tr>
+      <tr><td>Gated Residual low-rank projections</td><td>AdamW</td><td>Very elongated shape; AdamW simply performs better</td></tr>
+      <tr><td>Output gates (attention output gate, GDN \(z\) projection)</td><td>AdamW</td><td>Ablations found AdamW on par with or slightly better than Muon</td></tr>
+      <tr><td>GDN decay and beta projections</td><td>AdamW</td><td>One scalar per head — these are vectors in disguise, and orthogonalization is not meaningful on a vector</td></tr>
+      <tr><td>n-gram embedding tables</td><td>Adam, weight decay <em>off</em></td><td>A table, not a map — the report runs it on Adam with decay switched off</td></tr>
+    </table>
+  </div>
+  <p>
+    One rule generates the whole table. \(O_t = UV^\top\) is the steepest-descent direction when step
+    length is measured in the <em>spectral</em> norm — the norm that governs how a linear map stretches its
+    inputs — so the update is only the "right" one for a tensor that <em>is</em> a linear map from one
+    activation space to another. <strong>Orthogonalize what is genuinely a linear map</strong>; hand
+    everything else (lookups, per-expert scores, per-head scalars, gates) to AdamW.
+  </p>
   <div class="note">
     Muon's step size has a different natural scale than Adam's (its update is semi-orthogonal, so
     \(\lVert O_t\rVert\) is fixed by the matrix shape, not by the gradient magnitude). You generally
@@ -876,6 +947,52 @@ optimizer = torch.optim.AdamW([
     Muon and AdamW parameter groups move at compatible rates. Muon also typically keeps AdamW-style weight
     decay on its matrices.
   </div>
+
+  <h3 id="muon-split">Split fused parameters before orthogonalizing</h3>
+  <p>
+    The "is it a linear map?" test has a second, subtler failure mode: a tensor that is several linear
+    maps <em>stacked into one buffer</em>. Megatron-LM stores the attention <code>qkv</code> projection,
+    the SwiGLU <code>fc1</code> (gate and up), and the GDN input projection each as one fused matrix —
+    semantically a concatenation of independent operators along the output dimension. Orthogonalizing the
+    fused matrix is wrong in two ways:
+  </p>
+  <ul>
+    <li><strong>Mixed spectra.</strong> The Newton–Schulz iteration equalizes singular directions across
+      the <em>whole</em> matrix, so it mixes directions belonging to unrelated sub-blocks — a query head's
+      update is rebalanced against a value head's.</li>
+    <li><strong>Wrong shape scale.</strong> \(\gamma(A,B) = 0.2\sqrt{\max(A,B)}\) is computed from the
+      concatenated shape instead of the true operator shape, so every sub-block moves at the wrong rate.</li>
+  </ul>
+  <p>
+    Qwen3.8-Next therefore splits the fused <em>gradient</em> before orthogonalization, runs NS on each
+    sub-matrix independently, and gathers the results back into the fused layout before applying the
+    update. Granularity matters: <code>qkv</code> and the GDN input projection are split <strong>per
+    head</strong>, which improves both loss and downstream benchmarks; <code>fc1</code> is split into its
+    gate and up halves, which leaves loss essentially unchanged and nudges benchmarks up slightly. The
+    split also gives a natural unit for <em>excluding</em> pieces from Muon — that is how the per-head
+    decay/beta scalars and the output gates in the table above end up on AdamW. This is the same move as
+    <a href="../transformer/glm-5.html#muon-split" style="color:var(--accent);">GLM-5's "Muon Split"</a>
+    and <a href="../transformer/kimi-k3.html#muon" style="color:var(--accent);">Kimi K3's Per-Head Muon</a>:
+    three frontier labs converging on "orthogonalize per operator, not per buffer".
+  </p>
+
+  <h3 id="muon-systems">Systems cost</h3>
+  <p>
+    The NS iteration costs \(\approx 4K\,\max(A,B)\,\min(A,B)^2\) FLOPs for \(K\) steps on an
+    \(A\times B\) matrix — it scales with <em>matrix shape</em>, cubic in the shorter side, not with
+    parameter count. That clashes with Megatron's sharding twice over. Under data parallelism, Megatron's
+    equal-<em>element</em> partition of the optimizer state gives ranks equal parameter counts but wildly
+    unequal NS work, leaving severe stragglers; under tensor parallelism no single rank owns a full matrix
+    to orthogonalize at all. Qwen's <a href="https://arxiv.org/abs/2602.06079" style="color:var(--accent);"><em>Canzona</em></a> framework decouples logical optimizer assignment from
+    physical layout: an \(\alpha\)-balanced static partitioner reassigns <strong>whole</strong> parameters
+    (never cutting inside a tensor) across DP ranks to equalize <em>estimated NS FLOPs</em>, and an
+    asynchronous micro-group pipeline reconstructs each Muon-owned matrix from its TP shards with a fused
+    All-to-All. Each owner then runs a step mathematically equivalent to single-device Muon; ZeRO-1's
+    bucket geometry is preserved, so Megatron's reduce-scatter/backward overlap survives. The second cost
+    is launch overhead: after splitting, one layer contributes on the order of a hundred small
+    sub-matrices, and the optimizer step becomes a long chain of tiny kernels bounded by launch latency
+    rather than arithmetic — so the whole step is captured in a <strong>CUDA graph</strong>.
+  </p>
 
   <h3>Why it matters</h3>
   <ul>
@@ -889,6 +1006,12 @@ optimizer = torch.optim.AdamW([
       <strong>Shampoo</strong> and its efficient successor <strong>SOAP</strong> — that likewise use the
       matrix structure (full/Kronecker-factored preconditioners) rather than a diagonal one. Muon is the
       lightest of them: just orthogonalize the momentum, no preconditioner state to store.</li>
+    <li><strong>It moves the hyperparameters.</strong> Switching to Muon (together with Qwen3.8-Next's
+      architecture changes) shifted the predicted optimal batch size and learning rate upward, and the
+      report observes that Muon preserves data efficiency at larger batches where AdamW's degrades — so a
+      hyperparameter scaling law fit under AdamW is stale the day the optimizer changes. See
+      <a href="../transformer/scaling-laws.html#hyperparams" style="color:var(--accent);">hyperparameter
+      scaling laws</a>.</li>
   </ul>
   <p style="font-size:0.9rem; color:var(--muted)">
     Bottom line: AdamW is still the safe default and still runs the embeddings, head, and 1-D params even in a
@@ -918,6 +1041,10 @@ optimizer = torch.optim.AdamW([
     <div class="summary-card">
       <div class="summary-card-label">Muon</div>
       <p>Orthogonalize the momentum matrix (\(O=UV^\top\) via Newton–Schulz); hidden 2-D weights only, AdamW elsewhere.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Muon in production</div>
+      <p>Orthogonalize only true linear maps (router, gates, per-head scalars stay on AdamW); split fused qkv/fc1 per operator; 8 NS steps for stability; balance DP ranks by NS FLOPs, not elements. Under 4× LR stress: zero spikes with a gated residual.</p>
     </div>
   </div>
   <p style="font-size:0.88rem; color: var(--muted);">

@@ -566,7 +566,11 @@
       <strong>Positions:</strong> if the linear layer's decay is channel-wise
       (<a href="kda.html">KDA</a>), it carries a relative position code by itself and the full layers
       can run NoPE — which also makes context extension rescaling-free. With scalar-gated linear layers
-      (<a href="gated-deltanet.html">GDN</a>), Qwen keeps partial RoPE in the full layers instead.
+      (<a href="gated-deltanet.html">GDN</a>), Qwen keeps partial RoPE in the full layers instead —
+      and the Qwen3.8-Next report (<a href="https://github.com/QwenLM/Qwen3.8-Flash-Next/blob/main/tech_report.pdf">§2.1.1</a>) says why: a NoPE variant is
+      indistinguishable during pre-training but shows a substantially higher rate of endless
+      generation after post-training. A choice invisible to pre-training loss, decided by a
+      post-training failure mode.
     </li>
     <li>
       <strong>Short conv in front of the linear layers</strong> (kernel 3–4, depthwise) is universal:
@@ -612,7 +616,14 @@
     go before it can definitively beat full attention" — is the strongest published counterweight to
     this page. Note what it does and doesn't contradict: Qwen and Moonshot's hybrids keep 25% exact
     layers precisely to protect retrieval circuits; MiniMax's ablation compared against <em>SWA</em>,
-    not a 3:1 delta-rule hybrid. The experiment that would settle it hasn't been published.
+    not a 3:1 delta-rule hybrid. The closest published experiment is Qwen3.8-Next's
+    (<a href="https://github.com/QwenLM/Qwen3.8-Flash-Next/blob/main/tech_report.pdf">Tab. 1</a>): three 25B-A3B models at the same 1 : 4 layout — full attention
+    everywhere, an SWA hybrid (window 128), and a GDN hybrid — trained identically (400B tokens at 4K,
+    then 80B at 32K). The GDN hybrid beat full attention on eight of nine benchmarks (BBH 63.8 → 68.7,
+    MATH 49.4 → 54.0, MultiPL-E 39.7 → 47.5) and the SWA hybrid on seven, with SWA marginally ahead
+    only on MMLU and EvalPlus. It is not a multi-hop-specific test, so it does not close MiniMax's
+    objection outright — but it is the SWA-versus-delta-rule comparison the post-mortem lacked, and
+    it points the other way.
   </p>
   <ul>
     <li><strong>Does the ratio have a scaling law?</strong> 3:1 was tuned at 48–80B; nobody has published whether the optimal ratio drifts with model size or context length.</li>

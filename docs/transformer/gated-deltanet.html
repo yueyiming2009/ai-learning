@@ -612,7 +612,11 @@ for i in range(sequence_length):
     with dense matmuls inside each block and this recurrence carried between blocks. Both come from
     <a href="https://github.com/fla-org/flash-linear-attention" style="color:var(--accent);">flash-linear-attention</a>
     (<code>fla</code>), which supplies Triton kernels for the chunked and recurrent forms across most of the
-    modern linear-attention and SSM architectures. The chunkwise algorithm itself — including the WY
+    modern linear-attention and SSM architectures. Two 2026 production stacks have since re-implemented
+    the chunked form to beat FLA's Triton path: Moonshot's FlashKDA (CUTLASS, for
+    <a href="kda.html" style="color:var(--accent);">KDA</a>) and Qwen's
+    <a href="https://github.com/QwenLM/FlashQLA" style="color:var(--accent);">FlashQLA</a> (TileLang),
+    which reports a 2–3× forward and ≈2× backward speedup over FLA on NVIDIA GPUs. The chunkwise algorithm itself — including the WY
     trick that chunk-parallelizes this delta rule — is derived on
     <a href="../systems/fla-chunkwise.html" style="color:var(--accent);">the chunkwise kernel page</a>.
   </p>
@@ -639,6 +643,13 @@ for i in range(sequence_length):
       → <strong>gated delta rule</strong> → per-head
       <a href="../foundations/rmsnorm-gated.html" style="color:var(--accent);">RMSNorm ⊙ silu(z)</a> → <code>out_proj</code>
     </p>
+  </div>
+  <div class="note">
+    Qwen3.8-Next (<a href="https://github.com/QwenLM/Qwen3.8-Flash-Next/blob/main/tech_report.pdf">report</a>, §2.1.1) changes the last step to a bounded
+    <em>sigmoid</em> gate, \(o_t = W_o\bigl[\sigma(W_z x_t) \odot \mathrm{RMSNorm}(y_t)\bigr]\), and
+    reports consistent gains over SiLU across its experiments — the same swap Kimi K3 made on its KDA
+    and MLA layers, and the same preference for bounded gates its residual ablation found. It also
+    uses zero-centered RMSNorm for every norm in the layer, inherited from Qwen3-Next.
   </div>
 
   <ul>
