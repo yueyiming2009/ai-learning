@@ -312,6 +312,7 @@
   <li><strong>CUDA graph capture:</strong> the decode phase fires the same kernel sequence every step. Enable CUDA graph capture (<code>enforce_eager=False</code>) to eliminate CPU launch overhead, typically a 5–15% decode throughput gain at practical rollout batch sizes.</li>
   <li><strong>Tensor parallelism:</strong> the actor is often large (70B+). Use tensor parallelism across 4–8 GPUs per actor instance; run multiple independent actor instances in parallel for different prompt batches.</li>
   <li><strong>FlashAttention-3:</strong> on H100/H200, FA3's async-pipelined attention kernel achieves near-peak HBM throughput. Enabled by default in current vLLM on H100.</li>
+  <li><strong>Multi-turn KV affinity (DP-aware routing):</strong> in agentic RL each turn of a trajectory is a new request whose prompt is the previous turns. With a data-parallel rollout fleet, a load balancer that spreads requests round-robin sends turn t+1 to a replica that never saw turn t, so the shared prefix is re-prefilled every turn. GLM-5's rollout serving (EP64/DP64 over 8 nodes) adds a stateful routing layer that maps each <em>rollout ID</em> to a fixed DP rank by consistent hashing, so a trajectory keeps hitting its own KV cache for its whole episode, and the mapping stays stable when replicas join or leave. Pair it with <a href="pd-disaggregation.html">prefill/decode disaggregation</a>: under DP-attention a heavy multi-turn prefill can preempt in-flight decodes, and separating the two is what keeps rollout tail latency bounded.</li>
 </ul>
 
 <h3>Reward model scoring</h3>
@@ -347,6 +348,7 @@
 
 <div class="note">
   Weight synchronization in disaggregated placement adds overhead — the full actor weight tensor must be transferred from training workers to all rollout workers after each training step. For a 70B BF16 model: 140 GB × number of rollout worker groups. On InfiniBand (200 Gb/s ≈ 25 GB/s), this takes ~5–6 seconds. This must be factored into the per-iteration wall-clock time and is why collocated placement is preferred at small scale.
+  The fully decoupled version of disaggregated placement — rollout and training as independent services rather than alternating phases — is the async regime; its production configuration at 744B (threshold-triggered batches, optimizer reset per sync, staleness filtering) is on the <a href="../rl/async-rl.html#slime-glm5">async RL page</a>.
 </div>
 
 <!-- ═══════════════════════════════════════════ SUMMARY -->

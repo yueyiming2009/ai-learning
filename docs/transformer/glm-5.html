@@ -517,7 +517,12 @@
       the policy being graded on it silently differ — the same train/inference-mismatch class of bug
       that <a href="moe-routing.html">routing replay</a> repairs for MoE, and that
       <a href="deepseek-v4.html">V4</a> attacks with fully deterministic kernels. Sparse selection is
-      a discrete decision, and discrete decisions inside RL loops must be reproducible.
+      a discrete decision, and discrete decisions inside RL loops must be reproducible. The report's
+      evidence is blunt: non-deterministic CUDA/TileLang top-\(k\) kernels "caused drastic performance
+      degradation" within a few RL steps, and the slightly slower <code>torch.topk</code> resolved it.
+      The second half of the recipe is that <strong>the indexer is frozen during RL</strong> by default —
+      partly to save compute, partly because a selection network trained on RL signal was unstable — so
+      the sparse pattern is not just reproducible but fixed for the whole RL run.
     </li>
   </ul>
 
@@ -629,7 +634,10 @@
     </li>
     <li>
       <strong>RL on slime</strong> — the async, decoupled generation/training framework
-      (<a href="../rl/slime-miles-walkthrough.html">covered in the RL series</a>), with reasoning RL
+      (<a href="../rl/slime-miles-walkthrough.html">walkthrough</a>; the production configuration at this
+      scale — threshold-triggered batches, optimizer reset at every weight push, staleness filter on the
+      oldest rollout version, environment-failure masking — is in
+      <a href="../rl/async-rl.html#slime-glm5">async RL §8</a>), with reasoning RL
       at group size 32 and a final on-policy cross-stage distillation
       (<a href="../rl/cascade-rl.html">cascade pattern</a>).
     </li>

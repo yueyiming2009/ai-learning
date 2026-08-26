@@ -582,7 +582,8 @@ collocated async:  one pool: [gen gen gen] → stop admitting, drain → [update
     <li><strong>TP-size-dependent accumulation</strong> — training uses FSDP (data-parallel) while rollout uses tensor parallelism. All-reduce operations in TP introduce rounding in a different order → log-prob divergence even for the same batch size.</li>
     <li><strong>MoE routing instability</strong> — two separate forward passes can route tokens to different experts → completely different log-probs.</li>
     <li><strong>Tokenization drift (TITO)</strong> — if rollout and training apply slightly different token preprocessing, sequences diverge before any computation. When an external agent harness owns the loop this stops being a numerics footnote and becomes the dominant mismatch source — non-injective decoding, chat-template re-rendering, tool-call re-serialisation and history rewriting; see <a href="harnessed-agentic-rl.html#text">why text cannot cross the seam</a> and <a href="harnessed-agentic-rl.html#behavior">the proxy's logprobs as the behavior policy</a>.</li>
-  </ol>
+      <li><strong>Sparse-selection nondeterminism</strong> — with learned sparse attention (<a href="../transformer/sparse-attention.html">DSA</a>), each layer's indexer picks a top-\(k\) set of KV entries before attention runs. If rollout and trainer kernels break ties differently, they select <em>different entries</em>: the two forward passes are structurally different computations, not the same computation rounded differently. <a href="../transformer/glm-5.html#dsa">GLM-5</a> reports that non-deterministic CUDA/TileLang top-\(k\) collapsed RL within a few steps; deterministic <code>torch.topk</code> plus a frozen indexer fixed it. Same class of bug as MoE routing (3), one level down.</li>
+</ol>
 
   <h3>Diagnosing TIM</h3>
 
@@ -749,6 +750,44 @@ collocated async:  one pool: [gen gen gen] → stop admitting, drain → [update
   mode it is amortized over \(K\) training steps and largely absorbed, making the two mechanisms
   comparable in effective overhead.</p>
 
+  <h3 id="slime-glm5">slime at 744B: GLM-5's production configuration</h3>
+
+  <p>The largest published slime run is <a href="../transformer/glm-5.html">GLM-5</a> (744B-A40B;
+  report §3.6.2 and §4.1). It reads as a checklist of what the decoupled loop in §2 needs once
+  trajectories are multi-turn and the model is a frontier MoE:</p>
+
+  <ul>
+    <li><strong>Threshold-triggered training.</strong> Inference engines on their own GPUs stream
+    trajectories continuously; a training step fires when the buffer reaches a preset trajectory
+    count. Weights are pushed to the rollout engines every \(K\) gradient updates.</li>
+    <li><strong>Optimizer reset at every push.</strong> After each weight sync the optimizer state is
+    reset. The rationale: the asynchronous update changed the optimization problem, so momentum
+    accumulated against the previous rollout distribution is itself stale. A lag-reduction lever §3
+    does not list, because it acts on the <em>optimizer's</em> memory rather than on the samples.</li>
+    <li><strong>Staleness filter on the oldest version.</strong> A multi-turn trajectory is generated
+    under a sequence of policy versions \((w_0, \dots, w_k)\); GLM-5 drops it if
+    \(w' - w_0 > \tau\) for the current policy \(w'\). Compare verl's per-sample
+    <code>staleness_threshold</code> in §7: keying on the <em>oldest</em> version is the
+    partial-rollout case, where the first turns of a long agent episode can be many syncs older
+    than the last.</li>
+    <li><strong>Environment-failure masking.</strong> Every sample records why it ended; trajectories
+    that failed because the environment collapsed (sandbox died, tool timed out) are excluded
+    rather than scored as failures, and groups are padded or dropped to keep the GRPO baseline
+    honest. Data hygiene of a kind that only exists once the environment is a fallible service.</li>
+    <li><strong>TITO gateway + double-sided token IS.</strong> The trainer consumes the inference
+    engine's exact token stream — no re-tokenization — and per-token ratios outside
+    \([1-\epsilon_l,\ 1+\epsilon_h]\) are masked from the gradient: the
+    <a href="#stabilization">IcePop</a> family above, with \(\beta = 2\).</li>
+  </ul>
+
+  <p>On the serving side the same run uses FP8 rollouts with MTP drafting, prefill/decode
+  disaggregation (a heavy prefill preempts in-flight decodes under DP-attention), and rollout-ID
+  consistent hashing to pin each multi-turn trajectory to one DP rank — see
+  <a href="../inference/rl-inference.html#optimizations">RL inference</a>. The algorithm is still
+  GRPO with a group of 32; the same team's later
+  <a href="https://arxiv.org/abs/2607.07508">SAO</a> drops the group for single-rollout sampling
+  with a value model, on the argument that the group is the async loop's synchronization barrier.</p>
+
   <h3>Side-by-side</h3>
 
   <div class="table-wrap">
@@ -820,6 +859,10 @@ collocated async:  one pool: [gen gen gen] → stop admitting, drain → [update
       <tr>
         <td><a href="https://arxiv.org/abs/2507.18071">GSPO</a></td>
         <td>Qwen sequence-level IS; MoE RL stability; removes routing replay</td>
+      </tr>
+      <tr>
+        <td><a href="https://arxiv.org/abs/2602.15763">GLM-5 technical report</a></td>
+        <td>Zhipu, Feb 2026 — slime at 744B-A40B (§8): threshold-triggered batches, optimizer reset per sync, oldest-version staleness filter, env-failure masking; deterministic top-k + frozen indexer for DSA under RL (§6)</td>
       </tr>
       <tr>
         <td><a href="https://arxiv.org/abs/2608.17528">Agent Lightning v1.0</a></td>
