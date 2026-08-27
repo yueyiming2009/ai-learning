@@ -334,6 +334,9 @@
       margin: 1.6em 0;
       box-shadow: 0 1px 2px rgba(0,0,0,0.03);
     }
+    .figure svg { width: 100%; height: auto; display: block; }
+    .arch-stack svg { max-width: 520px; margin: 0 auto; }
+    figure.figure { margin-left: 0; margin-right: 0; }
     .figure canvas {
       width: 100%;
       height: 300px;
@@ -479,6 +482,249 @@
     Qwen3.5-Plus. No standalone tech report had appeared as of this writing — the spec below follows the
     model card, the released <code>config.json</code>, and the official blog.
   </p>
+
+  <figure class="figure arch-figure arch-block">
+    <svg viewBox="10 32 580 958" role="img" aria-label="One Qwen3.5 block: three Gated DeltaNet layers then one gated-attention layer, each followed by the same MoE FFN. In a DeltaNet layer a causal conv1d (kernel 4) feeds q, k, v; k and v write into a recurrent state of 64 value heads, each a fixed 128 by 128 matrix that persists from token to token and never grows; q reads it and the result passes an RMSNorm with an output gate. In the attention layer, GQA with 32 query and 2 KV heads at head dim 256 appends 1024 elements per token to a KV cache that grows with the sequence length, partial RoPE rotates a quarter of the dims, and a sigmoid output gate precedes the output projection. The FFN routes each token to 10 of 512 experts plus one shared expert.">
+      <defs>
+        <marker id="q35-ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+        <marker id="q35-ar-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--accent)"/></marker>
+      </defs>
+      <g font-size="13" fill="currentColor" stroke="currentColor" stroke-width="1.2">
+
+        <!-- ═══ one 3:1 block ═══ -->
+        <rect x="20" y="40" width="560" height="942" rx="10" fill="none" stroke-dasharray="6 4" stroke-opacity=".55"/>
+        <text x="32" y="60" font-size="13" font-weight="600" stroke="none">One block: 3 DeltaNet layers + 1 attention layer, ×15</text>
+
+        <text x="260" y="88" text-anchor="middle" font-size="13" stroke="none">x<tspan font-size="9" dy="3">ℓ</tspan><tspan dy="-3"> — residual stream, d = 4096</tspan></text>
+        <line x1="260" y1="96" x2="260" y2="112" marker-end="url(#q35-ar)"/>
+        <!-- residual skip 1 -->
+        <polyline points="260,100 120,100 120,351 246,351" fill="none" stroke-opacity=".5" marker-end="url(#q35-ar)"/>
+        <text x="112" y="228" text-anchor="end" font-size="12" fill-opacity=".7" stroke="none">skip</text>
+
+        <rect x="215" y="114" width="90" height="26" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="131" text-anchor="middle" font-size="12" stroke="none">RMSNorm</text>
+        <line x1="260" y1="140" x2="260" y2="152" marker-end="url(#q35-ar)"/>
+
+        <!-- Gated DeltaNet group -->
+        <rect x="170" y="154" width="390" height="180" rx="8" fill="none" stroke-opacity=".35"/>
+        <text x="554" y="328" text-anchor="end" font-size="12" fill-opacity=".7" stroke="none">Gated DeltaNet — 3 of every 4 layers</text>
+
+        <rect x="185" y="164" width="150" height="40" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="180" text-anchor="middle" font-size="12" stroke="none">causal conv1d, kernel 4</text>
+        <text x="260" y="196" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">then q, k, v projections</text>
+
+        <rect x="395" y="164" width="150" height="48" rx="6" style="fill:var(--accent);fill-opacity:.14;stroke:var(--accent)"/>
+        <text x="470" y="179" text-anchor="middle" font-size="12" stroke="none">recurrent state S<tspan font-size="9" dy="3">t</tspan></text>
+        <text x="470" y="193" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">64 value heads × 128×128</text>
+        <text x="470" y="207" text-anchor="middle" font-size="11" font-weight="600" style="fill:var(--accent)" stroke="none">constant size at any T</text>
+        <line x1="340" y1="184" x2="388" y2="184" marker-end="url(#q35-ar)"/>
+        <text x="364" y="179" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">write</text>
+        <path d="M545,176 H558 V200 H547" fill="none" style="stroke:var(--accent)" stroke-width="1.6" marker-end="url(#q35-ar-acc)"/>
+        <text x="556" y="226" text-anchor="end" font-size="11" fill-opacity=".75" stroke="none">t−1 → t</text>
+
+        <rect x="185" y="236" width="150" height="44" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="254" text-anchor="middle" font-size="12" stroke="none">read: q · S<tspan font-size="9" dy="3">t</tspan></text>
+        <text x="260" y="270" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">16 QK heads · 4 v each</text>
+
+        <line x1="260" y1="204" x2="260" y2="234" marker-end="url(#q35-ar)"/>
+        <text x="268" y="223" font-size="11" fill-opacity=".75" stroke="none">q</text>
+        <polyline points="470,212 470,258 342,258" fill="none" marker-end="url(#q35-ar)"/>
+        <text x="366" y="253" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">read S<tspan font-size="8" dy="2">t</tspan></text>
+
+        <line x1="260" y1="280" x2="260" y2="292" marker-end="url(#q35-ar)"/>
+        <rect x="185" y="294" width="150" height="26" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="311" text-anchor="middle" font-size="12" stroke="none">RMSNorm ⊙ output gate</text>
+
+        <line x1="260" y1="320" x2="260" y2="339" marker-end="url(#q35-ar)"/>
+        <circle cx="260" cy="351" r="11" style="fill:var(--surface)" stroke-opacity=".7"/>
+        <text x="260" y="355" text-anchor="middle" font-size="14" stroke="none">+</text>
+
+        <!-- compact MoE after each DeltaNet layer -->
+        <line x1="260" y1="362" x2="260" y2="376" marker-end="url(#q35-ar)"/>
+        <rect x="170" y="378" width="390" height="38" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="365" y="394" text-anchor="middle" font-size="12" stroke="none">MoE FFN sublayer</text>
+        <text x="365" y="409" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">pre-norm → 10 of 512 experts + 1 shared → skip (drawn in full below)</text>
+
+        <!-- ×3 bracket -->
+        <path d="M568,154 H576 V416 H568" fill="none" stroke-opacity=".7"/>
+        <text x="572" y="146" text-anchor="middle" font-size="11" font-weight="600" stroke="none">×3</text>
+
+        <!-- attention sublayer -->
+        <line x1="260" y1="416" x2="260" y2="432" marker-end="url(#q35-ar)"/>
+        <polyline points="260,424 120,424 120,692 246,692" fill="none" stroke-opacity=".5" marker-end="url(#q35-ar)"/>
+        <text x="112" y="560" text-anchor="end" font-size="12" fill-opacity=".7" stroke="none">skip</text>
+
+        <rect x="215" y="434" width="90" height="26" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="451" text-anchor="middle" font-size="12" stroke="none">RMSNorm</text>
+        <line x1="260" y1="460" x2="260" y2="472" marker-end="url(#q35-ar)"/>
+
+        <rect x="170" y="474" width="390" height="200" rx="8" fill="none" stroke-opacity=".35"/>
+        <text x="554" y="668" text-anchor="end" font-size="12" fill-opacity=".7" stroke="none">gated attention — 1 of every 4 layers</text>
+
+        <rect x="185" y="484" width="150" height="40" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="500" text-anchor="middle" font-size="12" stroke="none">q, k, v projections</text>
+        <text x="260" y="516" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">GQA 32 q / 2 KV · dim 256</text>
+
+        <rect x="395" y="484" width="150" height="48" rx="6" style="fill:var(--plot-amber);fill-opacity:.16;stroke:var(--plot-amber)"/>
+        <text x="470" y="499" text-anchor="middle" font-size="12" stroke="none">KV cache</text>
+        <text x="470" y="513" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">1024 elems / token / layer</text>
+        <text x="470" y="527" text-anchor="middle" font-size="11" font-weight="600" style="fill:var(--plot-amber)" stroke="none">grows with T</text>
+        <line x1="340" y1="504" x2="388" y2="504" marker-end="url(#q35-ar)"/>
+        <text x="364" y="499" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">append</text>
+
+        <rect x="185" y="550" width="150" height="52" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="568" text-anchor="middle" font-size="12" stroke="none">softmax attention</text>
+        <text x="260" y="582" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">RoPE on 64 of 256 dims</text>
+        <text x="260" y="595" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">reads every cached token</text>
+
+        <line x1="260" y1="524" x2="260" y2="548" marker-end="url(#q35-ar)"/>
+        <text x="268" y="540" font-size="11" fill-opacity=".75" stroke="none">q</text>
+        <polyline points="470,532 470,576 342,576" fill="none" marker-end="url(#q35-ar)"/>
+        <text x="366" y="571" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">all T</text>
+
+        <line x1="260" y1="602" x2="260" y2="614" marker-end="url(#q35-ar)"/>
+        <rect x="185" y="616" width="150" height="26" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="633" text-anchor="middle" font-size="12" stroke="none">σ(W<tspan font-size="9" dy="3">g</tspan><tspan dy="-3">x) ⊙ attn → W</tspan><tspan font-size="9" dy="3">O</tspan></text>
+
+        <line x1="260" y1="642" x2="260" y2="680" marker-end="url(#q35-ar)"/>
+        <circle cx="260" cy="692" r="11" style="fill:var(--surface)" stroke-opacity=".7"/>
+        <text x="260" y="696" text-anchor="middle" font-size="14" stroke="none">+</text>
+
+        <!-- MoE sublayer, in full -->
+        <line x1="260" y1="703" x2="260" y2="718" marker-end="url(#q35-ar)"/>
+        <polyline points="260,708 120,708 120,922 246,922" fill="none" stroke-opacity=".5" marker-end="url(#q35-ar)"/>
+        <text x="112" y="818" text-anchor="end" font-size="12" fill-opacity=".7" stroke="none">skip</text>
+
+        <rect x="215" y="720" width="90" height="26" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="737" text-anchor="middle" font-size="12" stroke="none">RMSNorm</text>
+        <line x1="260" y1="746" x2="260" y2="766" marker-end="url(#q35-ar)"/>
+        <circle cx="260" cy="758" r="2.5" stroke="none"/>
+        <polyline points="260,758 470,758 470,828" fill="none" marker-end="url(#q35-ar)"/>
+
+        <rect x="170" y="764" width="390" height="134" rx="8" fill="none" stroke-opacity=".35"/>
+        <text x="365" y="892" text-anchor="middle" font-size="12" fill-opacity=".7" stroke="none">MoE FFN — after every mixer</text>
+
+        <rect x="185" y="768" width="150" height="40" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="784" text-anchor="middle" font-size="12" stroke="none">router</text>
+        <text x="260" y="800" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">aux balance loss 0.001</text>
+        <line x1="260" y1="808" x2="260" y2="828" marker-end="url(#q35-ar)"/>
+        <text x="268" y="822" font-size="11" fill-opacity=".75" stroke="none">top-10</text>
+
+        <rect x="185" y="830" width="150" height="44" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="848" text-anchor="middle" font-size="12" stroke="none">10 of 512 routed experts</text>
+        <text x="260" y="863" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">expert dim 1024</text>
+
+        <rect x="395" y="830" width="150" height="44" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="470" y="848" text-anchor="middle" font-size="12" stroke="none">1 shared expert</text>
+        <text x="470" y="863" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">every token</text>
+
+        <line x1="260" y1="874" x2="260" y2="909" marker-end="url(#q35-ar)"/>
+        <polyline points="470,874 470,922 273,922" fill="none" marker-end="url(#q35-ar)"/>
+        <circle cx="260" cy="922" r="11" style="fill:var(--surface)" stroke-opacity=".7"/>
+        <text x="260" y="926" text-anchor="middle" font-size="14" stroke="none">+</text>
+        <line x1="260" y1="933" x2="260" y2="950" marker-end="url(#q35-ar)"/>
+        <text x="260" y="966" text-anchor="middle" font-size="13" stroke="none">x<tspan font-size="9" dy="3">ℓ+4</tspan></text>
+
+      </g>
+    </svg>
+    <figcaption class="figure-caption">
+      <strong>One block: three DeltaNet layers, one attention layer, and two different memories.</strong> A
+      DeltaNet layer writes each token into a
+      <span style="color:var(--accent);font-weight:600;">recurrent state</span> — 64 value heads, each a
+      128 × 128 matrix updated by the gated delta rule — and reads it back with \(q\); the state is the same
+      size after the first token as after the 262,144th. The attention layer instead appends 1024 elements
+      per token to a <span style="color:var(--plot-amber);font-weight:600;">KV cache</span> that grows
+      with \(T\), and reads all of it. Both mixers feed the same MoE FFN (10 of 512 experts + 1 shared),
+      and both end in an output gate: gated RMSNorm on the DeltaNet path, a sigmoid gate before
+      \(W_O\) on the attention path.
+    </figcaption>
+  </figure>
+  <figure class="figure arch-figure arch-stack">
+    <svg viewBox="590 32 402 560" role="img" aria-label="The Qwen3.5 stack: text tokens through a 248,320-entry embedding and images or video through a 27-layer ViT projected to 4096 dims enter one stream with interleaved M-RoPE; 15 blocks of three DeltaNet layers plus one gated-attention layer follow, so 45 layers hold a fixed-size state while only 15 accumulate a KV cache that grows with context; then final norm and LM head, and one MTP layer trained multi-step that drafts tokens ahead.">
+      <defs>
+        <marker id="q35b-ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+        <marker id="q35b-ar-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--accent)"/></marker>
+      </defs>
+      <g font-size="13" fill="currentColor" stroke="currentColor" stroke-width="1.2">
+        <rect x="600" y="40" width="380" height="542" rx="10" fill="none" stroke-dasharray="6 4" stroke-opacity=".55"/>
+        <text x="612" y="60" font-size="13" font-weight="600" stroke="none">The stack: 60 layers + MTP</text>
+
+        <!-- two inputs, one stream -->
+        <rect x="612" y="76" width="150" height="40" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="687" y="92" text-anchor="middle" font-size="12" stroke="none">text → embedding</text>
+        <text x="687" y="108" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">vocab 248,320</text>
+        <rect x="778" y="76" width="150" height="40" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="853" y="92" text-anchor="middle" font-size="12" stroke="none">image / video → ViT</text>
+        <text x="853" y="108" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">27 layers, 1152 → 4096</text>
+        <polyline points="687,116 687,132 770,132 770,138" fill="none" marker-end="url(#q35b-ar)"/>
+        <polyline points="853,116 853,132 770,132" fill="none"/>
+        <text x="693" y="128" font-size="10" fill-opacity=".75" stroke="none">tokens</text>
+        <text x="859" y="128" font-size="10" fill-opacity=".75" stroke="none">patches</text>
+
+        <rect x="612" y="140" width="316" height="30" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="770" y="159" text-anchor="middle" font-size="12" stroke="none">one stream, d = 4096 · interleaved M-RoPE (t, h, w)</text>
+        <line x1="770" y1="170" x2="770" y2="182" marker-end="url(#q35b-ar)"/>
+
+        <!-- 15 blocks -->
+        <rect x="612" y="184" width="316" height="212" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="770" y="200" text-anchor="middle" font-size="12" stroke="none">15 × block of 4 layers = 60 layers</text>
+        <text x="704" y="218" text-anchor="middle" font-size="11" font-weight="600" stroke="none">layer</text>
+        <text x="856" y="218" text-anchor="middle" font-size="11" font-weight="600" stroke="none">memory per layer</text>
+        <g stroke-opacity=".5">
+          <rect x="624" y="226" width="160" height="18" rx="3" fill="none"/>
+          <rect x="624" y="251" width="160" height="18" rx="3" fill="none"/>
+          <rect x="624" y="276" width="160" height="18" rx="3" fill="none"/>
+          <rect x="624" y="301" width="160" height="18" rx="3" fill="none"/>
+        </g>
+        <g font-size="10" stroke="none" fill-opacity=".8">
+          <text x="632" y="239">4k−3</text><text x="662" y="239">Gated DeltaNet → MoE</text>
+          <text x="632" y="264">4k−2</text><text x="662" y="264">Gated DeltaNet → MoE</text>
+          <text x="632" y="289">4k−1</text><text x="662" y="289">Gated DeltaNet → MoE</text>
+          <text x="632" y="314">4k</text><text x="662" y="314">gated attention → MoE</text>
+        </g>
+        <g style="fill:var(--accent);fill-opacity:.55;stroke:var(--accent)">
+          <rect x="796" y="228" width="14" height="14" rx="2"/><rect x="796" y="253" width="14" height="14" rx="2"/><rect x="796" y="278" width="14" height="14" rx="2"/>
+        </g>
+        <g font-size="10" stroke="none" fill-opacity=".8">
+          <text x="816" y="239">state, fixed size</text>
+          <text x="816" y="264">state, fixed size</text>
+          <text x="816" y="289">state, fixed size</text>
+        </g>
+        <rect x="796" y="303" width="14" height="14" rx="2" style="fill:var(--plot-amber);fill-opacity:.55;stroke:var(--plot-amber)"/>
+        <path d="M812,310 L826,310 L826,305 L832,310 L826,315 L826,310" fill="none" style="stroke:var(--plot-amber)" stroke-width="1.4"/>
+        <text x="838" y="314" font-size="10" font-weight="600" style="fill:var(--plot-amber)" stroke="none">KV grows with T</text>
+
+        <text x="770" y="342" text-anchor="middle" font-size="11" font-weight="600" style="fill:var(--accent)" stroke="none">45 layers: ≈94 MB of state, constant at any context</text>
+        <text x="770" y="358" text-anchor="middle" font-size="10" fill-opacity=".75" stroke="none">15 layers: KV cache ≈8 GB at 262K (≈32 GB if all 60 cached)</text>
+        <text x="770" y="374" text-anchor="middle" font-size="10" fill-opacity=".75" stroke="none">→ memory grows at ¼ the slope of a full-attention stack</text>
+        <text x="770" y="388" text-anchor="middle" font-size="10" fill-opacity=".75" stroke="none">the block repeats 15×, unchanged from the 80B testbed</text>
+
+        <line x1="770" y1="396" x2="770" y2="408" marker-end="url(#q35b-ar)"/>
+        <rect x="612" y="410" width="316" height="30" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="770" y="429" text-anchor="middle" font-size="12" stroke="none">final RMSNorm → LM head → token t+1</text>
+
+        <line x1="770" y1="440" x2="770" y2="468" marker-end="url(#q35b-ar)"/>
+        <text x="778" y="458" font-size="11" fill-opacity=".75" stroke="none">final hidden state</text>
+        <rect x="612" y="470" width="316" height="52" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="770" y="489" text-anchor="middle" font-size="12" stroke="none">MTP module — 1 layer, shares the embedding</text>
+        <text x="770" y="505" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">trained multi-step: drafts several tokens ahead</text>
+        <path d="M928,484 H946 V510 H930" fill="none" marker-end="url(#q35b-ar)"/>
+        <text x="951" y="501" font-size="11" stroke="none">step</text>
+        <text x="770" y="544" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">at serving, the same module is a self-speculative draft head:</text>
+        <text x="770" y="558" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">8.6× decode throughput at 32K, 19× at 256K</text>
+      </g>
+    </svg>
+    <figcaption class="figure-caption">
+      <strong>The stack: 15 identical blocks, and where the memory goes.</strong> Text and vision enter the
+      same 4096-dim stream — a 27-layer ViT projects image and video patches into it, and interleaved
+      M-RoPE splits the rotated dims across time, height and width. Of the 60 layers, 45 keep a
+      <span style="color:var(--accent);font-weight:600;">fixed-size state</span> (≈94 MB in total, whatever
+      the context) and only 15 accumulate a
+      <span style="color:var(--plot-amber);font-weight:600;">KV cache</span>, so total memory grows at a
+      quarter of the full-attention slope — ≈8 GB at the native 262K context where all-softmax would hold
+      ≈32 GB. One MTP layer, trained multi-step, doubles as the speculative draft head at serving time.
+    </figcaption>
+  </figure>
 
   <h2 id="testbed">1. The Testbed Pattern — Qwen3-Next Was the Experiment</h2>
   <p>

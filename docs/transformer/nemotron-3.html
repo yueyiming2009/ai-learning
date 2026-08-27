@@ -45,6 +45,8 @@
       --compare-fg: #2563eb;
       --violet-border: #ddd6fe;
       --nav-bg: rgba(255,255,255,0.92);
+      --fig-bg: #ffffff;
+      --plot-amber: #d97706;
     }
 
     @media (prefers-color-scheme: dark) {
@@ -72,6 +74,8 @@
         --compare-fg: #60a5fa;
         --violet-border: #372a5e;
         --nav-bg: rgba(15,17,21,0.9);
+        --fig-bg: #14181e;
+        --plot-amber: #fbbf24;
       }
     }
 
@@ -302,6 +306,24 @@
       margin-bottom: 4px;
     }
 
+    .figure {
+      background: var(--fig-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 16px 14px;
+      margin: 1.6em 0;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .figure svg { width: 100%; height: auto; display: block; }
+    .arch-stack svg { max-width: 520px; margin: 0 auto; }
+    figure.figure { margin-left: 0; margin-right: 0; }
+    .figure-caption {
+      font-size: 0.85rem;
+      color: var(--muted);
+      line-height: 1.6;
+      margin: 14px 4px 2px;
+    }
+
     .summary-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -421,6 +443,198 @@
       <tr><td>License</td><td>NVIDIA Open Model License</td><td>OpenMDW-1.1</td></tr>
     </table>
   </div>
+
+  <figure class="figure arch-figure arch-block">
+    <svg viewBox="10 32 580 622" role="img" aria-label="One Nemotron 3 layer pair: the residual stream enters a token-mixer layer that is Mamba-2 in 40 layers, updating a fixed-size SSM state of 128 per head, or attention in 8 layers, appending 512 elements per token to a KV cache that grows with T; then a LatentMoE layer that down-projects 4096 to 1024 before dispatching each token to 22 of 512 experts at latent width, up-projects the combined result, and adds a full-width shared expert. Each layer has its own residual add.">
+      <defs>
+        <marker id="n3-ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+        <marker id="n3-ar-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--accent)"/></marker>
+      </defs>
+      <g font-size="13" fill="currentColor" stroke="currentColor" stroke-width="1.2">
+
+        <!-- ═══ one layer pair ═══ -->
+        <rect x="20" y="40" width="560" height="606" rx="10" fill="none" stroke-dasharray="6 4" stroke-opacity=".55"/>
+        <text x="32" y="60" font-size="13" font-weight="600" stroke="none">One layer pair: token-mixer layer, then LatentMoE layer</text>
+
+        <text x="260" y="88" text-anchor="middle" font-size="13" stroke="none">x<tspan font-size="9" dy="3">ℓ</tspan><tspan dy="-3"> — residual stream, d = 4096</tspan></text>
+        <line x1="260" y1="96" x2="260" y2="130" marker-end="url(#n3-ar)"/>
+        <circle cx="260" cy="106" r="2.5" stroke="none"/>
+        <!-- residual skip 1 -->
+        <polyline points="260,106 120,106 120,300 246,300" fill="none" stroke-opacity=".5" marker-end="url(#n3-ar)"/>
+        <text x="112" y="205" text-anchor="end" font-size="12" fill-opacity=".7" stroke="none">skip</text>
+        <!-- fork: the mixer slot is one of two layer types -->
+        <polyline points="260,106 470,106 470,130" fill="none" marker-end="url(#n3-ar)"/>
+        <text x="268" y="124" font-size="11" fill-opacity=".75" stroke="none">40 layers</text>
+        <text x="478" y="124" font-size="11" fill-opacity=".75" stroke="none">8 layers</text>
+
+        <!-- mixer group -->
+        <rect x="170" y="112" width="390" height="152" rx="8" fill="none" stroke-opacity=".35"/>
+        <text x="178" y="126" font-size="11" fill-opacity=".7" stroke="none">mixer layer</text>
+
+        <rect x="185" y="132" width="150" height="54" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="150" text-anchor="middle" font-size="12" stroke="none">Mamba-2</text>
+        <text x="260" y="165" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">128 heads × 64 · conv 4</text>
+        <text x="260" y="179" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">decay-only transition</text>
+
+        <rect x="395" y="132" width="150" height="54" rx="6" style="fill:var(--plot-amber);fill-opacity:.16;stroke:var(--plot-amber)"/>
+        <text x="470" y="150" text-anchor="middle" font-size="12" stroke="none">attention</text>
+        <text x="470" y="165" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">GQA 32 Q / 2 KV, dim 128</text>
+        <text x="470" y="179" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">no RoPE, no positions</text>
+
+        <line x1="260" y1="186" x2="260" y2="212" marker-end="url(#n3-ar)"/>
+        <text x="268" y="203" font-size="11" fill-opacity=".75" stroke="none">update</text>
+        <line x1="470" y1="186" x2="470" y2="212" marker-end="url(#n3-ar)"/>
+        <text x="478" y="203" font-size="11" fill-opacity=".75" stroke="none">append k, v</text>
+
+        <rect x="185" y="214" width="150" height="40" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="231" text-anchor="middle" font-size="12" stroke="none">SSM state</text>
+        <text x="260" y="246" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">128 per head · fixed size</text>
+
+        <rect x="395" y="214" width="150" height="40" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="470" y="231" text-anchor="middle" font-size="12" stroke="none">KV cache</text>
+        <text x="470" y="246" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">512 elems / token, all T</text>
+
+        <line x1="260" y1="254" x2="260" y2="287" marker-end="url(#n3-ar)"/>
+        <text x="268" y="280" font-size="11" fill-opacity=".75" stroke="none">read</text>
+        <polyline points="470,254 470,300 273,300" fill="none" marker-end="url(#n3-ar)"/>
+        <text x="478" y="280" font-size="11" fill-opacity=".75" stroke="none">attend, all T</text>
+        <circle cx="260" cy="300" r="11" style="fill:var(--surface)" stroke-opacity=".7"/>
+        <text x="260" y="304" text-anchor="middle" font-size="14" stroke="none">+</text>
+
+        <!-- LatentMoE layer -->
+        <line x1="260" y1="311" x2="260" y2="358" marker-end="url(#n3-ar)"/>
+        <circle cx="260" cy="326" r="2.5" stroke="none"/>
+        <polyline points="260,326 120,326 120,590 246,590" fill="none" stroke-opacity=".5" marker-end="url(#n3-ar)"/>
+        <text x="112" y="460" text-anchor="end" font-size="12" fill-opacity=".7" stroke="none">skip</text>
+        <polyline points="260,326 530,326 530,430" fill="none" marker-end="url(#n3-ar)"/>
+        <text x="522" y="420" text-anchor="end" font-size="11" fill-opacity=".75" stroke="none">full width</text>
+        <circle cx="450" cy="326" r="2.5" stroke="none"/>
+        <line x1="450" y1="326" x2="450" y2="358" marker-end="url(#n3-ar)"/>
+        <text x="458" y="346" font-size="11" fill-opacity=".75" stroke="none">x</text>
+
+        <rect x="170" y="338" width="390" height="228" rx="8" fill="none" stroke-opacity=".35"/>
+        <text x="178" y="352" font-size="11" fill-opacity=".7" stroke="none">LatentMoE</text>
+
+        <rect x="185" y="360" width="150" height="40" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="377" text-anchor="middle" font-size="12" stroke="none">down-proj 4096 → 1024</text>
+        <text x="260" y="392" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">before dispatch</text>
+
+        <rect x="395" y="360" width="110" height="40" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="450" y="377" text-anchor="middle" font-size="12" stroke="none">router</text>
+        <text x="450" y="392" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">sigmoid + bias</text>
+
+        <line x1="260" y1="400" x2="260" y2="430" style="stroke:var(--accent)" stroke-width="1.6" marker-end="url(#n3-ar-acc)"/>
+        <text x="252" y="419" text-anchor="end" font-size="11" font-weight="600" style="fill:var(--accent)" stroke="none">dispatch at ¼ width</text>
+        <polyline points="450,400 450,416 320,416 320,430" fill="none" marker-end="url(#n3-ar)"/>
+        <text x="385" y="411" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">top-22</text>
+
+        <rect x="185" y="432" width="150" height="54" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="450" text-anchor="middle" font-size="12" stroke="none">22 of 512 experts</text>
+        <text x="260" y="465" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">at width 1024 · dim 2688</text>
+        <text x="260" y="479" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">ReLU², no gate branch</text>
+
+        <rect x="395" y="432" width="150" height="54" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="470" y="450" text-anchor="middle" font-size="12" stroke="none">1 shared expert</text>
+        <text x="470" y="465" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">full width 4096</text>
+        <text x="470" y="479" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">every token, no router</text>
+
+        <line x1="260" y1="486" x2="260" y2="512" marker-end="url(#n3-ar)"/>
+        <text x="268" y="503" font-size="11" fill-opacity=".75" stroke="none">combine</text>
+        <rect x="185" y="514" width="150" height="40" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="531" text-anchor="middle" font-size="12" stroke="none">up-proj 1024 → 4096</text>
+        <text x="260" y="546" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">back to model width</text>
+
+        <line x1="260" y1="554" x2="260" y2="577" marker-end="url(#n3-ar)"/>
+        <polyline points="470,486 470,590 273,590" fill="none" marker-end="url(#n3-ar)"/>
+        <text x="478" y="540" font-size="11" fill-opacity=".75" stroke="none">add</text>
+        <circle cx="260" cy="590" r="11" style="fill:var(--surface)" stroke-opacity=".7"/>
+        <text x="260" y="594" text-anchor="middle" font-size="14" stroke="none">+</text>
+        <line x1="260" y1="601" x2="260" y2="618" marker-end="url(#n3-ar)"/>
+        <text x="260" y="634" text-anchor="middle" font-size="13" stroke="none">x<tspan font-size="9" dy="3">ℓ+1</tspan></text>
+
+      </g>
+    </svg>
+    <figcaption class="figure-caption">
+      <strong>One layer pair: a mixer layer, then a LatentMoE layer — each a whole layer with its own residual.</strong>
+      The mixer slot is Mamba-2 in 40 layers, whose per-head state stays 128 wide however long the
+      context, and <span style="color:var(--plot-amber);font-weight:600;">attention</span> in 8 (5:1),
+      whose 2-KV-head cache grows by 512 elements per token and is read in full. The FFN layer
+      <span style="color:var(--accent);font-weight:600;">down-projects to a quarter width before dispatch</span>,
+      so the 22 routed experts and the all-to-all traffic run at 1024, not 4096; only the shared expert
+      keeps a full-width path. Numbers are Super's; Ultra doubles hidden (8192), latent (2048), and expert
+      dim (5120).
+    </figcaption>
+  </figure>
+  <figure class="figure arch-figure arch-stack">
+    <svg viewBox="590 32 402 536" role="img" aria-label="The Nemotron 3 Super stack: token embedding with no positional encoding, then 88 whole layers alternating Mamba-2 and LatentMoE with attention taking a Mamba slot at layers 8, 17, 26, 37, 48, 59, 70 and 79 — 40 Mamba to 8 attention, 5:1. The Mamba layers' decaying state carries order into the RoPE-free attention layers. After the LM head, one MTP module of an attention plus a MoE layer is applied twice with the same weights to draft tokens t+2 and t+3.">
+      <defs>
+        <marker id="n3b-ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+        <marker id="n3b-ar-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--accent)"/></marker>
+      </defs>
+      <g font-size="13" fill="currentColor" stroke="currentColor" stroke-width="1.2">
+        <rect x="600" y="40" width="380" height="520" rx="10" fill="none" stroke-dasharray="6 4" stroke-opacity=".55"/>
+        <text x="612" y="60" font-size="13" font-weight="600" stroke="none">The stack: Super, 88 layers + MTP</text>
+
+        <rect x="612" y="80" width="316" height="40" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="770" y="96" text-anchor="middle" font-size="12" stroke="none">token embedding · vocab 131,072</text>
+        <text x="770" y="112" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">no positional encoding added, anywhere</text>
+        <line x1="770" y1="120" x2="770" y2="132" marker-end="url(#n3b-ar)"/>
+
+        <rect x="612" y="134" width="316" height="254" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="770" y="150" text-anchor="middle" font-size="12" stroke="none">layers 1–88 · whole layers alternate</text>
+        <text x="770" y="163" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">each row = 22 layers, read left to right</text>
+
+        <!-- the config string, verbatim -->
+          <rect x="617" y="170" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="631" y="170" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="645" y="170" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="659" y="170" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="673" y="170" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="687" y="170" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="701" y="170" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="715" y="170" width="12" height="16" rx="2" style="fill:var(--plot-amber);fill-opacity:.55;stroke:var(--plot-amber)"/><rect x="729" y="170" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="743" y="170" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="757" y="170" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="771" y="170" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="785" y="170" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="799" y="170" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="813" y="170" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="827" y="170" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="841" y="170" width="12" height="16" rx="2" style="fill:var(--plot-amber);fill-opacity:.55;stroke:var(--plot-amber)"/><rect x="855" y="170" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="869" y="170" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="883" y="170" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="897" y="170" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="911" y="170" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/>
+          <text x="623 637 651 665 679 693 707 721 735 749 763 777 791 805 819 833 847 861 875 889 903 917" y="182" text-anchor="middle" font-size="11" stroke="none">MEMEMEM∗EMEMEMEM∗EMEME</text>
+          <rect x="617" y="190" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="631" y="190" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="645" y="190" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="659" y="190" width="12" height="16" rx="2" style="fill:var(--plot-amber);fill-opacity:.55;stroke:var(--plot-amber)"/><rect x="673" y="190" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="687" y="190" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="701" y="190" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="715" y="190" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="729" y="190" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="743" y="190" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="757" y="190" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="771" y="190" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="785" y="190" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="799" y="190" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="813" y="190" width="12" height="16" rx="2" style="fill:var(--plot-amber);fill-opacity:.55;stroke:var(--plot-amber)"/><rect x="827" y="190" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="841" y="190" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="855" y="190" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="869" y="190" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="883" y="190" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="897" y="190" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="911" y="190" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/>
+          <text x="623 637 651 665 679 693 707 721 735 749 763 777 791 805 819 833 847 861 875 889 903 917" y="202" text-anchor="middle" font-size="11" stroke="none">MEM∗EMEMEMEMEM∗EMEMEME</text>
+          <rect x="617" y="210" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="631" y="210" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="645" y="210" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="659" y="210" width="12" height="16" rx="2" style="fill:var(--plot-amber);fill-opacity:.55;stroke:var(--plot-amber)"/><rect x="673" y="210" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="687" y="210" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="701" y="210" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="715" y="210" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="729" y="210" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="743" y="210" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="757" y="210" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="771" y="210" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="785" y="210" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="799" y="210" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="813" y="210" width="12" height="16" rx="2" style="fill:var(--plot-amber);fill-opacity:.55;stroke:var(--plot-amber)"/><rect x="827" y="210" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="841" y="210" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="855" y="210" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="869" y="210" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="883" y="210" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="897" y="210" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="911" y="210" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/>
+          <text x="623 637 651 665 679 693 707 721 735 749 763 777 791 805 819 833 847 861 875 889 903 917" y="222" text-anchor="middle" font-size="11" stroke="none">MEM∗EMEMEMEMEM∗EMEMEME</text>
+          <rect x="617" y="230" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="631" y="230" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="645" y="230" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="659" y="230" width="12" height="16" rx="2" style="fill:var(--plot-amber);fill-opacity:.55;stroke:var(--plot-amber)"/><rect x="673" y="230" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="687" y="230" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="701" y="230" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="715" y="230" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="729" y="230" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="743" y="230" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="757" y="230" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="771" y="230" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="785" y="230" width="12" height="16" rx="2" style="fill:var(--plot-amber);fill-opacity:.55;stroke:var(--plot-amber)"/><rect x="799" y="230" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="813" y="230" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="827" y="230" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="841" y="230" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="855" y="230" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="869" y="230" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="883" y="230" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/><rect x="897" y="230" width="12" height="16" rx="2" style="fill:var(--surface)" stroke-opacity=".6"/><rect x="911" y="230" width="12" height="16" rx="2" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/>
+          <text x="623 637 651 665 679 693 707 721 735 749 763 777 791 805 819 833 847 861 875 889 903 917" y="242" text-anchor="middle" font-size="11" stroke="none">MEM∗EMEMEMEM∗EMEMEMEME</text>
+
+        <text x="770" y="262" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">attention at layers 8, 17, 26, 37, 48, 59, 70, 79</text>
+        <text x="770" y="276" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">mixer slots: 40 Mamba-2 : 8 attention = 5:1</text>
+
+        <!-- legend doubling as the position mechanism -->
+        <rect x="616" y="292" width="130" height="36" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="681" y="306" text-anchor="middle" font-size="12" stroke="none">M · Mamba-2</text>
+        <text x="681" y="320" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">state carries order</text>
+        <line x1="746" y1="310" x2="796" y2="310" style="stroke:var(--accent)" stroke-width="1.6" marker-end="url(#n3b-ar-acc)"/>
+        <text x="771" y="304" text-anchor="middle" font-size="11" font-weight="600" style="fill:var(--accent)" stroke="none">order</text>
+        <rect x="798" y="292" width="130" height="36" rx="6" style="fill:var(--plot-amber);fill-opacity:.16;stroke:var(--plot-amber)"/>
+        <text x="863" y="306" text-anchor="middle" font-size="12" stroke="none">∗ · attention</text>
+        <text x="863" y="320" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">no RoPE, 2 KV heads</text>
+        <rect x="670" y="340" width="200" height="36" rx="6" fill="currentColor" fill-opacity=".15" stroke-opacity=".6"/>
+        <text x="770" y="354" text-anchor="middle" font-size="12" stroke="none">E · LatentMoE</text>
+        <text x="770" y="368" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">22 of 512 experts + 1 shared</text>
+
+        <line x1="770" y1="388" x2="770" y2="400" marker-end="url(#n3b-ar)"/>
+        <rect x="612" y="402" width="316" height="30" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="770" y="421" text-anchor="middle" font-size="12" stroke="none">LM head → token t+1</text>
+
+        <line x1="770" y1="432" x2="770" y2="460" marker-end="url(#n3b-ar)"/>
+        <text x="778" y="450" font-size="11" fill-opacity=".75" stroke="none">hidden state</text>
+        <rect x="612" y="462" width="316" height="52" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="770" y="481" text-anchor="middle" font-size="12" stroke="none">MTP module — one attention + one MoE layer</text>
+        <text x="770" y="497" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">"∗E" · shared weights, applied twice: drafts t+2, t+3</text>
+        <path d="M928,476 H946 V502 H930" fill="none" stroke-width="1.6" marker-end="url(#n3b-ar)"/>
+        <text x="951" y="493" font-size="11" font-weight="600" stroke="none">×2</text>
+        <text x="770" y="536" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">same weights both steps; ≈97% acceptance</text>
+        <text x="770" y="550" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">on the two draft tokens → self-speculative</text>
+      </g>
+    </svg>
+    <figcaption class="figure-caption">
+      <strong>The stack, and where positions come from.</strong> Super's 88 layers are the config string
+      verbatim: Mamba-2 and LatentMoE alternate as whole layers, and
+      <span style="color:var(--plot-amber);font-weight:600;">attention</span> replaces a Mamba slot eight
+      times — 40 : 8, a 5:1 mixer ratio (Ultra: 108 layers, 48 / 48 / 12). Nothing injects position: the
+      Mamba layers' causal, decaying state <span style="color:var(--accent);font-weight:600;">carries
+      order</span> into the RoPE-free attention layers, so extending to 1M tokens is training at 1M.
+      The MTP module is one attention + MoE pair applied twice with the same weights.
+    </figcaption>
+  </figure>
 
   <h2 id="stack">1. The Stack — Mamba Between the Meals</h2>
   <p>Super's 88 layers, verbatim from the config (<code>M</code> Mamba-2, <code>E</code> LatentMoE, <code>*</code> attention):</p>

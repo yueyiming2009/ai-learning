@@ -334,6 +334,9 @@
       margin: 1.6em 0;
       box-shadow: 0 1px 2px rgba(0,0,0,0.03);
     }
+    .figure svg { width: 100%; height: auto; display: block; }
+    .arch-stack svg { max-width: 520px; margin: 0 auto; }
+    figure.figure { margin-left: 0; margin-right: 0; }
     .figure canvas {
       width: 100%;
       height: 320px;
@@ -475,6 +478,315 @@
       <tr><td>Modalities</td><td>text + image + video, from scratch (MoonViT-V2, 401M)</td><td>text (K2.5 added vision)</td></tr>
     </table>
   </div>
+
+  <figure class="figure arch-figure arch-block">
+    <svg viewBox="10 32 580 846" role="img" aria-label="One Kimi K3 3:1 block. Every layer reads its input through Block AttnRes: a softmax over the embedding and the block outputs below it, not a uniform residual sum. Three of every four layers are KDA: a short conv produces q, k, v, and the gated delta rule with a channel-wise decay Diag(alpha_t) updates a fixed-size recurrent state S_t that is carried token to token with no KV cache; the fourth layer is gated MLA with no positional encoding, reading a KV cache that grows with T. Both end in a sigmoid output gate. The FFN is Stable LatentMoE: down-project 7168 to 3584, a quantile-balanced router picks 16 of 896 experts that run in the latent, two full-width shared experts bypass the router, then RMSNorm and up-project back to 7168.">
+      <defs>
+        <marker id="k3-ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+        <marker id="k3-ar-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--accent)"/></marker>
+      </defs>
+      <g font-size="13" fill="currentColor" stroke="currentColor" stroke-width="1.2">
+
+        <!-- ═══ one 3:1 block ═══ -->
+        <rect x="20" y="40" width="560" height="828" rx="10" fill="none" stroke-dasharray="6 4" stroke-opacity=".55"/>
+        <text x="32" y="60" font-size="13" font-weight="600" stroke="none">One 3:1 block, ×23 (+1 gated-MLA layer on top)</text>
+
+        <!-- Block AttnRes read: the depth-axis input -->
+        <g stroke-opacity=".6">
+          <rect x="52" y="74" width="48" height="22" rx="4" style="fill:var(--surface)"/>
+          <rect x="108" y="74" width="48" height="22" rx="4" style="fill:var(--surface)"/>
+          <rect x="164" y="74" width="48" height="22" rx="4" style="fill:var(--surface)"/>
+          <rect x="220" y="74" width="48" height="22" rx="4" style="fill:var(--surface)"/>
+          <rect x="276" y="74" width="48" height="22" rx="4" style="fill:var(--surface)"/>
+          <rect x="332" y="74" width="48" height="22" rx="4" style="fill:var(--surface)"/>
+          <rect x="388" y="74" width="48" height="22" rx="4" style="fill:var(--surface)"/>
+          <rect x="444" y="74" width="48" height="22" rx="4" style="fill:var(--surface)"/>
+          <rect x="500" y="74" width="48" height="22" rx="4" style="fill:var(--surface)"/>
+        </g>
+        <g font-size="11" text-anchor="middle" stroke="none">
+          <text x="76" y="89">emb</text><text x="132" y="89">B1</text><text x="188" y="89">B2</text><text x="244" y="89">B3</text><text x="300" y="89">B4</text><text x="356" y="89">B5</text><text x="412" y="89">B6</text><text x="468" y="89">B7</text><text x="524" y="89">B8</text>
+        </g>
+        <g style="stroke:var(--accent)" stroke-width="1.4">
+          <line x1="76" y1="96" x2="76" y2="110" marker-end="url(#k3-ar-acc)"/>
+          <line x1="132" y1="96" x2="132" y2="110" marker-end="url(#k3-ar-acc)"/>
+          <line x1="188" y1="96" x2="188" y2="110" marker-end="url(#k3-ar-acc)"/>
+          <line x1="244" y1="96" x2="244" y2="110" marker-end="url(#k3-ar-acc)"/>
+          <line x1="300" y1="96" x2="300" y2="110" marker-end="url(#k3-ar-acc)"/>
+          <line x1="356" y1="96" x2="356" y2="110" marker-end="url(#k3-ar-acc)"/>
+          <line x1="412" y1="96" x2="412" y2="110" marker-end="url(#k3-ar-acc)"/>
+          <line x1="468" y1="96" x2="468" y2="110" marker-end="url(#k3-ar-acc)"/>
+          <line x1="524" y1="96" x2="524" y2="110" marker-end="url(#k3-ar-acc)"/>
+        </g>
+        <rect x="40" y="112" width="520" height="36" rx="6" style="fill:var(--accent);fill-opacity:.12;stroke:var(--accent)" stroke-width="1.6"/>
+        <text x="300" y="127" text-anchor="middle" font-size="12" font-weight="600" style="fill:var(--accent)" stroke="none">Block AttnRes read: softmax over the blocks below</text>
+        <text x="300" y="142" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">learned pseudo-query per layer · weights depend on the input</text>
+
+        <line x1="300" y1="148" x2="300" y2="166" marker-end="url(#k3-ar)"/>
+        <text x="308" y="162" font-size="11" fill-opacity=".75" stroke="none">x<tspan font-size="9" dy="3">ℓ</tspan><tspan dy="-3"> — weighted mix, not the uniform sum</tspan></text>
+
+        <!-- split to the two attention sublayer types + skips -->
+        <polyline points="300,168 36,168 36,496 169,496" fill="none" stroke-opacity=".5" marker-end="url(#k3-ar)"/>
+        <polyline points="300,168 568,168 568,496 457,496" fill="none" stroke-opacity=".5" marker-end="url(#k3-ar)"/>
+        <text x="44" y="182" font-size="11" fill-opacity=".7" stroke="none">skip</text>
+        <text x="560" y="182" text-anchor="end" font-size="11" fill-opacity=".7" stroke="none">skip</text>
+        <line x1="182" y1="168" x2="182" y2="206" marker-end="url(#k3-ar)"/>
+        <line x1="444" y1="168" x2="444" y2="206" marker-end="url(#k3-ar)"/>
+
+        <!-- KDA column -->
+        <rect x="48" y="186" width="268" height="286" rx="8" fill="none" stroke-opacity=".35"/>
+        <text x="56" y="201" font-size="12" font-weight="600" stroke="none">KDA layer</text>
+        <text x="308" y="201" text-anchor="end" font-size="11" fill-opacity=".75" stroke="none">3 of every 4</text>
+
+        <rect x="137" y="208" width="90" height="26" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="182" y="225" text-anchor="middle" font-size="12" stroke="none">RMSNorm</text>
+        <line x1="182" y1="234" x2="182" y2="248" marker-end="url(#k3-ar)"/>
+
+        <rect x="64" y="250" width="236" height="40" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="182" y="266" text-anchor="middle" font-size="12" stroke="none">short conv → q<tspan font-size="9" dy="3">t</tspan><tspan dy="-3">, k</tspan><tspan font-size="9" dy="3">t</tspan><tspan dy="-3">, v</tspan><tspan font-size="9" dy="3">t</tspan></text>
+        <text x="182" y="282" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">gates β<tspan font-size="8" dy="3">t</tspan><tspan dy="-3">, α</tspan><tspan font-size="8" dy="3">t</tspan><tspan dy="-3"> — channel-wise, from x</tspan><tspan font-size="8" dy="3">t</tspan></text>
+        <line x1="182" y1="290" x2="182" y2="304" marker-end="url(#k3-ar)"/>
+        <text x="190" y="301" font-size="11" fill-opacity=".75" stroke="none">k, v, β, α</text>
+
+        <rect x="72" y="306" width="236" height="70" rx="6" style="fill:var(--plot-amber);fill-opacity:.16;stroke:var(--plot-amber)"/>
+        <text x="190" y="322" text-anchor="middle" font-size="12" stroke="none">recurrent state S<tspan font-size="9" dy="3">t</tspan><tspan dy="-3"> — fixed size</tspan></text>
+        <text x="190" y="337" text-anchor="middle" font-size="11" fill-opacity=".8" stroke="none">S<tspan font-size="8" dy="3">t</tspan><tspan dy="-3"> = (I − β k kᵀ) Diag(α</tspan><tspan font-size="8" dy="3">t</tspan><tspan dy="-3">) S</tspan><tspan font-size="8" dy="3">t−1</tspan><tspan dy="-3"> + β k vᵀ</tspan></text>
+        <text x="190" y="352" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">Diag(α<tspan font-size="8" dy="3">t</tspan><tspan dy="-3">): each channel decays at its own rate</tspan></text>
+        <text x="190" y="367" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">carried token → token, no KV cache</text>
+        <path d="M72,330 H58 V352 H70" fill="none" style="stroke:var(--plot-amber)" stroke-width="1.4" marker-end="url(#k3-ar)"/>
+
+        <line x1="182" y1="376" x2="182" y2="390" marker-end="url(#k3-ar)"/>
+        <text x="190" y="387" font-size="11" fill-opacity=".75" stroke="none">q<tspan font-size="8" dy="3">t</tspan><tspan dy="-3"> reads</tspan></text>
+        <rect x="112" y="392" width="140" height="26" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="182" y="409" text-anchor="middle" font-size="12" stroke="none">readout o<tspan font-size="9" dy="3">t</tspan></text>
+        <line x1="182" y1="418" x2="182" y2="432" marker-end="url(#k3-ar)"/>
+
+        <rect x="64" y="434" width="236" height="26" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="182" y="451" text-anchor="middle" font-size="12" stroke="none">σ output gate ⊙ → W<tspan font-size="9" dy="3">O</tspan><tspan dy="-3"> (full-rank)</tspan></text>
+        <line x1="182" y1="460" x2="182" y2="483" marker-end="url(#k3-ar)"/>
+
+        <!-- gated MLA column -->
+        <rect x="332" y="186" width="224" height="286" rx="8" fill="none" stroke-opacity=".35"/>
+        <text x="340" y="201" font-size="12" font-weight="600" stroke="none">gated MLA</text>
+        <text x="548" y="201" text-anchor="end" font-size="11" fill-opacity=".75" stroke="none">1 of 4 · NoPE</text>
+
+        <rect x="399" y="208" width="90" height="26" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="444" y="225" text-anchor="middle" font-size="12" stroke="none">RMSNorm</text>
+        <line x1="444" y1="234" x2="444" y2="248" marker-end="url(#k3-ar)"/>
+
+        <rect x="344" y="250" width="200" height="40" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="444" y="266" text-anchor="middle" font-size="12" stroke="none">latent projections</text>
+        <text x="444" y="282" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">q, kv latents · no RoPE dims</text>
+        <line x1="444" y1="290" x2="444" y2="304" marker-end="url(#k3-ar)"/>
+        <text x="452" y="301" font-size="11" fill-opacity=".75" stroke="none">append</text>
+
+        <rect x="344" y="306" width="200" height="70" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="444" y="322" text-anchor="middle" font-size="12" stroke="none">KV cache — one entry per token</text>
+        <text x="444" y="337" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">grows with T</text>
+        <text x="444" y="352" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">no position stored: NoPE,</text>
+        <text x="444" y="367" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">order comes from KDA's recurrence</text>
+
+        <line x1="444" y1="376" x2="444" y2="390" marker-end="url(#k3-ar)"/>
+        <text x="452" y="387" font-size="11" fill-opacity=".75" stroke="none">q, all T</text>
+        <rect x="344" y="392" width="200" height="26" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="444" y="409" text-anchor="middle" font-size="12" stroke="none">softmax attention over all T</text>
+        <line x1="444" y1="418" x2="444" y2="432" marker-end="url(#k3-ar)"/>
+
+        <rect x="344" y="434" width="200" height="26" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="444" y="451" text-anchor="middle" font-size="12" stroke="none">σ output gate ⊙ → W<tspan font-size="9" dy="3">O</tspan><tspan dy="-3"> (full-rank)</tspan></text>
+        <line x1="444" y1="460" x2="444" y2="483" marker-end="url(#k3-ar)"/>
+
+        <!-- residual adds, then merge into the shared FFN -->
+        <circle cx="182" cy="496" r="11" style="fill:var(--surface)" stroke-opacity=".7"/>
+        <text x="182" y="500" text-anchor="middle" font-size="14" stroke="none">+</text>
+        <circle cx="444" cy="496" r="11" style="fill:var(--surface)" stroke-opacity=".7"/>
+        <text x="444" y="500" text-anchor="middle" font-size="14" stroke="none">+</text>
+        <polyline points="182,507 182,520 444,520 444,507" fill="none"/>
+        <line x1="300" y1="520" x2="300" y2="546" marker-end="url(#k3-ar)"/>
+        <circle cx="300" cy="530" r="2.5" stroke="none"/>
+        <polyline points="300,530 36,530 36,808 287,808" fill="none" stroke-opacity=".5" marker-end="url(#k3-ar)"/>
+        <text x="44" y="544" font-size="11" fill-opacity=".7" stroke="none">skip</text>
+
+        <!-- FFN: Stable LatentMoE -->
+        <rect x="255" y="548" width="90" height="26" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="300" y="565" text-anchor="middle" font-size="12" stroke="none">RMSNorm</text>
+        <line x1="300" y1="574" x2="300" y2="602" marker-end="url(#k3-ar)"/>
+        <circle cx="300" cy="588" r="2.5" stroke="none"/>
+        <polyline points="300,588 122,588 122,602" fill="none" marker-end="url(#k3-ar)"/>
+        <polyline points="300,588 478,588 478,658" fill="none" marker-end="url(#k3-ar)"/>
+        <text x="486" y="640" font-size="11" fill-opacity=".75" stroke="none">full width</text>
+
+        <rect x="40" y="596" width="520" height="184" rx="8" fill="none" stroke-opacity=".35"/>
+        <text x="48" y="773" font-size="12" fill-opacity=".7" stroke="none">Stable LatentMoE</text>
+
+        <rect x="48" y="604" width="148" height="40" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="122" y="620" text-anchor="middle" font-size="12" stroke="none">router — sigmoid + bias</text>
+        <text x="122" y="636" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">Quantile Balancing, no γ</text>
+        <polyline points="122,644 122,688 206,688" fill="none" marker-end="url(#k3-ar)"/>
+        <text x="164" y="683" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">top-16</text>
+
+        <rect x="208" y="604" width="184" height="40" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="300" y="620" text-anchor="middle" font-size="12" stroke="none">W↓ 7168 → 3584</text>
+        <text x="300" y="636" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">dispatch in the half-width latent</text>
+        <line x1="300" y1="644" x2="300" y2="658" marker-end="url(#k3-ar)"/>
+
+        <rect x="208" y="660" width="184" height="56" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="300" y="677" text-anchor="middle" font-size="12" stroke="none">16 of 896 routed experts</text>
+        <text x="300" y="692" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">run entirely in the 3584 latent</text>
+        <text x="300" y="707" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">SiTU-GLU · intermediate 3072</text>
+
+        <rect x="404" y="660" width="148" height="56" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="478" y="677" text-anchor="middle" font-size="12" stroke="none">2 shared experts</text>
+        <text x="478" y="692" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">full width 7168</text>
+        <text x="478" y="707" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">every token, no router</text>
+
+        <line x1="300" y1="716" x2="300" y2="730" marker-end="url(#k3-ar)"/>
+        <rect x="208" y="732" width="184" height="40" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="300" y="748" text-anchor="middle" font-size="12" stroke="none">RMSNorm → W↑ 3584 → 7168</text>
+        <text x="300" y="764" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">tame the 16-expert sum, re-enter</text>
+
+        <line x1="300" y1="772" x2="300" y2="795" marker-end="url(#k3-ar)"/>
+        <polyline points="478,716 478,808 313,808" fill="none" marker-end="url(#k3-ar)"/>
+        <circle cx="300" cy="808" r="11" style="fill:var(--surface)" stroke-opacity=".7"/>
+        <text x="300" y="812" text-anchor="middle" font-size="14" stroke="none">+</text>
+        <line x1="300" y1="819" x2="300" y2="836" marker-end="url(#k3-ar)"/>
+        <text x="300" y="853" text-anchor="middle" font-size="12" stroke="none">x<tspan font-size="9" dy="3">ℓ+1</tspan><tspan dy="-3"> — written to the stream; the block's output becomes a source B</tspan><tspan font-size="9" dy="3">i</tspan><tspan dy="-3"> above</tspan></text>
+
+      </g>
+    </svg>
+    <figcaption class="figure-caption">
+      <strong>One 3:1 block: every sublayer reads depth by attention, and three of four attention layers keep
+      state instead of a cache.</strong> A layer's input is a
+      <span style="color:var(--accent);font-weight:600;">softmax over the embedding and the block outputs
+      below it</span>, not the uniform residual sum. The KDA layers turn q, k, v from a short conv into an
+      update of the <span style="color:var(--plot-amber);font-weight:600;">fixed-size state \(S_t\)</span>
+      — the gated delta rule with a per-channel decay \(\mathrm{Diag}(\alpha_t)\) — so nothing per token is
+      stored; the one gated-MLA layer reads a KV cache that grows with \(T\) and carries no positional
+      encoding, since order arrives through KDA's recurrence. Both attention types end in a full-rank sigmoid
+      output gate. The FFN down-projects to a 3584-dim latent, sends each token to 16 of 896 experts there
+      (the router's biases set by Quantile Balancing), adds two full-width shared experts, and up-projects
+      after an RMSNorm.
+    </figcaption>
+  </figure>
+  <figure class="figure arch-figure arch-stack">
+    <svg viewBox="590 32 402 642" role="img" aria-label="The Kimi K3 stack: token embedding, then 93 layers as 3:1 blocks of KDA, KDA, KDA, gated MLA, grouped into 8 AttnRes blocks of 12, with one extra gated-MLA layer 93 so the last layer is global, then final norm and LM head. The MTP module, fine-tuned into the EAGLE-3 drafter, reads fused features from blocks 1, 4 and 8. Below, the change from K2: a K2 layer receives the uniform sum of everything below it with weight one each, while a K3 layer takes a softmax over the block outputs with input-dependent weights.">
+      <defs>
+        <marker id="k3b-ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+        <marker id="k3b-ar-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--accent)"/></marker>
+      </defs>
+      <g font-size="13" fill="currentColor" stroke="currentColor" stroke-width="1.2">
+        <rect x="600" y="40" width="380" height="624" rx="10" fill="none" stroke-dasharray="6 4" stroke-opacity=".55"/>
+        <text x="612" y="60" font-size="13" font-weight="600" stroke="none">The stack: 93 layers + 1 MTP module</text>
+
+        <rect x="612" y="76" width="316" height="28" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="770" y="94" text-anchor="middle" font-size="12" stroke="none">token embedding · AttnRes source 0</text>
+        <line x1="770" y1="104" x2="770" y2="116" marker-end="url(#k3b-ar)"/>
+
+        <!-- 8 AttnRes blocks -->
+        <rect x="612" y="118" width="316" height="222" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="770" y="134" text-anchor="middle" font-size="11" stroke="none">8 AttnRes blocks of 12 layers = 3 × (KDA KDA KDA MLA)</text>
+        <g font-size="10" stroke="none" fill-opacity=".8">
+          <text x="624" y="154">B1</text><text x="624" y="176">B2</text><text x="624" y="198">B3</text><text x="624" y="220">B4</text>
+          <text x="624" y="242">B5</text><text x="624" y="264">B6</text><text x="624" y="286">B7</text><text x="624" y="308">B8</text>
+        </g>
+        <g stroke-opacity=".5" fill="none">
+          <rect x="648" y="143" width="14" height="14" rx="2"/><rect x="666" y="143" width="14" height="14" rx="2"/><rect x="684" y="143" width="14" height="14" rx="2"/>
+          <rect x="648" y="165" width="14" height="14" rx="2"/><rect x="666" y="165" width="14" height="14" rx="2"/><rect x="684" y="165" width="14" height="14" rx="2"/>
+          <rect x="648" y="187" width="14" height="14" rx="2"/><rect x="666" y="187" width="14" height="14" rx="2"/><rect x="684" y="187" width="14" height="14" rx="2"/>
+          <rect x="648" y="209" width="14" height="14" rx="2"/><rect x="666" y="209" width="14" height="14" rx="2"/><rect x="684" y="209" width="14" height="14" rx="2"/>
+          <rect x="648" y="231" width="14" height="14" rx="2"/><rect x="666" y="231" width="14" height="14" rx="2"/><rect x="684" y="231" width="14" height="14" rx="2"/>
+          <rect x="648" y="253" width="14" height="14" rx="2"/><rect x="666" y="253" width="14" height="14" rx="2"/><rect x="684" y="253" width="14" height="14" rx="2"/>
+          <rect x="648" y="275" width="14" height="14" rx="2"/><rect x="666" y="275" width="14" height="14" rx="2"/><rect x="684" y="275" width="14" height="14" rx="2"/>
+          <rect x="648" y="297" width="14" height="14" rx="2"/><rect x="666" y="297" width="14" height="14" rx="2"/><rect x="684" y="297" width="14" height="14" rx="2"/>
+        </g>
+        <g fill-opacity=".45" stroke-opacity=".7">
+          <rect x="702" y="143" width="14" height="14" rx="2"/><rect x="702" y="165" width="14" height="14" rx="2"/><rect x="702" y="187" width="14" height="14" rx="2"/><rect x="702" y="209" width="14" height="14" rx="2"/>
+          <rect x="702" y="231" width="14" height="14" rx="2"/><rect x="702" y="253" width="14" height="14" rx="2"/><rect x="702" y="275" width="14" height="14" rx="2"/><rect x="702" y="297" width="14" height="14" rx="2"/>
+        </g>
+        <g font-size="10" stroke="none" fill-opacity=".7">
+          <text x="724" y="154">×3</text><text x="724" y="176">×3</text><text x="724" y="198">×3</text><text x="724" y="220">×3</text>
+          <text x="724" y="242">×3</text><text x="724" y="264">×3</text><text x="724" y="286">×3</text><text x="724" y="308">×3</text>
+        </g>
+        <text x="770" y="330" text-anchor="middle" font-size="10" fill-opacity=".75" stroke="none">□ KDA layer &nbsp; ■ gated MLA layer (NoPE)</text>
+
+        <!-- features to the drafter -->
+        <g style="stroke:var(--plot-amber)" stroke-width="1.4" fill="none">
+          <line x1="760" y1="150" x2="950" y2="150"/>
+          <line x1="760" y1="216" x2="950" y2="216"/>
+          <line x1="760" y1="304" x2="950" y2="304"/>
+          <polyline points="950,150 950,462 932,462" marker-end="url(#k3b-ar)"/>
+        </g>
+        <g font-size="10" stroke="none" style="fill:var(--plot-amber)">
+          <text x="850" y="146" text-anchor="middle">low-level features</text>
+          <text x="850" y="212" text-anchor="middle">mid-level features</text>
+          <text x="850" y="300" text-anchor="middle">high-level features</text>
+        </g>
+
+        <line x1="770" y1="340" x2="770" y2="352" marker-end="url(#k3b-ar)"/>
+        <rect x="612" y="354" width="316" height="28" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="770" y="372" text-anchor="middle" font-size="11" stroke="none">layer 93: one extra gated MLA — the last layer is global</text>
+        <line x1="770" y1="382" x2="770" y2="394" marker-end="url(#k3b-ar)"/>
+        <rect x="612" y="396" width="316" height="28" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="770" y="414" text-anchor="middle" font-size="12" stroke="none">final RMSNorm → LM head → token t+1</text>
+
+        <rect x="612" y="440" width="316" height="44" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="770" y="457" text-anchor="middle" font-size="12" stroke="none">MTP module (mirrors a block) → EAGLE-3 drafter</text>
+        <text x="770" y="473" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">fuses features of blocks 1, 4, 8 · LK loss, 7 draft steps</text>
+
+        <!-- what changes vs K2: the read -->
+        <rect x="612" y="500" width="316" height="152" rx="8" fill="none" stroke-opacity=".35"/>
+        <text x="770" y="516" text-anchor="middle" font-size="11" stroke="none">how a layer reads the blocks below it</text>
+
+        <text x="688" y="534" text-anchor="middle" font-size="11" font-weight="600" stroke="none">K2: uniform sum</text>
+        <g stroke-opacity=".5">
+          <rect x="624" y="544" width="40" height="16" rx="3" fill="none"/>
+          <rect x="624" y="566" width="40" height="16" rx="3" fill="none"/>
+          <rect x="624" y="588" width="40" height="16" rx="3" fill="none"/>
+          <rect x="624" y="610" width="40" height="16" rx="3" fill="none"/>
+        </g>
+        <g font-size="10" stroke="none" fill-opacity=".8" text-anchor="middle">
+          <text x="644" y="556">emb</text><text x="644" y="578">B1</text><text x="644" y="600">B2</text><text x="644" y="622">B3</text>
+        </g>
+        <g stroke-opacity=".5" fill="none">
+          <line x1="664" y1="552" x2="698" y2="575" marker-end="url(#k3b-ar)"/>
+          <line x1="664" y1="574" x2="698" y2="583" marker-end="url(#k3b-ar)"/>
+          <line x1="664" y1="596" x2="698" y2="591" marker-end="url(#k3b-ar)"/>
+          <line x1="664" y1="618" x2="698" y2="599" marker-end="url(#k3b-ar)"/>
+        </g>
+        <rect x="700" y="571" width="56" height="32" rx="3" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="728" y="591" text-anchor="middle" font-size="10" stroke="none">layer ℓ</text>
+        <text x="688" y="642" text-anchor="middle" font-size="10" fill-opacity=".75" stroke="none">weight 1 each, fixed</text>
+
+        <text x="852" y="534" text-anchor="middle" font-size="11" font-weight="600" style="fill:var(--accent)" stroke="none">K3: Block AttnRes</text>
+        <g stroke-opacity=".5">
+          <rect x="788" y="544" width="40" height="16" rx="3" fill="none"/>
+          <rect x="788" y="566" width="40" height="16" rx="3" fill="none"/>
+          <rect x="788" y="588" width="40" height="16" rx="3" fill="none"/>
+          <rect x="788" y="610" width="40" height="16" rx="3" fill="none"/>
+        </g>
+        <g font-size="10" stroke="none" fill-opacity=".8" text-anchor="middle">
+          <text x="808" y="556">emb</text><text x="808" y="578">B1</text><text x="808" y="600">B2</text><text x="808" y="622">B3</text>
+        </g>
+        <g style="stroke:var(--accent)" fill="none">
+          <line x1="828" y1="552" x2="862" y2="575" stroke-width=".8" marker-end="url(#k3b-ar-acc)"/>
+          <line x1="828" y1="574" x2="862" y2="583" stroke-width="2.6" marker-end="url(#k3b-ar-acc)"/>
+          <line x1="828" y1="596" x2="862" y2="591" stroke-width="1.2" marker-end="url(#k3b-ar-acc)"/>
+          <line x1="828" y1="618" x2="862" y2="599" stroke-width="1.8" marker-end="url(#k3b-ar-acc)"/>
+        </g>
+        <rect x="864" y="571" width="56" height="32" rx="3" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="892" y="591" text-anchor="middle" font-size="10" stroke="none">layer ℓ</text>
+        <text x="852" y="642" text-anchor="middle" font-size="10" font-weight="600" style="fill:var(--accent)" stroke="none">softmax weights, per input</text>
+      </g>
+    </svg>
+    <figcaption class="figure-caption">
+      <strong>The stack, and the one thing K3 changes about how depth is read.</strong> 93 layers as 3:1
+      blocks — 69 KDA, 24 gated MLA, the extra MLA layer at the top so the final layer is global — grouped
+      into 8 AttnRes blocks of 12. A K2 layer receives the uniform sum of everything below it; a K3 layer
+      takes a <span style="color:var(--accent);font-weight:600;">softmax over the block outputs</span> with
+      input-dependent weights, so a deep layer can pull sharply on an early block. The same block boundaries
+      give the <span style="color:var(--plot-amber);font-weight:600;">MTP module</span> its EAGLE-3 inputs:
+      the drafter fuses features from the 1st, 4th and final blocks.
+    </figcaption>
+  </figure>
 
   <h2 id="attention">1. Attention — KDA + Gated MLA, and No Positional Encoding</h2>
   <p>

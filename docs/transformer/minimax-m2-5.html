@@ -317,6 +317,9 @@
       margin: 1.6em 0;
       box-shadow: 0 1px 2px rgba(0,0,0,0.03);
     }
+    .figure svg { width: 100%; height: auto; display: block; }
+    .arch-stack svg { max-width: 520px; margin: 0 auto; }
+    figure.figure { margin-left: 0; margin-right: 0; }
     .figure canvas {
       width: 100%;
       height: 300px;
@@ -456,6 +459,205 @@
       <tr><td>Post-training</td><td>~2 months of RL in 200K+ environments (Forge framework) — M2.5 and M2.7 differ from M2 only here</td></tr>
     </table>
   </div>
+
+  <figure class="figure arch-figure arch-block">
+    <svg viewBox="10 32 580 570" role="img" aria-label="One MiniMax-M2.5 block: the residual stream enters Q, K, V projections with 48 query and 8 KV heads of 128 dims, QK-norm and RoPE on 64 of 128 dims; each token appends a 2048-element entry to this layer's KV cache, which grows with T and is kept whole, and softmax attention reads all T entries. The FFN half routes each token through a sigmoid-plus-bias router to 8 of 256 experts; there is no shared expert, so nothing bypasses the router. Both halves sum back into the residual. All 62 blocks are identical.">
+      <defs>
+        <marker id="mm-ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+        <marker id="mm-ar-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--accent)"/></marker>
+      </defs>
+      <g font-size="13" fill="currentColor" stroke="currentColor" stroke-width="1.2">
+
+        <!-- ═══ one block ═══ -->
+        <rect x="20" y="40" width="560" height="554" rx="10" fill="none" stroke-dasharray="6 4" stroke-opacity=".55"/>
+        <text x="32" y="60" font-size="13" font-weight="600" stroke="none">One block, ×62 — all identical</text>
+
+        <text x="260" y="88" text-anchor="middle" font-size="13" stroke="none">x<tspan font-size="9" dy="3">ℓ</tspan><tspan dy="-3"> — residual stream, d = 3072</tspan></text>
+        <line x1="260" y1="96" x2="260" y2="132" marker-end="url(#mm-ar)"/>
+        <!-- residual skip 1 -->
+        <polyline points="260,104 120,104 120,299 246,299" fill="none" stroke-opacity=".5" marker-end="url(#mm-ar)"/>
+        <text x="112" y="205" text-anchor="end" font-size="12" fill-opacity=".7" stroke="none">skip</text>
+
+        <!-- attention group -->
+        <rect x="168" y="124" width="394" height="160" rx="8" fill="none" stroke-opacity=".35"/>
+        <text x="554" y="278" text-anchor="end" font-size="12" fill-opacity=".7" stroke="none">full softmax, every layer · no sinks, gates, sparsity</text>
+
+        <rect x="178" y="134" width="164" height="52" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="150" text-anchor="middle" font-size="12" stroke="none">Q · K · V projections</text>
+        <text x="260" y="164" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">48 Q · 8 KV heads × 128</text>
+        <text x="260" y="178" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">QK-norm · RoPE on 64 of 128</text>
+
+        <rect x="388" y="134" width="164" height="52" rx="6" style="fill:var(--accent);fill-opacity:.14;stroke:var(--accent)"/>
+        <text x="470" y="150" text-anchor="middle" font-size="12" font-weight="600" stroke="none">KV cache — this layer</text>
+        <text x="470" y="164" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">2048 elems / token</text>
+        <text x="470" y="178" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">grows with T, kept whole</text>
+        <line x1="342" y1="160" x2="381" y2="160" marker-end="url(#mm-ar)"/>
+        <text x="362" y="155" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">append</text>
+
+        <rect x="178" y="210" width="164" height="52" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="226" text-anchor="middle" font-size="12" stroke="none">softmax attention</text>
+        <text x="260" y="240" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">48 heads × 128 = 6144 wide</text>
+        <text x="260" y="254" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">2× the residual width</text>
+
+        <line x1="260" y1="186" x2="260" y2="208" marker-end="url(#mm-ar)"/>
+        <text x="268" y="201" font-size="11" fill-opacity=".75" stroke="none">q</text>
+        <polyline points="470,186 470,236 349,236" fill="none" style="stroke:var(--accent)" stroke-width="1.6" marker-end="url(#mm-ar-acc)"/>
+        <text x="410" y="230" text-anchor="middle" font-size="11" font-weight="600" style="fill:var(--accent)" stroke="none">all T entries</text>
+
+        <line x1="260" y1="262" x2="260" y2="286" marker-end="url(#mm-ar)"/>
+        <circle cx="260" cy="299" r="11" style="fill:var(--surface)" stroke-opacity=".7"/>
+        <text x="260" y="303" text-anchor="middle" font-size="14" stroke="none">+</text>
+
+        <!-- FFN sublayer -->
+        <line x1="260" y1="310" x2="260" y2="342" marker-end="url(#mm-ar)"/>
+        <polyline points="260,318 120,318 120,534 246,534" fill="none" stroke-opacity=".5" marker-end="url(#mm-ar)"/>
+        <text x="112" y="430" text-anchor="end" font-size="12" fill-opacity=".7" stroke="none">skip</text>
+
+        <!-- MoE group -->
+        <rect x="168" y="334" width="394" height="176" rx="8" fill="none" stroke-opacity=".35"/>
+        <text x="554" y="504" text-anchor="end" font-size="12" fill-opacity=".7" stroke="none">MoE, every layer — 9.8B of 229.9B active</text>
+
+        <rect x="178" y="344" width="164" height="52" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="360" text-anchor="middle" font-size="12" stroke="none">router</text>
+        <text x="260" y="374" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">sigmoid + learnable bias</text>
+        <text x="260" y="388" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">reduced aux loss</text>
+        <line x1="260" y1="396" x2="260" y2="418" marker-end="url(#mm-ar)"/>
+        <text x="268" y="411" font-size="11" fill-opacity=".75" stroke="none">top-8</text>
+
+        <rect x="178" y="420" width="164" height="44" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="438" text-anchor="middle" font-size="12" stroke="none">8 of 256 routed experts</text>
+        <text x="260" y="453" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">expert dim 1536</text>
+
+        <rect x="388" y="420" width="164" height="44" rx="6" stroke-dasharray="5 4" style="fill:var(--plot-amber);fill-opacity:.12;stroke:var(--plot-amber)"/>
+        <text x="470" y="438" text-anchor="middle" font-size="12" stroke="none">no shared expert</text>
+        <text x="470" y="453" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">nothing bypasses the router</text>
+
+        <line x1="260" y1="464" x2="260" y2="521" marker-end="url(#mm-ar)"/>
+        <circle cx="260" cy="534" r="11" style="fill:var(--surface)" stroke-opacity=".7"/>
+        <text x="260" y="538" text-anchor="middle" font-size="14" stroke="none">+</text>
+        <line x1="260" y1="545" x2="260" y2="562" marker-end="url(#mm-ar)"/>
+        <text x="260" y="578" text-anchor="middle" font-size="13" stroke="none">x<tspan font-size="9" dy="3">ℓ+1</tspan></text>
+
+      </g>
+    </svg>
+    <figcaption class="figure-caption">
+      <strong>One block: full softmax attention, then MoE — nothing between the cache and the query.</strong>
+      The projections write a 2048-element entry per token (8 KV heads × 128) into
+      <span style="color:var(--accent);font-weight:600;">this layer's KV cache</span>, and attention reads
+      all \(T\) of them — no sinks, no gates, no sparsity, and no recurrent state anywhere. Attention is
+      6144 wide on a 3072-dim residual, twice the model's width. The router sends each token to 8 of 256
+      experts; the <span style="color:var(--plot-amber);font-weight:600;">amber slot</span> marks what is
+      absent — no shared expert, so nothing bypasses the router. All 62 blocks are the same.
+    </figcaption>
+  </figure>
+  <figure class="figure arch-figure arch-stack">
+    <svg viewBox="590 32 402 510" role="img" aria-label="The MiniMax-M2.5 stack: token embedding, 62 identical layers of full softmax attention plus MoE, LM head, then three MTP modules of which one was trained and two copied. Within any eight consecutive layers, the Text-01 and M1 hybrid kept a fixed-size recurrent state in seven lightning-attention layers and a KV cache in one softmax layer; M2.5 keeps a growing KV cache in all eight, so 62 caches of 2048 elements per token reach about 50 GB per sequence at 196K context.">
+      <defs>
+        <marker id="mmb-ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+      </defs>
+      <g font-size="13" fill="currentColor" stroke="currentColor" stroke-width="1.2">
+        <rect x="600" y="40" width="380" height="494" rx="10" fill="none" stroke-dasharray="6 4" stroke-opacity=".55"/>
+        <text x="612" y="60" font-size="13" font-weight="600" stroke="none">The stack: 62 identical layers</text>
+
+        <rect x="612" y="80" width="316" height="30" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="770" y="99" text-anchor="middle" font-size="12" stroke="none">token embedding · vocab 200,064</text>
+        <line x1="770" y1="110" x2="770" y2="122" marker-end="url(#mmb-ar)"/>
+
+        <rect x="612" y="124" width="316" height="264" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="770" y="140" text-anchor="middle" font-size="12" stroke="none">layers 1–62 · full softmax + MoE 256 / top-8</text>
+        <text x="770" y="155" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">any 8 consecutive layers, M1 hybrid vs M2.5:</text>
+
+        <!-- Text-01 / M1 hybrid mini column -->
+        <text x="682" y="173" text-anchor="middle" font-size="11" font-weight="600" stroke="none">Text-01 / M1, 7:1</text>
+        <g stroke-opacity=".5">
+          <rect x="618" y="181" width="84" height="15" rx="3" fill="none"/>
+          <rect x="618" y="200" width="84" height="15" rx="3" fill="none"/>
+          <rect x="618" y="219" width="84" height="15" rx="3" fill="none"/>
+          <rect x="618" y="238" width="84" height="15" rx="3" fill="none"/>
+          <rect x="618" y="257" width="84" height="15" rx="3" fill="none"/>
+          <rect x="618" y="276" width="84" height="15" rx="3" fill="none"/>
+          <rect x="618" y="295" width="84" height="15" rx="3" fill="none"/>
+          <rect x="618" y="314" width="84" height="15" rx="3" fill="none"/>
+        </g>
+        <g font-size="10" stroke="none" fill-opacity=".8">
+          <text x="624" y="192">lightning</text><text x="624" y="211">lightning</text><text x="624" y="230">lightning</text><text x="624" y="249">lightning</text>
+          <text x="624" y="268">lightning</text><text x="624" y="287">lightning</text><text x="624" y="306">lightning</text><text x="624" y="325">softmax</text>
+        </g>
+        <g style="fill:var(--plot-amber);fill-opacity:.55;stroke:var(--plot-amber)">
+          <rect x="708" y="182.5" width="12" height="12" rx="2"/><rect x="708" y="201.5" width="12" height="12" rx="2"/><rect x="708" y="220.5" width="12" height="12" rx="2"/><rect x="708" y="239.5" width="12" height="12" rx="2"/>
+          <rect x="708" y="258.5" width="12" height="12" rx="2"/><rect x="708" y="277.5" width="12" height="12" rx="2"/><rect x="708" y="296.5" width="12" height="12" rx="2"/>
+        </g>
+        <g style="fill:var(--accent);fill-opacity:.55;stroke:var(--accent)">
+          <rect x="708" y="315.5" width="30" height="12" rx="2"/><path d="M740,315.5 L747,321.5 L740,327.5 z" stroke="none" style="fill-opacity:1"/>
+        </g>
+
+        <!-- M2.5 mini column -->
+        <text x="860" y="173" text-anchor="middle" font-size="11" font-weight="600" stroke="none">M2.5</text>
+        <g stroke-opacity=".5">
+          <rect x="796" y="181" width="84" height="15" rx="3" fill="none"/>
+          <rect x="796" y="200" width="84" height="15" rx="3" fill="none"/>
+          <rect x="796" y="219" width="84" height="15" rx="3" fill="none"/>
+          <rect x="796" y="238" width="84" height="15" rx="3" fill="none"/>
+          <rect x="796" y="257" width="84" height="15" rx="3" fill="none"/>
+          <rect x="796" y="276" width="84" height="15" rx="3" fill="none"/>
+          <rect x="796" y="295" width="84" height="15" rx="3" fill="none"/>
+          <rect x="796" y="314" width="84" height="15" rx="3" fill="none"/>
+        </g>
+        <g font-size="10" stroke="none" fill-opacity=".8">
+          <text x="802" y="192">softmax</text><text x="802" y="211">softmax</text><text x="802" y="230">softmax</text><text x="802" y="249">softmax</text>
+          <text x="802" y="268">softmax</text><text x="802" y="287">softmax</text><text x="802" y="306">softmax</text><text x="802" y="325">softmax</text>
+        </g>
+        <g style="fill:var(--accent);fill-opacity:.55;stroke:var(--accent)">
+          <rect x="886" y="182.5" width="30" height="12" rx="2"/><rect x="886" y="201.5" width="30" height="12" rx="2"/><rect x="886" y="220.5" width="30" height="12" rx="2"/><rect x="886" y="239.5" width="30" height="12" rx="2"/>
+          <rect x="886" y="258.5" width="30" height="12" rx="2"/><rect x="886" y="277.5" width="30" height="12" rx="2"/><rect x="886" y="296.5" width="30" height="12" rx="2"/><rect x="886" y="315.5" width="30" height="12" rx="2"/>
+        </g>
+        <g style="fill:var(--accent)" stroke="none">
+          <path d="M918,182.5 L925,188.5 L918,194.5 z"/><path d="M918,201.5 L925,207.5 L918,213.5 z"/><path d="M918,220.5 L925,226.5 L918,232.5 z"/><path d="M918,239.5 L925,245.5 L918,251.5 z"/>
+          <path d="M918,258.5 L925,264.5 L918,270.5 z"/><path d="M918,277.5 L925,283.5 L918,289.5 z"/><path d="M918,296.5 L925,302.5 L918,308.5 z"/><path d="M918,315.5 L925,321.5 L918,327.5 z"/>
+        </g>
+
+        <!-- legend + footers -->
+        <rect x="622" y="338" width="12" height="12" rx="2" style="fill:var(--plot-amber);fill-opacity:.55;stroke:var(--plot-amber)"/>
+        <text x="640" y="348" font-size="10" fill-opacity=".8" stroke="none">state — fixed size</text>
+        <rect x="752" y="338" width="30" height="12" rx="2" style="fill:var(--accent);fill-opacity:.55;stroke:var(--accent)"/>
+        <path d="M784,338 L791,344 L784,350 z" stroke="none" style="fill:var(--accent)"/>
+        <text x="797" y="348" font-size="10" fill-opacity=".8" stroke="none">KV cache — grows with T</text>
+        <text x="682" y="366" text-anchor="middle" font-size="10" fill-opacity=".75" stroke="none">1 cache per 8 layers</text>
+        <text x="860" y="366" text-anchor="middle" font-size="10" font-weight="600" style="fill:var(--accent)" stroke="none">a cache in all 8</text>
+        <text x="770" y="380" text-anchor="middle" font-size="10" fill-opacity=".75" stroke="none">62 × 2048 elems / token ≈ 50 GB per sequence at 196K</text>
+
+        <line x1="770" y1="388" x2="770" y2="400" marker-end="url(#mmb-ar)"/>
+        <rect x="612" y="402" width="316" height="30" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="770" y="421" text-anchor="middle" font-size="12" stroke="none">LM head → token t+1</text>
+
+        <polyline points="770,432 770,450 654,450 654,464" fill="none" marker-end="url(#mmb-ar)"/>
+        <text x="712" y="445" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">final hidden state</text>
+        <rect x="612" y="466" width="84" height="40" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="654" y="482" text-anchor="middle" font-size="12" stroke="none">MTP 1</text>
+        <text x="654" y="497" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">trained</text>
+        <line x1="696" y1="486" x2="726" y2="486" marker-end="url(#mmb-ar)"/>
+        <text x="711" y="480" text-anchor="middle" font-size="10" fill-opacity=".75" stroke="none">copy</text>
+        <rect x="728" y="466" width="84" height="40" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="770" y="482" text-anchor="middle" font-size="12" stroke="none">MTP 2</text>
+        <text x="770" y="497" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">copied</text>
+        <line x1="812" y1="486" x2="842" y2="486" marker-end="url(#mmb-ar)"/>
+        <text x="827" y="480" text-anchor="middle" font-size="10" fill-opacity=".75" stroke="none">copy</text>
+        <rect x="844" y="466" width="84" height="40" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="886" y="482" text-anchor="middle" font-size="12" stroke="none">MTP 3</text>
+        <text x="886" y="497" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">copied</text>
+        <text x="770" y="524" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">1 module trained, 2 copied from it → 3 draft steps</text>
+      </g>
+    </svg>
+    <figcaption class="figure-caption">
+      <strong>The stack, and the layers that changed since M1.</strong> Sixty-two identical layers, the LM
+      head, then three MTP modules — one trained in pretraining, two initialized as copies of it. The
+      Text-01 / M1 hybrid (7:1 lightning attention) kept a fixed-size recurrent state in seven of every eight
+      layers and a KV cache in the eighth; M2.5 carries a
+      <span style="color:var(--accent);font-weight:600;">growing KV cache in every layer</span> — 62 × 2048
+      elements per token, ≈50 GB per sequence at the 196K native context (§3). That is the price the page
+      is about, paid for the serving properties of reason #2.
+    </figcaption>
+  </figure>
 
   <h2 id="experiment">1. The Experiment They Ran</h2>
   <p>
