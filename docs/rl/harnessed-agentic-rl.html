@@ -555,7 +555,7 @@
   stable interface."</p>
 
   <div class="figure">
-    <svg viewBox="0 0 900 590" role="img" aria-label="Proxy architecture between a black-box agent harness and the trainer side, showing API adapters, inference forwarding and token capture, trace storage, and trajectory stitching">
+    <svg viewBox="0 0 900 590" role="img" aria-label="Proxy architecture between a black-box agent harness and the training system, distinguishing the rollout controller from the inference engine and trainer">
       <defs>
         <marker id="proxy-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
           <path d="M0 0L10 5L0 10z" fill="currentColor"/>
@@ -568,7 +568,7 @@
         <rect x="660" y="42" width="230" height="516" rx="12" fill="var(--surface)" stroke="var(--border)"/>
         <text x="110" y="27" text-anchor="middle" font-size="12" font-weight="600" fill="var(--tok-model)">AGENT SIDE</text>
         <text x="435" y="27" text-anchor="middle" font-size="12" font-weight="600" fill="var(--accent)">PROXY BOUNDARY</text>
-        <text x="775" y="27" text-anchor="middle" font-size="12" font-weight="600" fill="var(--muted)">TRAINER SIDE</text>
+        <text x="775" y="27" text-anchor="middle" font-size="12" font-weight="600" fill="var(--muted)">TRAINING SYSTEM</text>
 
         <!-- Connections, drawn behind the boxes -->
         <g fill="none" stroke="currentColor" stroke-width="1.4">
@@ -582,7 +582,7 @@
           <line x1="435" y1="265" x2="435" y2="320" marker-end="url(#proxy-arr)"/>
           <line x1="435" y1="390" x2="435" y2="435" marker-end="url(#proxy-arr)"/>
           <line x1="620" y1="475" x2="680" y2="475" marker-end="url(#proxy-arr)"/>
-          <path d="M680 106H620" stroke-dasharray="5 4" marker-end="url(#proxy-arr)"/>
+          <path d="M680 115H620" stroke-dasharray="5 4" marker-start="url(#proxy-arr)" marker-end="url(#proxy-arr)"/>
           <line x1="815" y1="435" x2="815" y2="265" marker-end="url(#proxy-arr)"/>
         </g>
 
@@ -624,10 +624,13 @@
         <text x="435" y="496" text-anchor="middle" font-size="10.5" fill="var(--muted)">merge, keep per-call, or fork when history diverges</text>
 
         <!-- Trainer side -->
-        <rect x="680" y="75" width="190" height="65" rx="8" fill="var(--bg)" stroke="var(--warning-border)" stroke-width="1.4"/>
-        <text x="775" y="99" text-anchor="middle" font-size="12" font-weight="600">Rollout controller</text>
-        <text x="775" y="118" text-anchor="middle" font-size="10.5" fill="var(--muted)">session IDs · admission</text>
-        <text x="775" y="133" text-anchor="middle" font-size="10.5" fill="var(--muted)">pause / resume</text>
+        <rect x="670" y="56" width="210" height="229" rx="10" fill="none" stroke="var(--warning-border)" stroke-width="1.1" stroke-dasharray="5 4"/>
+        <text x="775" y="72" text-anchor="middle" font-size="9.5" font-weight="600" fill="var(--muted)">ROLLOUT SERVICES · SOMETIMES “ROLLOUTER”</text>
+
+        <rect x="680" y="82" width="190" height="65" rx="8" fill="var(--bg)" stroke="var(--warning-border)" stroke-width="1.4"/>
+        <text x="775" y="106" text-anchor="middle" font-size="12" font-weight="600">Rollout controller</text>
+        <text x="775" y="125" text-anchor="middle" font-size="10.5" fill="var(--muted)">queue · launch · reconcile</text>
+        <text x="775" y="140" text-anchor="middle" font-size="10.5" fill="var(--muted)">timeouts · status · cleanup</text>
 
         <rect x="680" y="190" width="190" height="75" rx="8" fill="var(--bg)" stroke="var(--tok-model)" stroke-width="1.4"/>
         <text x="775" y="215" text-anchor="middle" font-size="12" font-weight="600">Inference engine</text>
@@ -650,7 +653,7 @@
         <text x="447" y="416" font-size="9.5" fill="var(--muted)">ordered trace</text>
         <text x="650" y="465" text-anchor="middle" font-size="9.5" fill="var(--muted)">five-field</text>
         <text x="650" y="488" text-anchor="middle" font-size="9.5" fill="var(--muted)">payload</text>
-        <text x="650" y="95" text-anchor="middle" font-size="9.5" fill="var(--muted)">control</text>
+        <text x="650" y="102" text-anchor="middle" font-size="9.5" fill="var(--muted)">queue / status</text>
         <text x="827" y="350" font-size="9.5" fill="var(--muted)">weight sync</text>
         <text x="827" y="365" font-size="9.5" fill="var(--muted)">(direct)</text>
 
@@ -663,7 +666,70 @@
       flow. On the trainer side it forwards generation to the rollout engine, captures the exact
       sampling-time tokens and logprobs, joins the reward, and emits masked training samples. Model
       weight synchronization remains a direct trainer-to-engine path; the proxy does not participate.
+      The dashed “rollout services” boundary is conceptual: framework APIs do not agree on what a
+      component named <em>Rollouter</em> contains.
     </p>
+  </div>
+
+  <h3>Trainer-side control plane: controller vs. rollouter</h3>
+
+  <p>A <strong>rollout</strong> is one agent execution on one input. A
+  <strong>rollout controller</strong> is the control-plane service that turns a declared rollout
+  into a running harness process. In Agent Lightning v1.0, for example, the trainer creates
+  rollout records in the gateway; the controller reconciles the queued records, starts a local
+  subprocess or Kubernetes Job with rollout-specific proxy and event URLs, enforces execution
+  capacity and timeouts, and drives status from <code>QUEUING</code> through
+  <code>RUNNING</code> to <code>SUCCEEDED</code> or <code>FAILED</code>. It can retry
+  reconciliation after a process, watch, or network interruption. It does not sample tokens,
+  execute tools, compute rewards, or update weights.</p>
+
+  <div class="result">
+    <div class="result-label">The ownership rule</div>
+    The harness owns the <strong>inner agent loop</strong>; the rollout controller owns the
+    <strong>outer episode lifecycle</strong>; the inference engine generates tokens; the trainer
+    turns completed traces into gradient updates.
+  </div>
+
+  <p><strong>“Rollouter” has no universal component boundary.</strong> Architecturally, people
+  often use it for the whole rollout-producing subsystem, which can include a controller,
+  agent runners, inference engines, and trace collection. Under that broad usage,
+  <em>yes</em>, the controller and inference engine are both parts of the rollouter, but they
+  remain separate control-plane and data-plane services. A framework class actually named
+  <code>Rollouter</code> may be narrower: verl's experimental fully-async design, for example,
+  lists <code>Rollouter</code>, <code>MessageQueue</code>, <code>Trainer</code>,
+  <code>ParameterSynchronizer</code>, and its resource controller as separate components.
+  Agent Lightning does not define one encompassing <code>Rollouter</code>; it exposes the
+  Rollout Controller, API Gateway, and Customized Trainer as three peer components, with vLLM
+  hosted by the trainer.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr>
+        <th>Component</th>
+        <th>What it owns</th>
+        <th>How it communicates</th>
+      </tr>
+      <tr>
+        <td><strong>Rollout controller</strong><br><span style="color:var(--muted);">control plane</span></td>
+        <td>Admission, process/Job launch, rollout and attempt identity, timeout/failure handling, status reconciliation, cleanup</td>
+        <td>Reads queued work and writes status through the gateway; injects rollout-specific gateway URLs when it launches the harness</td>
+      </tr>
+      <tr>
+        <td><strong>Harness</strong><br><span style="color:var(--muted);">agent loop</span></td>
+        <td>Context construction, tool calls, environment interaction, branching, stopping, reward reporting</td>
+        <td>Calls the proxy as an ordinary model API and posts events/reward under its rollout ID</td>
+      </tr>
+      <tr>
+        <td><strong>Inference engine</strong><br><span style="color:var(--muted);">generation data plane</span></td>
+        <td>Autoregressive decoding, KV cache, exact sampled token IDs and sampling-time logprobs</td>
+        <td>Serves requests forwarded by the proxy; receives fresh weights directly from the trainer</td>
+      </tr>
+      <tr>
+        <td><strong>Trainer + optimizer</strong><br><span style="color:var(--muted);">learning plane</span></td>
+        <td>Rollout demand, sample selection, advantages, masked loss, policy updates, weight versions</td>
+        <td>Declares work and consumes completed traces through the gateway; synchronizes weights directly to the inference engine</td>
+      </tr>
+    </table>
   </div>
 
   <div class="result">
@@ -1343,7 +1409,7 @@ tail    = prompt_ids[n][len(prev):]               # if extends: the new tool/tem
   <h2 id="refs">11. References</h2>
 
   <ul>
-    <li>Agent Lightning v1.0: <a href="https://arxiv.org/abs/2608.17528">"Towards Harnessed Agentic RL"</a> (arXiv 2608.17528, Aug 2026) — names the paradigm; the retokenisation taxonomy, merge strategies, the advantage-granularity comparison and the loss-normalisation ablation of §5–§6. Original: <a href="https://arxiv.org/abs/2508.03680">arXiv 2508.03680</a> (Aug 2025); <a href="https://vllm.ai/blog/2025-10-22-agent-lightning">vLLM blog</a> on <code>return_token_ids</code> and retokenization drift.</li>
+    <li>Agent Lightning v1.0: <a href="https://arxiv.org/abs/2608.17528">"Towards Harnessed Agentic RL"</a> (arXiv 2608.17528, Aug 2026) — names the paradigm; the retokenisation taxonomy, merge strategies, the advantage-granularity comparison and the loss-normalisation ablation of §5–§6; official <a href="https://microsoft.github.io/agent-lightning/stable/05-basics/">component overview</a> and <a href="https://microsoft.github.io/agent-lightning/stable/30-controller-configuration/">controller configuration</a>. Original: <a href="https://arxiv.org/abs/2508.03680">arXiv 2508.03680</a> (Aug 2025); <a href="https://vllm.ai/blog/2025-10-22-agent-lightning">vLLM blog</a> on <code>return_token_ids</code> and retokenization drift.</li>
     <li>Hugging Face, <a href="https://huggingface.co/blog/huggingface/tito">"Agentic RL: Token-In, Token-Out Done Right"</a> (May 2026) — prefix-preservation, tool-response delta, 18/19 template survey; and <a href="https://huggingface.co/blog/async-rl-training-landscape">"Keep the Tokens Flowing: Lessons from 16 Open-Source RL Libraries"</a> (Mar 2026).</li>
     <li>Prime Intellect: <a href="https://www.primeintellect.ai/blog/renderers">renderers</a> (May 2026, "the inference server should be a simple token-only endpoint"), <a href="https://www.primeintellect.ai/blog/verifiers-v1">verifiers v1</a> (Jul 2026, taskset × harness × runtime, interception server), <a href="https://github.com/PrimeIntellect-ai/prime-rl">prime-rl</a>, <a href="https://arxiv.org/abs/2512.16144">INTELLECT-3</a>.</li>
     <li>NVIDIA: <a href="https://arxiv.org/abs/2605.24220">Polar</a> (May 2026) and the <a href="https://github.com/NVIDIA-NeMo/ProRL-Agent-Server">ProRL-Agent-Server</a>; <a href="https://arxiv.org/abs/2603.18815">ProRL Agent</a> ("token IDs as the canonical representation throughout"); B. Xu, <a href="https://billxbf.github.io/posts/agent-rl-infra/">"Rethinking RL Infra for Agents"</a> (May 2026). NeMo-RL <a href="https://github.com/NVIDIA-NeMo/RL">repo</a> and NeMo Gym on-policy-corrections docs.</li>
