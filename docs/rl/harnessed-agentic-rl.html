@@ -749,6 +749,74 @@
     </table>
   </div>
 
+  <h3 id="polar-vs-agent-lightning">Polar vs. Agent Lightning: same seam, different system boundary</h3>
+
+  <p><a href="https://arxiv.org/abs/2605.24220"><strong>Polar</strong></a> and
+  <a href="https://microsoft.github.io/agent-lightning/stable/05-basics/"><strong>Agent
+  Lightning v1.0</strong></a> share the central harnessed-RL idea: leave the real agent loop
+  outside the trainer, intercept its model API calls, and preserve sampling-time token IDs and
+  logprobs. They differ in how much infrastructure they put around that seam. Polar presents
+  black-box agent execution as a <strong>trainer-agnostic rollout service</strong>; Agent
+  Lightning presents a small <strong>end-to-end training stack</strong> with an explicit Gateway,
+  Controller, and verl-based Trainer.</p>
+
+  <div class="table-wrap">
+    <table class="dense">
+      <tr>
+        <th>Dimension</th>
+        <th>Polar</th>
+        <th>Agent Lightning v1.0</th>
+      </tr>
+      <tr>
+        <td><strong>Primary abstraction</strong></td>
+        <td>Rollout-as-a-service: submit agent work and receive reconstructed trajectories through trainer callbacks</td>
+        <td>A three-component RL framework: API Gateway, Rollout Controller, and Customized Trainer</td>
+      </tr>
+      <tr>
+        <td><strong>Training backend</strong></td>
+        <td>Trainer-agnostic boundary; framework-specific bridges connect the service to a learner</td>
+        <td>Customized Trainer is built around verl and trainer-hosted vLLM</td>
+      </tr>
+      <tr>
+        <td><strong>Agent execution</strong></td>
+        <td>Runtime setup, harness execution, evaluation, and trainer callbacks are separated behind asynchronous service boundaries</td>
+        <td>Controller reconciles Gateway rollout records into local subprocesses or one Kubernetes Job per rollout</td>
+      </tr>
+      <tr>
+        <td><strong>Model API surface</strong></td>
+        <td>Provider-compatible gateway for OpenAI, Anthropic, and Google-style harnesses, normalized toward the training engine</td>
+        <td>Rollout-specific OpenAI-compatible proxy URL routed to a model endpoint registered by the trainer</td>
+      </tr>
+      <tr>
+        <td><strong>Shared state</strong></td>
+        <td>Service-owned task, execution, trace, and evaluation lifecycle</td>
+        <td>Gateway-owned rollout records, attempt status, endpoint registry, and append-only events</td>
+      </tr>
+      <tr>
+        <td><strong>Sample reconstruction</strong></td>
+        <td><code>per_request</code> or strict <code>prefix_merging</code>; a prefix break starts a new chain</td>
+        <td>Gateway stores <code>model_request</code> events; the Trainer performs exact-prefix merging/forking, masking, and sample construction</td>
+      </tr>
+      <tr>
+        <td><strong>Policy-update coordination</strong></td>
+        <td>Inference exposes pause/resume controls while an attached trainer updates weights</td>
+        <td>Gateway drains model traffic; the Customized Trainer synchronizes weights directly to its vLLM endpoint</td>
+      </tr>
+      <tr>
+        <td><strong>Best fit</strong></td>
+        <td>You want a reusable black-box rollout service across harness dialects and training backends</td>
+        <td>You want an integrated verl/vLLM path with declarative rollouts and built-in local/Kubernetes execution control</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="result">
+    <div class="result-label">Shortest distinction</div>
+    <strong>Polar productizes the rollout boundary.</strong>
+    <strong>Agent Lightning productizes the complete control-and-learning path around that
+    boundary.</strong> Neither puts the inner tool-using agent loop inside the trainer.
+  </div>
+
   <div class="result">
     <div class="result-label">The pattern</div>
     Each generation moved the harness boundary one step further from the trainer — from a
