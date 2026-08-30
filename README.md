@@ -38,7 +38,7 @@ production BPE, test-time compute scaling, the Jacobian lens.
 
 ### 02 · Hardware — [docs/hardware/](docs/hardware/)
 The physical accelerator, in four pages: inside the GPU chip (SIMT, SMs and Tensor Cores, the
-memory hierarchy, the roofline), the GPU interconnect (NVSwitch crossbar, rail-optimized
+memory hierarchy, TMA tensor maps/barriers/multicast, the roofline), the GPU interconnect (NVSwitch crossbar, rail-optimized
 fat-tree, the bandwidth cliff), GPU generations (Blackwell, the H100→B300 lineup,
 B300 vs. GB300), and the TPU's systolic array and torus.
 

@@ -217,6 +217,8 @@
     /* ── Code ────────────────────────────────── */
     code { font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace; }
     p code, li code, td code { background: var(--code-bg); padding: 1px 6px; border-radius: 4px; font-size: 0.88em; color: var(--code-fg); }
+    pre { background: var(--spec-bg); color: var(--spec-fg); border-radius: 10px; padding: 18px 20px; overflow-x: auto; font-size: 0.84rem; line-height: 1.6; margin: 1.2em 0; }
+    pre code { background: none; color: inherit; padding: 0; font-size: inherit; }
 
     /* ── Table ───────────────────────────────── */
     .table-wrap { overflow-x: auto; margin: 1.2em 0; }
@@ -306,6 +308,14 @@
     .legend { display:flex; flex-wrap:wrap; gap:8px 18px; justify-content:center; margin-top:12px; font-size:0.82rem; color:var(--text); }
     .legend-item { display:flex; align-items:center; gap:7px; white-space:nowrap; }
     .lg { display:inline-block; width:22px; height:3px; border-radius:2px; background:var(--c); }
+    .lg.dash { height:0; border-top:2px dashed var(--c); background:none; border-radius:0; }
+    .plot-controls { display:flex; flex-wrap:wrap; gap:16px 24px; margin:16px 4px 4px; }
+    .plot-control { flex:1 1 190px; }
+    .plot-control label { display:flex; justify-content:space-between; gap:12px; font-size:0.8rem; font-weight:600; color:var(--ink); margin-bottom:5px; }
+    .plot-control label span { color:var(--accent); font-variant-numeric:tabular-nums; }
+    .plot-control input[type=range] { width:100%; max-width:none; }
+    .plot-readout { font-size:0.86rem; line-height:1.6; margin:14px 4px 2px; padding:11px 13px; background:var(--step-bg); border:1px solid var(--border); border-radius:8px; }
+    .plot-readout b { color:var(--accent); }
     .figure-caption { font-size:0.85rem; color:var(--muted); line-height:1.6; margin:14px 4px 2px; }
 
     /* ── Themed SVG text (static diagrams) ───── */
@@ -326,7 +336,7 @@
     <a href="#execution">Execution model</a>
     <a href="#sm">Inside an SM</a>
     <a href="#memory">Memory</a>
-    <a href="#datamove">Data movement</a>
+    <a href="#datamove">TMA / data movement</a>
     <a href="#roofline">Roofline</a>
     <a href="#summary">Summary</a>
   </div>
@@ -336,7 +346,7 @@
 <div class="hero">
   <span class="hero-pill">Systems · Hardware</span>
   <h1>GPU Hardware: Inside the Chip</h1>
-  <p>What one training GPU actually exposes — the SIMT execution model (warps, occupancy, latency hiding), the SM with its Tensor Cores and managed scratchpad, the memory hierarchy from registers to HBM, the copy engines behind software pipelining, and the roofline that decides whether a kernel is compute- or memory-bound. Built on the H100, the running example for the whole series.</p>
+  <p>What one training GPU actually exposes — the SIMT execution model (warps, occupancy, latency hiding), the SM with its Tensor Cores and managed scratchpad, the memory hierarchy from registers to HBM, TMA tensor maps and transaction-barrier pipelines, and the roofline that decides whether a kernel is compute- or memory-bound. Built on the H100, the running example for the whole series.</p>
 </div>
 
 <div class="page-wrap">
@@ -545,24 +555,282 @@
   </div>
 
   <!-- ════════════════════════ DATA MOVEMENT ════════════════════════ -->
-  <h2 id="datamove">5 · Data movement: async copy and TMA</h2>
+  <h2 id="datamove">5 · Data movement: from <code>cp.async</code> to TMA</h2>
   <p>
-    Getting operands from HBM into that scratchpad fast — and <em>without stalling the math</em> — is its own
-    hardware story. Two engines matter:
+    Tiling only works if the next operands reach shared memory before the Tensor Cores need them. Ampere made
+    global→shared copies asynchronous with <code>cp.async</code>; Hopper turned the copy itself into a programmable
+    engine. <strong>TMA — the Tensor Memory Accelerator</strong> accepts a tensor descriptor and a coordinate, walks
+    a one-to-five-dimensional tile in hardware, deposits it in shared memory, and signals completion without a warp
+    spending hundreds of instructions or registers on address generation.
   </p>
-  <ul>
-    <li><strong><code>cp.async</code> (Ampere+):</strong> an asynchronous global→shared copy that bypasses the
-      register file. A thread issues the load and keeps computing instead of blocking until the data lands.</li>
-    <li><strong>TMA — Tensor Memory Accelerator (Hopper):</strong> a dedicated copy engine that moves whole
-      multi-dimensional <em>tiles</em> between HBM and shared memory with the address arithmetic done in hardware.
-      A single thread kicks off a bulk transfer and the SM’s threads are freed entirely for compute.</li>
-  </ul>
-  <div class="note" style="background:var(--lime-bg); border-left-color:var(--lime-border); color:var(--lime-fg)">
-    <strong>Foundation for kernel optimization →</strong> these are the hardware behind <em>software pipelining</em>:
-    while the Tensor Cores chew on tile \(k\), TMA is already streaming tile \(k{+}1\) into a second shared-memory
-    buffer, so compute and memory overlap and neither waits. A multi-stage pipeline like this is how a well-written
-    matmul or <a href="https://github.com/yueyiming2009/ai-learning/blob/main/triton/fused_softmax.ipynb">fused
-    kernel</a> stays compute-bound.
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th></th><th><code>cp.async</code> (Ampere)</th><th>TMA / <code>cp.async.bulk.tensor</code> (Hopper+)</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Issuer</strong></td><td>Many threads each issue a small segment, commonly 4/8/16 bytes.</td><td>One elected thread can issue a whole tensor tile for the CTA.</td></tr>
+        <tr><td><strong>Address math</strong></td><td>Threads compute every global and shared address.</td><td>A reusable tensor-map descriptor stores dimensions, strides, tile shape, and layout policy.</td></tr>
+        <tr><td><strong>Directions</strong></td><td>Global → shared.</td><td>Global ↔ shared; loads may target local or cluster shared memory.</td></tr>
+        <tr><td><strong>Completion</strong></td><td>Async-copy groups and <code>wait_group</code>.</td><td>Loads complete an <code>mbarrier</code> transaction; stores complete through a bulk async group.</td></tr>
+        <tr><td><strong>Layout help</strong></td><td>Mostly a linear byte copy.</td><td>1D–5D tiled addressing, interleave, shared-memory swizzle, supported OOB fill, im2col/gather/scatter modes.</td></tr>
+        <tr><td><strong>Across CTAs</strong></td><td>None.</td><td>Cluster multicast can deliver one HBM tile to the shared memory of several CTAs.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="result">
+    <div class="result-label">What TMA removes</div>
+    <p style="margin:0;">It does not make HBM intrinsically faster. It removes the warp-wide address-generation and copy-instruction tax, bypasses registers, and makes a large transfer independently schedulable so useful math can overlap it.</p>
+  </div>
+
+  <h3>The tensor map: move the loop nest into a descriptor</h3>
+
+  <p>
+    A <strong><code>CUtensorMap</code></strong> is an opaque 128-byte descriptor (64-byte aligned in current CUDA).
+    The host normally creates it once with <code>cuTensorMapEncodeTiled</code>, then passes it by value to kernels as
+    a <code>__grid_constant__</code> parameter. Instead of handing TMA a pointer for every row, the kernel supplies
+    only the descriptor plus the starting tensor coordinates.
+  </p>
+
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">Global geometry</div>
+      <p>Base address, element type, rank, dimensions, and byte strides describe the backing tensor in HBM.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Tile geometry</div>
+      <p><code>boxDim</code> and element strides describe the block of values moved by one TMA instruction.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Shared layout</div>
+      <p>Interleave and 32/64/128-byte swizzle modes can place the tile to reduce shared-memory bank conflicts.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Memory policy</div>
+      <p>L2-promotion and supported out-of-bounds behavior travel with the descriptor instead of the inner loop.</p>
+    </div>
+  </div>
+
+  <p>The following host-side sketch describes a row-major \([M,K]\) fp16 tensor and a \([B_M,B_K]\) tile. TMA orders descriptor dimensions from the fastest-varying dimension outward, so \(K\) comes first. Error handling is omitted:</p>
+
+<pre><code>constexpr uint32_t BM = 64, BK = 64;
+alignas(64) CUtensorMap map;
+
+uint64_t global_dim[2]    = {K, M};
+uint64_t global_stride[1] = {K * sizeof(__half)};  // stride of the outer M dimension
+uint32_t box_dim[2]       = {BK, BM};               // one shared-memory tile
+uint32_t elem_stride[2]   = {1, 1};
+
+cuTensorMapEncodeTiled(
+    &amp;map,
+    CU_TENSOR_MAP_DATA_TYPE_FLOAT16,
+    2, A,
+    global_dim, global_stride,
+    box_dim, elem_stride,
+    CU_TENSOR_MAP_INTERLEAVE_NONE,
+    CU_TENSOR_MAP_SWIZZLE_NONE,
+    CU_TENSOR_MAP_L2_PROMOTION_NONE,
+    CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE);</code></pre>
+
+  <p>
+    The descriptor is validation as well as compression. Common tiled maps require a 16-byte-aligned global base
+    and outer byte strides that are multiples of 16; interleave, datatype, and swizzle choices add stricter rules.
+    A production kernel may select a 32/64/128-byte swizzle to avoid bank conflicts; its shared-memory allocation
+    and consumer indexing must then implement that same layout. CUDA rejects invalid maps at encode time rather
+    than letting every CTA rediscover the mistake.
+  </p>
+
+  <p>The geometry and policy can be reused across launches. If only the backing allocation changes, <code>cuTensorMapReplaceAddress</code> retargets the descriptor without rebuilding it; advanced device code can use <code>tensormap.replace</code> with the tensor-map proxy’s ordering rules.</p>
+
+  <h3>The load protocol: issue, account for bytes, wait on the barrier</h3>
+
+  <p>
+    A TMA load is asynchronous with respect to the issuing thread. Correctness comes from Hopper’s
+    <strong>transaction barrier</strong>, or <code>mbarrier</code>. The producer announces how many bytes the phase
+    expects; the TMA engine decrements that pending transaction count when the transfer lands. Consumers wait for
+    the barrier’s phase to complete before reading the shared-memory stage.
+  </p>
+
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">1 · Initialize</div>
+      <p>Create one barrier per pipeline stage and initialize its expected thread-arrival count.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">2 · Acquire + issue</div>
+      <p>An elected producer waits until a stage is empty, then issues TMA with descriptor coordinates.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">3 · Complete transaction</div>
+      <p>The barrier tracks both thread arrivals and the outstanding byte count completed by the copy engine.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">4 · Consume + release</div>
+      <p>Consumer warps wait for the full stage, use it, then release that ring-buffer slot for the next tile.</p>
+    </div>
+  </div>
+
+  <p>A compact CUDA C++/CCCL load looks like this. The wrapper lowers to the <code>cp.async.bulk.tensor</code> instruction family; production GEMMs separate the producer’s issue from the consumers’ wait so the producer can run ahead:</p>
+
+<pre><code>#include &lt;cuda.h&gt;
+#include &lt;cuda/barrier&gt;
+#include &lt;cuda_fp16.h&gt;
+
+using TmaBarrier = cuda::barrier&lt;cuda::thread_scope_block&gt;;
+static constexpr int BM = 64, BK = 64;
+
+__global__ void load_tile(
+    const __grid_constant__ CUtensorMap map,
+    __half* out, int m0, int k0)
+{
+    __shared__ __align__(128) __half tile[BM][BK];
+    __shared__ TmaBarrier full;
+
+    if (threadIdx.x == 0) init(&amp;full, 1);
+    __syncthreads();
+
+    if (threadIdx.x == 0) {
+        cuda::device::experimental::cp_async_bulk_tensor_2d_global_to_shared(
+            tile, &amp;map, k0, m0, full);
+
+        // One producer arrival plus BM*BK*sizeof(__half) transaction bytes.
+        full.wait(cuda::device::barrier_arrive_tx(
+            full, 1, sizeof(tile)));
+    }
+    __syncthreads();
+
+    // All threads may now consume tile from shared memory.
+    use_tile(tile, out);
+}</code></pre>
+
+  <p>At the PTX level, the central load names every part of the contract directly:</p>
+
+<pre><code>cp.async.bulk.tensor.2d.shared::cluster.global
+    .mbarrier::complete_tx::bytes
+    [smem_dst], [tensor_map, {k0, m0}], [full_barrier];</code></pre>
+
+  <p>The CCCL convenience intrinsic shown above is the current CUDA 13 style. CUDA 12-era Hopper kernels commonly reach the same instruction through CUTLASS/CuTe or inline PTX; the descriptor, barrier, and pipeline model is unchanged.</p>
+
+  <div class="compare">
+    <div class="compare-label">Loads and stores deliberately complete differently</div>
+    <p style="margin:0 0 8px;"><strong>Global → shared:</strong> an <code>mbarrier</code> becomes ready only after the engine has completed the promised transaction bytes, so consumer threads know the stage is full.</p>
+    <p style="margin:0;"><strong>Shared → global:</strong> the source stage is already full; the kernel uses a bulk async group, commits the store, and waits before reusing that shared-memory storage. A proxy fence is required so writes made by normal threads are visible to the asynchronous copy engine; CUDA/CUTLASS wrappers encode this choreography.</p>
+  </div>
+
+  <h3>The payoff is overlap, not merely a shorter copy loop</h3>
+
+  <p>
+    Let a tile load take \(L\) time units and its Tensor Core work take \(C\). Processing \(N\) tiles serially costs
+    \(N(L+C)\). With at least two shared-memory stages, the prologue loads the first tile, steady state overlaps the
+    next load with the current compute, and the epilogue drains the last tile:
+  </p>
+
+  <div class="result">
+    \[
+      T_{\text{serial}} = N(L+C),
+      \qquad
+      T_{\text{pipeline}} = L+C+(N-1)\max(L,C).
+    \]
+  </div>
+
+  <div class="figure">
+    <canvas id="plot-tma-pipeline" aria-label="Average time per tile with serial loading and with a TMA software pipeline"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-orange)"></span>load then compute</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-teal)"></span>TMA + compute pipeline</span>
+      <span class="legend-item"><span class="lg dash" style="--c:var(--plot-axis)"></span>steady-state bottleneck \(\max(L,C)\)</span>
+    </div>
+    <div class="plot-controls">
+      <div class="plot-control">
+        <label for="tma-load">TMA load latency <span id="tma-load-val">8 units</span></label>
+        <input type="range" id="tma-load" min="2" max="20" step="1" value="8">
+      </div>
+      <div class="plot-control">
+        <label for="tma-compute">Tile compute latency <span id="tma-compute-val">10 units</span></label>
+        <input type="range" id="tma-compute" min="2" max="20" step="1" value="10">
+      </div>
+      <div class="plot-control">
+        <label for="tma-tiles">Tiles in the K-loop <span id="tma-tiles-val">16</span></label>
+        <input type="range" id="tma-tiles" min="1" max="64" step="1" value="16">
+      </div>
+    </div>
+    <div class="plot-readout" id="tma-readout"></div>
+    <p class="figure-caption">
+      <strong>The prologue and epilogue amortize away.</strong> With one tile there is nothing to overlap. As the
+      K-loop grows, average time approaches \(\max(L,C)\), not \(L+C\); the theoretical overlap gain is largest
+      when transfer and compute are balanced. This ideal model excludes descriptor setup, barriers, and resource
+      pressure, but captures why multi-stage TMA pipelines exist.
+    </p>
+  </div>
+
+  <p>
+    More stages do not change the ideal steady-state formula; they provide enough distance to cover variable
+    latency. Every extra stage consumes shared memory, however, and can reduce CTA residency. The tuning problem is
+    therefore: allocate enough stages to keep TMA and the Tensor Cores busy, but not so many that occupancy collapses.
+  </p>
+
+  <h3>Clusters and multicast: fetch once, deliver to several CTAs</h3>
+
+  <p>
+    Hopper’s <strong>thread-block cluster</strong> guarantees that a group of CTAs is resident concurrently and lets
+    them address one another’s shared memory as distributed shared memory. A TMA load with
+    <code>.multicast::cluster</code> uses a CTA mask to place the same global tile at the same shared-memory offset
+    in several destination CTAs and signal their barriers. In a clustered GEMM, CTAs that share an A tile across
+    output columns—or a B tile across output rows—can pay the HBM/L2 fetch once for the cluster instead of once per CTA.
+  </p>
+
+  <div class="step">
+    <div class="step-label">Why CUTLASS asks for <code>ClusterShape</code></div>
+    <p style="margin:0;">The cluster shape is a data-reuse choice, not just a launch shape. It determines which CTA tiles can share A or B through TMA multicast, while the collective’s barriers guarantee that every recipient sees a full stage. See the <a href="../systems/cutlass.html#mainloop">Hopper CUTLASS mainloop</a> for the producer-TMA / consumer-WGMMA pipeline built on this mechanism.</p>
+  </div>
+
+  <h3>The instruction family is broader than a GEMM load</h3>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Operation</th><th>What TMA handles</th><th>Completion</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Tiled load</strong></td><td>1D–5D global tensor tile → local or cluster shared memory</td><td><code>mbarrier</code> transaction bytes</td></tr>
+        <tr><td><strong>Tiled store</strong></td><td>Shared-memory tile → 1D–5D global tensor</td><td>Bulk async group</td></tr>
+        <tr><td><strong>Multicast load</strong></td><td>One global tile → matching shared-memory offsets in selected cluster CTAs</td><td>Destination barriers</td></tr>
+        <tr><td><strong>Gather/scatter and im2col</strong></td><td>Supported structured tensor rearrangements while moving data</td><td>Variant-dependent</td></tr>
+        <tr><td><strong>Reduction store</strong></td><td>Supported <code>cp.reduce.async.bulk.tensor</code> variants combine values on the way to global memory</td><td>Bulk async group</td></tr>
+        <tr><td><strong>L2 prefetch</strong></td><td>Descriptor-addressed tile prefetch without filling shared memory</td><td>No consumer stage</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Programming checklist and common failures</h3>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Check</th><th>Failure mode if missed</th></tr></thead>
+      <tbody>
+        <tr><td>Target Hopper or newer (<code>sm_90+</code>) and compile the TMA path for that architecture.</td><td>The intrinsic is unavailable or a fallback path runs.</td></tr>
+        <tr><td>Keep the tensor map opaque, 64-byte aligned, and preferably pass it as <code>__grid_constant__</code>.</td><td>The descriptor is copied through local memory or accessed incorrectly.</td></tr>
+        <tr><td>Satisfy base-address, stride, tile, and swizzle alignment rules.</td><td>Descriptor encoding fails, or the shared layout does not match its consumers.</td></tr>
+        <tr><td>Match every issued load with the correct transaction-byte count and barrier phase.</td><td>Consumers read incomplete data or the pipeline deadlocks.</td></tr>
+        <tr><td>Fence thread-written shared memory before a TMA store and wait before reusing the stage.</td><td>The engine observes stale data or the next tile overwrites an in-flight store.</td></tr>
+        <tr><td>Handle boundaries through a valid descriptor/OOB mode or a separate tail path.</td><td>A partial tile is not equivalent to arbitrary per-element masking.</td></tr>
+        <tr><td>Measure stage count against shared-memory use and occupancy.</td><td>A deeper pipeline hides latency but leaves too few CTAs resident.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="xref">
+    <strong>From mechanism to kernels:</strong> <a href="../systems/cutlass.html#mainloop">CUTLASS</a> turns these
+    barriers into a reusable pipeline; <a href="../systems/cute-dsl.html#gemm">CuTe DSL</a> exposes TMA as copy
+    atoms over layouts; <a href="../inference/flash-attention.html#fa2-fa3">FlashAttention-3</a> assigns producer
+    warps to TMA while consumers run WGMMA; and <a href="../systems/blackwell-kernels.html#kernel-shape">Blackwell
+    kernels</a> keep TMA but move accumulators into TMEM. TMA moves tiles; <strong>TMEM</strong> is the separate
+    Blackwell accumulator memory.
+  </div>
+
+  <div class="xref">
+    <strong>Primary references:</strong>
+    <a href="https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async-bulk-tensor">PTX <code>cp.async.bulk.tensor</code></a>,
+    <a href="https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__TENSOR__MEMORY.html">CUDA tensor-map APIs</a>,
+    and NVIDIA’s <a href="https://github.com/NVIDIA/cuda-samples/tree/master/python/2_CoreConcepts/tmaTensorMap">TMA tensor-map sample</a>.
   </div>
 
   <!-- ════════════════════════ ROOFLINE ════════════════════════ -->
@@ -643,7 +911,7 @@
     </div>
     <div class="summary-card">
       <div class="summary-card-label">Async data movement</div>
-      <p>cp.async / TMA stream tiles HBM→SMEM while the cores compute — the hardware behind software pipelining.</p>
+      <p>TMA uses tensor-map descriptors, transaction barriers, and optional cluster multicast to pipeline whole HBM↔SMEM tiles.</p>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">Memory wall</div>
@@ -674,6 +942,184 @@
   const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const darkMQ = window.matchMedia('(prefers-color-scheme: dark)');
   const onSchemeChange = fn => { if (darkMQ.addEventListener) darkMQ.addEventListener('change', fn); };
+
+  // ── TMA pipeline overlap ──────────────────────────────────
+  (function () {
+    const canvas = document.getElementById('plot-tma-pipeline');
+    const loadSlider = document.getElementById('tma-load');
+    const computeSlider = document.getElementById('tma-compute');
+    const tilesSlider = document.getElementById('tma-tiles');
+    const loadOut = document.getElementById('tma-load-val');
+    const computeOut = document.getElementById('tma-compute-val');
+    const tilesOut = document.getElementById('tma-tiles-val');
+    const readout = document.getElementById('tma-readout');
+    if (!canvas) return;
+
+    const serialAverage = (n, load, compute) => load + compute;
+    const pipelineTotal = (n, load, compute) =>
+      n <= 1 ? load + compute : load + compute + (n - 1) * Math.max(load, compute);
+    const pipelineAverage = (n, load, compute) =>
+      pipelineTotal(Math.max(1, n), load, compute) / Math.max(1, n);
+
+    function niceCeil(value) {
+      const power = Math.pow(10, Math.floor(Math.log10(value)));
+      const scaled = value / power;
+      const nice = scaled <= 1 ? 1 : scaled <= 2 ? 2 : scaled <= 5 ? 5 : 10;
+      return nice * power;
+    }
+
+    function drawPlot(target, cfg) {
+      const dpr = window.devicePixelRatio || 1;
+      const cssW = target.clientWidth;
+      const cssH = target.clientHeight;
+      if (!cssW || !cssH) return;
+      target.width = Math.round(cssW * dpr);
+      target.height = Math.round(cssH * dpr);
+
+      const ctx = target.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, cssW, cssH);
+
+      const mL = 58, mR = 16, mT = 16, mB = 46;
+      const pw = cssW - mL - mR;
+      const ph = cssH - mT - mB;
+      const X = x => mL + (x - cfg.xMin) / (cfg.xMax - cfg.xMin) * pw;
+      const Y = y => mT + (cfg.yMax - y) / (cfg.yMax - cfg.yMin) * ph;
+
+      ctx.font = '11px Inter, sans-serif';
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = cssVar('--plot-grid');
+      ctx.fillStyle = cssVar('--plot-tick');
+
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      cfg.xTicks.forEach(tick => {
+        const px = X(tick);
+        ctx.beginPath();
+        ctx.moveTo(px, mT);
+        ctx.lineTo(px, mT + ph);
+        ctx.stroke();
+        ctx.fillText(tick, px, mT + ph + 6);
+      });
+
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      cfg.yTicks.forEach(tick => {
+        const py = Y(tick);
+        ctx.beginPath();
+        ctx.moveTo(mL, py);
+        ctx.lineTo(mL + pw, py);
+        ctx.stroke();
+        ctx.fillText(tick.toFixed(tick % 1 ? 1 : 0), mL - 8, py);
+      });
+
+      ctx.strokeStyle = cssVar('--plot-axis');
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(X(0), mT);
+      ctx.lineTo(X(0), Y(0));
+      ctx.lineTo(mL + pw, Y(0));
+      ctx.stroke();
+
+      ctx.fillStyle = cssVar('--plot-label');
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText('tiles processed by the repeated K-loop', mL + pw / 2, mT + ph + 25);
+      ctx.save();
+      ctx.translate(13, mT + ph / 2);
+      ctx.rotate(-Math.PI / 2);
+      ctx.fillText('average time per tile', 0, 0);
+      ctx.restore();
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(mL, mT, pw, ph);
+      ctx.clip();
+      cfg.series.forEach(series => {
+        ctx.beginPath();
+        ctx.strokeStyle = series.color;
+        ctx.lineWidth = series.width || 2.5;
+        ctx.setLineDash(series.dash || []);
+        ctx.lineJoin = 'round';
+        const samples = 260;
+        for (let i = 0; i <= samples; i++) {
+          const x = cfg.xMin + (cfg.xMax - cfg.xMin) * i / samples;
+          const y = series.fn(x);
+          if (i === 0) ctx.moveTo(X(x), Y(y));
+          else ctx.lineTo(X(x), Y(y));
+        }
+        ctx.stroke();
+      });
+      ctx.restore();
+
+      ctx.save();
+      ctx.strokeStyle = cssVar('--plot-violet');
+      ctx.lineWidth = 1.25;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(X(cfg.marker), mT);
+      ctx.lineTo(X(cfg.marker), mT + ph);
+      ctx.stroke();
+      ctx.restore();
+
+      cfg.series.slice(0, 2).forEach(series => {
+        const y = series.fn(cfg.marker);
+        ctx.beginPath();
+        ctx.fillStyle = series.color;
+        ctx.arc(X(cfg.marker), Y(y), 4.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = cssVar('--fig-bg');
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      });
+    }
+
+    function update() {
+      const load = parseInt(loadSlider.value, 10);
+      const compute = parseInt(computeSlider.value, 10);
+      const tiles = parseInt(tilesSlider.value, 10);
+      const serialTotal = tiles * serialAverage(tiles, load, compute);
+      const pipelinedTotal = pipelineTotal(tiles, load, compute);
+      const speedup = serialTotal / pipelinedTotal;
+      const yMax = niceCeil((load + compute) * 1.08);
+
+      loadOut.textContent = load + ' units';
+      computeOut.textContent = compute + ' units';
+      tilesOut.textContent = tiles;
+      readout.innerHTML =
+        'For <b>' + tiles + ' tiles</b>, serial load-then-compute costs <b>' + serialTotal +
+        ' units</b>; the ideal TMA pipeline costs <b>' + pipelinedTotal + ' units</b> (<b>' +
+        speedup.toFixed(2) + '×</b> faster). Steady state is limited by <b>' +
+        (load > compute ? 'data movement' : compute > load ? 'Tensor Core work' : 'both equally') +
+        '</b> at ' + Math.max(load, compute) + ' units per tile.';
+
+      drawPlot(canvas, {
+        xMin: 0,
+        xMax: 64,
+        yMin: 0,
+        yMax,
+        xTicks: [1, 8, 16, 32, 48, 64],
+        yTicks: [0, yMax / 4, yMax / 2, 3 * yMax / 4, yMax],
+        marker: tiles,
+        series: [
+          { fn: n => serialAverage(n, load, compute), color: cssVar('--plot-orange'), width: 2.75 },
+          { fn: n => pipelineAverage(n, load, compute), color: cssVar('--plot-teal'), width: 2.75 },
+          { fn: () => Math.max(load, compute), color: cssVar('--plot-axis'), width: 1.5, dash: [5, 4] }
+        ]
+      });
+    }
+
+    loadSlider.addEventListener('input', update);
+    computeSlider.addEventListener('input', update);
+    tilesSlider.addEventListener('input', update);
+    let raf;
+    window.addEventListener('resize', () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(update);
+    });
+    update();
+    onSchemeChange(update);
+  })();
 
   // ── Roofline explorer ─────────────────────────────────────
   (function () {
