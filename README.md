@@ -43,11 +43,13 @@ fat-tree, the bandwidth cliff), GPU generations (Blackwell, the H100→B300 line
 B300 vs. GB300), and the TPU's systolic array and torus.
 
 ### 03 · Transformer & Pretraining — [docs/transformer/](docs/transformer/)
-Assembling the Foundations pieces into a working model and training it. **Architecture:**
-self-attention (forward & backward), the pre-norm block, linear attention, Mamba & SSMs
+Assembling the Foundations pieces into a working model and training it. **Core Architecture:**
+self-attention (forward & backward), the pre-norm block, recurrent depth / loop transformers,
+MoE routing, and the 2026 residual-stream redesigns (hyper-connections / attention residuals).
+**Sequence Mixing & Memory:** linear attention, Mamba & SSMs
 (discretization → selection → the Mamba-2 duality), Gated DeltaNet, KDA,
-sparse attention (the lightning indexer), hybrid attention stacks, MoE routing, and the 2026
-residual-stream redesigns (hyper-connections / attention residuals). **Training:** the next-token objective and single-device loop, multi-token prediction
+sparse attention (the lightning indexer), hybrid attention stacks, and conditional memory.
+**Training:** the next-token objective and single-device loop, multi-token prediction
 (parallel heads vs. DeepSeek-V3's sequential MTP modules, and the free draft head that falls out),
 and the neural scaling laws that size the run (Kaplan vs. Chinchilla, the compute-optimal frontier).
 **Model Architectures:** case studies reading complete 2026 frontier designs through those
@@ -55,8 +57,10 @@ components — DeepSeek-V4 (sequence-compressed sparse attention, mHC residual l
 (the 3:1 Gated DeltaNet hybrid scaled to 397B, native early-fusion vision), Kimi K3
 (KDA + NoPE gated MLA, Block AttnRes, latent-space MoE, MXFP4 QAT), GLM-5 (MLA-256, IndexShare
 indexer sharing, Muon Split, shared-weight MTP), MiniMax-M2.5 (the full-attention counterpoint
-and its published ablation), and Nemotron 3 & 3.5 (Mamba-2 hybrid, LatentMoE, NVFP4 pretraining,
-and Lightning — the 30B whose generation bump is pure training).
+and its published ablation), Nemotron 3 & 3.5 (Mamba-2 hybrid, LatentMoE, NVFP4 pretraining,
+and Lightning — the 30B whose generation bump is pure training), and GPT-6 Astra (adaptive
+reasoning behavior, public API/system-card facts, and the boundary between evidence and
+undisclosed architecture).
 
 ### 04 · Systems & Scaling — [docs/systems/](docs/systems/), [triton/](triton/)
 The engineering substrate that trains it across many devices, built bottom-up — MFU, the PyTorch

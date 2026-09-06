@@ -545,8 +545,8 @@
       <h1>Transformer &amp; Pretraining</h1>
       <span class="chevron" aria-hidden="true">▸</span>
     </summary>
-    <p class="domain-desc">Assemble the Foundations pieces into a working model and train it — self-attention and the multi-head split, the pre-norm residual block stacked into a decoder, the layer variants that compress, replace, or route it (MLA, linear attention, DeltaNet, MoE), then the next-token objective with the loop that optimizes it and the scaling laws that decide how big to make the run. The bridge from isolated derivations to a real training budget — capped by case studies reading complete frontier architectures through these components.</p>
-    <h2 id="transformer-architecture">Architecture</h2>
+    <p class="domain-desc">Assemble the Foundations pieces into a working model and train it — self-attention, the residual block, recurrent depth, routing and residual rewrites; sequence mixers and memory mechanisms that compress or replace softmax attention; then the next-token objective and the scaling laws that decide how big to make the run. The bridge from isolated derivations to a real training budget — capped by case studies reading complete frontier architectures through these components.</p>
+    <h2 id="transformer-architecture">Core Architecture</h2>
     <div class="card-grid">
       <a class="card" href="transformer/attention.html">
         <span class="card-tag tag-tf">Attention</span>
@@ -566,6 +566,27 @@
         <p class="card-desc">How norm, attention, MLP, and residuals snap into one repeatable block: the residual stream as a gradient highway, why every modern LLM is pre-norm, the attention-mixes / MLP-transforms division of labor, the embed → stack → unembed skeleton, weight tying, and the \(12d^2\) params-per-block budget.</p>
         <div class="card-arrow">Read guide →</div>
       </a>
+      <a class="card" href="transformer/recurrent-depth.html">
+        <span class="card-tag tag-tf">Recurrent Depth</span>
+        <div class="card-title">Recurrent Depth — Looping a Transformer Block</div>
+        <p class="card-desc">Replace \(L\) independently weighted layers with a prelude, a shared recurrent core, and a coda: \(H^{(r+1)}=F_\theta(H^{(r)},E)\). The parameter-vs-executed-depth tradeoff (interactive), randomized loop-count training, truncated backpropagation, ACT/PonderNet halting, systems costs, and the open Huginn 2–4–2 / 32-loop case study.</p>
+        <div class="card-arrow">Read guide →</div>
+      </a>
+      <a class="card" href="transformer/moe-routing.html">
+        <span class="card-tag tag-tf">MoE Routing</span>
+        <div class="card-title">MoE Routing — Gating, Top-K Selection, and Load Balancing</div>
+        <p class="card-desc">How a Mixture-of-Experts layer decides which experts process each token: the gating network (\(\mathbf{x}W_g\) → softmax → top-\(K\)), why gradients still flow through a discrete selection, the expert capacity buffer, the auxiliary load-balancing loss \(\alpha E \sum_i f_i P_i\) that prevents expert collapse and its device- and communication-level siblings, expert granularity as an axis separate from \(K\) — plus why attention heads self-organize without any of this machinery (summation vs selection), and why the same discreteness breaks the importance ratio in RL, which is what routing replay pays to repair.</p>
+        <div class="card-arrow">Read guide →</div>
+      </a>
+      <a class="card" href="transformer/hyper-connections.html">
+        <span class="card-tag tag-tf">Residual</span>
+        <div class="card-title">Hyper-Connections &amp; Attention Residuals — Rewiring the Residual Stream</div>
+        <p class="card-desc">The two 2026 replacements for the uniform residual sum: DeepSeek-V4's mHC (4 lanes, mixing Sinkhorn-projected onto doubly stochastic matrices — soft permutations that can't amplify) and Kimi K3's Block AttnRes (softmax reads over 8 depth blocks). The compounding-gain plot showing why unconstrained learned mixing fails at 93 layers, and the shared idea: learned convex combinations.</p>
+        <div class="card-arrow">Read guide →</div>
+      </a>
+    </div>
+    <h2 id="transformer-sequence-mixing">Sequence Mixing &amp; Memory</h2>
+    <div class="card-grid">
       <a class="card" href="transformer/linear-attention.html">
         <span class="card-tag tag-tf">Linear Attn</span>
         <div class="card-title">Linear Attention — Attention as a Fixed-Size State</div>
@@ -576,12 +597,6 @@
         <span class="card-tag tag-tf">DeltaNet</span>
         <div class="card-title">Gated DeltaNet — Overwrite, Don't Accumulate</div>
         <p class="card-desc">The delta rule as a read-then-correct memory write \(S_t = \alpha_t(I - \beta_t k_t k_t^\top)S_{t-1} + \beta_t k_t v_t^\top\), a live simulation of additive vs delta-rule recall, the decode loop from transformers, and how Qwen3-Next stacks it 3:1 with full attention.</p>
-        <div class="card-arrow">Read guide →</div>
-      </a>
-      <a class="card" href="transformer/moe-routing.html">
-        <span class="card-tag tag-tf">MoE Routing</span>
-        <div class="card-title">MoE Routing — Gating, Top-K Selection, and Load Balancing</div>
-        <p class="card-desc">How a Mixture-of-Experts layer decides which experts process each token: the gating network (\(\mathbf{x}W_g\) → softmax → top-\(K\)), why gradients still flow through a discrete selection, the expert capacity buffer, the auxiliary load-balancing loss \(\alpha E \sum_i f_i P_i\) that prevents expert collapse and its device- and communication-level siblings, expert granularity as an axis separate from \(K\) — plus why attention heads self-organize without any of this machinery (summation vs selection), and why the same discreteness breaks the importance ratio in RL, which is what routing replay pays to repair.</p>
         <div class="card-arrow">Read guide →</div>
       </a>
       <a class="card" href="transformer/conditional-memory.html">
@@ -612,12 +627,6 @@
         <span class="card-tag tag-tf">Hybrid</span>
         <div class="card-title">Hybrid Attention Stacks — Rationing Exact Recall</div>
         <p class="card-desc">The design pattern behind Qwen3.5 and Kimi K3: mostly recurrent-state layers, a few exact softmax layers. The memory identity \(M(T) = L_f c_{kv} T + (L{-}L_f)c_s\), why 3:1 captures 75% of the win (with the diminishing-returns plot), placement rules (interleave, end global, NoPE iff the linear layer encodes position), and the serving consequences of a two-object cache.</p>
-        <div class="card-arrow">Read guide →</div>
-      </a>
-      <a class="card" href="transformer/hyper-connections.html">
-        <span class="card-tag tag-tf">Residual</span>
-        <div class="card-title">Hyper-Connections &amp; Attention Residuals — Rewiring the Residual Stream</div>
-        <p class="card-desc">The two 2026 replacements for the uniform residual sum: DeepSeek-V4's mHC (4 lanes, mixing Sinkhorn-projected onto doubly stochastic matrices — soft permutations that can't amplify) and Kimi K3's Block AttnRes (softmax reads over 8 depth blocks). The compounding-gain plot showing why unconstrained learned mixing fails at 93 layers, and the shared idea: learned convex combinations.</p>
         <div class="card-arrow">Read guide →</div>
       </a>
     </div>
@@ -678,6 +687,12 @@
         <span class="card-tag tag-tf">Nemotron 3</span>
         <div class="card-title">Nemotron 3 — Mamba Hybrid, Latent Experts, 4-Bit Pretraining</div>
         <p class="card-desc">NVIDIA's reproducible frontier entry: a 5:1 Mamba-2 : GQA hybrid with no positional embeddings anywhere, LatentMoE experts in a quarter-width space activating top-22 of 512, shared-weight MTP heads, and NVFP4 in the pretraining loop itself — with the BF16 exception list mapping exactly where 4-bit still fails. Plus the 30B small end: Nano and 3.5 Lightning, the config-identical pair whose half-generation gap is pure training — NVFP4 pretrain, baked-in MTP, and a three-drafter serving kit.</p>
+        <div class="card-arrow">Read guide →</div>
+      </a>
+      <a class="card" href="transformer/gpt-6-astra.html">
+        <span class="card-tag tag-tf">GPT-6 Astra</span>
+        <div class="card-title">GPT-6 Astra — Adaptive Reasoning, Undisclosed Architecture</div>
+        <p class="card-desc">An evidence-first reading of OpenAI's September 2026 release: the 1.05M-token interface, adaptive reasoning-effort behavior, selected benchmark deltas, and the system card's monitorability finding — plus a precise ledger showing why no public primary source yet establishes recurrent depth, shared transformer blocks, loop counts, or learned halting.</p>
         <div class="card-arrow">Read guide →</div>
       </a>
     </div>

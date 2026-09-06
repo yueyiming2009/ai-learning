@@ -1,0 +1,1025 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Recurrent Depth — Looping a Transformer Block</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #7c3aed;
+      --accent-light: #f5f3ff;
+      --warning-bg: #fffbeb;
+      --warning-border: #f59e0b;
+      --warning-fg: #78350f;
+      --info-bg: #eff6ff;
+      --info-border: #3b82f6;
+      --info-fg: #1e40af;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --boxed-fg: #15803d;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --violet-border: #ddd6fe;
+      --nav-bg: rgba(255,255,255,0.92);
+      --fig-bg: #ffffff;
+      --plot-grid: #eceef1;
+      --plot-axis: #c7cbd1;
+      --plot-tick: #6b7280;
+      --plot-violet: #7c3aed;
+      --plot-violet2: #a78bfa;
+      --plot-teal: #0d9488;
+      --plot-amber: #d97706;
+      --plot-gray: #9ca3af;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #a78bfa;
+        --accent-light: #1a1626;
+        --warning-bg: #251c0b;
+        --warning-border: #b45309;
+        --warning-fg: #fcd34d;
+        --info-bg: #101a2b;
+        --info-border: #1e40af;
+        --info-fg: #93c5fd;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --boxed-fg: #4ade80;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --violet-border: #372a5e;
+        --nav-bg: rgba(15,17,21,0.9);
+        --fig-bg: #14181e;
+        --plot-grid: #232830;
+        --plot-axis: #3a4149;
+        --plot-tick: #9aa1ab;
+        --plot-violet: #a78bfa;
+        --plot-violet2: #c4b5fd;
+        --plot-teal: #2dd4bf;
+        --plot-amber: #fbbf24;
+        --plot-gray: #6b7280;
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    .hero {
+      background: linear-gradient(135deg, #4c1d95 0%, #7c3aed 52%, #8b5cf6 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.55rem, 4vw, 2.3rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.025em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.87;
+      font-size: 0.98rem;
+      max-width: 680px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .page-wrap {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+    }
+    h3 {
+      font-size: 0.98rem;
+      font-weight: 600;
+      margin: 1.7em 0 0.45em;
+      color: var(--ink);
+    }
+    p { margin: 0.65em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.65em 0; }
+    li { margin-bottom: 0.42em; }
+    em { color: var(--ink); }
+    a { color: var(--accent); }
+    code {
+      font-family: 'SF Mono', SFMono-Regular, ui-monospace, Menlo, monospace;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+    pre {
+      background: #111827;
+      color: #e5e7eb;
+      border-radius: 9px;
+      padding: 18px 20px;
+      overflow-x: auto;
+      line-height: 1.55;
+      font-size: 0.86rem;
+      margin: 1.2em 0;
+    }
+    pre code { background: none; border: 0; padding: 0; color: inherit; }
+
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.92rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 14px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface);
+      font-size: 0.79rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+
+    .note, .caution {
+      border-left: 3px solid;
+      border-radius: 0 8px 8px 0;
+      padding: 12px 17px;
+      margin: 1.2em 0;
+      font-size: 0.92rem;
+    }
+    .note {
+      background: var(--info-bg);
+      border-color: var(--info-border);
+      color: var(--info-fg);
+    }
+    .caution {
+      background: var(--warning-bg);
+      border-color: var(--warning-border);
+      color: var(--warning-fg);
+    }
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.25em 0;
+      text-align: center;
+    }
+    .result-label {
+      color: var(--boxed-fg);
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 7px;
+    }
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 15px 18px;
+      margin: 1.15em 0;
+    }
+    .step-label {
+      color: var(--accent);
+      font-size: 0.82rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-bottom: 5px;
+    }
+
+    .pipeline {
+      display: grid;
+      grid-template-columns: 1fr auto 1.25fr auto 1fr;
+      align-items: stretch;
+      gap: 10px;
+      margin: 1.5em 0;
+    }
+    .pipe-box {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      min-height: 112px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      padding: 13px;
+      text-align: center;
+      font-size: 0.88rem;
+    }
+    .pipe-box.core {
+      background: var(--accent-light);
+      border: 2px solid var(--accent);
+    }
+    .pipe-title {
+      color: var(--accent);
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .pipe-arrow {
+      align-self: center;
+      color: var(--muted);
+      font-size: 1.25rem;
+    }
+
+    .figure {
+      background: var(--fig-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 18px 14px;
+      margin: 1.6em 0;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .figure canvas {
+      width: 100%;
+      height: 300px;
+      display: block;
+    }
+    .figure-controls {
+      padding: 0 4px 12px;
+    }
+    .figure-controls label {
+      display: block;
+      color: var(--ink);
+      font-size: 0.88rem;
+      margin-bottom: 5px;
+    }
+    .figure-controls input { width: 100%; accent-color: var(--accent); }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      padding: 10px 4px 0;
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+    .legend-item { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, var(--c) 0 5px, transparent 5px 9px); }
+    .figure-caption {
+      font-size: 0.85rem;
+      color: var(--muted);
+      line-height: 1.6;
+      margin: 10px 4px 0;
+    }
+    .stat-grid, .summary-grid, .next-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 12px;
+      margin: 1.25em 0;
+    }
+    .stat, .summary-card {
+      background: var(--accent-light);
+      border: 1px solid var(--violet-border);
+      border-radius: 8px;
+      padding: 13px 15px;
+    }
+    .stat-value {
+      color: var(--accent);
+      font-weight: 600;
+      font-size: 1.18rem;
+    }
+    .stat-label, .summary-card-label {
+      color: var(--accent);
+      font-size: 0.76rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.045em;
+    }
+    .stat p, .summary-card p { margin: 3px 0 0; font-size: 0.88rem; }
+
+    .next-card {
+      display: block;
+      color: var(--text);
+      text-decoration: none;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      transition: border-color 0.15s, transform 0.15s;
+    }
+    .next-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+    .next-card-label {
+      color: var(--accent);
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.045em;
+    }
+    .next-card-title { font-weight: 600; margin: 3px 0; }
+    .next-card p { margin: 0; color: var(--muted); font-size: 0.85rem; }
+
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    @media (max-width: 680px) {
+      nav { padding: 0 14px; gap: 10px; }
+      .hero { padding: 42px 16px 38px; }
+      .page-wrap { padding: 34px 16px 60px; }
+      .pipeline { grid-template-columns: 1fr; }
+      .pipe-arrow { transform: rotate(90deg); }
+      .figure canvas { height: 270px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Recurrent Depth</a>
+  <div class="nav-links">
+    <a href="../index.html">← All notes</a>
+    <a href="../index.html#transformer-architecture" style="border-right:1px solid var(--border);padding-right:12px;margin-right:4px;">↑ Transformer · Core Architecture</a>
+    <a href="#definition">Definition</a>
+    <a href="#loop">The Loop</a>
+    <a href="#budget">Compute</a>
+    <a href="#training">Training</a>
+    <a href="#halting">Halting</a>
+    <a href="#huginn">Huginn</a>
+    <a href="#systems">Systems</a>
+    <a href="#summary">Summary</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Transformer · Core Architecture</span>
+  <h1>Recurrent Depth — Looping a Transformer Block</h1>
+  <p>Ordinary transformers buy depth with new parameters. A loop transformer applies one shared core repeatedly to a changing latent state, turning inference compute into an architectural scaling axis.</p>
+</div>
+
+<div class="page-wrap">
+
+  <p>
+    The standard <a href="transformer-block.html">transformer stack</a> uses a different parameter set
+    at every depth. Recurrent-depth models — also called <strong>loop transformers</strong> or
+    <strong>depth-recurrent transformers</strong> — keep a small physical stack and execute it several
+    times. The weights are shared; the hidden state is not. Each pass revises the representation left
+    by the previous pass.
+  </p>
+
+  <div class="note">
+    This page explains mechanisms documented in the Universal Transformer, Adaptive Computation Time,
+    PonderNet, and the open Huginn recurrent-pretraining work. OpenAI's public GPT-6 Astra materials do
+    not currently disclose a recurrent-depth architecture; the evidence boundary is documented on the
+    <a href="gpt-6-astra.html">Astra case-study page</a>.
+  </div>
+
+  <h2 id="definition">1. Four Different Meanings of "Recurrence"</h2>
+  <p>
+    The word is overloaded. The state index tells you which mechanism you are looking at:
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Mechanism</th><th>State advances over</th><th>Shared operation</th><th>What extra compute buys</th></tr>
+      <tr>
+        <td><strong>Ordinary transformer depth</strong></td>
+        <td>layer \(\ell\)</td>
+        <td>none: \(F_{\theta_\ell}\) differs by layer</td>
+        <td>new parameters and a new transformation</td>
+      </tr>
+      <tr>
+        <td><strong>Recurrent depth</strong></td>
+        <td>revision \(r\)</td>
+        <td>the same core \(F_\theta\)</td>
+        <td>another latent-state refinement</td>
+      </tr>
+      <tr>
+        <td><strong>Sequence recurrence</strong></td>
+        <td>token position \(t\)</td>
+        <td>a state update such as Mamba or DeltaNet</td>
+        <td>more context processed through a fixed-size memory</td>
+      </tr>
+      <tr>
+        <td><strong>Long reasoning trace</strong></td>
+        <td>generated token \(t\)</td>
+        <td>the whole model, once per token</td>
+        <td>more explicit language-space reasoning</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>
+    <a href="mamba.html">Mamba</a> and <a href="gated-deltanet.html">Gated DeltaNet</a> recur across
+    the <em>sequence</em>. Long chain-of-thought and search on the
+    <a href="../foundations/test-time-compute.html">test-time compute</a> page recur through
+    <em>generated tokens</em>. A loop transformer instead revises the same token representations
+    several times before the output head reads them.
+  </p>
+
+  <div class="result">
+    <div class="result-label">Untied stack versus shared-depth loop</div>
+    \[
+      \text{ordinary:}\quad H^{(\ell+1)} = F_{\theta_\ell}\!\left(H^{(\ell)}\right),
+      \qquad
+      \text{recurrent:}\quad H^{(r+1)} = F_{\theta}\!\left(H^{(r)}, E, s_r\right).
+    \]
+  </div>
+
+  <p>
+    \(E\) is an input representation that can be reinjected every pass, and \(s_r\) is an optional
+    recurrence-step embedding or control signal. Sharing \(\theta\) is the defining move. Without it,
+    repeatedly drawing the same box in a diagram is just an ordinary deep network.
+  </p>
+
+  <h2 id="loop">2. Prelude → Recurrent Core → Coda</h2>
+  <p>
+    A practical decoder-only design usually keeps a few untied layers around the loop. The
+    <strong>prelude</strong> converts token embeddings into a stable input representation; the
+    <strong>core</strong> performs \(R\) revisions; the <strong>coda</strong> converts the final latent
+    state into the representation consumed by the language-model head.
+  </p>
+
+  <div class="pipeline" aria-label="Prelude, recurrent core, and coda architecture">
+    <div class="pipe-box">
+      <div class="pipe-title">Prelude \(P_\phi\)</div>
+      <div>Embed tokens and build \(E\)</div>
+      <div>Executed once</div>
+    </div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-box core">
+      <div class="pipe-title">Shared core \(F_\theta\)</div>
+      <div>\(H^{(r+1)}=F_\theta(H^{(r)},E,s_r)\)</div>
+      <div>Executed \(R\) times</div>
+    </div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-box">
+      <div class="pipe-title">Coda \(C_\psi\)</div>
+      <div>Final norm and readout</div>
+      <div>Executed once</div>
+    </div>
+  </div>
+
+  \[
+    E=P_\phi(x),\qquad H^{(0)}=\operatorname{Init}(E),\qquad
+    H^{(r+1)}=F_\theta(H^{(r)},E,s_r),\qquad
+    p(x_{t+1}\mid x_{\le t})=\operatorname{softmax}\!\left(W_U C_\psi(H^{(R)})\right).
+  \]
+
+  <h3>Why inject the input again?</h3>
+  <p>
+    A pure iteration \(H^{(r+1)}=F_\theta(H^{(r)})\) can gradually forget the original token evidence
+    or collapse toward an attractor. Concatenating or adding \(E\) at each pass turns the update into
+    repeated refinement <em>conditioned on the problem</em>. A step embedding \(s_r\) also tells shared
+    weights where they are in the computation, so pass 20 need not behave like pass 1.
+  </p>
+
+  <pre><code>e = prelude(embed(tokens))
+h = initialize(e)
+
+for r in range(num_recurrences):
+    h = shared_core(fuse(h, e), step=r)
+
+logits = unembed(coda(h))</code></pre>
+
+  <p>
+    The core can contain several transformer blocks. "One loop" therefore means one application of the
+    whole core, not necessarily one attention-plus-MLP block.
+  </p>
+
+  <h2 id="budget">3. Parameters Stay Flat; Executed Depth Does Not</h2>
+  <p>
+    Let \(L_P\), \(L_R\), and \(L_C\) be the numbers of blocks in the prelude, recurrent core, and coda.
+    The stored block parameter sets and the number of block applications are:
+  </p>
+
+  <div class="result">
+    <div class="result-label">Storage versus execution</div>
+    \[
+      D_{\text{stored}}=L_P+L_R+L_C,
+      \qquad
+      D_{\text{executed}}(R)=L_P+R\,L_R+L_C.
+    \]
+  </div>
+
+  <p>
+    Weight sharing is a parameter-efficiency claim, not a free-compute claim. FLOPs and serial latency
+    still grow roughly linearly with \(R\). A recurrent model can therefore be small on disk while
+    behaving like a much deeper computation graph at inference.
+  </p>
+
+  <div class="figure">
+    <div class="figure-controls">
+      <label for="loop-count">Recurrent-core applications \(R\): <b id="loop-count-value">32</b></label>
+      <input id="loop-count" type="range" min="1" max="64" value="32">
+    </div>
+    <canvas id="plot-depth" aria-label="Stored and executed transformer block equivalents as recurrent loop count increases"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span> recurrent executed depth</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-teal)"></span> recurrent stored blocks</span>
+      <span class="legend-item"><span class="lg dash" style="--c:var(--plot-gray)"></span> ordinary 48-block stack</span>
+    </div>
+    <div class="stat-grid">
+      <div class="stat">
+        <div class="stat-label">Stored blocks</div>
+        <div class="stat-value" id="stored-value">8</div>
+        <p>Two prelude + four core + two coda.</p>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Executed blocks</div>
+        <div class="stat-value" id="executed-value">132</div>
+        <p>The effective computation depth at the selected \(R\).</p>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Core reuse</div>
+        <div class="stat-value" id="reuse-value">32×</div>
+        <p>One four-block parameter set, repeatedly applied.</p>
+      </div>
+    </div>
+    <p class="figure-caption">
+      <strong>More depth without proportionally more parameters.</strong> The plotted 2–4–2 layout is
+      the published Huginn configuration. At \(R=32\), eight stored blocks execute as 132 block
+      applications; an untied model with the same executed depth would need a separate parameter set
+      for every one of those applications.
+    </p>
+  </div>
+
+  <h2 id="training">4. Training a Loop Without Letting It Cheat</h2>
+
+  <div class="step">
+    <div class="step-label">Sample the recurrence count</div>
+    <p>
+      If every example always uses exactly \(R=32\), the core can specialize to a 32-step schedule and
+      fail at 8 or 64. Sampling depth during training teaches one transition operator to remain useful
+      across a range of budgets and makes test-time scaling possible.
+    </p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Backpropagate through only the tail</div>
+    <p>
+      Full backpropagation through \(R\) applications stores \(R\) sets of activations. A scalable
+      compromise runs early iterations without a gradient graph, then differentiates through the final
+      \(K\) iterations. This is truncated backpropagation through depth: compute still pays for all
+      \(R\), while activation memory scales mainly with \(K\).
+    </p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Make repeated application stable</div>
+    <p>
+      The same Jacobian is encountered again and again. Small expansive directions can compound into
+      exploding activations; overly contractive dynamics can erase useful state. Residual paths,
+      normalization, careful initialization, input reinjection, and training across varied depths all
+      matter more when one core must remain well behaved under repeated composition.
+    </p>
+  </div>
+
+  <div class="caution">
+    More loops are not guaranteed to help. A model can overthink, oscillate, converge to a bad fixed
+    point, or move its output distribution only cosmetically. Training at varied depths and measuring
+    answer quality — not merely latent convergence — are essential.
+  </div>
+
+  <h2 id="halting">5. Fixed Budgets, Learned Halting, and Convergence</h2>
+  <p>
+    Once depth is a loop, the iteration count can be chosen per request, sequence, or token. Three
+    families make different tradeoffs:
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Policy</th><th>Stopping rule</th><th>Strength</th><th>Failure mode</th></tr>
+      <tr>
+        <td><strong>Fixed \(R\)</strong></td>
+        <td>run an externally chosen number of loops</td>
+        <td>simple, deterministic, batch-friendly</td>
+        <td>wastes compute on easy inputs; may underthink hard ones</td>
+      </tr>
+      <tr>
+        <td><strong>ACT / PonderNet</strong></td>
+        <td>learn a halting distribution and penalize computation</td>
+        <td>task-adaptive and trainable</td>
+        <td>sensitive objective; divergent token-level loop counts hurt batching</td>
+      </tr>
+      <tr>
+        <td><strong>Convergence exit</strong></td>
+        <td>stop when successive predictions change by less than \(\delta\)</td>
+        <td>can retrofit a trained recurrent model</td>
+        <td>stable predictions can still be confidently wrong</td>
+      </tr>
+    </table>
+  </div>
+
+  <h3>Adaptive Computation Time</h3>
+  <p>
+    ACT adds a halting unit \(a_r=\sigma(w^\top H^{(r)}+b)\), accumulates probability mass, and stops
+    once the mass reaches \(1-\epsilon\) or a hard cap:
+  </p>
+  \[
+    N=\min\left\{M,\min\left\{n:\sum_{r=1}^{n}a_r\ge 1-\epsilon\right\}\right\},
+    \qquad
+    \mathcal{L}_{\text{total}}=\mathcal{L}_{\text{task}}+\tau\,\mathcal{P}.
+  \]
+  <p>
+    The ponder penalty \(\tau\mathcal{P}\) prices computation. Without it, the easiest way to reduce
+    task loss is usually to keep thinking.
+  </p>
+
+  <h3>PonderNet and convergence exits</h3>
+  <p>
+    PonderNet predicts a conditional halt probability \(\lambda_r\), inducing a stopping distribution
+    \(q_r=\lambda_r\prod_{j&lt;r}(1-\lambda_j)\), then regularizes it toward a geometric prior. A simpler
+    inference-only rule compares consecutive output distributions:
+  </p>
+  \[
+    N=\min\left\{r:D_{\mathrm{KL}}\!\left(p_{r-1}\,\|\,p_r\right)&lt;\delta\right\}.
+  \]
+  <p>
+    ACT and PonderNet learn when to stop; a KL threshold merely detects that the answer has stopped
+    moving. Those are not equivalent guarantees.
+  </p>
+
+  <h2 id="huginn">6. Open Case Study — Huginn</h2>
+  <p>
+    Geiping et al.'s <em>Scaling up Test-Time Compute with Latent Reasoning: A Recurrent Depth
+    Approach</em> is the clearest inspectable decoder-only example. The released 3.5B-parameter model
+    was trained on 800B tokens and exposes both its configuration and recurrence loop.
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Quantity</th><th>Published value</th><th>Interpretation</th></tr>
+      <tr><td>Prelude / core / coda</td><td>2 / 4 / 2 blocks</td><td>8 stored transformer blocks</td></tr>
+      <tr><td>Mean recurrence</td><td>32 core applications</td><td>\(2+32\cdot4+2=132\) executed blocks</td></tr>
+      <tr><td>Mean backprop depth</td><td>8 recurrent applications</td><td>early loops run without saved gradient history</td></tr>
+      <tr><td>Training-depth policy</td><td>randomized, Poisson/log-normal based</td><td>discourages dependence on one exact loop count</td></tr>
+      <tr><td>Input conditioning</td><td>prelude state reinjected each loop</td><td>keeps the original sequence available during refinement</td></tr>
+      <tr><td>Experimental early exit</td><td>successive-output KL threshold</td><td>inference heuristic, not a trained ACT head</td></tr>
+    </table>
+  </div>
+
+  <p>
+    The implementation makes truncated depth explicit: it samples no-gradient and gradient-bearing
+    iteration counts, executes the first group under <code>torch.no_grad()</code>, then checkpoints and
+    differentiates through the tail. The same <code>core_block</code> module is called every time, after
+    concatenating the current state with the prelude representation.
+  </p>
+
+  <div class="note">
+    "Effective depth 132" describes 132 block applications, not 132 independently learned layers.
+    Weight sharing changes the function class: the core learns an iterative algorithm, while an untied
+    stack can assign a completely different transformation to every depth.
+  </div>
+
+  <h2 id="systems">7. The Systems Bill Still Arrives</h2>
+  <ul>
+    <li><strong>Latency is serial.</strong> Loop \(r+1\) needs \(H^{(r)}\), so recurrent depth cannot be parallelized like best-of-\(n\) samples.</li>
+    <li><strong>FLOPs scale with the loop count.</strong> Shared weights reduce parameter memory, not matrix multiplications.</li>
+    <li><strong>Training activations are the pressure point.</strong> Truncated gradients and checkpointing trade extra recomputation for memory.</li>
+    <li><strong>Adaptive exits fragment batches.</strong> If examples or tokens stop at different depths, hardware either masks finished work or compacts the batch between iterations.</li>
+    <li><strong>Autoregressive caching becomes subtle.</strong> Different recurrence depths create different latent histories; token-wise early exits can leave loop-specific cache entries missing.</li>
+    <li><strong>Serving needs a new budget axis.</strong> Schedulers must account for prompt length, output length, and recurrent iterations rather than tokens alone.</li>
+  </ul>
+
+  <h2 id="compare">8. What Recurrent Depth Is — and Is Not</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Compared with</th><th>Shared idea</th><th>Critical difference</th></tr>
+      <tr>
+        <td><a href="transformer-block.html">ordinary deep transformers</a></td>
+        <td>successive residual-state refinement</td>
+        <td>ordinary layers have independent \(\theta_\ell\); a loop reuses \(\theta\)</td>
+      </tr>
+      <tr>
+        <td><a href="mamba.html">Mamba / sequence RNNs</a></td>
+        <td>a state repeatedly updated by shared weights</td>
+        <td>Mamba advances across tokens; recurrent depth revises the same sequence representation</td>
+      </tr>
+      <tr>
+        <td><a href="../foundations/test-time-compute.html">long chain-of-thought</a></td>
+        <td>quality can improve with extra inference compute</td>
+        <td>CoT spends compute on new tokens; recurrent depth spends it in latent space</td>
+      </tr>
+      <tr>
+        <td>deep equilibrium models</td>
+        <td>repeated dynamics and fixed-point language</td>
+        <td>recurrent-depth LLMs can train by finite unrolling rather than implicit differentiation</td>
+      </tr>
+      <tr>
+        <td><a href="multi-token-prediction.html">shared-weight MTP</a></td>
+        <td>one module may be reused</td>
+        <td>MTP advances future-token drafts; recurrent depth refines the main hidden state</td>
+      </tr>
+    </table>
+  </div>
+
+  <h2 id="summary">9. Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">Definition</div>
+      <p>Apply one shared transformer core repeatedly over latent depth: \(H^{(r+1)}=F_\theta(H^{(r)},E)\).</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Scaling axis</div>
+      <p>Stored parameters stay fixed while executed depth, FLOPs, and serial latency grow with \(R\).</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Training</div>
+      <p>Sample loop counts, reinject the input, stabilize repeated Jacobians, and truncate gradients when needed.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Halting</div>
+      <p>Fixed budgets are simple; ACT/PonderNet learn a compute policy; convergence exits only measure stability.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Open evidence</div>
+      <p>Huginn: 2–4–2 stored blocks, mean 32 recurrences, mean 8 gradient-bearing recurrences.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Not the same as</div>
+      <p>Sequence recurrence, shared embed/unembed weights, MTP drafting, or more chain-of-thought tokens.</p>
+    </div>
+  </div>
+
+  <h2>What's Next</h2>
+  <div class="next-grid">
+    <a class="next-card" href="transformer-block.html">
+      <div class="next-card-label">Prerequisite</div>
+      <div class="next-card-title">The Transformer Block</div>
+      <p>The independently weighted stack that recurrent depth replaces with a shared iterative core.</p>
+    </a>
+    <a class="next-card" href="gpt-6-astra.html">
+      <div class="next-card-label">Evidence audit</div>
+      <div class="next-card-title">GPT-6 Astra</div>
+      <p>What the release and system card establish — and why adaptive reasoning is not proof of a loop transformer.</p>
+    </a>
+    <a class="next-card" href="mamba.html">
+      <div class="next-card-label">Contrast</div>
+      <div class="next-card-title">Mamba &amp; State Space Models</div>
+      <p>Recurrence over sequence positions rather than repeated revisions over model depth.</p>
+    </a>
+    <a class="next-card" href="../foundations/test-time-compute.html">
+      <div class="next-card-label">Other compute axis</div>
+      <div class="next-card-title">Test-Time Compute Scaling</div>
+      <p>Spend inference compute on samples and generated reasoning tokens instead of latent iterations.</p>
+    </a>
+  </div>
+
+  <p style="margin-top:2.5em;font-size:0.85rem;color:var(--muted);">
+    <strong>Sources:</strong>
+    <a href="https://arxiv.org/abs/1807.03819">Dehghani et al., "Universal Transformers" (2018)</a>;
+    <a href="https://arxiv.org/abs/1603.08983">Graves, "Adaptive Computation Time for Recurrent Neural Networks" (2016)</a>;
+    <a href="https://arxiv.org/abs/2107.05407">Banino et al., "PonderNet" (2021)</a>;
+    <a href="https://arxiv.org/abs/2502.05171">Geiping et al., "Scaling up Test-Time Compute with Latent Reasoning" (2025)</a>;
+    and the
+    <a href="https://github.com/seal-rg/recurrent-pretraining">released recurrent-pretraining implementation</a>.
+    Huginn configuration values follow commit
+    <a href="https://github.com/seal-rg/recurrent-pretraining/tree/1ea7220ec7eb42d13e89db0663df254d0bcdc28e"><code>1ea7220</code></a>.
+  </p>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; Recurrent depth — looping a transformer block
+  &nbsp;·&nbsp; <a href="transformer-block.html" style="color:inherit">← Transformer block</a>
+</footer>
+
+<script>
+(function () {
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  function drawPlot(canvas, cfg) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth;
+    const cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const mL = 50, mR = 14, mT = 16, mB = 42;
+    const pw = cssW - mL - mR;
+    const ph = cssH - mT - mB;
+    const X = x => mL + (x - cfg.xMin) / (cfg.xMax - cfg.xMin) * pw;
+    const Y = y => mT + (cfg.yMax - y) / (cfg.yMax - cfg.yMin) * ph;
+
+    ctx.font = '11px Inter, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(t => {
+      const px = X(t);
+      ctx.beginPath();
+      ctx.moveTo(px, mT);
+      ctx.lineTo(px, mT + ph);
+      ctx.stroke();
+      ctx.fillText(String(t), px, mT + ph + 7);
+    });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(t => {
+      const py = Y(t);
+      ctx.beginPath();
+      ctx.moveTo(mL, py);
+      ctx.lineTo(mL + pw, py);
+      ctx.stroke();
+      ctx.fillText(String(t), mL - 8, py);
+    });
+
+    ctx.strokeStyle = cssVar('--plot-axis');
+    ctx.lineWidth = 1.25;
+    ctx.beginPath();
+    ctx.moveTo(mL, Y(0));
+    ctx.lineTo(mL + pw, Y(0));
+    ctx.stroke();
+
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(cfg.xLabel, mL + pw / 2, cssH - 8);
+    ctx.save();
+    ctx.translate(12, mT + ph / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText(cfg.yLabel, 0, 0);
+    ctx.restore();
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(mL, mT, pw, ph);
+    ctx.clip();
+    ctx.lineJoin = 'round';
+    cfg.series.forEach(s => {
+      ctx.beginPath();
+      ctx.lineWidth = s.width || 2;
+      ctx.strokeStyle = s.color.indexOf('--') === 0 ? cssVar(s.color) : s.color;
+      ctx.setLineDash(s.dash || []);
+      for (let i = 0; i <= 260; i++) {
+        const x = cfg.xMin + (cfg.xMax - cfg.xMin) * i / 260;
+        const y = s.fn(x);
+        if (i === 0) ctx.moveTo(X(x), Y(y));
+        else ctx.lineTo(X(x), Y(y));
+      }
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+
+    const markerX = cfg.markerX();
+    ctx.strokeStyle = cssVar('--plot-amber');
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(X(markerX), mT);
+    ctx.lineTo(X(markerX), mT + ph);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = cssVar('--plot-amber');
+    ctx.beginPath();
+    ctx.arc(X(markerX), Y(4 * markerX + 4), 4.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  const slider = document.getElementById('loop-count');
+  const value = document.getElementById('loop-count-value');
+  const executed = document.getElementById('executed-value');
+  const reuse = document.getElementById('reuse-value');
+  const canvas = document.getElementById('plot-depth');
+
+  const cfg = {
+    xMin: 1,
+    xMax: 64,
+    yMin: 0,
+    yMax: 270,
+    xTicks: [1, 8, 16, 32, 48, 64],
+    yTicks: [0, 50, 100, 150, 200, 250],
+    xLabel: 'recurrent-core applications, R',
+    yLabel: 'transformer block equivalents',
+    markerX: () => Number(slider.value),
+    series: [
+      { fn: x => 4 * x + 4, color: '--plot-violet', width: 2.75 },
+      { fn: () => 8, color: '--plot-teal', width: 2.25 },
+      { fn: () => 48, color: '--plot-gray', width: 2, dash: [6, 5] }
+    ]
+  };
+
+  function render() {
+    const r = Number(slider.value);
+    value.textContent = String(r);
+    executed.textContent = String(4 * r + 4);
+    reuse.textContent = r + '×';
+    drawPlot(canvas, cfg);
+  }
+
+  slider.addEventListener('input', render);
+  render();
+  let raf;
+  window.addEventListener('resize', () => {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(render);
+  });
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq.addEventListener) mq.addEventListener('change', render);
+})();
+</script>
+
+</body>
+</html>
