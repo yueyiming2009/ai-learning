@@ -434,7 +434,6 @@
     <a href="../index.html#transformer-architecture" style="border-right:1px solid var(--border);padding-right:12px;margin-right:4px;">↑ Transformer · Core Architecture</a>
     <a href="#definition">Definition</a>
     <a href="#loop">The Loop</a>
-    <a href="#readout">Readout</a>
     <a href="#budget">Compute</a>
     <a href="#training">Training</a>
     <a href="#halting">Halting</a>
@@ -502,13 +501,83 @@
     </table>
   </div>
 
+  <h3>One sequence, three different directions of movement</h3>
   <p>
-    <a href="mamba.html">Mamba</a> and <a href="gated-deltanet.html">Gated DeltaNet</a> recur across
-    the <em>sequence</em>. Long chain-of-thought and search on the
-    <a href="../foundations/test-time-compute.html">test-time compute</a> page recur through
-    <em>generated tokens</em>. A loop transformer instead revises the same token representations
-    several times before the output head reads them.
+    Take the three-token sequence <code>[The] [cat] [sat]</code>. Each token occupies one fixed slot
+    and has a \(d\)-dimensional hidden vector. Sequence recurrence, generated-token reasoning, and
+    recurrent depth all repeat computation, but they advance along different axes.
   </p>
+
+  <div class="step">
+    <div class="step-label">Mamba and Gated DeltaNet — move across existing tokens</div>
+    <pre><code>token:   The       cat       sat
+         |         |         |
+state:  S_0  ->   S_1  ->   S_2  ->  S_3
+              sequence position t increases</code></pre>
+    <p>
+      At token \(t\), the layer updates a compact memory from \(S_{t-1}\) to \(S_t\). When it reaches
+      <code>sat</code>, the state carries a compressed summary of <code>The cat</code>. The recurrent
+      object is the sequence memory \(S_t\), and one recurrence step means consuming the next token
+      position.
+    </p>
+    <p style="margin-bottom:0">
+      Training may evaluate this recurrence with parallel scans or chunkwise matrix multiplications,
+      but the mathematical dependency still runs from earlier tokens to later tokens.
+    </p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Chain-of-thought and search — extend the token sequence</div>
+    <pre><code>prompt
+  -> generate reasoning token y_1
+  -> append y_1 to the context
+  -> generate reasoning token y_2
+  -> append y_2 to the context
+  -> ...</code></pre>
+    <p>
+      The whole model runs to emit a token, that token becomes part of the next input, and the context
+      grows from \(T\) positions to \(T+1,T+2,\ldots\). A long chain-of-thought is therefore recurrent
+      in <em>generated-token space</em>. Search adds branches — several possible continuations — but
+      each branch still advances by generating or selecting more tokens.
+    </p>
+    <p style="margin-bottom:0">
+      This loop sits outside one forward pass: output text from one invocation becomes input to the
+      next invocation.
+    </p>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Loop transformer — move through latent depth</div>
+    <pre><code>             The          cat          sat
+
+r = 0       h_1(0)       h_2(0)       h_3(0)
+               |            |            |
+               +----- shared core -------+
+               |            |            |
+r = 1       h_1(1)       h_2(1)       h_3(1)
+               |            |            |
+               +----- same core ---------+
+               |            |            |
+r = 2       h_1(2)       h_2(2)       h_3(2)</code></pre>
+    <p>
+      The sequence still has exactly three token slots. No token is appended between \(r=0\) and
+      \(r=1\). Instead, the shared core updates all three hidden vectors, using attention to exchange
+      information among the positions and an MLP to transform each position.
+    </p>
+    <p style="margin-bottom:0">
+      "The same token representations" means the same <em>slots</em> remain associated with
+      <code>The</code>, <code>cat</code>, and <code>sat</code>; their vector values change on every
+      revision. Only after the chosen number of revisions does the coda and output head produce a
+      next-token distribution.
+    </p>
+  </div>
+
+  <div class="note">
+    The three mechanisms can coexist. A recurrent-depth model is still autoregressive: for each new
+    output token it can run \(R\) internal latent revisions, emit one token, append that token, and
+    repeat. It could also use a Mamba-like mixer inside its shared core. The axes are independent:
+    sequence position \(t\), generated position, and latent revision \(r\).
+  </div>
 
   <div class="result">
     <div class="result-label">Untied stack versus shared-depth loop</div>
@@ -579,131 +648,6 @@ logits = unembed(coda(h))</code></pre>
     The core can contain several transformer blocks. "One loop" therefore means one application of the
     whole core, not necessarily one attention-plus-MLP block.
   </p>
-
-  <h3 id="readout">Can We Turn an Intermediate Revision Back Into Tokens?</h3>
-  <p>
-    An activation is a continuous vector, not a token ID, so it cannot literally be passed to the
-    tokenizer's decoder. What we can do is apply the model's vocabulary readout early. This produces a
-    <em>probe</em> of the intermediate state: a provisional next-token distribution that the real
-    forward pass has not emitted.
-  </p>
-
-  <p>
-    Start with an ordinary 12-layer transformer. At token position \(t\), layer 6 leaves a residual
-    vector \(h^{(6)}_t\). The simplest readout sends that vector through the model's final normalization
-    and unembedding matrix:
-  </p>
-
-  <pre><code>layer-6 residual h_t^(6)
-        |
-        v
-final RMSNorm / LayerNorm
-        |
-        v
-unembedding W_U
-        |
-        v
-vocabulary logits -> top-k token strings</code></pre>
-
-  \[
-    \operatorname{logits}^{(6)}_t
-      = W_U\,\operatorname{FinalNorm}\!\left(h^{(6)}_t\right).
-  \]
-
-  <p>
-    This is the <strong>logit lens</strong>. It asks, "If layer 6 were already the final layer, which
-    token would the output head prefer?" For a causal model, the readout at position \(t\) is a
-    provisional prediction for position \(t+1\), not a reconstruction of the token currently occupying
-    position \(t\).
-  </p>
-
-  <div class="step">
-    <div class="step-label">Illustrative trajectory</div>
-    <p>For the final position of <code>The capital of France is</code>, a probe might evolve as:</p>
-    <pre><code>layer 2:   broad grammatical continuations
-layer 6:   "Paris" begins to rank highly
-layer 10:  "Paris" dominates
-layer 12:  final next-token distribution</code></pre>
-    <p style="margin-bottom:0">
-      These are snapshots of a changing distributed representation, not a transcript in which each
-      layer writes one word of private reasoning.
-    </p>
-  </div>
-
-  <h3>The Jacobian lens asks a better downstream question</h3>
-  <p>
-    The logit lens silently assumes that the remaining layers are the identity map. In the 12-layer
-    example, it reads \(h^{(6)}\) as though layers 7–12 would not rotate, gate, or otherwise transform
-    it. That approximation is often reasonable near the output and much weaker in early or middle
-    layers.
-  </p>
-
-  <p>
-    Anthropic's <a href="../foundations/jacobian-lens.html">Jacobian lens</a> instead estimates how the
-    remaining network typically transports a perturbation from layer 6 to the final residual stream:
-  </p>
-
-  \[
-    \bar J_6
-      = \mathbb{E}\!\left[
-          \frac{\partial h_{\mathrm{final},t'}}
-               {\partial h^{(6)}_t}
-        \right].
-  \]
-
-  <pre><code>Logit lens:
-    h6 -----------------------------> W_U -> tokens
-         assume remaining map is I
-
-Jacobian lens:
-    h6 -> average Jacobian of layers 7-12 -> W_U -> tokens
-          approximate downstream transport</code></pre>
-
-  <p>
-    Its vocabulary readout is conceptually
-  </p>
-  \[
-    \operatorname{lens}\!\left(h^{(6)}\right)
-      = \operatorname{softmax}\!\left(
-          W_U\,\operatorname{norm}\!\left(\bar J_6 h^{(6)}\right)
-        \right).
-  \]
-
-  <p>
-    The same distinction applies to recurrent depth. After recurrence \(r\), a logit lens directly
-    unembeds \(H^{(r)}\). A Jacobian lens asks how the <em>remaining applications of the shared core
-    plus the coda</em> would normally transform a direction in \(H^{(r)}\) before it affects the final
-    token logits.
-  </p>
-
-  <div class="table-wrap">
-    <table>
-      <tr><th>Readout</th><th>Intermediate-to-final map</th><th>Interpretation</th></tr>
-      <tr>
-        <td><strong>Logit lens</strong></td>
-        <td>assume identity</td>
-        <td>What token does this state resemble in the final vocabulary basis right now?</td>
-      </tr>
-      <tr>
-        <td><strong>Tuned lens</strong></td>
-        <td>learn a per-layer affine map</td>
-        <td>What final output can a fitted probe predict from this state?</td>
-      </tr>
-      <tr>
-        <td><strong>Jacobian lens</strong></td>
-        <td>use the model's averaged downstream derivative</td>
-        <td>How does the remaining computation tend to turn this direction into final logits?</td>
-      </tr>
-    </table>
-  </div>
-
-  <div class="caution">
-    A decoded intermediate token is not necessarily "what the model is thinking." The hidden vector
-    simultaneously carries syntax, entities, uncertainty, routing information, and many other
-    superposed features. Reading its top vocabulary direction discards almost all of that information.
-    Replacing the activation with the embedding of that one token would therefore be a destructive
-    intervention; merely reading it is harmless.
-  </div>
 
   <h2 id="budget">3. Parameters Stay Flat; Executed Depth Does Not</h2>
   <p>
@@ -957,10 +901,6 @@ Jacobian lens:
     <div class="summary-card">
       <div class="summary-card-label">Not the same as</div>
       <p>Sequence recurrence, shared embed/unembed weights, MTP drafting, or more chain-of-thought tokens.</p>
-    </div>
-    <div class="summary-card">
-      <div class="summary-card-label">Reading a revision</div>
-      <p>Logit lens unembeds it directly; the Jacobian lens approximates how the remaining loops and coda transform it first.</p>
     </div>
   </div>
 
