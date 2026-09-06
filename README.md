@@ -44,8 +44,9 @@ B300 vs. GB300), and the TPU's systolic array and torus.
 
 ### 03 · Transformer & Pretraining — [docs/transformer/](docs/transformer/)
 Assembling the Foundations pieces into a working model and training it. **Core Architecture:**
-self-attention (forward & backward), the pre-norm block, recurrent depth / loop transformers,
-MoE routing, and the 2026 residual-stream redesigns (hyper-connections / attention residuals).
+self-attention (forward & backward), the pre-norm block, recurrent depth / loop transformers
+plus their open-model and serving landscape, MoE routing, and the 2026 residual-stream redesigns
+(hyper-connections / attention residuals).
 **Sequence Mixing & Memory:** linear attention, Mamba & SSMs
 (discretization → selection → the Mamba-2 duality), Gated DeltaNet, KDA,
 sparse attention (the lightning indexer), hybrid attention stacks, and conditional memory.

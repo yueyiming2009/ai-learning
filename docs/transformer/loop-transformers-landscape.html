@@ -1,0 +1,1085 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Loop Transformers in Practice — Open Models, Retrofitting, and Serving</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #7c3aed;
+      --accent-light: #f5f3ff;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --nav-bg: rgba(255,255,255,0.92);
+      --violet-border: #ddd6fe;
+      --info-bg: #eff6ff;
+      --info-border: #3b82f6;
+      --info-fg: #1e40af;
+      --warning-bg: #fffbeb;
+      --warning-border: #f59e0b;
+      --warning-fg: #78350f;
+      --good-bg: #f0fdf4;
+      --good-border: #16a34a;
+      --good-fg: #15803d;
+      --fig-bg: #ffffff;
+      --plot-grid: #eceef1;
+      --plot-axis: #c7cbd1;
+      --plot-tick: #6b7280;
+      --plot-violet: #7c3aed;
+      --plot-teal: #0d9488;
+      --plot-amber: #d97706;
+      --plot-gray: #9ca3af;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #a78bfa;
+        --accent-light: #1a1626;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --nav-bg: rgba(15,17,21,0.9);
+        --violet-border: #372a5e;
+        --info-bg: #101a2b;
+        --info-border: #1e40af;
+        --info-fg: #93c5fd;
+        --warning-bg: #251c0b;
+        --warning-border: #b45309;
+        --warning-fg: #fcd34d;
+        --good-bg: #0e2016;
+        --good-border: #15803d;
+        --good-fg: #4ade80;
+        --fig-bg: #14181e;
+        --plot-grid: #232830;
+        --plot-axis: #3a4149;
+        --plot-tick: #9aa1ab;
+        --plot-violet: #a78bfa;
+        --plot-teal: #2dd4bf;
+        --plot-amber: #fbbf24;
+        --plot-gray: #6b7280;
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      height: 52px;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      color: var(--muted);
+      text-decoration: none;
+      white-space: nowrap;
+      font-size: 0.82rem;
+      padding: 4px 10px;
+      border-radius: 6px;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    .hero {
+      background: linear-gradient(135deg, #4c1d95 0%, #7c3aed 52%, #8b5cf6 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.55rem, 4vw, 2.3rem);
+      font-weight: 600;
+      letter-spacing: -0.025em;
+      margin: 0 0 12px;
+    }
+    .hero p {
+      margin: 0 auto;
+      max-width: 720px;
+      opacity: 0.87;
+      font-size: 0.98rem;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 100px;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      font-size: 0.78rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .page-wrap {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+    }
+    h3 {
+      font-size: 0.98rem;
+      font-weight: 600;
+      color: var(--ink);
+      margin: 1.7em 0 0.45em;
+    }
+    p { margin: 0.65em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.65em 0; }
+    li { margin-bottom: 0.42em; }
+    em { color: var(--ink); }
+    a { color: var(--accent); }
+    code {
+      font-family: 'SF Mono', SFMono-Regular, ui-monospace, Menlo, monospace;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+
+    .note, .caution, .status {
+      border-left: 3px solid;
+      border-radius: 0 8px 8px 0;
+      padding: 12px 17px;
+      margin: 1.2em 0;
+      font-size: 0.92rem;
+    }
+    .note {
+      background: var(--info-bg);
+      border-color: var(--info-border);
+      color: var(--info-fg);
+    }
+    .caution {
+      background: var(--warning-bg);
+      border-color: var(--warning-border);
+      color: var(--warning-fg);
+    }
+    .status {
+      background: var(--good-bg);
+      border-color: var(--good-border);
+      color: var(--good-fg);
+    }
+
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 13px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    tr:hover td { background: var(--row-hover); }
+
+    .badge {
+      display: inline-block;
+      border-radius: 100px;
+      padding: 2px 8px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .badge-a { background: var(--good-bg); color: var(--good-fg); border: 1px solid var(--good-border); }
+    .badge-b { background: var(--info-bg); color: var(--info-fg); border: 1px solid var(--info-border); }
+    .badge-c { background: var(--warning-bg); color: var(--warning-fg); border: 1px solid var(--warning-border); }
+
+    .figure {
+      background: var(--fig-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 18px 14px;
+      margin: 1.6em 0;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .figure canvas {
+      display: block;
+      width: 100%;
+      height: 340px;
+    }
+    .figure-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      padding: 0 4px 12px;
+    }
+    .figure-controls label {
+      color: var(--ink);
+      font-size: 0.87rem;
+      font-weight: 500;
+    }
+    .figure-controls select {
+      color: var(--text);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 9px;
+      font: inherit;
+      font-size: 0.86rem;
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      padding: 10px 4px 0;
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+    .legend-item { display: flex; align-items: center; gap: 7px; }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--c);
+      display: inline-block;
+    }
+    .figure-caption {
+      color: var(--muted);
+      font-size: 0.85rem;
+      line-height: 1.6;
+      margin: 10px 4px 0;
+    }
+    .selected-project {
+      background: var(--accent-light);
+      border: 1px solid var(--violet-border);
+      border-radius: 8px;
+      padding: 12px 15px;
+      margin: 10px 4px 0;
+      font-size: 0.88rem;
+    }
+    .selected-project strong { color: var(--accent); }
+
+    .path-grid, .summary-grid, .next-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(225px, 1fr));
+      gap: 12px;
+      margin: 1.25em 0;
+    }
+    .path-card, .summary-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      background: var(--surface);
+    }
+    .path-label, .summary-card-label {
+      color: var(--accent);
+      font-size: 0.76rem;
+      font-weight: 600;
+      letter-spacing: 0.045em;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+    .path-card p, .summary-card p { margin: 0; font-size: 0.88rem; }
+    .summary-card {
+      background: var(--accent-light);
+      border-color: var(--violet-border);
+    }
+
+    .next-card {
+      display: block;
+      color: var(--text);
+      text-decoration: none;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      transition: border-color 0.15s, transform 0.15s;
+    }
+    .next-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+    .next-card-label {
+      color: var(--accent);
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.045em;
+      text-transform: uppercase;
+    }
+    .next-card-title { font-weight: 600; margin: 3px 0; }
+    .next-card p { color: var(--muted); margin: 0; font-size: 0.85rem; }
+
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+
+    @media (max-width: 650px) {
+      nav { padding: 0 14px; gap: 10px; }
+      .hero { padding: 42px 16px 38px; }
+      .page-wrap { padding: 34px 16px 60px; }
+      .figure canvas { height: 300px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Loop Transformers in Practice</a>
+  <div class="nav-links">
+    <a href="../index.html">← All notes</a>
+    <a href="../index.html#transformer-architecture" style="border-right:1px solid var(--border);padding-right:12px;margin-right:4px;">↑ Transformer · Core Architecture</a>
+    <a href="#scope">Scope</a>
+    <a href="#snapshot">Snapshot</a>
+    <a href="#models">Models</a>
+    <a href="#retrofit">Retrofit</a>
+    <a href="#adaptive">Adaptive Depth</a>
+    <a href="#systems">Serving</a>
+    <a href="#frontier">Frontier</a>
+    <a href="#start">Where to Start</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Transformer · Core Architecture</span>
+  <h1>Loop Transformers in Practice</h1>
+  <p>Open models, recurrent pretraining, pretrained-model retrofits, adaptive depth, and the systems work required to turn shared-weight loops into usable language models.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="status">
+    <strong>Landscape verified September 6, 2026.</strong> "Open" is graded explicitly below:
+    some projects release training code, data, and checkpoints; some release weights and custom
+    inference only; others remain paper-level results. Reported benchmark numbers are not treated as
+    independent reproductions.
+  </div>
+
+  <p>
+    The <a href="recurrent-depth.html">Recurrent Depth</a> page explains the mechanism. This page asks
+    the practical follow-up: who has trained it, what can be downloaded, whether existing checkpoints
+    can be converted, and which systems problems still block broad deployment?
+  </p>
+
+  <h2 id="scope">1. What Counts as a Loop Transformer?</h2>
+  <p>
+    The defining operation is repeated application of shared transformer parameters over
+    <em>computational depth</em>:
+  </p>
+  \[
+    H^{(r+1)}=F_\theta(H^{(r)},E).
+  \]
+  <p>
+    Extra iterations refine the hidden representation without requiring a new parameter set for every
+    depth. That excludes several adjacent ideas that use "recurrence" or "latent reasoning" differently.
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Family</th><th>What repeats?</th><th>Included here?</th></tr>
+      <tr>
+        <td><strong>Looped / recurrent-depth transformer</strong></td>
+        <td>shared transformer blocks over latent depth</td>
+        <td>yes — the main subject</td>
+      </tr>
+      <tr>
+        <td><a href="mamba.html">Mamba, RWKV, recurrent sequence mixers</a></td>
+        <td>a state update across token positions</td>
+        <td>no — sequence recurrence</td>
+      </tr>
+      <tr>
+        <td>Coconut and continuous latent CoT</td>
+        <td>hidden states inserted into later latent/token positions</td>
+        <td>related, but a different execution pattern</td>
+      </tr>
+      <tr>
+        <td>Universal Transformer / ACT</td>
+        <td>shared depth transitions, optionally with halting</td>
+        <td>historical foundation</td>
+      </tr>
+      <tr>
+        <td>HRM / Tiny Recursive Models</td>
+        <td>task-specific latent or answer-state updates</td>
+        <td>relevant research, not general-purpose LM checkpoints</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>
+    A model can combine recurrent depth with generated chain-of-thought. Ouro-Thinking and IQuest's
+    Loop-Thinking checkpoints do both: hidden-state loops happen inside each language-model call, while
+    ordinary autoregressive decoding can still emit visible reasoning tokens.
+  </p>
+
+  <h2 id="snapshot">2. The Downloadable-Model Snapshot</h2>
+  <p>
+    Open looped checkpoints now span academic proof-of-concepts through specialized 40B coding models.
+    The plot shows <strong>stored parameter size</strong>, not quality or effective depth. Select a
+    project to highlight it.
+  </p>
+
+  <div class="figure">
+    <div class="figure-controls">
+      <label for="project-select">Highlight:</label>
+      <select id="project-select">
+        <option value="huginn">Huginn-0125</option>
+        <option value="ouro14">Ouro-1.4B</option>
+        <option value="ouro26">Ouro-2.6B</option>
+        <option value="iquest">IQuest-Coder 40B Loop</option>
+        <option value="loopcoder">LoopCoder-v2 7B</option>
+        <option value="nanbeige">Nanbeige4.2</option>
+        <option value="grt">Gated Recurrent Transformer</option>
+      </select>
+    </div>
+    <canvas id="plot-releases" aria-label="Open loop-transformer checkpoint size by public release date"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="dot" style="--c:var(--plot-violet)"></span> training code + weights</span>
+      <span class="legend-item"><span class="dot" style="--c:var(--plot-teal)"></span> weights + inference</span>
+      <span class="legend-item"><span class="dot" style="--c:var(--plot-amber)"></span> selected project</span>
+    </div>
+    <div class="selected-project">
+      <strong id="selected-project-label">Huginn-0125:</strong>
+      <span id="selected-project-detail">3.5B parameters; the most complete open recurrent-pretraining release.</span>
+    </div>
+    <p class="figure-caption">
+      <strong>The scale jump is real, but openness differs.</strong> Huginn and GRT expose training
+      implementations; Ouro, Nanbeige, LoopCoder-v2, and IQuest emphasize downloadable weights and
+      custom inference. Nanbeige is plotted at roughly 4.17B total stored parameters rather than its
+      3B non-embedding label. Dates are first public paper/checkpoint dates, rounded to the month.
+    </p>
+  </div>
+
+  <h2 id="models">3. Models Pretrained With Recurrence</h2>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Project</th><th>Open evidence</th><th>Scale and loop</th><th>Best use</th></tr>
+      <tr>
+        <td><strong>Huginn</strong></td>
+        <td><span class="badge badge-a">A · full stack</span><br>code, data, weights, intermediate checkpoints</td>
+        <td>3.5B; 2–4–2 layout; mean 32 core iterations</td>
+        <td>understanding and reproducing recurrent pretraining</td>
+      </tr>
+      <tr>
+        <td><strong>Ouro</strong></td>
+        <td><span class="badge badge-a">A · weights</span><br>1.4B/2.6B checkpoints and HF inference code</td>
+        <td>four recurrent passes; base and Thinking variants</td>
+        <td>compact looped-model inference and exit studies</td>
+      </tr>
+      <tr>
+        <td><strong>Nanbeige4.2</strong></td>
+        <td><span class="badge badge-a">A · weights</span><br>checkpoint plus serving forks</td>
+        <td>3B non-embedding, about 4.17B total; two loops</td>
+        <td>small general and agentic workloads</td>
+      </tr>
+      <tr>
+        <td><strong>LoopCoder-v2</strong></td>
+        <td><span class="badge badge-a">A · weights</span><br>checkpoint and specialized vLLM fork</td>
+        <td>7B; 14 shared layers; two loops</td>
+        <td>coding, tools, and non-monotonic loop-count study</td>
+      </tr>
+      <tr>
+        <td><strong>IQuest-Coder-V1 Loop</strong></td>
+        <td><span class="badge badge-a">A · weights</span><br>40B checkpoints and upstream vLLM implementation</td>
+        <td>80 shared layers executed twice</td>
+        <td>largest verified downloadable looped checkpoint</td>
+      </tr>
+      <tr>
+        <td><strong>Gated Recurrent Transformer</strong></td>
+        <td><span class="badge badge-a">A · research</span><br>code and 127M–779M checkpoints</td>
+        <td>prelude/core/coda with state-conditioned update gates</td>
+        <td>compact study of modulation and recurrent stability</td>
+      </tr>
+    </table>
+  </div>
+
+  <h3>Huginn — the reproducibility reference</h3>
+  <p>
+    <a href="https://github.com/seal-rg/recurrent-pretraining">Huginn's repository</a>,
+    <a href="https://huggingface.co/tomg-group-umd/huginn-0125">checkpoint</a>, and
+    <a href="https://huggingface.co/datasets/tomg-group-umd/huginn-dataset">training data</a>
+    expose the complete path from preprocessing to variable-depth generation. The 3.5B checkpoint was
+    trained on 800B tokens. Its custom cache, adaptive-compute experiments, and intermediate
+    checkpoints make it the best laboratory even though it is not the strongest application model.
+  </p>
+
+  <h3>Ouro — compact pretrained LoopLMs</h3>
+  <p>
+    ByteDance's <a href="https://huggingface.co/ByteDance/Ouro-2.6B">Ouro-2.6B</a> and related
+    checkpoints use iterative shared-weight computation, intermediate-depth supervision, and a learned
+    exit distribution. They are Apache-2.0 and convenient to load, but the public release is stronger
+    on weights and inference than on reproducing the full 7.7T-token pretraining run.
+  </p>
+  <div class="caution">
+    An exit distribution is not automatically an efficient early exit. The inspected Hugging Face
+    implementation computes all configured recurrences before selecting or combining intermediate
+    outputs. A policy can choose an earlier answer after the expensive work has already happened.
+  </div>
+
+  <h3>Application-oriented releases</h3>
+  <p>
+    <a href="https://huggingface.co/Nanbeige/Nanbeige4.2-3B">Nanbeige4.2-3B</a> is a small general and
+    agentic model with public SGLang, vLLM, llama.cpp, and Ollama branches.
+    <a href="https://huggingface.co/Multilingual-Multimodal-NLP/LoopCoder-V2">LoopCoder-v2</a> is a
+    7B two-loop coding model whose three- and four-loop variants regress sharply — direct evidence that
+    recurrent depth is not a monotonic quality knob.
+    <a href="https://huggingface.co/IQuestLab/IQuest-Coder-V1-40B-Loop-Instruct">IQuest-Coder-V1
+    40B Loop</a> is the largest accessible checkpoint verified here and has merged vLLM support, but
+    uses a custom license rather than plain Apache or MIT.
+  </p>
+
+  <h2 id="retrofit">4. Three Ways to Obtain a Looped Model</h2>
+  <div class="path-grid">
+    <div class="path-card">
+      <div class="path-label">Native pretraining</div>
+      <p>Design the recurrent trajectory before training and optimize the shared core end to end. Huginn, Ouro, Nanbeige, LoopCoder, and GRT follow this broad path.</p>
+    </div>
+    <div class="path-card">
+      <div class="path-label">Retrofitted recurrence</div>
+      <p>Map selected layers from an existing dense checkpoint into prelude/core/coda roles, add input injection, then continue training at varied depths.</p>
+    </div>
+    <div class="path-card">
+      <div class="path-label">Training-free wrapper</div>
+      <p>Keep a checkpoint frozen and reapply a middle layer window with damped residual substeps. Cheapest to try, but narrower evidence and weaker generation support.</p>
+    </div>
+  </div>
+
+  <h3>Retrofitting recurrence</h3>
+  <p>
+    <a href="https://github.com/mcleish7/retrofitting-recurrence">Teaching Pretrained Language Models
+    to Think Deeper with Retrofitted Recurrence</a> converts TinyLlama-1.1B, Llama-3.2-1B, and
+    OLMo-2-0425-1B. The conversion scripts preserve selected pretrained layers, assign them to
+    prelude/shared-core/coda roles, add Huginn-style input injection, verify the initial mapping, and
+    then continue training with a recurrent-depth curriculum. Released checkpoints are collected on
+    <a href="https://huggingface.co/collections/tomg-group-umd/retrofitting-recurrence">Hugging Face</a>.
+  </p>
+
+  <h3>Training-free looping</h3>
+  <p>
+    <a href="https://github.com/L-z-Chen/Training-Free-Looped-Transformer">Training-Free Looped
+    Transformers</a> wraps frozen Qwen3 checkpoints at inference. Naive reapplication usually drifts,
+    so the method treats a pre-norm block as an ODE step and replaces one large residual update with
+    smaller damped substeps anchored to the ordinary representation.
+  </p>
+  <div class="caution">
+    The public reproduction path primarily loops prefill or log-likelihood evaluation; incremental
+    decoding bypasses the loop. Its gains should not be read as a demonstrated general-purpose
+    latent-reasoning decoder.
+  </div>
+
+  <h2 id="adaptive">5. Adaptive Depth — Routing Is Ahead of Scheduling</h2>
+  <p>
+    A fixed-loop model gives every token the same recurrent depth. Adaptive computation instead asks
+    which tokens or examples deserve another pass. Four distinct capabilities are often conflated:
+  </p>
+  <ol>
+    <li>produce a valid prediction at intermediate depths;</li>
+    <li>learn or fit a policy that chooses a depth;</li>
+    <li>actually stop executing when the policy fires;</li>
+    <li>regroup unfinished work so the accelerator remains full.</li>
+  </ol>
+
+  <p>
+    <a href="https://github.com/raymin0223/mixture_of_recursions">Mixture-of-Recursions (MoR)</a> is
+    the strongest substantial open codebase for this problem. It routes tokens to different recursive
+    depths with token-choice or expert-choice routing, then handles recursion-specific KV state. Its
+    experiments span roughly 135M through 1.7B baseline configurations, with public training code and
+    author-linked checkpoints.
+  </p>
+
+  <p>
+    Ouro supplies learned exit distributions; Huginn supplies zero-shot criteria such as entropy
+    change, latent change, KL change, and argmax stability. Recent
+    <a href="https://arxiv.org/abs/2607.20519">adaptive-depth diagnostics</a> find that the supervision
+    used to shape intermediate trajectories can matter as much as the gate itself: a better classifier
+    cannot rescue states that were trained to be useful only at the final loop.
+  </p>
+
+  <h2 id="systems">6. Why Serving Is the Hard Part</h2>
+  <p>
+    Sharing weights reduces parameter storage. It does not automatically reduce recurrent FLOPs,
+    activation traffic, or KV-cache memory.
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Problem</th><th>Why recurrence creates it</th><th>Current direction</th></tr>
+      <tr>
+        <td><strong>Serial latency</strong></td>
+        <td>loop \(r+1\) depends on loop \(r\)</td>
+        <td>two-loop designs, partial-stack loops, parallel-loop attention</td>
+      </tr>
+      <tr>
+        <td><strong>KV-cache growth</strong></td>
+        <td>the same physical layer produces different K/V states on each visit</td>
+        <td>cache sharing, compression, gated updates, cross-loop attention</td>
+      </tr>
+      <tr>
+        <td><strong>Batch divergence</strong></td>
+        <td>different tokens or requests halt at different depths</td>
+        <td>routing, masking, compaction, depth-aware schedulers</td>
+      </tr>
+      <tr>
+        <td><strong>Training memory</strong></td>
+        <td>backpropagation spans repeated applications of the same core</td>
+        <td>truncated depth gradients and activation checkpointing</td>
+      </tr>
+      <tr>
+        <td><strong>Runtime support</strong></td>
+        <td>standard engines assume one visit per physical layer</td>
+        <td>custom Transformers code and model-specific vLLM/SGLang forks</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>
+    The most concrete serving progress is model-specific: IQuest's looped implementation is present in
+    upstream vLLM; Nanbeige publishes deployment branches; LoopCoder-v2 uses a specialized vLLM fork;
+    Huginn's plugin remains explicitly experimental. There is not yet one common loop-transformer
+    cache and scheduler interface.
+  </p>
+
+  <p>
+    <a href="https://arxiv.org/abs/2605.07721">MELT</a> proposes one gated KV cache per physical layer
+    so memory remains independent of loop count, while
+    <a href="https://arxiv.org/abs/2607.15456">Looped Latent Attention</a> compresses the trajectory
+    across loop-indexed KV states. Both are important directions, but no complete official artifact
+    release was verified for this snapshot.
+  </p>
+
+  <h2 id="frontier">7. The Research Frontier</h2>
+  <ul>
+    <li>
+      <strong>Stability:</strong>
+      <a href="https://github.com/lszshu/DeepLoop">DeepLoop</a> derives residual scaling for parameters
+      revisited many times; GRT adds state-conditioned update gates. The recurrent operator's dynamics,
+      not just nominal depth, decide whether extra loops settle, oscillate, or drift.
+    </li>
+    <li>
+      <strong>What should loop:</strong> full-block recurrence is expensive. Mixer-only and partial-stack
+      designs investigate whether repeated attention/state transport captures most of the gain without
+      repeatedly executing the dense FFN.
+    </li>
+    <li>
+      <strong>Matched-budget evidence:</strong>
+      <a href="https://arxiv.org/abs/2609.01343">SMELT</a> reports compute/parameter/KV-matched MoE
+      experiments up to 54B non-embedding parameters, but no public weights were verified.
+    </li>
+    <li>
+      <strong>Interpretability:</strong>
+      <a href="../foundations/jacobian-lens.html">Jacobian-lens</a> work now studies whether recurrent
+      models preserve a readable global workspace across loop boundaries. Different models carry and
+      reconstruct information in materially different ways.
+    </li>
+    <li>
+      <strong>Depth extrapolation:</strong> useful behavior beyond the trained loop range remains
+      inconsistent. More iterations can improve, saturate, or damage the answer.
+    </li>
+  </ul>
+
+  <div class="note">
+    GitHub contains many "reconstructions" of rumored closed architectures. They are useful personal
+    experiments, but they should not be placed beside projects with primary papers, trained
+    checkpoints, reproducible evaluations, and explicit licenses. This landscape includes the latter
+    and treats unverifiable releases as a watchlist, not evidence.
+  </div>
+
+  <h2 id="start">8. Where to Start</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Goal</th><th>Best starting point</th><th>Why</th></tr>
+      <tr>
+        <td>Understand the full training design</td>
+        <td><a href="https://github.com/seal-rg/recurrent-pretraining">Huginn</a></td>
+        <td>paper, code, data, weights, depth controls, and intermediate checkpoints</td>
+      </tr>
+      <tr>
+        <td>Run a compact pretrained LoopLM</td>
+        <td><a href="https://huggingface.co/ByteDance/Ouro-2.6B">Ouro-2.6B</a></td>
+        <td>small downloadable checkpoint with configurable recurrent steps</td>
+      </tr>
+      <tr>
+        <td>Convert an existing dense model</td>
+        <td><a href="https://github.com/mcleish7/retrofitting-recurrence">Retrofitting Recurrence</a></td>
+        <td>conversion scripts and released TinyLlama/Llama/OLMo examples</td>
+      </tr>
+      <tr>
+        <td>Study adaptive token depth</td>
+        <td><a href="https://github.com/raymin0223/mixture_of_recursions">Mixture-of-Recursions</a></td>
+        <td>routing and recursion-aware cache training are implemented together</td>
+      </tr>
+      <tr>
+        <td>Try a practical small agentic model</td>
+        <td><a href="https://huggingface.co/Nanbeige/Nanbeige4.2-3B">Nanbeige4.2-3B</a></td>
+        <td>open weights plus several local and server inference backends</td>
+      </tr>
+      <tr>
+        <td>Study coding and serving at larger scale</td>
+        <td><a href="https://huggingface.co/IQuestLab/IQuest-Coder-V1-40B-Loop-Instruct">IQuest 40B Loop</a></td>
+        <td>largest verified checkpoint and upstream vLLM integration</td>
+      </tr>
+    </table>
+  </div>
+
+  <h2 id="summary">9. Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">Maturity</div>
+      <p>Looped LMs have crossed from toy tasks into multi-billion-parameter open checkpoints and specialized serving integrations.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Best learning artifact</div>
+      <p>Huginn remains the most complete open path from data and training code to variable-depth inference.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Best adaptive code</div>
+      <p>Mixture-of-Recursions addresses token routing, missing KV entries, and batch efficiency in one framework.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Largest checkpoint</div>
+      <p>IQuest-Coder-V1-40B-Loop is the largest publicly accessible looped checkpoint verified here.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Central warning</div>
+      <p>More loops are not monotonically better; recurrent trajectories must be trained and stabilized for their deployment depth.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Main blocker</div>
+      <p>Efficient adaptive serving still needs loop-aware KV caches, compaction, and scheduler support.</p>
+    </div>
+  </div>
+
+  <h2>What's Next</h2>
+  <div class="next-grid">
+    <a class="next-card" href="recurrent-depth.html">
+      <div class="next-card-label">Mechanism</div>
+      <div class="next-card-title">Recurrent Depth</div>
+      <p>The shared-core equations, training loop, adaptive halting, and Huginn implementation in detail.</p>
+    </a>
+    <a class="next-card" href="gpt-6-astra.html">
+      <div class="next-card-label">Evidence boundary</div>
+      <div class="next-card-title">GPT-6 Astra</div>
+      <p>Why adaptive reasoning behavior does not by itself reveal a private model's architecture.</p>
+    </a>
+    <a class="next-card" href="../inference/kv-cache.html">
+      <div class="next-card-label">Serving prerequisite</div>
+      <div class="next-card-title">KV Cache</div>
+      <p>The memory object recurrent visits multiply, compress, share, or selectively omit.</p>
+    </a>
+    <a class="next-card" href="../foundations/test-time-compute.html">
+      <div class="next-card-label">Other compute axis</div>
+      <div class="next-card-title">Test-Time Compute Scaling</div>
+      <p>Generated-token depth and search width, contrasted with latent recurrent computation.</p>
+    </a>
+  </div>
+
+  <p style="margin-top:2.5em;font-size:0.85rem;color:var(--muted);">
+    <strong>Primary sources:</strong>
+    <a href="https://arxiv.org/abs/2502.05171">Huginn</a> and
+    <a href="https://github.com/seal-rg/recurrent-pretraining">its repository</a>;
+    <a href="https://arxiv.org/abs/2510.25741">Ouro</a>;
+    <a href="https://arxiv.org/abs/2511.07384">Retrofitting Recurrence</a>;
+    <a href="https://arxiv.org/abs/2507.10524">Mixture-of-Recursions</a>;
+    <a href="https://arxiv.org/abs/2605.23872">Training-Free Looped Transformers</a>;
+    <a href="https://arxiv.org/abs/2608.15062">Gated Recurrent Transformers</a>;
+    <a href="https://arxiv.org/abs/2607.13491">DeepLoop</a>;
+    <a href="https://arxiv.org/abs/2607.22083">Nanbeige4.2</a>;
+    <a href="https://arxiv.org/abs/2606.18023">LoopCoder-v2</a>;
+    <a href="https://arxiv.org/abs/2603.16733">IQuest-Coder-V1</a>;
+    <a href="https://arxiv.org/abs/2605.07721">MELT</a>; and
+    <a href="https://arxiv.org/abs/2609.01343">SMELT</a>.
+  </p>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; Loop transformers in practice
+  &nbsp;·&nbsp; <a href="recurrent-depth.html" style="color:inherit">← Recurrent depth</a>
+</footer>
+
+<script>
+(function () {
+  const projects = [
+    {
+      id: 'huginn',
+      name: 'Huginn',
+      month: 1,
+      params: 3.5,
+      kind: 'training',
+      dx: 7,
+      dy: -10,
+      detail: '3.5B parameters; the most complete open recurrent-pretraining release.'
+    },
+    {
+      id: 'ouro14',
+      name: 'Ouro 1.4B',
+      month: 9,
+      params: 1.4,
+      kind: 'weights',
+      dx: -60,
+      dy: 16,
+      detail: '1.4B parameters; compact four-step LoopLM with open weights and inference.'
+    },
+    {
+      id: 'ouro26',
+      name: 'Ouro 2.6B',
+      month: 9,
+      params: 2.6,
+      kind: 'weights',
+      dx: 7,
+      dy: -10,
+      detail: '2.6B parameters; four-step LoopLM with base and Thinking variants.'
+    },
+    {
+      id: 'iquest',
+      name: 'IQuest 40B',
+      month: 12,
+      params: 40,
+      kind: 'weights',
+      dx: 7,
+      dy: -10,
+      detail: '40B parameters; two-pass coding model and the largest verified open checkpoint here.'
+    },
+    {
+      id: 'loopcoder',
+      name: 'LoopCoder-v2',
+      month: 17,
+      params: 7,
+      kind: 'weights',
+      dx: -82,
+      dy: -10,
+      detail: '7B parameters; two-loop coding model with a specialized vLLM implementation.'
+    },
+    {
+      id: 'nanbeige',
+      name: 'Nanbeige4.2',
+      month: 18,
+      params: 4.17,
+      kind: 'weights',
+      dx: -92,
+      dy: 17,
+      detail: 'About 4.17B total stored parameters; two-loop general and agentic model.'
+    },
+    {
+      id: 'grt',
+      name: 'GRT 779M',
+      month: 19,
+      params: 0.779,
+      kind: 'training',
+      dx: -76,
+      dy: 17,
+      detail: '779M checkpoint; gated recurrent update with public research training code.'
+    }
+  ];
+
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  function drawPlot(canvas, selectedId) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth;
+    const cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const mL = 58, mR = 18, mT = 22, mB = 48;
+    const pw = cssW - mL - mR;
+    const ph = cssH - mT - mB;
+    const xMin = 0, xMax = 20;
+    const yMin = -0.4, yMax = 2;
+    const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
+    const Y = p => {
+      const y = Math.log10(p);
+      return mT + (yMax - y) / (yMax - yMin) * ph;
+    };
+
+    ctx.font = '11px Inter, sans-serif';
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.lineWidth = 1;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    [
+      [1, 'Feb 2025'],
+      [6, 'Jul 2025'],
+      [12, 'Jan 2026'],
+      [17, 'Jun 2026'],
+      [20, 'Sep 2026']
+    ].forEach(t => {
+      const px = X(t[0]);
+      ctx.beginPath();
+      ctx.moveTo(px, mT);
+      ctx.lineTo(px, mT + ph);
+      ctx.stroke();
+      ctx.fillText(t[1], px, mT + ph + 8);
+    });
+
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    [
+      [0.5, '0.5B'],
+      [1, '1B'],
+      [3, '3B'],
+      [10, '10B'],
+      [30, '30B'],
+      [100, '100B']
+    ].forEach(t => {
+      const py = Y(t[0]);
+      ctx.beginPath();
+      ctx.moveTo(mL, py);
+      ctx.lineTo(mL + pw, py);
+      ctx.stroke();
+      ctx.fillText(t[1], mL - 8, py);
+    });
+
+    ctx.strokeStyle = cssVar('--plot-axis');
+    ctx.lineWidth = 1.25;
+    ctx.beginPath();
+    ctx.moveTo(mL, mT);
+    ctx.lineTo(mL, mT + ph);
+    ctx.lineTo(mL + pw, mT + ph);
+    ctx.stroke();
+
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText('first public paper / checkpoint date', mL + pw / 2, cssH - 8);
+    ctx.save();
+    ctx.translate(13, mT + ph / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText('stored parameters (billions, log scale)', 0, 0);
+    ctx.restore();
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(mL, mT, pw, ph);
+    ctx.clip();
+    projects.forEach(project => {
+      const selected = project.id === selectedId;
+      const color = selected
+        ? cssVar('--plot-amber')
+        : project.kind === 'training'
+          ? cssVar('--plot-violet')
+          : cssVar('--plot-teal');
+      const px = X(project.month);
+      const py = Y(project.params);
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(px, py, selected ? 6.5 : 5, 0, Math.PI * 2);
+      ctx.fill();
+      if (selected) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(px, py, 10, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    });
+    ctx.restore();
+
+    ctx.font = '11px Inter, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    projects.forEach(project => {
+      const selected = project.id === selectedId;
+      ctx.fillStyle = selected ? cssVar('--plot-amber') : cssVar('--plot-tick');
+      ctx.fillText(
+        project.name,
+        X(project.month) + project.dx,
+        Y(project.params) + project.dy
+      );
+    });
+  }
+
+  const select = document.getElementById('project-select');
+  const canvas = document.getElementById('plot-releases');
+  const selectedProjectLabel = document.getElementById('selected-project-label');
+  const selectedProjectDetail = document.getElementById('selected-project-detail');
+
+  function render() {
+    const project = projects.find(p => p.id === select.value);
+    drawPlot(canvas, project.id);
+    selectedProjectLabel.textContent = project.name + ':';
+    selectedProjectDetail.textContent = ' ' + project.detail;
+  }
+
+  select.addEventListener('change', render);
+  render();
+  let raf;
+  window.addEventListener('resize', () => {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(render);
+  });
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq.addEventListener) mq.addEventListener('change', render);
+})();
+</script>
+
+</body>
+</html>
