@@ -439,6 +439,7 @@
     <a href="#halting">Halting</a>
     <a href="#huginn">Huginn</a>
     <a href="#systems">Systems</a>
+    <a href="#cot-kv">KV vs. CoT</a>
     <a href="#summary">Summary</a>
   </div>
 </nav>
@@ -835,6 +836,112 @@ logits = unembed(coda(h))</code></pre>
   </div>
 
   <h2 id="systems">7. The Systems Bill Still Arrives</h2>
+  <p>
+    Reusing weights guarantees a smaller parameter footprint than an equally deep untied model. It
+    does <em>not</em> guarantee a smaller KV cache: the answer depends on whether latent loops replace
+    explicit reasoning tokens and whether the runtime stores separate K/V states for every recurrent
+    visit.
+  </p>
+
+  <h3 id="cot-kv">Latent Loops vs. Explicit CoT — Where the KV Memory Goes</h3>
+  <p>
+    Let \(L\) be an ordinary model's layer count, \(T\) the prompt plus visible answer tokens, and
+    \(M\) the number of explicit chain-of-thought tokens. Ignoring the common factors for batch size,
+    KV heads, head dimension, and precision, its cache is proportional to:
+  </p>
+
+  <div class="result">
+    <div class="result-label">Ordinary model with explicit reasoning tokens</div>
+    \[
+      \mathrm{KV}_{\mathrm{CoT}} \;\propto\; L(T+M)
+    \]
+  </div>
+
+  <p>
+    Every generated reasoning token creates a key and value at every layer, and those entries remain
+    available to all later reasoning and answer tokens. A latent loop can avoid those extra token
+    positions: it repeatedly changes the hidden state while the sequence stays at length \(T\).
+  </p>
+
+  <p>
+    The catch is that one physical core layer produces a different hidden state on every recurrent
+    visit:
+  </p>
+  \[
+    K_{r,t}=H_{r,t}W_K,\qquad V_{r,t}=H_{r,t}W_V,
+    \qquad H_{r,t}\ne H_{r+1,t}.
+  \]
+  <p>
+    Shared \(W_K,W_V\) therefore do not imply shared K/V values. An exact naive implementation may
+    cache every <em>virtual layer visit</em>. With
+    \(L_{\mathrm{eff}}=L_P+R L_R+L_C\):
+  </p>
+
+  <div class="result">
+    <div class="result-label">Naive recurrent-depth cache, no explicit CoT</div>
+    \[
+      \mathrm{KV}_{\mathrm{loop}} \;\propto\; L_{\mathrm{eff}}T
+    \]
+  </div>
+
+  <p>
+    A loop-aware architecture can instead overwrite, compress, or recurrently update one cache per
+    physical layer. In the idealized case, with
+    \(L_{\mathrm{phys}}=L_P+L_R+L_C\):
+  </p>
+
+  <div class="result">
+    <div class="result-label">Shared or compressed loop cache</div>
+    \[
+      \mathrm{KV}_{\mathrm{shared}} \;\propto\; L_{\mathrm{phys}}T
+    \]
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Example</th><th>Cache depth × token positions</th><th>Layer-token units</th></tr>
+      <tr>
+        <td>32-layer model; 1,000 prompt/answer tokens + 1,000 CoT tokens</td>
+        <td>\(32\times(1000+1000)\)</td>
+        <td>64,000</td>
+      </tr>
+      <tr>
+        <td>2–4–2 loop model; \(R=8\); 1,000 tokens; exact per-visit cache</td>
+        <td>\((2+4\times8+2)\times1000\)</td>
+        <td>36,000</td>
+      </tr>
+      <tr>
+        <td>Same loop model; ideal one-cache-per-physical-layer design</td>
+        <td>\((2+4+2)\times1000\)</td>
+        <td>8,000</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>
+    One layer-token unit above means one token's K/V entry at one attention layer. Actual bytes multiply
+    it by \(2\times n_{\mathrm{KVheads}}\times d_{\mathrm{head}}\times\) bytes per stored value. The
+    example is illustrative rather than a universal win: a sufficiently large loop count can make
+    \(L_{\mathrm{eff}}T\) exceed \(L(T+M)\).
+  </p>
+
+  <div class="caution">
+    A looped Thinking model can pay both bills. If it runs several latent iterations for every
+    generated reasoning token, it stores the loop-related K/V state <em>and</em> grows the sequence with
+    explicit CoT entries. The memory advantage appears only to the extent that latent computation
+    replaces visible reasoning tokens or the architecture shares/compresses cache state across loops.
+  </div>
+
+  <p>
+    Explicit CoT also acts as a durable discrete scratchpad that later tokens can attend to directly.
+    Latent recurrence keeps the sequence shorter, but its intermediate work is encoded in hidden states
+    and may be discarded after the current prediction. The serving trade is therefore not merely
+    memory: it exchanges a longer persistent token history for more serial computation over a shorter
+    sequence. See the <a href="../inference/kv-cache.html">KV-cache page</a> for the underlying storage
+    arithmetic and <a href="loop-transformers-landscape.html#systems">the open landscape</a> for
+    Huginn, MoR, MELT, and parallel-loop cache strategies.
+  </p>
+
   <ul>
     <li><strong>Latency is serial.</strong> Loop \(r+1\) needs \(H^{(r)}\), so recurrent depth cannot be parallelized like best-of-\(n\) samples.</li>
     <li><strong>FLOPs scale with the loop count.</strong> Shared weights reduce parameter memory, not matrix multiplications.</li>
