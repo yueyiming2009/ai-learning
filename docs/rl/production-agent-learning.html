@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Learning from Real Users — Production Agent Training Loops</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --ink: #374151;
+      --accent: #0d9488;
+      --accent-light: #f0fdfa;
+      --accent-mid: #14b8a6;
+      --blue: #2563eb;
+      --blue-bg: #eff6ff;
+      --amber: #b45309;
+      --amber-bg: #fffbeb;
+      --red: #dc2626;
+      --red-bg: #fff1f2;
+      --green: #15803d;
+      --green-bg: #f0fdf4;
+      --violet: #7c3aed;
+      --violet-bg: #f5f3ff;
+      --nav-bg: rgba(255,255,255,0.92);
+      --row-hover: #fafafa;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --ink: #cbd5e1;
+        --accent: #2dd4bf;
+        --accent-light: #10201e;
+        --accent-mid: #2dd4bf;
+        --blue: #60a5fa;
+        --blue-bg: #101a2b;
+        --amber: #fbbf24;
+        --amber-bg: #251f0a;
+        --red: #f87171;
+        --red-bg: #2a1214;
+        --green: #4ade80;
+        --green-bg: #0e2016;
+        --violet: #a78bfa;
+        --violet-bg: #1a1626;
+        --nav-bg: rgba(15,17,21,0.9);
+        --row-hover: #191e25;
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      line-height: 1.72;
+      font-size: 16px;
+    }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      height: 52px;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--accent);
+      font-size: 0.9rem;
+      font-weight: 600;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links { display: flex; gap: 4px; overflow-x: auto; flex: 1; }
+    .nav-links a {
+      color: var(--muted);
+      font-size: 0.82rem;
+      padding: 4px 10px;
+      border-radius: 6px;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    .hero {
+      background: linear-gradient(135deg, #042f2e 0%, #0f766e 58%, #14b8a6 100%);
+      color: white;
+      padding: 58px 24px 50px;
+      text-align: center;
+    }
+    .hero-pill {
+      display: inline-block;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      border: 1px solid rgba(255,255,255,0.28);
+      border-radius: 100px;
+      background: rgba(255,255,255,0.14);
+      font-size: 0.78rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .hero h1 {
+      margin: 0 0 12px;
+      font-size: clamp(1.6rem, 4vw, 2.35rem);
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+    .hero p { max-width: 760px; margin: 0 auto; opacity: 0.9; font-size: 0.98rem; }
+
+    .page-wrap { max-width: 900px; margin: 0 auto; padding: 48px 24px 80px; }
+    h2 {
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      font-size: 1.17rem;
+      font-weight: 600;
+    }
+    h3 { margin: 1.7em 0 0.4em; color: var(--ink); font-size: 0.98rem; }
+    p { margin: 0.65em 0; }
+    ul, ol { padding-left: 1.45em; }
+    li { margin-bottom: 0.42em; }
+    a { color: var(--accent); }
+    code {
+      padding: 1px 5px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--surface);
+      font-family: Menlo, monospace;
+      font-size: 0.88em;
+    }
+
+    .thesis {
+      margin: 1.4em 0;
+      padding: 18px 22px;
+      border: 1.5px solid var(--accent-mid);
+      border-radius: 10px;
+      background: var(--accent-light);
+      text-align: center;
+      font-size: 1.02rem;
+    }
+    .thesis strong { color: var(--accent); }
+
+    .table-wrap { overflow-x: auto; margin: 1.3em 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.91rem; }
+    th, td { padding: 10px 13px; border: 1px solid var(--border); text-align: left; vertical-align: top; }
+    th {
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    tr:hover td { background: var(--row-hover); }
+
+    .level {
+      display: grid;
+      grid-template-columns: 48px 1fr;
+      gap: 16px;
+      margin: 12px 0;
+      padding: 14px 18px;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: var(--surface);
+    }
+    .level-num {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--accent-light);
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .level h3 { margin: 0 0 3px; }
+    .level p { margin: 0; color: var(--muted); font-size: 0.9rem; }
+    .level.frontier { border-color: var(--amber); background: var(--amber-bg); }
+    .level.frontier .level-num { background: var(--amber-bg); color: var(--amber); border: 1px solid var(--amber); }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      margin: 1.4em 0;
+    }
+    .flow-step {
+      position: relative;
+      padding: 15px 13px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      text-align: center;
+    }
+    .flow-step:not(:last-child)::after {
+      content: '→';
+      position: absolute;
+      right: -10px;
+      top: 50%;
+      transform: translate(50%, -50%);
+      z-index: 2;
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .flow-label { color: var(--accent); font-size: 0.76rem; font-weight: 600; text-transform: uppercase; }
+    .flow-step p { margin: 4px 0 0; color: var(--muted); font-size: 0.83rem; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(235px, 1fr));
+      gap: 12px;
+      margin: 1.3em 0;
+    }
+    .card { padding: 15px 17px; border: 1px solid var(--border); border-radius: 9px; }
+    .card h3 { margin: 0 0 5px; font-size: 0.92rem; }
+    .card p { margin: 0; color: var(--muted); font-size: 0.86rem; }
+    .card.good { background: var(--green-bg); border-color: var(--green); }
+    .card.good h3 { color: var(--green); }
+    .card.warn { background: var(--amber-bg); border-color: var(--amber); }
+    .card.warn h3 { color: var(--amber); }
+    .card.bad { background: var(--red-bg); border-color: var(--red); }
+    .card.bad h3 { color: var(--red); }
+    .card.info { background: var(--blue-bg); border-color: var(--blue); }
+    .card.info h3 { color: var(--blue); }
+
+    .callout {
+      margin: 1.2em 0;
+      padding: 12px 17px;
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      background: var(--accent-light);
+      font-size: 0.92rem;
+    }
+    .callout.warn { background: var(--amber-bg); border-left-color: var(--amber); }
+    .callout.bad { background: var(--red-bg); border-left-color: var(--red); }
+
+    .gate {
+      display: grid;
+      grid-template-columns: 110px 1fr;
+      gap: 15px;
+      padding: 13px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .gate:last-child { border-bottom: none; }
+    .gate-name { color: var(--accent); font-weight: 600; font-size: 0.88rem; }
+    .gate p { margin: 0; font-size: 0.9rem; }
+
+    .source-list li { margin-bottom: 0.72em; }
+    footer {
+      padding: 28px 24px;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      text-align: center;
+      font-size: 0.82rem;
+    }
+
+    @media (max-width: 720px) {
+      .flow { grid-template-columns: 1fr; }
+      .flow-step:not(:last-child)::after {
+        content: '↓';
+        right: auto;
+        left: 50%;
+        top: auto;
+        bottom: -13px;
+        transform: translate(-50%, 50%);
+      }
+      .gate { grid-template-columns: 1fr; gap: 3px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes">
+    <svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none"
+         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+         aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+    Production Agent Learning
+  </a>
+  <div class="nav-links">
+    <a href="../index.html">← All notes</a>
+    <a href="../index.html#rl-agentic-rl">↑ RL · Agentic RL</a>
+    <a href="#meaning">The Boundary</a>
+    <a href="#industry">Industry</a>
+    <a href="#architecture">Architecture</a>
+    <a href="#rewards">Signals</a>
+    <a href="#risks">Risks</a>
+    <a href="#frontier">Research Frontier</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Agentic RL · Production</span>
+  <h1>Learning from Real Users</h1>
+  <p>How to connect a deployed agent to training without turning customers into an uncontrolled exploration environment: the maturity ladder, production data flywheel, reward boundary, and research frontier.</p>
+</div>
+
+<main class="page-wrap">
+  <p>A deployed agent generates the richest possible training data: real tasks, real tool failures,
+  real preferences, and long-horizon outcomes. Connecting that experience to training is not a
+  crazy idea—it is the natural destination of agent learning. The dangerous version is narrower:
+  letting an updating policy experiment directly on users and publish its own weight changes.</p>
+
+  <div class="thesis">
+    <strong>Learn from real users; do not let an unconstrained learner experiment on them.</strong><br>
+    Production experience should enter a gated learning loop, not a direct gradient-to-deployment pipe.
+  </div>
+
+  <h2 id="meaning">1. "Connected to Training" Means Five Different Things</h2>
+
+  <p>Discussions often collapse observability, personalization, batch training, online experimentation,
+  and continuous weight updates into one phrase. They have very different risk profiles.</p>
+
+  <div class="level">
+    <div class="level-num">1</div>
+    <div><h3>Observe</h3><p>Versioned production traces capture prompts, tool calls, outcomes, latency, errors, and consent state. Nothing learns yet.</p></div>
+  </div>
+  <div class="level">
+    <div class="level-num">2</div>
+    <div><h3>Adapt without weights</h3><p>Memory, retrieval, prompt selection, routing, and workflow configuration adapt immediately while the model remains frozen.</p></div>
+  </div>
+  <div class="level">
+    <div class="level-num">3</div>
+    <div><h3>Train asynchronously</h3><p>Curated production trajectories become an offline SFT, preference-learning, or RL dataset. A candidate policy is produced later.</p></div>
+  </div>
+  <div class="level">
+    <div class="level-num">4</div>
+    <div><h3>Experiment behind gates</h3><p>Candidates run in replay, shadow, canary, or randomized trials with guardrail metrics and rollback.</p></div>
+  </div>
+  <div class="level frontier">
+    <div class="level-num">5</div>
+    <div><h3>Update weights online</h3><p>The serving policy learns continuously from fresh interactions. This is still a frontier architecture for general-purpose LLM agents.</p></div>
+  </div>
+
+  <div class="callout">
+    Immediate personalization is common, but it usually changes <strong>context</strong>, not
+    <strong>weights</strong>. A memory entry can be deleted and audited; a learned behavioral
+    tendency is distributed across parameters and much harder to reverse.
+  </div>
+
+  <h2 id="industry">2. Where Research and Industry Are</h2>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Pattern</th><th>Maturity</th><th>Typical use</th><th>Main boundary</th></tr>
+      <tr>
+        <td><strong>Logged feedback → periodic retraining</strong></td>
+        <td>Established</td>
+        <td>Conversations, thumbs, edits, accepted outputs, support outcomes</td>
+        <td>Consent, privacy filtering, curation, and delayed deployment</td>
+      </tr>
+      <tr>
+        <td><strong>Contextual bandits</strong></td>
+        <td>Mature in bounded domains</td>
+        <td>Ranking, recommendation, ads, notification and policy selection</td>
+        <td>Known action set, propensity logging, constrained exploration</td>
+      </tr>
+      <tr>
+        <td><strong>Production-trace agent optimization</strong></td>
+        <td>Emerging</td>
+        <td>Prompt/workflow tuning, model routing, SFT and batch RL</td>
+        <td>Trace schema, reward attribution, replay and evaluation</td>
+      </tr>
+      <tr>
+        <td><strong>Agent RL in realistic environments</strong></td>
+        <td>Active research</td>
+        <td>Coding, search, SQL, retrieval, browser and tool-use tasks</td>
+        <td>Usually sandboxed tasks or controlled datasets—not live customers</td>
+      </tr>
+      <tr>
+        <td><strong>Continuous live weight learning</strong></td>
+        <td>Frontier</td>
+        <td>Long-lived adaptive agents</td>
+        <td>Safe exploration, reward integrity, regression control, rollback</td>
+      </tr>
+    </table>
+  </div>
+
+  <p><a href="https://storage.googleapis.com/deepmind-media/Era-of-Experience%20/The%20Era%20of%20Experience%20Paper.pdf">Silver and Sutton's <em>Era of Experience</em></a>
+  makes the research case: persistent agents should learn from streams of grounded experience,
+  actions, observations, and consequences rather than only static human-generated data.
+  <a href="https://www.microsoft.com/en-us/research/project/agent-lightning/">Agent Lightning</a>
+  supplies part of the systems bridge by turning executions from existing agent frameworks into
+  transitions for a separate RL trainer. Its published examples remain controlled tasks; richer
+  user feedback and more advanced online methods are presented as future work.</p>
+
+  <p>Public product policies show the prevailing deployment pattern. For example,
+  <a href="https://help.openai.com/en/articles/5722486-how-your-data-is-used-to-improve-model-performance">OpenAI's data controls</a>
+  describe opted-in conversations and submitted feedback as material that may improve later
+  models. That is a data flywheel, not evidence that an individual interaction immediately
+  updates the model serving the next user.</p>
+
+  <h2 id="architecture">3. The Production-Safe Learning Loop</h2>
+
+  <div class="flow">
+    <div class="flow-step"><div class="flow-label">Serve</div><p>Frozen, versioned policy handles real tasks.</p></div>
+    <div class="flow-step"><div class="flow-label">Curate</div><p>Consent, PII filtering, rewards, and trace quality.</p></div>
+    <div class="flow-step"><div class="flow-label">Learn</div><p>Offline replay, SFT, preference learning, or batch RL.</p></div>
+    <div class="flow-step"><div class="flow-label">Gate</div><p>Replay → shadow → canary → promotion or rollback.</p></div>
+  </div>
+
+  <h3>Trace contract</h3>
+  <p>Every production trajectory needs enough provenance to be replayable and interpretable:</p>
+  <ul>
+    <li>policy, prompt, harness, tool, and environment versions;</li>
+    <li>observations, model actions, tool results, timing, retries, and terminal state;</li>
+    <li>sampling metadata when policy-gradient training is intended;</li>
+    <li>consent and retention status plus PII/security classifications;</li>
+    <li>immediate feedback and delayed business or task outcomes;</li>
+    <li>exposure propensity when the system chose among alternatives.</li>
+  </ul>
+
+  <p>The <a href="harnessed-agentic-rl.html">harnessed agentic RL</a> boundary is useful here:
+  the agent runtime owns real execution, while an event/trajectory layer gives the trainer a
+  stable contract. Production serving and training can share the trace format without sharing a
+  failure domain.</p>
+
+  <h3>Promotion gates</h3>
+  <div class="gate"><div class="gate-name">Replay</div><p>Run the candidate against immutable historical tasks. Detect regressions and compare counterfactual predictions where possible.</p></div>
+  <div class="gate"><div class="gate-name">Offline eval</div><p>Require capability, safety, privacy, and adversarial suites—not only the optimized reward.</p></div>
+  <div class="gate"><div class="gate-name">Shadow</div><p>Observe what the candidate would do without exposing its actions to users or tools.</p></div>
+  <div class="gate"><div class="gate-name">Canary</div><p>Expose a small, controlled population with bounded actions, stop conditions, and automatic rollback.</p></div>
+  <div class="gate"><div class="gate-name">Promote</div><p>A separate controller—not the learner—changes the production policy after explicit acceptance criteria pass.</p></div>
+
+  <h2 id="rewards">4. Real Users Produce Signals, Not a Ready-Made Reward</h2>
+
+  <div class="grid">
+    <div class="card good"><h3>Strong signals</h3><p>Verified task completion, accepted code, tests passing, resolved ticket, successful transaction, durable correction.</p></div>
+    <div class="card info"><h3>Useful but incomplete</h3><p>User edits, retries, escalation, abandonment, explicit preference, time-to-completion, downstream reuse.</p></div>
+    <div class="card warn"><h3>Easy to misread</h3><p>Thumbs, clicks, dwell time, conversation length, immediate satisfaction, agent self-reports.</p></div>
+    <div class="card bad"><h3>Unsafe alone</h3><p>Revenue, engagement, or retention optimized without truthfulness, fairness, safety, and user-welfare constraints.</p></div>
+  </div>
+
+  <p>User feedback is affected by who chooses to respond, what action they were shown, whether the
+  task was inherently difficult, and whether the consequence appears hours or weeks later.
+  A production reward therefore needs multiple channels and explicit constraints:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Channel</th><th>What it captures</th><th>Failure mode</th></tr>
+      <tr><td>Outcome verifier</td><td>Did the task actually succeed?</td><td>Proxy can miss quality, side effects, or hidden requirements.</td></tr>
+      <tr><td>User feedback</td><td>Was the result useful or preferred?</td><td>Selection bias, politeness, manipulation, short-term preference.</td></tr>
+      <tr><td>Process constraints</td><td>Did the agent obey policy and tool boundaries?</td><td>Checklist compliance can become the objective instead of the task.</td></tr>
+      <tr><td>Delayed outcome</td><td>Did the work remain correct and valuable?</td><td>Sparse signal and difficult credit assignment.</td></tr>
+      <tr><td>Guardrail metrics</td><td>Safety, privacy, fairness, cost, latency</td><td>Averages can hide subgroup or tail regressions.</td></tr>
+    </table>
+  </div>
+
+  <h2 id="risks">5. Why a Direct Live Loop Fails</h2>
+
+  <div class="grid">
+    <div class="card bad"><h3>Reward hacking</h3><p>The agent learns to satisfy the measurement rather than the user's underlying goal.</p></div>
+    <div class="card bad"><h3>User manipulation</h3><p>If satisfaction or engagement is reward, persuasion and sycophancy can become instrumental strategies.</p></div>
+    <div class="card warn"><h3>Biased feedback</h3><p>Only selected actions receive outcomes; vocal users and common tasks dominate the gradient.</p></div>
+    <div class="card warn"><h3>Policy lag</h3><p>Logged behavior comes from older policies, tools, and prompts, making naive updates off-policy.</p></div>
+    <div class="card warn"><h3>Catastrophic regression</h3><p>A local gain can erase rare capabilities or safety behavior across the entire user population.</p></div>
+    <div class="card bad"><h3>Privacy leakage</h3><p>Training can memorize sensitive user or enterprise data unless collection and retention are designed for learning.</p></div>
+  </div>
+
+  <div class="callout bad">
+    An agent may be able to affect the same system that produces its reward. Anthropic's
+    <a href="https://www.anthropic.com/research/reward-tampering">reward-tampering experiments</a>
+    show why the reward channel, evaluator, policy deployment, and training controller should be
+    separate trust domains.
+  </div>
+
+  <h2 id="frontier">6. What Remains Research</h2>
+
+  <ul>
+    <li><strong>Long-horizon credit assignment:</strong> which model calls among dozens caused the final outcome?</li>
+    <li><strong>Off-policy correction:</strong> how should learning account for trajectories generated by older or different production policies?</li>
+    <li><strong>Safe exploration:</strong> how can an agent discover better behavior without imposing unacceptable actions on users?</li>
+    <li><strong>Counterfactual evaluation:</strong> would another action have produced a better result when only one was actually served?</li>
+    <li><strong>Continual learning without forgetting:</strong> can adaptation preserve rare skills, safety behavior, and calibrated uncertainty?</li>
+    <li><strong>Reward integrity:</strong> can the agent influence users, evaluators, logs, tools, or the metric itself?</li>
+    <li><strong>Consent and deletion:</strong> how do data removal and purpose limitations propagate through datasets, checkpoints, and derived models?</li>
+  </ul>
+
+  <h3>A practical sequencing rule</h3>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Start here</th><th>Advance when</th><th>Do not advance if</th></tr>
+      <tr>
+        <td>Production traces → offline training</td>
+        <td>Trace quality, consent, and outcome labeling are reliable</td>
+        <td>You cannot replay or attribute the data to a policy version</td>
+      </tr>
+      <tr>
+        <td>Offline candidate → canary</td>
+        <td>Independent evals and guardrails pass with rollback ready</td>
+        <td>The optimized metric is the only acceptance test</td>
+      </tr>
+      <tr>
+        <td>Bandit optimization</td>
+        <td>Actions are bounded, reversible, and propensity-logged</td>
+        <td>Exploration can create material user or business harm</td>
+      </tr>
+      <tr>
+        <td>Online weight updates</td>
+        <td>All prior controls work and update-level rollback is proven</td>
+        <td>The learner can publish itself or alter its reward channel</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="thesis">
+    The near-term production pattern is a <strong>real-experience data flywheel with batch learning
+    and gated deployment</strong>. Fully online agent-weight learning is the frontier, not the default.
+  </div>
+
+  <h2 id="sources">Sources and Further Reading</h2>
+  <ul class="source-list">
+    <li><a href="https://storage.googleapis.com/deepmind-media/Era-of-Experience%20/The%20Era%20of%20Experience%20Paper.pdf">David Silver and Richard S. Sutton, “Welcome to the Era of Experience”</a> — the case for persistent agents learning from grounded streams of action and consequence.</li>
+    <li><a href="https://www.microsoft.com/en-us/research/project/agent-lightning/">Microsoft Research, Agent Lightning</a> · <a href="https://arxiv.org/abs/2508.03680">paper</a> — decoupling real agent execution from RL training through a transition interface and training service.</li>
+    <li><a href="https://help.openai.com/en/articles/5722486-how-your-data-is-used-to-improve-model-performance">OpenAI, how user data is used to improve model performance</a> — an example of consented product data entering a later model-improvement process.</li>
+    <li><a href="https://www.anthropic.com/research/reward-tampering">Anthropic, “Sycophancy to Subterfuge”</a> — controlled evidence that optimizing imperfect rewards can generalize into more serious reward manipulation.</li>
+    <li><a href="harnessed-agentic-rl.html">Harnessed Agentic RL</a> — the systems boundary for collecting authentic agent trajectories without putting the inner agent loop inside the trainer.</li>
+    <li><a href="behavior-policy.html">Behavior Policy</a> and <a href="../foundations/importance-sampling.html">Importance Sampling</a> — the statistical foundations for learning from data generated by a different policy.</li>
+  </ul>
+</main>
+
+<footer>AI Learning Notes · Reinforcement Learning · Production Agent Learning</footer>
+</body>
+</html>
