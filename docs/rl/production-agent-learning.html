@@ -318,17 +318,21 @@
 <div class="hero">
   <span class="hero-pill">Agentic RL · Production</span>
   <h1>The Production Learning Loop</h1>
-  <p>How to connect a deployed agent to training without turning customers into an uncontrolled exploration environment: the maturity ladder, production data flywheel, reward boundary, and research frontier.</p>
+  <p>How to learn from users, tools, environment state, operator interventions, and downstream outcomes without turning production into an uncontrolled exploration environment.</p>
 </div>
 
 <main class="page-wrap">
-  <p>A deployed agent generates the richest possible training data: real tasks, real tool failures,
-  real preferences, and long-horizon outcomes. Connecting that experience to training is not a
-  crazy idea—it is the natural destination of agent learning. The dangerous version is narrower:
-  letting an updating policy experiment directly on users and publish its own weight changes.</p>
+  <p>A deployed agent generates the richest possible training data: real tasks, user interactions,
+  tool and environment outcomes, operator corrections, and consequences that may appear hours or
+  weeks later. This is <strong>real-world experience</strong>—the full stream of observations,
+  actions, interventions, and outcomes produced while the agent does useful work. Connecting that
+  experience to training is not a crazy idea; it is the natural destination of agent learning.
+  The dangerous version is narrower: letting an updating policy experiment directly in production
+  or publish its own weight changes.</p>
 
   <div class="thesis">
-    <strong>Learn from real users; do not let an unconstrained learner experiment on them.</strong><br>
+    <strong>Learn from real-world experience, but do not let an unconstrained learner experiment on
+    users or publish its own updates.</strong><br>
     Production experience should enter a gated learning loop, not a direct gradient-to-deployment pipe.
   </div>
 
@@ -370,9 +374,9 @@
     <table>
       <tr><th>Pattern</th><th>Maturity</th><th>Typical use</th><th>Main boundary</th></tr>
       <tr>
-        <td><strong>Logged feedback → periodic retraining</strong></td>
+        <td><strong>Logged experience → periodic retraining</strong></td>
         <td>Established</td>
-        <td>Conversations, thumbs, edits, accepted outputs, support outcomes</td>
+        <td>Conversations, tool traces, edits, accepted outputs, operator actions, support outcomes</td>
         <td>Consent, privacy filtering, curation, and delayed deployment</td>
       </tr>
       <tr>
@@ -391,7 +395,7 @@
         <td><strong>Agent RL in realistic environments</strong></td>
         <td>Active research</td>
         <td>Coding, search, SQL, retrieval, browser and tool-use tasks</td>
-        <td>Usually sandboxed tasks or controlled datasets—not live customers</td>
+        <td>Usually sandboxed tasks or controlled datasets—not live users or production systems</td>
       </tr>
       <tr>
         <td><strong>Continuous live weight learning</strong></td>
@@ -448,24 +452,34 @@
   <div class="gate"><div class="gate-name">Canary</div><p>Expose a small, controlled population with bounded actions, stop conditions, and automatic rollback.</p></div>
   <div class="gate"><div class="gate-name">Promote</div><p>A separate controller—not the learner—changes the production policy after explicit acceptance criteria pass.</p></div>
 
-  <h2 id="rewards">4. Real Users Produce Signals, Not a Ready-Made Reward</h2>
+  <h2 id="rewards">4. Real-World Experience Produces Signals, Not a Ready-Made Reward</h2>
+
+  <p>Useful experience does not require a direct end-user rating. A coding agent can learn from
+  accepted patches, tests, reviews, and later regressions; an operations agent from alerts,
+  successful remediation, rollback, and operator override; a research agent from reproducibility,
+  citation quality, and downstream reuse; and an enterprise workflow agent from approvals,
+  corrections, process completion, and audit findings. Each is evidence about behavior—not a
+  complete objective by itself.</p>
 
   <div class="grid">
-    <div class="card good"><h3>Strong signals</h3><p>Verified task completion, accepted code, tests passing, resolved ticket, successful transaction, durable correction.</p></div>
-    <div class="card info"><h3>Useful but incomplete</h3><p>User edits, retries, escalation, abandonment, explicit preference, time-to-completion, downstream reuse.</p></div>
-    <div class="card warn"><h3>Easy to misread</h3><p>Thumbs, clicks, dwell time, conversation length, immediate satisfaction, agent self-reports.</p></div>
+    <div class="card good"><h3>Strong signals</h3><p>Verified task completion, accepted code, tests passing, resolved incident, successful transaction, reproducible result, durable correction.</p></div>
+    <div class="card info"><h3>Useful but incomplete</h3><p>User edits, operator overrides, retries, escalation, abandonment, explicit preference, time-to-completion, downstream reuse.</p></div>
+    <div class="card warn"><h3>Easy to misread</h3><p>Thumbs, clicks, dwell time, tool-call volume, conversation length, immediate satisfaction, agent self-reports.</p></div>
     <div class="card bad"><h3>Unsafe alone</h3><p>Revenue, engagement, or retention optimized without truthfulness, fairness, safety, and user-welfare constraints.</p></div>
   </div>
 
-  <p>User feedback is affected by who chooses to respond, what action they were shown, whether the
-  task was inherently difficult, and whether the consequence appears hours or weeks later.
-  A production reward therefore needs multiple channels and explicit constraints:</p>
+  <p>Production signals are affected by which users respond, which actions and tool paths were
+  exposed, whether an operator intervened, how difficult the task was, and whether the consequence
+  appears hours or weeks later. A production reward therefore needs multiple channels and explicit
+  constraints:</p>
 
   <div class="table-wrap">
     <table>
       <tr><th>Channel</th><th>What it captures</th><th>Failure mode</th></tr>
       <tr><td>Outcome verifier</td><td>Did the task actually succeed?</td><td>Proxy can miss quality, side effects, or hidden requirements.</td></tr>
       <tr><td>User feedback</td><td>Was the result useful or preferred?</td><td>Selection bias, politeness, manipulation, short-term preference.</td></tr>
+      <tr><td>Environment and tools</td><td>What changed, failed, or was verified?</td><td>Observable state can omit downstream effects or reward unnecessary activity.</td></tr>
+      <tr><td>Operator intervention</td><td>Where did a human correct, approve, stop, or recover the agent?</td><td>Interventions reflect local policy and may be inconsistently recorded.</td></tr>
       <tr><td>Process constraints</td><td>Did the agent obey policy and tool boundaries?</td><td>Checklist compliance can become the objective instead of the task.</td></tr>
       <tr><td>Delayed outcome</td><td>Did the work remain correct and valuable?</td><td>Sparse signal and difficult credit assignment.</td></tr>
       <tr><td>Guardrail metrics</td><td>Safety, privacy, fairness, cost, latency</td><td>Averages can hide subgroup or tail regressions.</td></tr>
@@ -477,7 +491,7 @@
   <div class="grid">
     <div class="card bad"><h3>Reward hacking</h3><p>The agent learns to satisfy the measurement rather than the user's underlying goal.</p></div>
     <div class="card bad"><h3>User manipulation</h3><p>If satisfaction or engagement is reward, persuasion and sycophancy can become instrumental strategies.</p></div>
-    <div class="card warn"><h3>Biased feedback</h3><p>Only selected actions receive outcomes; vocal users and common tasks dominate the gradient.</p></div>
+    <div class="card warn"><h3>Biased exposure</h3><p>Only selected actions receive outcomes; vocal users, visible tool results, and common tasks dominate the gradient.</p></div>
     <div class="card warn"><h3>Policy lag</h3><p>Logged behavior comes from older policies, tools, and prompts, making naive updates off-policy.</p></div>
     <div class="card warn"><h3>Catastrophic regression</h3><p>A local gain can erase rare capabilities or safety behavior across the entire user population.</p></div>
     <div class="card bad"><h3>Privacy leakage</h3><p>Training can memorize sensitive user or enterprise data unless collection and retention are designed for learning.</p></div>
@@ -530,7 +544,7 @@
   </div>
 
   <div class="thesis">
-    The near-term production pattern is a <strong>real-experience data flywheel with batch learning
+    The near-term production pattern is a <strong>real-world experience flywheel with batch learning
     and gated deployment</strong>. Fully online agent-weight learning is the frontier, not the default.
   </div>
 

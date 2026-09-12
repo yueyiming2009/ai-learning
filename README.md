@@ -85,7 +85,7 @@ From first-principles RL theory to LLM post-training and the systems that run it
 **Theory:** MDP → value functions → Monte Carlo → TD → DQN → policy gradient → PPO → MCTS →
 AlphaZero → tree search for LLMs. **Alignment:** RLHF, GRPO, DPO, DeepSeek-R1, cascade RL,
 distillation. **Agentic:** ReAct, agentic RL over long horizons, multi-turn tool-use training in
-verl, harness/trainer decoupling, and gated learning from real-user production experience.
+verl, harness/trainer decoupling, and gated learning from real-world production experience.
 **Environments:** the training-environment stack — anatomy + ecosystem landscape,
 OpenEnv, verifiers &amp; the Environments Hub, verifier/reward design, sandboxing at scale,
 task generation &amp; curriculum. **Frameworks:** the framework landscape, verl (HybridFlow) architecture, resource-pool
