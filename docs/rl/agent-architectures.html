@@ -1,0 +1,954 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Agent Architectures — Deep Agents and the Alternatives</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --surface-2: #f1f5f9;
+      --border: #e5e7eb;
+      --text: #172033;
+      --ink: #334155;
+      --muted: #64748b;
+      --accent: #0f766e;
+      --accent-mid: #14b8a6;
+      --accent-light: #f0fdfa;
+      --violet: #6d28d9;
+      --violet-light: #f5f3ff;
+      --blue: #2563eb;
+      --blue-light: #eff6ff;
+      --green: #15803d;
+      --green-light: #f0fdf4;
+      --amber: #b45309;
+      --amber-light: #fffbeb;
+      --red: #dc2626;
+      --red-light: #fff1f2;
+      --nav-bg: rgba(255,255,255,0.92);
+      --row-hover: #fafafa;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --surface-2: #1c222b;
+        --border: #29313b;
+        --text: #e5e7eb;
+        --ink: #cbd5e1;
+        --muted: #9aa4b2;
+        --accent: #2dd4bf;
+        --accent-mid: #5eead4;
+        --accent-light: #102321;
+        --violet: #a78bfa;
+        --violet-light: #1c1729;
+        --blue: #60a5fa;
+        --blue-light: #101d31;
+        --green: #4ade80;
+        --green-light: #102319;
+        --amber: #fbbf24;
+        --amber-light: #28200d;
+        --red: #f87171;
+        --red-light: #2b1417;
+        --nav-bg: rgba(15,17,21,0.9);
+        --row-hover: #191e25;
+      }
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 16px;
+      line-height: 1.72;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      height: 52px;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      border-bottom: 1px solid var(--border);
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+    }
+    .nav-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--accent);
+      font-size: 0.9rem;
+      font-weight: 600;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links { display: flex; gap: 4px; overflow-x: auto; flex: 1; }
+    .nav-links a {
+      padding: 4px 10px;
+      border-radius: 6px;
+      color: var(--muted);
+      font-size: 0.82rem;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+
+    .hero {
+      padding: 58px 24px 50px;
+      background: linear-gradient(135deg, #042f2e 0%, #0f766e 52%, #6d28d9 115%);
+      color: white;
+      text-align: center;
+    }
+    .hero-pill {
+      display: inline-block;
+      margin-bottom: 16px;
+      padding: 3px 12px;
+      border: 1px solid rgba(255,255,255,0.28);
+      border-radius: 100px;
+      background: rgba(255,255,255,0.14);
+      font-size: 0.78rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .hero h1 {
+      margin: 0 0 12px;
+      font-size: clamp(1.65rem, 4vw, 2.4rem);
+      font-weight: 600;
+      letter-spacing: -0.025em;
+    }
+    .hero p { max-width: 780px; margin: 0 auto; opacity: 0.9; font-size: 0.98rem; }
+
+    .page-wrap { max-width: 940px; margin: 0 auto; padding: 48px 24px 80px; }
+    h2 {
+      margin: 2.9em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      font-size: 1.18rem;
+      font-weight: 600;
+    }
+    h3 { margin: 1.7em 0 0.45em; color: var(--ink); font-size: 0.98rem; }
+    p { margin: 0.65em 0; }
+    ul, ol { padding-left: 1.45em; }
+    li { margin-bottom: 0.42em; }
+    a { color: var(--accent); }
+    code {
+      padding: 1px 5px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--surface);
+      font-family: Menlo, monospace;
+      font-size: 0.88em;
+    }
+
+    .thesis {
+      margin: 1.45em 0;
+      padding: 18px 22px;
+      border: 1.5px solid var(--accent-mid);
+      border-radius: 10px;
+      background: var(--accent-light);
+      text-align: center;
+      font-size: 1.02rem;
+    }
+    .thesis strong { color: var(--accent); }
+
+    .callout {
+      margin: 1.2em 0;
+      padding: 12px 17px;
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      background: var(--accent-light);
+      font-size: 0.92rem;
+    }
+    .callout.violet { border-left-color: var(--violet); background: var(--violet-light); }
+    .callout.warn { border-left-color: var(--amber); background: var(--amber-light); }
+
+    .table-wrap { overflow-x: auto; margin: 1.3em 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.89rem; }
+    th, td {
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 0.76rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    tr:hover td { background: var(--row-hover); }
+
+    .axis-grid, .pattern-grid, .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(235px, 1fr));
+      gap: 12px;
+      margin: 1.35em 0;
+    }
+    .axis-card, .pattern-card, .summary-card {
+      padding: 15px 17px;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: var(--surface);
+    }
+    .axis-card h3, .pattern-card h3, .summary-card h3 {
+      margin: 0 0 5px;
+      color: var(--accent);
+      font-size: 0.92rem;
+    }
+    .axis-card p, .pattern-card p, .summary-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+    .pattern-card.deep { border-color: var(--violet); background: var(--violet-light); }
+    .pattern-card.deep h3 { color: var(--violet); }
+    .pattern-card.code { border-color: var(--blue); background: var(--blue-light); }
+    .pattern-card.code h3 { color: var(--blue); }
+    .pattern-card.search { border-color: var(--amber); background: var(--amber-light); }
+    .pattern-card.search h3 { color: var(--amber); }
+
+    .stack {
+      max-width: 760px;
+      margin: 1.5em auto;
+      display: grid;
+      gap: 8px;
+    }
+    .stack-layer {
+      padding: 14px 18px;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: var(--surface);
+      text-align: center;
+    }
+    .stack-layer strong { display: block; color: var(--accent); font-size: 0.9rem; }
+    .stack-layer span { color: var(--muted); font-size: 0.84rem; }
+    .stack-layer.model { border-color: var(--violet); background: var(--violet-light); }
+    .stack-layer.model strong { color: var(--violet); }
+    .stack-layer.runtime { border-color: var(--blue); background: var(--blue-light); }
+    .stack-layer.runtime strong { color: var(--blue); }
+    .stack-arrow { color: var(--muted); text-align: center; line-height: 1; }
+
+    .episode {
+      margin: 1.4em 0;
+      padding: 19px 21px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface);
+    }
+    .episode-row {
+      display: grid;
+      grid-template-columns: 112px 1fr;
+      gap: 13px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .episode-row:last-child { border-bottom: none; }
+    .episode-who { color: var(--accent); font-size: 0.79rem; font-weight: 600; text-transform: uppercase; }
+    .episode-row p { margin: 0; font-size: 0.88rem; }
+
+    .relation {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 64px minmax(0, 1fr);
+      gap: 12px;
+      align-items: stretch;
+      margin: 1.4em 0;
+    }
+    .relation-box {
+      padding: 17px 19px;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: var(--surface);
+    }
+    .relation-box h3 { margin: 0 0 6px; color: var(--accent); }
+    .relation-box p { margin: 0; color: var(--muted); font-size: 0.88rem; }
+    .relation-box.deep { border-color: var(--violet); background: var(--violet-light); }
+    .relation-box.deep h3 { color: var(--violet); }
+    .relation-arrow {
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-size: 1.35rem;
+      font-weight: 600;
+    }
+
+    .boundary-flow {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin: 1.45em 0;
+    }
+    .boundary-stage {
+      position: relative;
+      padding: 16px 15px;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: var(--surface);
+    }
+    .boundary-stage:not(:last-child)::after {
+      content: '→';
+      position: absolute;
+      top: 50%;
+      right: -10px;
+      z-index: 2;
+      transform: translate(50%, -50%);
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .boundary-stage h3 { margin: 0 0 6px; color: var(--accent); font-size: 0.9rem; }
+    .boundary-stage p { margin: 0; color: var(--muted); font-size: 0.83rem; }
+
+    .trust-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 12px;
+      margin: 1.3em 0;
+    }
+    .trust-card {
+      padding: 15px 17px;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+    }
+    .trust-card.model { border-color: var(--violet); background: var(--violet-light); }
+    .trust-card.runtime { border-color: var(--blue); background: var(--blue-light); }
+    .trust-card h3 { margin: 0 0 6px; font-size: 0.92rem; }
+    .trust-card.model h3 { color: var(--violet); }
+    .trust-card.runtime h3 { color: var(--blue); }
+    .trust-card ul { margin: 0; color: var(--muted); font-size: 0.86rem; }
+
+    .next-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .next-card {
+      display: block;
+      padding: 14px 16px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: inherit;
+      text-decoration: none;
+    }
+    .next-card:hover { border-color: var(--accent); }
+    .next-card-label {
+      margin-bottom: 4px;
+      color: var(--accent);
+      font-size: 0.77rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .next-card-title { margin-bottom: 4px; font-size: 0.94rem; font-weight: 600; }
+    .next-card p { margin: 0; color: var(--muted); font-size: 0.86rem; }
+
+    .source-list li { margin-bottom: 0.7em; }
+    footer {
+      padding: 28px 24px;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      text-align: center;
+      font-size: 0.82rem;
+    }
+
+    @media (max-width: 720px) {
+      .relation { grid-template-columns: 1fr; }
+      .relation-arrow { transform: rotate(90deg); min-height: 28px; }
+      .boundary-flow { grid-template-columns: 1fr; }
+      .boundary-stage:not(:last-child)::after {
+        content: '↓';
+        top: auto;
+        right: auto;
+        bottom: -13px;
+        left: 50%;
+        transform: translate(-50%, 50%);
+      }
+      .episode-row { grid-template-columns: 1fr; gap: 2px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes">
+    <svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none"
+         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+         aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+    Agent Architectures
+  </a>
+  <div class="nav-links">
+    <a href="../index.html">← All notes</a>
+    <a href="../index.html#rl-agentic-rl">↑ RL · Agentic RL</a>
+    <a href="#axes">Architecture Axes</a>
+    <a href="#deep-agents">Deep Agents</a>
+    <a href="#alternatives">Alternatives</a>
+    <a href="#choose">How to Choose</a>
+    <a href="#boundary">Model vs. Harness</a>
+    <a href="#training">Training</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Agentic RL · Architecture</span>
+  <h1>Agent Architectures — Deep Agents and the Alternatives</h1>
+  <p>ReAct explains what happens inside one reason–act–observe turn. Architecture decides who plans, who controls the next step, where context lives, when work is delegated, whether alternatives branch, and which guarantees remain outside the model.</p>
+</div>
+
+<main class="page-wrap">
+  <p>An agent framework name is not an architecture. The same framework can run one tool-using
+  model, a deterministic graph, a manager with workers, a handoff network, or a search tree.
+  Conversely, the same architecture can be implemented in several frameworks. The useful question
+  is not “which agent library won?” but <strong>where control, state, context, and trust live</strong>.</p>
+
+  <div class="thesis">
+    <strong>Deep Agents are one important composite architecture, not the parent category.</strong><br>
+    They bundle a normal model/tool loop with external context management, delegation, memory, and
+    runtime services. Those pieces can be removed, replaced, or combined with other patterns.
+  </div>
+
+  <h2 id="axes">1. From an Agent Loop to an Agent Architecture</h2>
+
+  <p>The <a href="react.html">ReAct loop</a> answers a local question: after observing the current
+  state, how does the model reason, choose an action, and incorporate the result? An architecture
+  answers the system-level questions around that loop.</p>
+
+  <div class="axis-grid">
+    <div class="axis-card">
+      <h3>Control policy</h3>
+      <p>Does the model choose the next step, does application code choose it, or does a deterministic outer workflow contain agentic nodes?</p>
+    </div>
+    <div class="axis-card">
+      <h3>Execution topology</h3>
+      <p>One loop, planner–executor, supervisor–worker, peer handoff, or an explicit search tree over several candidate trajectories.</p>
+    </div>
+    <div class="axis-card">
+      <h3>Context topology</h3>
+      <p>One shared transcript, filtered handoff context, isolated worker contexts, or external working memory in files and stores.</p>
+    </div>
+    <div class="axis-card">
+      <h3>Improvement mechanism</h3>
+      <p>Continue from tool feedback, replan, ask a critic to revise, or generate and score multiple alternatives.</p>
+    </div>
+    <div class="axis-card">
+      <h3>State and durability</h3>
+      <p>Ephemeral prompt state, checkpointed thread state, cross-session memory, or a durable workflow that can pause and resume.</p>
+    </div>
+    <div class="axis-card">
+      <h3>Environment boundary</h3>
+      <p>What tools exist, where they execute, which side effects are allowed, and which sandbox, approval, and audit controls are enforced.</p>
+    </div>
+  </div>
+
+  <div class="callout">
+    These axes compose. A code-authored graph can invoke a Deep Agent node; a supervisor can
+    delegate to workers that each run ReAct; a reflection loop can wrap plan-and-execute; and a
+    tree search can branch entire tool-using trajectories.
+  </div>
+
+  <h2 id="deep-agents">2. Deep Agents — The Composite Case</h2>
+
+  <p>LangChain’s original <a href="https://www.langchain.com/blog/deep-agents">Deep Agents</a>
+  article described an ordinary LLM/tool loop augmented with four pieces: a detailed system prompt,
+  an explicit planning tool, subagents, and a filesystem used for both work products and context
+  management. That is a useful description of the <em>generic deep-agent pattern</em>. The concrete
+  <a href="https://github.com/langchain-ai/deepagents"><code>deepagents</code> library</a> is an
+  evolving implementation of that pattern, not the definition of the category.</p>
+
+  <p>As of September 2026, <code>create_deep_agent()</code> builds on LangChain’s normal agent loop
+  and the LangGraph runtime. It assembles middleware, storage backends, context compaction,
+  subagents, skills, optional memory, and optional human approval around the model/tool loop.
+  One important version caveat: since <code>deepagents</code> 0.7.0, task-list planning through
+  <code>TodoListMiddleware</code> is <em>supported but no longer installed by default</em>. The
+  architecture should therefore be understood as a configurable bundle, not a fixed checklist.</p>
+
+  <div class="stack" aria-label="Deep Agent architecture layers">
+    <div class="stack-layer runtime">
+      <strong>Trusted runtime and environment</strong>
+      <span>LangGraph execution, checkpoints, sandbox, approvals, budgets, tool permissions</span>
+    </div>
+    <div class="stack-arrow">↑ executes and persists</div>
+    <div class="stack-layer">
+      <strong>Middleware and backends</strong>
+      <span>Filesystem abstraction, summarization, memory loading, tool patching, storage routing</span>
+    </div>
+    <div class="stack-arrow">↑ shapes context and capabilities</div>
+    <div class="stack-layer model">
+      <strong>Manager model/tool loop</strong>
+      <span>Reason, call tools, optionally plan, delegate bounded work, integrate results</span>
+    </div>
+    <div class="stack-arrow">↕ delegates and receives summaries</div>
+    <div class="stack-layer">
+      <strong>Subagent loops</strong>
+      <span>Specialized prompts, tools, models, and normally isolated contexts</span>
+    </div>
+    <div class="stack-arrow">↕ reads and writes</div>
+    <div class="stack-layer">
+      <strong>External working state</strong>
+      <span>Files, artifacts, conversation history, durable stores, environment observations</span>
+    </div>
+  </div>
+
+  <h3>What each layer buys</h3>
+  <div class="pattern-grid">
+    <div class="pattern-card deep">
+      <h3>Filesystem-backed context</h3>
+      <p>Large observations and intermediate artifacts move out of the live transcript. Summaries keep the active context small while files retain exact details for later retrieval.</p>
+    </div>
+    <div class="pattern-card deep">
+      <h3>Subagent delegation</h3>
+      <p>A manager gives a bounded task to a specialist with a focused prompt and tool set. The worker returns a result instead of polluting the manager’s context with every intermediate step.</p>
+    </div>
+    <div class="pattern-card deep">
+      <h3>Optional explicit planning</h3>
+      <p>A task list can make progress inspectable and revisable, but a list is useful only when later actions actually consult and update it. Planning middleware is configuration, not magic.</p>
+    </div>
+    <div class="pattern-card deep">
+      <h3>Memory and skills</h3>
+      <p>Project instructions, reusable procedures, and cross-session facts can be loaded from external stores. Persistence depends on the configured backend; it is not automatically encoded in model weights.</p>
+    </div>
+    <div class="pattern-card deep">
+      <h3>Durable execution</h3>
+      <p>Checkpoints can support pause, approval, retry, replay, and recovery. Durability comes from the runtime and persistent checkpointer, not merely from calling the agent “deep.”</p>
+    </div>
+    <div class="pattern-card deep">
+      <h3>Capability boundaries</h3>
+      <p>Tools, backends, middleware, and sandboxes determine what the agent can actually do. The model proposes actions; trusted code validates and executes them.</p>
+    </div>
+  </div>
+
+  <h3>A worked execution</h3>
+  <p>Suppose the task is “upgrade a repository to a new payments API, preserve behavior, and
+  explain the migration.” A Deep-Agent-style harness might execute it as follows:</p>
+
+  <div class="episode">
+    <div class="episode-row">
+      <div class="episode-who">Manager</div>
+      <p>Inspects the task, optionally writes a plan, and creates shared artifacts such as <code>/work/constraints.md</code> and <code>/work/status.md</code>.</p>
+    </div>
+    <div class="episode-row">
+      <div class="episode-who">Research worker</div>
+      <p>Reads the migration documentation in an isolated context, records exact API changes in <code>/work/api-notes.md</code>, and returns a short summary.</p>
+    </div>
+    <div class="episode-row">
+      <div class="episode-who">Code worker</div>
+      <p>Inspects call sites, applies the migration, and writes changed-file and uncertainty notes without carrying the research worker’s full transcript.</p>
+    </div>
+    <div class="episode-row">
+      <div class="episode-who">Verifier</div>
+      <p>Runs tests and static checks in the sandbox. Failures become observations; they do not become self-certified success claims.</p>
+    </div>
+    <div class="episode-row">
+      <div class="episode-who">Manager</div>
+      <p>Reads the artifacts, reconciles conflicts, requests follow-up work if necessary, and produces the final patch and migration explanation.</p>
+    </div>
+  </div>
+
+  <p>This is hierarchical delegation plus external working memory. It is <strong>not tree
+  search</strong>: the workers are not competing branches whose values are backed up. It is also
+  not automatically parallel; a runtime may execute delegated work serially or concurrently.</p>
+
+  <h3>How Deep Agents relate to ReAct</h3>
+  <div class="relation">
+    <div class="relation-box">
+      <h3>ReAct</h3>
+      <p>The inner control primitive: observe the current context, reason about the next move, call a tool, append the real result, and repeat.</p>
+    </div>
+    <div class="relation-arrow">⊂</div>
+    <div class="relation-box deep">
+      <h3>Deep-agent harness</h3>
+      <p>A larger architecture that can run several ReAct-like loops while managing plans, contexts, files, memory, delegation, persistence, and approvals.</p>
+    </div>
+  </div>
+
+  <div class="callout violet">
+    Deep Agents do not replace ReAct at the same abstraction level. The manager and each subagent
+    may still use a ReAct-style model/tool loop; the deep-agent architecture determines how those
+    loops are composed and what state surrounds them.
+  </div>
+
+  <h2 id="alternatives">3. The Alternative Architecture Patterns</h2>
+
+  <p>“Alternative” does not mean mutually exclusive product choice. These are reusable patterns.
+  A system should add the smallest pattern that addresses its observed failure mode.</p>
+
+  <div class="pattern-grid">
+    <div class="pattern-card">
+      <h3>Enhanced single-agent ReAct</h3>
+      <p>One coherent model/tool loop with better tools, retrieval, summarization, guardrails, approvals, and perhaps a scratchpad. Lowest coordination overhead and the right default while one context still works.</p>
+    </div>
+    <div class="pattern-card">
+      <h3>Plan → execute → replan</h3>
+      <p>A planner creates explicit remaining work; an executor performs one step; a replanner updates or terminates the plan. Best when decomposition is stable enough to inspect but observations still change the route.</p>
+    </div>
+    <div class="pattern-card code">
+      <h3>Deterministic workflow or graph</h3>
+      <p>Application code owns transitions, branches, joins, loops, and approvals; models are nodes inside the flow. Best when predictability, auditability, or bounded cost matters more than open-ended autonomy.</p>
+    </div>
+    <div class="pattern-card">
+      <h3>Supervisor → workers</h3>
+      <p>A central manager decomposes work, delegates bounded subtasks, and retains responsibility for integration. This is the topology Deep Agents most directly emphasize.</p>
+    </div>
+    <div class="pattern-card">
+      <h3>Peer handoffs or “swarm”</h3>
+      <p>The active specialist transfers control to another specialist. In common SDKs, “swarm” usually means model-directed handoff—not necessarily decentralization, parallelism, or emergent collective intelligence.</p>
+    </div>
+    <div class="pattern-card">
+      <h3>Reflection or critic loop</h3>
+      <p>A generator produces work, a critic evaluates it, and the system revises until a coded acceptance or stopping rule fires. The critique normally changes context, not model weights.</p>
+    </div>
+    <div class="pattern-card search">
+      <h3>Tree search and branching</h3>
+      <p>Several candidate thoughts, states, or trajectories are generated and scored. ToT and LATS buy breadth and backtracking at much higher inference and environment cost.</p>
+    </div>
+    <div class="pattern-card code">
+      <h3>Environment-native agent</h3>
+      <p>The differentiator is a purpose-built computer interface: bounded file views, repository search, syntax-gated edits, shell execution, tests, patch extraction, and a sandbox. For coding, the environment can matter more than another model role.</p>
+    </div>
+  </div>
+
+  <h3>Representative implementations, not categories</h3>
+  <ul>
+    <li><strong>LangGraph, AutoGen GraphFlow, and CrewAI Flows</strong> can encode explicit state graphs, conditions, loops, and joins.</li>
+    <li><strong>OpenAI Agents SDK, AutoGen, AG2, and CrewAI</strong> expose manager, specialist, or handoff patterns in different forms.</li>
+    <li><strong>OpenHands and SWE-agent</strong> emphasize the workspace, shell/editor/test interface, sandbox, and trajectory around software work.</li>
+    <li><strong>Reflexion, Tree of Thoughts, and LATS</strong> are improvement/search patterns that can wrap or branch ordinary agent loops.</li>
+  </ul>
+
+  <div class="callout warn">
+    Framework names hide composition. “Multi-agent” may mean one manager calling workers, serial
+    handoffs through a shared transcript, or genuinely parallel isolated tasks. Those designs have
+    different costs, failure modes, and training traces even when a library exposes all of them
+    under one API.
+  </div>
+
+  <h2 id="choose">4. How to Choose</h2>
+
+  <div class="table-wrap">
+    <table>
+      <tr>
+        <th>Pattern</th>
+        <th>Who controls?</th>
+        <th>Context / delegation</th>
+        <th>Predictability</th>
+        <th>Relative cost</th>
+        <th>Best fit</th>
+      </tr>
+      <tr>
+        <td><strong>Single ReAct</strong></td>
+        <td>Model</td>
+        <td>One context</td>
+        <td>Low</td>
+        <td>Lowest baseline</td>
+        <td>Open-ended tasks that still fit one coherent trajectory</td>
+      </tr>
+      <tr>
+        <td><strong>Deep-agent harness</strong></td>
+        <td>Model inside runtime</td>
+        <td>Filesystem + isolated workers</td>
+        <td>Low–medium</td>
+        <td>Medium–high</td>
+        <td>Long-horizon research or coding under context pressure</td>
+      </tr>
+      <tr>
+        <td><strong>Plan / execute</strong></td>
+        <td>Planner + replanner</td>
+        <td>Explicit plan state</td>
+        <td>Medium</td>
+        <td>Medium</td>
+        <td>Tasks with inspectable decomposition and changing observations</td>
+      </tr>
+      <tr>
+        <td><strong>Workflow / graph</strong></td>
+        <td>Code</td>
+        <td>State passed by nodes</td>
+        <td>Highest</td>
+        <td>Predictable</td>
+        <td>Regulated, transactional, repeatable processes</td>
+      </tr>
+      <tr>
+        <td><strong>Supervisor / worker</strong></td>
+        <td>Manager model</td>
+        <td>Focused worker contexts</td>
+        <td>Low–medium</td>
+        <td>High, parallelizable</td>
+        <td>Decomposable tasks needing specialists and final synthesis</td>
+      </tr>
+      <tr>
+        <td><strong>Peer handoff</strong></td>
+        <td>Active specialist</td>
+        <td>Shared or filtered handoff</td>
+        <td>Low</td>
+        <td>Medium–high</td>
+        <td>Conversational routing among specialists</td>
+      </tr>
+      <tr>
+        <td><strong>Reflection / critic</strong></td>
+        <td>Generator + evaluator</td>
+        <td>Attempt and critique</td>
+        <td>Medium with coded stop</td>
+        <td>Iteration-dependent</td>
+        <td>Outputs with a stable rubric: code, writing, structured analysis</td>
+      </tr>
+      <tr>
+        <td><strong>Tree search</strong></td>
+        <td>Search controller</td>
+        <td>Isolated candidate branches</td>
+        <td>Medium</td>
+        <td>Highest</td>
+        <td>Hard tasks where candidates can be scored and compute is justified</td>
+      </tr>
+    </table>
+  </div>
+
+  <ol>
+    <li><strong>Start with one loop.</strong> Better tools and environment feedback often beat extra agent roles.</li>
+    <li><strong>Add explicit planning</strong> when long-horizon drift—not tool weakness—is the dominant failure.</li>
+    <li><strong>Add code-owned structure</strong> when predictability, approval, or bounded cost matters more than adaptation.</li>
+    <li><strong>Add workers</strong> when subtasks need different tools, prompts, or isolated context—not merely because the task is large.</li>
+    <li><strong>Add a critic</strong> only when an independent rubric can recognize improvement.</li>
+    <li><strong>Add search</strong> only when alternative trajectories can be scored well enough to justify their cost.</li>
+    <li><strong>For coding, improve the environment first:</strong> repository search, file views, safe edits, tests, and sandboxing define the action space the policy can learn.</li>
+  </ol>
+
+  <h3>Common architecture mistakes</h3>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <h3>Premature multi-agent design</h3>
+      <p>Several copies of the same weak policy add token cost and coordination errors without adding genuine specialization.</p>
+    </div>
+    <div class="summary-card">
+      <h3>Shared-context pollution</h3>
+      <p>Every worker sees every intermediate message, so delegation multiplies context instead of isolating it.</p>
+    </div>
+    <div class="summary-card">
+      <h3>Decorative planning</h3>
+      <p>The model writes a todo list once, then ignores it. A plan matters only if execution and replanning consume the same state.</p>
+    </div>
+    <div class="summary-card">
+      <h3>Handoff loops</h3>
+      <p>Specialists keep transferring control because ownership and terminal conditions are ambiguous.</p>
+    </div>
+    <div class="summary-card">
+      <h3>Self-verification</h3>
+      <p>The agent that produced an action also declares it safe and correct, with no independent test or policy boundary.</p>
+    </div>
+    <div class="summary-card">
+      <h3>Architecture by brand name</h3>
+      <p>A framework is selected before the required topology, state, trust boundaries, and failure modes are understood.</p>
+    </div>
+  </div>
+
+  <h2 id="boundary">5. The Moving Boundary — When the Model Absorbs the Harness</h2>
+
+  <p>“The model swallows the harness” contains two claims that should be separated. The first is
+  already plausible: training internalizes behavioral scaffolding, so the model needs fewer prompt
+  rules to choose tools, decompose tasks, recover from errors, or decide what context matters. The
+  stronger claim is that persistent state, permissions, execution, and governance become properties
+  of the model itself. That does not follow.</p>
+
+  <div class="boundary-flow">
+    <div class="boundary-stage">
+      <h3>Thick harness</h3>
+      <p>Prompts and code prescribe planning, routing, retries, compaction, critique, and delegation around a relatively generic model.</p>
+    </div>
+    <div class="boundary-stage">
+      <h3>Co-designed system</h3>
+      <p>The model has learned agentic behavior; the runtime supplies state, tools, policies, and checkpoints while intervening less often.</p>
+    </div>
+    <div class="boundary-stage">
+      <h3>Thin trusted kernel</h3>
+      <p>The model chooses most cognitive actions, but external infrastructure still validates, executes, persists, limits, observes, and rolls back them.</p>
+    </div>
+  </div>
+
+  <h3>Four kinds of “memory” that should not be collapsed</h3>
+  <div class="table-wrap">
+    <table>
+      <tr><th>State</th><th>Where it lives</th><th>What it means</th></tr>
+      <tr>
+        <td><strong>Parametric behavior</strong></td>
+        <td>Model weights</td>
+        <td>General learned tendencies: tool syntax, decomposition habits, recovery strategies.</td>
+      </tr>
+      <tr>
+        <td><strong>In-run state</strong></td>
+        <td>Prompt, tool results, KV cache</td>
+        <td>The current episode’s working context; normally gone unless the runtime retains it.</td>
+      </tr>
+      <tr>
+        <td><strong>Provider continuation</strong></td>
+        <td>Conversation or response service</td>
+        <td>External service state supplied to later inference calls, not a weight update.</td>
+      </tr>
+      <tr>
+        <td><strong>Application state</strong></td>
+        <td>Files, databases, checkpoints, stores</td>
+        <td>Durable, auditable facts, artifacts, identities, budgets, and execution history.</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="trust-grid">
+    <div class="trust-card model">
+      <h3>The model can increasingly own</h3>
+      <ul>
+        <li>task decomposition and replanning;</li>
+        <li>tool and specialist selection;</li>
+        <li>context triage and summarization proposals;</li>
+        <li>error recovery and escalation decisions;</li>
+        <li>critique, revision, and uncertainty reporting.</li>
+      </ul>
+    </div>
+    <div class="trust-card runtime">
+      <h3>The trusted runtime must still own</h3>
+      <ul>
+        <li>tool execution, authentication, and authorization;</li>
+        <li>durable storage, deletion, checkpoints, and replay;</li>
+        <li>sandboxes, network policy, secrets, and tenant isolation;</li>
+        <li>hard budgets, timeouts, rate limits, and termination;</li>
+        <li>independent verification, audit logs, deployment, and rollback.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="thesis">
+    <strong>The model may swallow the behavioral harness, but it cannot safely swallow the trust boundary.</strong><br>
+    The likely end state is not “no harness.” It is a thinner harness that looks less like a prompt
+    author and more like an operating system kernel for state, capabilities, policy, and evidence.
+  </div>
+
+  <p>This reframes Deep Agents too. Today’s explicit task lists, delegation prompts, context files,
+  and retry policies can generate the trajectories from which a future model learns those
+  behaviors. Some scaffolding may disappear into the policy. Files, permissions, sandboxes,
+  independent verifiers, and durable execution remain external because they are facts and
+  guarantees about the world—not merely better next-token predictions.</p>
+
+  <h2 id="training">6. Architecture Becomes Part of the Policy’s Training Distribution</h2>
+
+  <p>Changing the architecture changes what the model observes and therefore what policy is being
+  trained. A single ReAct loop produces one mostly linear trajectory. A deep-agent harness may
+  compact context, fork subagent prompts, merge summaries, and turn one task reward into several
+  trainable model-call sequences. A deterministic graph inserts code-authored state between model
+  calls. Tree search samples many branches but deploys only a selected path.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Architecture feature</th><th>Training consequence</th></tr>
+      <tr>
+        <td>Context compaction or file offload</td>
+        <td>The post-compaction prompt may no longer extend the earlier token prefix; the compacted text is environment-produced context, not sampled policy output.</td>
+      </tr>
+      <tr>
+        <td>Subagent delegation</td>
+        <td>One episode becomes several model-call histories with one shared terminal outcome and a harder credit-assignment problem.</td>
+      </tr>
+      <tr>
+        <td>Code-owned graph transitions</td>
+        <td>Transitions are easier to replay and audit, but the policy only learns decisions exposed at agentic nodes.</td>
+      </tr>
+      <tr>
+        <td>Reflection or critic calls</td>
+        <td>The learner must distinguish policy-generated tokens from evaluator feedback and decide which sequence receives the reward.</td>
+      </tr>
+      <tr>
+        <td>Tree-search selection</td>
+        <td>Generated-but-rejected branches contain behavior data too; training only on the winner introduces a selection mechanism that must be understood.</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>The <a href="harnessed-agentic-rl.html">Harnessed Agentic RL</a> page covers the systems
+  consequence: if the production harness owns the graph, the trainer must recover faithful tokens,
+  masks, behavior log-probabilities, and causal structure from the model calls it observes. The
+  <a href="production-agent-learning.html">Production Learning Loop</a> covers the longer-term
+  consequence: real harness behavior can become training data, but new policies still need
+  independent evaluation, promotion gates, and rollback.</p>
+
+  <h2>Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <h3>Loop vs. architecture</h3>
+      <p>ReAct is an inner control loop. Architecture places that loop inside a topology of planning, state, delegation, search, and execution.</p>
+    </div>
+    <div class="summary-card">
+      <h3>Deep Agents</h3>
+      <p>An opinionated harness around a normal model/tool loop: external context, subagents, memory, runtime services, and optional explicit planning.</p>
+    </div>
+    <div class="summary-card">
+      <h3>No universal winner</h3>
+      <p>Single loops, graphs, managers, handoffs, critics, and search solve different failure modes and can be composed.</p>
+    </div>
+    <div class="summary-card">
+      <h3>Environment first</h3>
+      <p>Tool feedback, safe execution, and a good computer interface often matter more than adding another model role.</p>
+    </div>
+    <div class="summary-card">
+      <h3>Future boundary</h3>
+      <p>Models can internalize planning and routing behavior; trusted infrastructure must still own authority, persistence, limits, evidence, and rollback.</p>
+    </div>
+    <div class="summary-card">
+      <h3>Train what you ship</h3>
+      <p>Compaction, delegation, graphs, and selection alter the policy’s observations. The deployed harness is part of the training distribution.</p>
+    </div>
+  </div>
+
+  <h2>What’s Next</h2>
+  <div class="next-grid">
+    <a class="next-card" href="agentic-rl.html">
+      <div class="next-card-label">Train the behavior</div>
+      <div class="next-card-title">Agentic RL</div>
+      <p>Reward, credit assignment, environments, and context management for long-horizon tool use.</p>
+    </a>
+    <a class="next-card" href="tree-search-llm.html">
+      <div class="next-card-label">Branch deliberately</div>
+      <div class="next-card-title">Tree Search for LLMs</div>
+      <p>ToT and LATS when one evolving trajectory is not enough and candidate branches can be scored.</p>
+    </a>
+    <a class="next-card" href="harnessed-agentic-rl.html">
+      <div class="next-card-label">Keep the real graph</div>
+      <div class="next-card-title">Harnessed Agentic RL</div>
+      <p>Train through an unchanged production harness while preserving token and behavior-policy fidelity.</p>
+    </a>
+    <a class="next-card" href="production-agent-learning.html">
+      <div class="next-card-label">Close the loop safely</div>
+      <div class="next-card-title">The Production Learning Loop</div>
+      <p>Turn real-world agent experience into gated, auditable model improvement.</p>
+    </a>
+  </div>
+
+  <h2 id="sources">Sources and Further Reading</h2>
+  <ul class="source-list">
+    <li><a href="https://arxiv.org/abs/2210.03629">Yao et al., “ReAct”</a> — the reason-and-act loop underneath the architectures on this page.</li>
+    <li><a href="https://www.langchain.com/blog/deep-agents">LangChain, “Deep Agents”</a> · <a href="https://github.com/langchain-ai/deepagents">current repository</a> · <a href="https://github.com/langchain-ai/deepagents/blob/9e7d62ff6e7131505995a706d717e01837aa8617/libs/ARCHITECTURE.md">architecture</a> · <a href="https://github.com/langchain-ai/deepagents/blob/9e7d62ff6e7131505995a706d717e01837aa8617/libs/deepagents/CHANGELOG.md#L100-L108">0.7.0 planning change</a>.</li>
+    <li><a href="https://docs.langchain.com/oss/python/deepagents/backends">Deep Agents backends</a> and <a href="https://docs.langchain.com/oss/python/langgraph/persistence">LangGraph persistence</a> — filesystem abstraction, thread state, stores, checkpoints, and durability.</li>
+    <li><a href="https://www.anthropic.com/engineering/building-effective-agents">Anthropic, “Building Effective Agents”</a> — workflows versus agents and composable orchestration patterns.</li>
+    <li><a href="https://openai.github.io/openai-agents-python/multi_agent/">OpenAI Agents SDK, multi-agent orchestration</a> and <a href="https://openai.github.io/openai-agents-python/handoffs/">handoffs</a>.</li>
+    <li><a href="https://docs.crewai.com/en/concepts/processes">CrewAI processes</a>, <a href="https://docs.crewai.com/en/concepts/flows">CrewAI flows</a>, and <a href="https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/swarm.html">AutoGen Swarm</a> — representative manager, graph, and handoff implementations.</li>
+    <li><a href="https://arxiv.org/abs/2303.11366">Reflexion</a>, <a href="https://arxiv.org/abs/2305.10601">Tree of Thoughts</a>, and <a href="https://arxiv.org/abs/2310.04406">Language Agent Tree Search</a> — critique, branching, and search patterns.</li>
+    <li><a href="https://github.com/SWE-agent/SWE-agent/blob/3ea751c087f32b16e039a2233dd6eefecef325d5/docs/background/aci.md">SWE-agent’s Agent-Computer Interface</a> and <a href="https://github.com/OpenHands/software-agent-sdk">OpenHands Software Agent SDK</a> — environment-native software agents.</li>
+    <li><a href="https://developers.openai.com/api/docs/guides/function-calling">OpenAI function calling</a>, <a href="https://developers.openai.com/api/docs/guides/conversation-state">conversation state</a>, and <a href="https://openai.github.io/openai-agents-python/tracing/">agent tracing</a> — the distinction between model proposals, external state, execution, and audit.</li>
+  </ul>
+</main>
+
+<footer>AI Learning Notes · Reinforcement Learning · Agent Architectures</footer>
+</body>
+</html>
