@@ -393,6 +393,7 @@
     <a href="../index.html#rl-agentic-rl">↑ RL · Agentic RL</a>
     <a href="#axes">The Agent Loop</a>
     <a href="#choose">State &amp; Control</a>
+    <a href="#compaction">Compaction</a>
     <a href="#alternatives">Core Patterns</a>
     <a href="#deep-agents">Deep Agents</a>
     <a href="#boundary">Model vs. Harness</a>
@@ -535,6 +536,66 @@
     <li><strong>Isolate:</strong> give a worker the minimum useful context instead of copying the manager’s entire transcript.</li>
     <li><strong>Persist:</strong> checkpoint state that must survive interruption, retry, or a fresh context window.</li>
   </ul>
+
+  <h3 id="compaction">How context compaction actually works</h3>
+  <p>Compaction is a runtime operation that replaces an old part of the active conversation with a
+  smaller checkpoint. It does <em>not</em> squeeze the original tokens into a denser hidden memory,
+  and it does not update the model’s weights. The complete transcript and artifacts can remain in
+  external storage; only the context supplied to the next model call becomes smaller.</p>
+
+  <div class="stack" aria-label="Context compaction flow">
+    <div class="stack-layer">
+      <strong>Canonical run state</strong>
+      <span>Full messages, exact tool outputs, files, checkpoints, and audit records remain externally available.</span>
+    </div>
+    <div class="stack-arrow">↓ select an old prefix</div>
+    <div class="stack-layer runtime">
+      <strong>Compaction pass</strong>
+      <span>Extract goals, constraints, decisions, evidence pointers, completed work, open questions, and the next step.</span>
+    </div>
+    <div class="stack-arrow">↓ rebuild the model view</div>
+    <div class="stack-layer model">
+      <strong>Next active context</strong>
+      <span>Stable instructions + compact checkpoint + recent turns + retrieved artifacts relevant to the next decision.</span>
+    </div>
+  </div>
+
+  <p>A typical harness compacts before a request would exceed its input budget—or earlier, when a
+  long noisy history begins to hurt quality. It chooses a cut point, preserves protected content
+  such as system instructions and tool schemas, summarizes the older prefix into structured task
+  state, keeps a recent suffix verbatim, and constructs a fresh prompt from those pieces.</p>
+
+  <div class="episode">
+    <div class="episode-row">
+      <div class="episode-who">Before</div>
+      <p>The live context contains the migration request, twelve documentation reads, twenty file inspections, three edits, verbose test output, and five recent turns.</p>
+    </div>
+    <div class="episode-row">
+      <div class="episode-who">Checkpoint</div>
+      <p>The compactor records the unchanged requirements, verified API rules, files modified, passing checks, one unresolved test, and pointers to <code>/work/api-notes.md</code> and the current diff.</p>
+    </div>
+    <div class="episode-row">
+      <div class="episode-who">After</div>
+      <p>The next model sees that checkpoint plus the five recent turns. The raw documentation pages and old test logs are absent from the prompt but still retrievable from external state.</p>
+    </div>
+    <div class="episode-row">
+      <div class="episode-who">Retrieve</div>
+      <p>If an omitted signature matters later, the agent follows the artifact pointer and loads the exact source instead of trusting a lossy recollection.</p>
+    </div>
+  </div>
+
+  <p>The compact checkpoint should preserve provenance and uncertainty. “The tests pass” is unsafe
+  if only one focused test ran; “focused parser test passed; full suite not yet run” preserves the
+  distinction. Repeatedly summarizing a summary without retaining raw evidence causes drift: caveats
+  disappear, tentative beliefs become facts, and old constraints are silently rewritten.</p>
+
+  <div class="callout violet">
+    The post-compaction prompt is a <strong>new context segment</strong>, not an append-only extension
+    of the old prompt. The old KV cache cannot simply continue across that rewrite. During RL, the
+    pre- and post-compaction calls must likewise remain separate training chains; concatenating them
+    would train on a token history the policy never observed. See <a href="verl-agentic-training.html">verl
+    Agentic Training</a> for that reconstruction problem.
+  </div>
 
   <h3>Control answers “who chooses the next transition?”</h3>
   <p>In a model-controlled loop, the model chooses among tools and decides when to stop. In a
