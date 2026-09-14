@@ -198,35 +198,28 @@
     }
     tr:hover td { background: var(--row-hover); }
 
-    .axis-grid, .pattern-grid, .summary-grid {
+    .axis-grid, .summary-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(235px, 1fr));
       gap: 12px;
       margin: 1.35em 0;
     }
-    .axis-card, .pattern-card, .summary-card {
+    .axis-card, .summary-card {
       padding: 15px 17px;
       border: 1px solid var(--border);
       border-radius: 9px;
       background: var(--surface);
     }
-    .axis-card h3, .pattern-card h3, .summary-card h3 {
+    .axis-card h3, .summary-card h3 {
       margin: 0 0 5px;
       color: var(--accent);
       font-size: 0.92rem;
     }
-    .axis-card p, .pattern-card p, .summary-card p {
+    .axis-card p, .summary-card p {
       margin: 0;
       color: var(--muted);
       font-size: 0.86rem;
     }
-    .pattern-card.deep { border-color: var(--violet); background: var(--violet-light); }
-    .pattern-card.deep h3 { color: var(--violet); }
-    .pattern-card.code { border-color: var(--blue); background: var(--blue-light); }
-    .pattern-card.code h3 { color: var(--blue); }
-    .pattern-card.search { border-color: var(--amber); background: var(--amber-light); }
-    .pattern-card.search h3 { color: var(--amber); }
-
     .stack {
       max-width: 760px;
       margin: 1.5em auto;
@@ -398,10 +391,10 @@
   <div class="nav-links">
     <a href="../index.html">← All notes</a>
     <a href="../index.html#rl-agentic-rl">↑ RL · Agentic RL</a>
-    <a href="#axes">Architecture Axes</a>
+    <a href="#axes">The Agent Loop</a>
+    <a href="#choose">State &amp; Control</a>
+    <a href="#alternatives">Core Patterns</a>
     <a href="#deep-agents">Deep Agents</a>
-    <a href="#alternatives">Alternatives</a>
-    <a href="#choose">How to Choose</a>
     <a href="#boundary">Model vs. Harness</a>
     <a href="#training">Training</a>
   </div>
@@ -410,351 +403,337 @@
 <div class="hero">
   <span class="hero-pill">Agentic RL · Architecture</span>
   <h1>Agent Architectures — Deep Agents and the Alternatives</h1>
-  <p>ReAct explains what happens inside one reason–act–observe turn. Architecture decides who plans, who controls the next step, where context lives, when work is delegated, whether alternatives branch, and which guarantees remain outside the model.</p>
+  <p>Build the idea from first principles: one model proposes an action, a runtime executes it, the environment returns an observation, and the cycle continues. Agent architectures arise by changing who controls that cycle, where its state lives, and how several cycles compose.</p>
 </div>
 
 <main class="page-wrap">
-  <p>An agent framework name is not an architecture. The same framework can run one tool-using
-  model, a deterministic graph, a manager with workers, a handoff network, or a search tree.
-  Conversely, the same architecture can be implemented in several frameworks. The useful question
-  is not “which agent library won?” but <strong>where control, state, context, and trust live</strong>.</p>
+  <p>Modern agents are feedback systems made from three very different components: a model that
+  proposes what to do, a runtime that controls execution, and an environment that supplies real
+  consequences. This page builds that system one mechanism at a time, then shows how planning,
+  delegation, reflection, search, and Deep Agents emerge by composing the mechanisms.</p>
 
   <div class="thesis">
-    <strong>Deep Agents are one important composite architecture, not the parent category.</strong><br>
-    They bundle a normal model/tool loop with external context management, delegation, memory, and
-    runtime services. Those pieces can be removed, replaced, or combined with other patterns.
+    <strong>An agent architecture is the design of a stateful feedback loop.</strong><br>
+    To understand one, trace who chooses each transition, what state the next model call can see,
+    how actions become observations, and which guarantees are enforced outside the model.
   </div>
 
-  <h2 id="axes">1. From an Agent Loop to an Agent Architecture</h2>
+  <h2 id="axes">1. The Smallest Useful Agent</h2>
 
-  <p>The <a href="react.html">ReAct loop</a> answers a local question: after observing the current
-  state, how does the model reason, choose an action, and incorporate the result? An architecture
-  answers the system-level questions around that loop.</p>
+  <p>An LLM call is not yet an agent. A call maps an input context to output tokens. An agent
+  closes a loop around that call: some outputs are interpreted as actions, those actions change
+  an environment, and the resulting observations become input to the next call.</p>
+
+  <div class="stack" aria-label="The basic agent loop">
+    <div class="stack-layer">
+      <strong>1 · Observe</strong>
+      <span>The runtime builds the model context from the request, current state, and prior tool results.</span>
+    </div>
+    <div class="stack-arrow">↓</div>
+    <div class="stack-layer model">
+      <strong>2 · Propose</strong>
+      <span>The model emits either a candidate action—such as a tool call—or a final response.</span>
+    </div>
+    <div class="stack-arrow">↓</div>
+    <div class="stack-layer runtime">
+      <strong>3 · Validate and execute</strong>
+      <span>Trusted code checks syntax, permissions, budgets, and approvals before invoking the tool.</span>
+    </div>
+    <div class="stack-arrow">↓</div>
+    <div class="stack-layer">
+      <strong>4 · Transition</strong>
+      <span>The environment changes and returns an observation: output, an error, a file diff, or a test result.</span>
+    </div>
+    <div class="stack-arrow">↺ append the observation, then repeat</div>
+  </div>
+
+  <p>The separation between <em>proposal</em> and <em>execution</em> is fundamental. A model can
+  write “delete the file,” but only the runtime can actually delete it. Likewise, the model can
+  claim that a test passes, but only an executed test produces that observation. The model is a
+  policy over possible next actions; the runtime and environment determine what really happened.</p>
+
+  <h3>A concrete two-turn trace</h3>
+  <p>Suppose the task is “find why the parser test fails and fix it.” One short trajectory might be:</p>
+
+  <div class="episode">
+    <div class="episode-row">
+      <div class="episode-who">Observation 0</div>
+      <p>The request, repository instructions, visible files, and available tools are placed in the initial context.</p>
+    </div>
+    <div class="episode-row">
+      <div class="episode-who">Action 0</div>
+      <p>The model proposes running the failing test. The runtime validates the command and executes it in the repository sandbox.</p>
+    </div>
+    <div class="episode-row">
+      <div class="episode-who">Observation 1</div>
+      <p>The real stack trace is appended. It points to an empty-token edge case in <code>parse()</code>; this evidence changes the next decision.</p>
+    </div>
+    <div class="episode-row">
+      <div class="episode-who">Action 1</div>
+      <p>The model reads the relevant code, proposes a patch, and asks the runtime to rerun the focused test.</p>
+    </div>
+    <div class="episode-row">
+      <div class="episode-who">Termination</div>
+      <p>A passing test is observed, broader checks run, and the model returns a summary. A hard step or time limit could also terminate the loop.</p>
+    </div>
+  </div>
+
+  <p><a href="react.html">ReAct</a> is one way to train or prompt the model’s inner policy for this
+  cycle: reason from the current observation, choose an action, receive the result, and continue.
+  The architecture is everything that specifies how the cycle is hosted and composed: what state
+  is visible, who may choose transitions, which actions exist, and when another loop is created.</p>
+
+  <div class="thesis">
+    <strong>First understand one loop; then understand architectures as transformations of it.</strong><br>
+    Planning adds explicit task state. Delegation forks another loop. Reflection adds an evaluator
+    loop. Search copies state into branches. A workflow moves some transition choices into code.
+  </div>
+
+  <h2 id="choose">2. State, Context, Control, and Trust</h2>
+
+  <p>Long-horizon agents rarely fail because they cannot emit another token. They fail because the
+  right fact is no longer visible, stale state is mistaken for current state, two workers overwrite
+  each other, or the model is allowed to judge a claim that only the environment can verify.
+  Architecture starts by keeping several kinds of state distinct.</p>
 
   <div class="axis-grid">
     <div class="axis-card">
-      <h3>Control policy</h3>
-      <p>Does the model choose the next step, does application code choose it, or does a deterministic outer workflow contain agentic nodes?</p>
+      <h3>Task state</h3>
+      <p>The goal, constraints, completed work, unresolved questions, and termination condition. A plan is one representation of task state.</p>
     </div>
     <div class="axis-card">
-      <h3>Execution topology</h3>
-      <p>One loop, planner–executor, supervisor–worker, peer handoff, or an explicit search tree over several candidate trajectories.</p>
+      <h3>Model context</h3>
+      <p>The tokens visible on this inference call: instructions, selected history, tool schemas, retrieved text, and recent observations.</p>
     </div>
     <div class="axis-card">
-      <h3>Context topology</h3>
-      <p>One shared transcript, filtered handoff context, isolated worker contexts, or external working memory in files and stores.</p>
+      <h3>Working state</h3>
+      <p>Files, scratch artifacts, structured records, and checkpoints that survive context compaction and can be inspected again exactly.</p>
     </div>
     <div class="axis-card">
-      <h3>Improvement mechanism</h3>
-      <p>Continue from tool feedback, replan, ask a critic to revise, or generate and score multiple alternatives.</p>
+      <h3>Durable memory</h3>
+      <p>Facts or procedures intentionally carried across runs. This is different from a long transcript and different again from model weights.</p>
     </div>
     <div class="axis-card">
-      <h3>State and durability</h3>
-      <p>Ephemeral prompt state, checkpointed thread state, cross-session memory, or a durable workflow that can pause and resume.</p>
+      <h3>Environment state</h3>
+      <p>The world outside the prompt: repository contents, browser state, databases, deployed services, and the actual effects of tool calls.</p>
     </div>
     <div class="axis-card">
-      <h3>Environment boundary</h3>
-      <p>What tools exist, where they execute, which side effects are allowed, and which sandbox, approval, and audit controls are enforced.</p>
+      <h3>Runtime state</h3>
+      <p>Budgets, permissions, active worker identities, pending approvals, retry counts, locks, checkpoints, and audit records.</p>
     </div>
   </div>
+
+  <h3>Context is a view of state, not the state itself</h3>
+  <p>Before every model call, the runtime constructs a context view. It may select recent messages,
+  retrieve a relevant file, summarize older turns, hide secrets, or include only the portion of a
+  task assigned to a worker. This operation is part of the architecture. If a summary replaces
+  details, the exact details must still live somewhere if later steps may need them.</p>
+
+  <ul>
+    <li><strong>Select:</strong> choose which state is relevant to this decision.</li>
+    <li><strong>Transform:</strong> summarize or normalize large observations while retaining a path back to exact evidence.</li>
+    <li><strong>Isolate:</strong> give a worker the minimum useful context instead of copying the manager’s entire transcript.</li>
+    <li><strong>Persist:</strong> checkpoint state that must survive interruption, retry, or a fresh context window.</li>
+  </ul>
+
+  <h3>Control answers “who chooses the next transition?”</h3>
+  <p>In a model-controlled loop, the model chooses among tools and decides when to stop. In a
+  code-controlled workflow, application logic selects the next node and the model only fills in
+  bounded decisions. Most useful systems are hybrid: code enforces gates and invariants, while the
+  model handles decisions whose branches cannot be enumerated in advance.</p>
 
   <div class="callout">
-    These axes compose. A code-authored graph can invoke a Deep Agent node; a supervisor can
-    delegate to workers that each run ReAct; a reflection loop can wrap plan-and-execute; and a
-    tree search can branch entire tool-using trajectories.
+    A good trust boundary follows evidence. Let the model propose a command, a patch, or a verdict;
+    let trusted code enforce permissions, execute actions, record effects, and apply hard limits.
+    “The model believes it succeeded” and “the environment produced evidence of success” are
+    different system states.
   </div>
 
-  <h2 id="deep-agents">2. Deep Agents — The Composite Case</h2>
+  <h3>Delegation requires a protocol, not merely another role prompt</h3>
+  <p>A real delegation operation has four parts: a bounded subtask, an initial context view, a
+  capability set, and a return contract. The child loop should know what artifact or answer to
+  produce and when to stop. The parent needs a deliberate join operation that validates and
+  integrates the result. Without those pieces, “multi-agent” often means several models chatting
+  in one increasingly noisy transcript.</p>
+
+  <h2 id="alternatives">3. Core Patterns, Derived from the Loop</h2>
+
+  <p>The common architecture names become easier to understand when each is expressed as a small
+  change to the basic cycle. They are composable mechanisms, not mutually exclusive products.</p>
+
+  <h3>Single-loop agent: improve observation and action before adding topology</h3>
+  <p>The base architecture keeps one controller and one evolving context. Retrieval makes relevant
+  state visible; summarization controls context growth; better tools expose safer, more meaningful
+  actions; tests and structured outputs improve feedback. Many apparent “reasoning” failures are
+  actually missing observations or a poorly designed action space.</p>
+  <p><strong>Invariant:</strong> each action result returns to the same loop, and one loop owns the
+  final answer. This preserves causal clarity: it is easy to tell which observation led to which
+  next action.</p>
+
+  <h3>Plan → execute → replan: make task state explicit</h3>
+  <p>A planner turns the goal into an ordered or dependency-aware plan. The executor performs one
+  step against the real environment. A replanner then consumes both the old plan and the new
+  observation to mark work complete, revise later steps, or stop.</p>
+  <ol>
+    <li>Create plan state with explicit completion criteria.</li>
+    <li>Select one ready step; do not treat the whole initial plan as ground truth.</li>
+    <li>Execute it and attach evidence to the step.</li>
+    <li>Update the remaining plan from what actually happened.</li>
+  </ol>
+  <p>A plan that is written once and never consulted is decoration. The architectural change is
+  not “the model made a list”; it is that later transitions read and mutate the same task state.</p>
+
+  <h3>Code-owned workflow or graph: move transitions outside the model</h3>
+  <p>Here the application defines nodes, edges, branch conditions, joins, and loops. A model can
+  still act inside a node—for example, extracting fields from an invoice—but code decides that a
+  high-value invoice must next pass through approval. The graph gives deterministic structure
+  around locally probabilistic decisions.</p>
+  <p><strong>Invariant:</strong> graph state has a schema, and every node has a defined input,
+  output, and transition rule. Retries must distinguish an idempotent read from a side effect that
+  cannot safely be repeated.</p>
+
+  <h3>Supervisor → workers: fork context, then join results</h3>
+  <p>A supervisor decomposes the task and creates child loops. Each worker receives a focused
+  prompt, selected evidence, and only the tools it needs. Its intermediate trajectory stays local;
+  the parent receives a result or artifact through an explicit return channel.</p>
+  <p>The important operations are <strong>fork</strong> and <strong>join</strong>. Forking decides
+  which state is copied, referenced, or hidden. Joining decides how conflicts are resolved, how
+  claims are checked, and who remains accountable for the final output. Parallel execution is an
+  optional scheduling choice, not the definition of delegation.</p>
+
+  <h3>Peer handoff: transfer ownership of the active loop</h3>
+  <p>A handoff does not create a manager above the specialists. The current agent selects a new
+  specialist, constructs handoff context, and transfers responsibility for the next turn. The
+  system must record who currently owns the conversation and define terminal conditions; otherwise
+  specialists can bounce control back and forth without advancing task state.</p>
+
+  <h3>Reflection or critic loop: add an evaluation signal</h3>
+  <p>A generator creates an attempt. An evaluator inspects the attempt against a rubric or external
+  evidence and returns defects. The generator revises from that feedback. A coded acceptance rule,
+  iteration limit, or budget terminates the cycle.</p>
+  <p>The evaluator only adds information when it has a stronger signal than the generator had:
+  executable tests, a reference answer, a formal constraint, a different context, or a genuinely
+  independent review. Asking the same model to “check again” with no new evidence can amplify
+  confidence without improving correctness.</p>
+
+  <h3>Tree search: copy state and explore competing continuations</h3>
+  <p>Search turns one trajectory into a tree. A node is a snapshot of task and environment state;
+  an edge is a candidate action or reasoning continuation. The search controller expands several
+  children, scores them, selects promising branches, and may backtrack. Tree of Thoughts and LATS
+  differ in how they generate, evaluate, and revisit nodes, but both need three things a normal
+  loop does not: state copying, a value signal, and a branch-selection policy.</p>
+  <p>This is deeper than running several workers. Workers normally solve complementary subtasks and
+  combine their results; search branches compete as alternative continuations of the same state.</p>
+
+  <h3>Environment-native agent: redesign what the loop can see and do</h3>
+  <p>Some of the largest gains come without another model role. A coding agent becomes far more
+  capable when its environment offers repository search, bounded file views, syntax-aware edits,
+  shell execution, tests, diffs, and a sandbox. The environment defines the observation and action
+  spaces on which the policy operates; architecture is partly interface design.</p>
+
+  <div class="thesis">
+    <strong>Every added loop must own state, receive evidence, and have a stopping rule.</strong><br>
+    If a planner, worker, critic, or search branch has no distinct state transition or information
+    source, it is probably adding ceremony rather than capability.
+  </div>
+
+  <h2 id="deep-agents">4. Deep Agents — Assembling the Primitives</h2>
+
+  <p>A Deep Agent is easiest to understand now as a composition, not a new inner reasoning
+  algorithm. Start with a normal model/tool loop. Give it an external workspace so exact artifacts
+  need not remain in the prompt. Add a context policy that decides what to load and summarize. Let
+  it fork bounded subagent loops. Place the whole system inside a durable runtime that owns
+  execution, permissions, checkpoints, and approvals.</p>
 
   <p>LangChain’s original <a href="https://www.langchain.com/blog/deep-agents">Deep Agents</a>
-  article described an ordinary LLM/tool loop augmented with four pieces: a detailed system prompt,
-  an explicit planning tool, subagents, and a filesystem used for both work products and context
-  management. That is a useful description of the <em>generic deep-agent pattern</em>. The concrete
-  <a href="https://github.com/langchain-ai/deepagents"><code>deepagents</code> library</a> is an
-  evolving implementation of that pattern, not the definition of the category.</p>
-
-  <p>As of September 2026, <code>create_deep_agent()</code> builds on LangChain’s normal agent loop
-  and the LangGraph runtime. It assembles middleware, storage backends, context compaction,
-  subagents, skills, optional memory, and optional human approval around the model/tool loop.
-  One important version caveat: since <code>deepagents</code> 0.7.0, task-list planning through
-  <code>TodoListMiddleware</code> is <em>supported but no longer installed by default</em>. The
-  architecture should therefore be understood as a configurable bundle, not a fixed checklist.</p>
+  article emphasized a detailed system prompt, explicit planning, subagents, and a filesystem.
+  The concrete <a href="https://github.com/langchain-ai/deepagents"><code>deepagents</code>
+  library</a> has evolved into a configurable implementation around LangChain’s agent loop and the
+  LangGraph runtime. Context compaction, storage backends, skills, memory, human approval, and
+  task-list planning are separable capabilities; the category should not be defined by one fixed
+  middleware checklist.</p>
 
   <div class="stack" aria-label="Deep Agent architecture layers">
     <div class="stack-layer runtime">
       <strong>Trusted runtime and environment</strong>
-      <span>LangGraph execution, checkpoints, sandbox, approvals, budgets, tool permissions</span>
+      <span>Execute tools, enforce permissions and budgets, checkpoint, pause, resume, and audit.</span>
     </div>
-    <div class="stack-arrow">↑ executes and persists</div>
+    <div class="stack-arrow">↑ supplies real observations</div>
     <div class="stack-layer">
-      <strong>Middleware and backends</strong>
-      <span>Filesystem abstraction, summarization, memory loading, tool patching, storage routing</span>
+      <strong>Context and storage layer</strong>
+      <span>Select prompt context, compact history, route files, load skills, and preserve exact artifacts.</span>
     </div>
-    <div class="stack-arrow">↑ shapes context and capabilities</div>
+    <div class="stack-arrow">↑ constructs each model view</div>
     <div class="stack-layer model">
-      <strong>Manager model/tool loop</strong>
-      <span>Reason, call tools, optionally plan, delegate bounded work, integrate results</span>
+      <strong>Manager loop</strong>
+      <span>Choose tools, maintain task state, optionally plan, delegate bounded work, and integrate results.</span>
     </div>
-    <div class="stack-arrow">↕ delegates and receives summaries</div>
+    <div class="stack-arrow">↕ forks tasks and joins results</div>
     <div class="stack-layer">
       <strong>Subagent loops</strong>
-      <span>Specialized prompts, tools, models, and normally isolated contexts</span>
+      <span>Run with focused context, capabilities, return contracts, and normally isolated trajectories.</span>
     </div>
-    <div class="stack-arrow">↕ reads and writes</div>
+    <div class="stack-arrow">↕ read and write</div>
     <div class="stack-layer">
       <strong>External working state</strong>
-      <span>Files, artifacts, conversation history, durable stores, environment observations</span>
+      <span>Plans, source notes, patches, test output, status records, and durable memory.</span>
     </div>
   </div>
 
-  <h3>What each layer buys</h3>
-  <div class="pattern-grid">
-    <div class="pattern-card deep">
-      <h3>Filesystem-backed context</h3>
-      <p>Large observations and intermediate artifacts move out of the live transcript. Summaries keep the active context small while files retain exact details for later retrieval.</p>
-    </div>
-    <div class="pattern-card deep">
-      <h3>Subagent delegation</h3>
-      <p>A manager gives a bounded task to a specialist with a focused prompt and tool set. The worker returns a result instead of polluting the manager’s context with every intermediate step.</p>
-    </div>
-    <div class="pattern-card deep">
-      <h3>Optional explicit planning</h3>
-      <p>A task list can make progress inspectable and revisable, but a list is useful only when later actions actually consult and update it. Planning middleware is configuration, not magic.</p>
-    </div>
-    <div class="pattern-card deep">
-      <h3>Memory and skills</h3>
-      <p>Project instructions, reusable procedures, and cross-session facts can be loaded from external stores. Persistence depends on the configured backend; it is not automatically encoded in model weights.</p>
-    </div>
-    <div class="pattern-card deep">
-      <h3>Durable execution</h3>
-      <p>Checkpoints can support pause, approval, retry, replay, and recovery. Durability comes from the runtime and persistent checkpointer, not merely from calling the agent “deep.”</p>
-    </div>
-    <div class="pattern-card deep">
-      <h3>Capability boundaries</h3>
-      <p>Tools, backends, middleware, and sandboxes determine what the agent can actually do. The model proposes actions; trusted code validates and executes them.</p>
-    </div>
-  </div>
-
-  <h3>A worked execution</h3>
+  <h3>A worked execution, with the state changes exposed</h3>
   <p>Suppose the task is “upgrade a repository to a new payments API, preserve behavior, and
-  explain the migration.” A Deep-Agent-style harness might execute it as follows:</p>
+  explain the migration.” Watch how context is forked and results are joined:</p>
 
   <div class="episode">
     <div class="episode-row">
-      <div class="episode-who">Manager</div>
-      <p>Inspects the task, optionally writes a plan, and creates shared artifacts such as <code>/work/constraints.md</code> and <code>/work/status.md</code>.</p>
+      <div class="episode-who">Initialize</div>
+      <p>The runtime opens a checkpointed thread. The manager records success criteria and unresolved questions in task state, then writes exact constraints to <code>/work/constraints.md</code>.</p>
     </div>
     <div class="episode-row">
-      <div class="episode-who">Research worker</div>
-      <p>Reads the migration documentation in an isolated context, records exact API changes in <code>/work/api-notes.md</code>, and returns a short summary.</p>
+      <div class="episode-who">Fork research</div>
+      <p>The manager creates a worker with the API-version question, documentation tools, and a return contract. The worker does not receive unrelated repository history.</p>
     </div>
     <div class="episode-row">
-      <div class="episode-who">Code worker</div>
-      <p>Inspects call sites, applies the migration, and writes changed-file and uncertainty notes without carrying the research worker’s full transcript.</p>
+      <div class="episode-who">Return evidence</div>
+      <p>The research worker stores exact signatures and migration rules in <code>/work/api-notes.md</code>, then returns a compact summary plus pointers to its evidence.</p>
     </div>
     <div class="episode-row">
-      <div class="episode-who">Verifier</div>
-      <p>Runs tests and static checks in the sandbox. Failures become observations; they do not become self-certified success claims.</p>
+      <div class="episode-who">Fork code</div>
+      <p>A code worker receives the scoped change, relevant files, and the research artifact. It edits call sites and reports changed files and uncertainties, not its entire transcript.</p>
     </div>
     <div class="episode-row">
-      <div class="episode-who">Manager</div>
-      <p>Reads the artifacts, reconciles conflicts, requests follow-up work if necessary, and produces the final patch and migration explanation.</p>
+      <div class="episode-who">Verify</div>
+      <p>The runtime executes tests in the sandbox. Failures become new observations and update task state; the producing worker does not get to self-certify success.</p>
+    </div>
+    <div class="episode-row">
+      <div class="episode-who">Join</div>
+      <p>The manager reconciles the patch, evidence, and test results. It delegates follow-up work if a criterion remains open, otherwise it produces the final patch and explanation.</p>
     </div>
   </div>
 
-  <p>This is hierarchical delegation plus external working memory. It is <strong>not tree
-  search</strong>: the workers are not competing branches whose values are backed up. It is also
-  not automatically parallel; a runtime may execute delegated work serially or concurrently.</p>
+  <p>The architecture extends the effective horizon in three ways. External artifacts survive when
+  the live transcript is compacted. Isolated workers spend their context on one bounded problem.
+  Checkpoints let execution pause and resume without asking the model to reconstruct the world from
+  memory. None of these capabilities comes merely from a longer prompt.</p>
 
-  <h3>How Deep Agents relate to ReAct</h3>
+  <h3>How the pieces relate</h3>
   <div class="relation">
     <div class="relation-box">
-      <h3>ReAct</h3>
-      <p>The inner control primitive: observe the current context, reason about the next move, call a tool, append the real result, and repeat.</p>
+      <h3>ReAct-like loop</h3>
+      <p>The local policy primitive: observe, propose an action, receive the real result, and continue until a stopping condition.</p>
     </div>
     <div class="relation-arrow">⊂</div>
     <div class="relation-box deep">
       <h3>Deep-agent harness</h3>
-      <p>A larger architecture that can run several ReAct-like loops while managing plans, contexts, files, memory, delegation, persistence, and approvals.</p>
+      <p>The composition layer: manage context and working state, fork subagent loops, join their results, and run everything inside trusted infrastructure.</p>
     </div>
   </div>
 
   <div class="callout violet">
-    Deep Agents do not replace ReAct at the same abstraction level. The manager and each subagent
-    may still use a ReAct-style model/tool loop; the deep-agent architecture determines how those
-    loops are composed and what state surrounds them.
-  </div>
-
-  <h2 id="alternatives">3. The Alternative Architecture Patterns</h2>
-
-  <p>“Alternative” does not mean mutually exclusive product choice. These are reusable patterns.
-  A system should add the smallest pattern that addresses its observed failure mode.</p>
-
-  <div class="pattern-grid">
-    <div class="pattern-card">
-      <h3>Enhanced single-agent ReAct</h3>
-      <p>One coherent model/tool loop with better tools, retrieval, summarization, guardrails, approvals, and perhaps a scratchpad. Lowest coordination overhead and the right default while one context still works.</p>
-    </div>
-    <div class="pattern-card">
-      <h3>Plan → execute → replan</h3>
-      <p>A planner creates explicit remaining work; an executor performs one step; a replanner updates or terminates the plan. Best when decomposition is stable enough to inspect but observations still change the route.</p>
-    </div>
-    <div class="pattern-card code">
-      <h3>Deterministic workflow or graph</h3>
-      <p>Application code owns transitions, branches, joins, loops, and approvals; models are nodes inside the flow. Best when predictability, auditability, or bounded cost matters more than open-ended autonomy.</p>
-    </div>
-    <div class="pattern-card">
-      <h3>Supervisor → workers</h3>
-      <p>A central manager decomposes work, delegates bounded subtasks, and retains responsibility for integration. This is the topology Deep Agents most directly emphasize.</p>
-    </div>
-    <div class="pattern-card">
-      <h3>Peer handoffs or “swarm”</h3>
-      <p>The active specialist transfers control to another specialist. In common SDKs, “swarm” usually means model-directed handoff—not necessarily decentralization, parallelism, or emergent collective intelligence.</p>
-    </div>
-    <div class="pattern-card">
-      <h3>Reflection or critic loop</h3>
-      <p>A generator produces work, a critic evaluates it, and the system revises until a coded acceptance or stopping rule fires. The critique normally changes context, not model weights.</p>
-    </div>
-    <div class="pattern-card search">
-      <h3>Tree search and branching</h3>
-      <p>Several candidate thoughts, states, or trajectories are generated and scored. ToT and LATS buy breadth and backtracking at much higher inference and environment cost.</p>
-    </div>
-    <div class="pattern-card code">
-      <h3>Environment-native agent</h3>
-      <p>The differentiator is a purpose-built computer interface: bounded file views, repository search, syntax-gated edits, shell execution, tests, patch extraction, and a sandbox. For coding, the environment can matter more than another model role.</p>
-    </div>
-  </div>
-
-  <h3>Representative implementations, not categories</h3>
-  <ul>
-    <li><strong>LangGraph, AutoGen GraphFlow, and CrewAI Flows</strong> can encode explicit state graphs, conditions, loops, and joins.</li>
-    <li><strong>OpenAI Agents SDK, AutoGen, AG2, and CrewAI</strong> expose manager, specialist, or handoff patterns in different forms.</li>
-    <li><strong>OpenHands and SWE-agent</strong> emphasize the workspace, shell/editor/test interface, sandbox, and trajectory around software work.</li>
-    <li><strong>Reflexion, Tree of Thoughts, and LATS</strong> are improvement/search patterns that can wrap or branch ordinary agent loops.</li>
-  </ul>
-
-  <div class="callout warn">
-    Framework names hide composition. “Multi-agent” may mean one manager calling workers, serial
-    handoffs through a shared transcript, or genuinely parallel isolated tasks. Those designs have
-    different costs, failure modes, and training traces even when a library exposes all of them
-    under one API.
-  </div>
-
-  <h2 id="choose">4. How to Choose</h2>
-
-  <div class="table-wrap">
-    <table>
-      <tr>
-        <th>Pattern</th>
-        <th>Who controls?</th>
-        <th>Context / delegation</th>
-        <th>Predictability</th>
-        <th>Relative cost</th>
-        <th>Best fit</th>
-      </tr>
-      <tr>
-        <td><strong>Single ReAct</strong></td>
-        <td>Model</td>
-        <td>One context</td>
-        <td>Low</td>
-        <td>Lowest baseline</td>
-        <td>Open-ended tasks that still fit one coherent trajectory</td>
-      </tr>
-      <tr>
-        <td><strong>Deep-agent harness</strong></td>
-        <td>Model inside runtime</td>
-        <td>Filesystem + isolated workers</td>
-        <td>Low–medium</td>
-        <td>Medium–high</td>
-        <td>Long-horizon research or coding under context pressure</td>
-      </tr>
-      <tr>
-        <td><strong>Plan / execute</strong></td>
-        <td>Planner + replanner</td>
-        <td>Explicit plan state</td>
-        <td>Medium</td>
-        <td>Medium</td>
-        <td>Tasks with inspectable decomposition and changing observations</td>
-      </tr>
-      <tr>
-        <td><strong>Workflow / graph</strong></td>
-        <td>Code</td>
-        <td>State passed by nodes</td>
-        <td>Highest</td>
-        <td>Predictable</td>
-        <td>Regulated, transactional, repeatable processes</td>
-      </tr>
-      <tr>
-        <td><strong>Supervisor / worker</strong></td>
-        <td>Manager model</td>
-        <td>Focused worker contexts</td>
-        <td>Low–medium</td>
-        <td>High, parallelizable</td>
-        <td>Decomposable tasks needing specialists and final synthesis</td>
-      </tr>
-      <tr>
-        <td><strong>Peer handoff</strong></td>
-        <td>Active specialist</td>
-        <td>Shared or filtered handoff</td>
-        <td>Low</td>
-        <td>Medium–high</td>
-        <td>Conversational routing among specialists</td>
-      </tr>
-      <tr>
-        <td><strong>Reflection / critic</strong></td>
-        <td>Generator + evaluator</td>
-        <td>Attempt and critique</td>
-        <td>Medium with coded stop</td>
-        <td>Iteration-dependent</td>
-        <td>Outputs with a stable rubric: code, writing, structured analysis</td>
-      </tr>
-      <tr>
-        <td><strong>Tree search</strong></td>
-        <td>Search controller</td>
-        <td>Isolated candidate branches</td>
-        <td>Medium</td>
-        <td>Highest</td>
-        <td>Hard tasks where candidates can be scored and compute is justified</td>
-      </tr>
-    </table>
-  </div>
-
-  <ol>
-    <li><strong>Start with one loop.</strong> Better tools and environment feedback often beat extra agent roles.</li>
-    <li><strong>Add explicit planning</strong> when long-horizon drift—not tool weakness—is the dominant failure.</li>
-    <li><strong>Add code-owned structure</strong> when predictability, approval, or bounded cost matters more than adaptation.</li>
-    <li><strong>Add workers</strong> when subtasks need different tools, prompts, or isolated context—not merely because the task is large.</li>
-    <li><strong>Add a critic</strong> only when an independent rubric can recognize improvement.</li>
-    <li><strong>Add search</strong> only when alternative trajectories can be scored well enough to justify their cost.</li>
-    <li><strong>For coding, improve the environment first:</strong> repository search, file views, safe edits, tests, and sandboxing define the action space the policy can learn.</li>
-  </ol>
-
-  <h3>Common architecture mistakes</h3>
-  <div class="summary-grid">
-    <div class="summary-card">
-      <h3>Premature multi-agent design</h3>
-      <p>Several copies of the same weak policy add token cost and coordination errors without adding genuine specialization.</p>
-    </div>
-    <div class="summary-card">
-      <h3>Shared-context pollution</h3>
-      <p>Every worker sees every intermediate message, so delegation multiplies context instead of isolating it.</p>
-    </div>
-    <div class="summary-card">
-      <h3>Decorative planning</h3>
-      <p>The model writes a todo list once, then ignores it. A plan matters only if execution and replanning consume the same state.</p>
-    </div>
-    <div class="summary-card">
-      <h3>Handoff loops</h3>
-      <p>Specialists keep transferring control because ownership and terminal conditions are ambiguous.</p>
-    </div>
-    <div class="summary-card">
-      <h3>Self-verification</h3>
-      <p>The agent that produced an action also declares it safe and correct, with no independent test or policy boundary.</p>
-    </div>
-    <div class="summary-card">
-      <h3>Architecture by brand name</h3>
-      <p>A framework is selected before the required topology, state, trust boundaries, and failure modes are understood.</p>
-    </div>
+    A Deep Agent is therefore usually hierarchical delegation plus external working state and a
+    durable runtime. It is not automatically tree search: workers normally solve complementary
+    subtasks rather than compete as scored continuations. It is not automatically parallel either;
+    concurrency is a runtime scheduling decision.
   </div>
 
   <h2 id="boundary">5. The Moving Boundary — When the Model Absorbs the Harness</h2>
@@ -894,8 +873,8 @@
       <p>An opinionated harness around a normal model/tool loop: external context, subagents, memory, runtime services, and optional explicit planning.</p>
     </div>
     <div class="summary-card">
-      <h3>No universal winner</h3>
-      <p>Single loops, graphs, managers, handoffs, critics, and search solve different failure modes and can be composed.</p>
+      <h3>Patterns transform the loop</h3>
+      <p>Plans add task state, workers fork context, critics add evidence, search copies branches, and graphs move transitions into code.</p>
     </div>
     <div class="summary-card">
       <h3>Environment first</h3>
