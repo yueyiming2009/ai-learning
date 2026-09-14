@@ -1,6 +1,6 @@
 ---
 name: add-plot
-description: Add an interactive visualization to a learning page in this repo whenever it aids understanding. Use when creating or editing any docs/<domain>/*.html explainer page that describes a function, activation, distribution, curve, geometric relationship, comparison between methods, or training/optimization dynamic — anything where seeing the shape beats reading the formula. Follows the self-contained canvas plotting pattern established on docs/foundations/swiglu.html (no external chart libraries).
+description: Add an interactive visualization to a learning page in this repo whenever it aids understanding. Use when creating or editing an HTML explainer page under a docs domain folder that describes a function, activation, distribution, curve, geometric relationship, comparison between methods, or training/optimization dynamic — anything where seeing the shape beats reading the formula. Follows the self-contained canvas plotting pattern established on docs/foundations/swiglu.html (no external chart libraries).
 ---
 
 # Add a plot when it aids understanding
