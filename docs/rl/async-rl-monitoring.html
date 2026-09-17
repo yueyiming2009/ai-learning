@@ -288,6 +288,7 @@
     <a href="#advantages">Advantages</a>
     <a href="#gradnorm">Grad norm</a>
     <a href="#length">Response length</a>
+    <a href="#operations">Operations</a>
   </div>
 </nav>
 
@@ -793,6 +794,70 @@ Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
   <code>rollout/weight_version/mixed_version_ratio</code> flags individual samples whose
   tokens span a weight-sync boundary (partial rollout resumed after sync).
   </p>
+
+  <!-- ── §10 Operational context ───────────── -->
+  <h2 id="operations">10. Operational Context — MiMo-V2.6 Live Runs</h2>
+
+  <p>Xiaomi MiMo's September 2026 <a href="https://mimo.xiaomi.com/rl/#overview">live RL
+  dashboard</a>, announced by <a href="https://x.com/_LuoFuli/status/2100296686719610932">Fuli
+  Luo</a>, is a rare public example of these diagnostics embedded in the control plane of an
+  active frontier-scale run. The announced batch shape is <strong>1,568 prompts × 16
+  rollouts = 25,088 agent trajectories per step</strong>, roughly 2B tokens per step, with
+  generation and training fully asynchronous.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Plane</th><th>Public signals</th><th>Question answered</th></tr>
+      <tr>
+        <td><strong>Optimization</strong></td>
+        <td><code>dynsam/avg@n</code>, reward, entropy, policy-gradient loss, gradient norm,
+        PPO and TIS clip fractions</td>
+        <td>Is the batch producing useful signal, and is the update stable?</td>
+      </tr>
+      <tr>
+        <td><strong>Off-policy correctness</strong></td>
+        <td><code>partial/avg_staleness</code>,
+        <code>train_infer_diff/new_infer/kl</code></td>
+        <td>How old are admitted samples, and how far do trainer and inference probabilities
+        differ?</td>
+      </tr>
+      <tr>
+        <td><strong>Sampler and mixture</strong></td>
+        <td>all-fail/all-pass fractions, pass-rate histogram, measurable prompts,
+        per-source accepted/target counts, per-harness training rollouts</td>
+        <td>Which task and harness distributions actually reached the trainer?</td>
+      </tr>
+      <tr>
+        <td><strong>Capacity and reliability</strong></td>
+        <td>active sandboxes, infrastructure-error rate, accepted/judged/remaining work,
+        partial rollouts, grader backlog, prewarm count, restart and redo events</td>
+        <td>Is a curve movement caused by learning, queue state, environment capacity, or an
+        operational incident?</td>
+      </tr>
+      <tr>
+        <td><strong>External evaluation</strong></td>
+        <td>DeepSWE v1.1 with mini-swe-agent, <code>avg@3</code>, attached to selected steps</td>
+        <td>Does an asynchronously evaluated checkpoint improve on a held-out agent benchmark?</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>The important design lesson is that an async-RL dashboard needs <em>causal context</em>,
+  not only optimizer curves. MiMo publishes operator notices for trainer restarts, cluster-to-grader
+  connectivity, VRAM failures and bad rollout data; it also marks redone steps. Without those
+  annotations, a discontinuity in reward, entropy or latency can be misread as an algorithmic
+  event. Dataset and harness slices serve the same purpose: a stable global mean can hide one
+  source saturating, one harness failing, or a mixture-weight shift.</p>
+
+  <div class="note">
+    <strong>Evidence boundary.</strong> The dashboard's aggregate trainer–inference KL is useful,
+    but it cannot replace the ratio distribution, upper/lower clip decomposition, Pearson
+    correlation or per-version lag distribution described above; a small mean can hide a
+    damaging tail. The page is also an operational trace, not a controlled study: the dynamic
+    sampler, reward normalization and announced “agentic in-group credit assignment” have not
+    yet been specified. Treat the telemetry as evidence for what to observe, not yet as a
+    reproducible training recipe.
+  </div>
 
   <!-- ── Quick-ref summary ──────────────────── -->
   <h2 id="quickref">Quick Reference</h2>
