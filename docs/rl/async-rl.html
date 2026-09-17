@@ -285,7 +285,7 @@
     /* ── Two-column regime ───────────────────── */
     .regime-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: repeat(3, 1fr);
       gap: 12px;
       margin: 1.2em 0;
     }
@@ -342,17 +342,17 @@
   <div class="nav-links">
     <a href="../index.html">← All notes</a>
     <a href="../index.html#rl-rl-efficiency" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;" title="Back to Reinforcement Learning › RL Efficiency">↑ RL Efficiency</a>
-    <a href="#bottleneck">Sync bottleneck</a>
-    <a href="#async">Async RL</a>
-    <a href="#lag">Policy lag</a>
-    <a href="#is">IS correction</a>
+    <a href="#bottleneck">Why async</a>
+    <a href="#async">Scheduling modes</a>
+    <a href="#lag">Staleness</a>
+    <a href="#is">Three policies</a>
     <a href="#stabilization">Stabilization</a>
     <a href="#tim">TIM</a>
-    <a href="#knobs">VeRL knobs</a>
+    <a href="#knobs">Controls</a>
     <a href="verl-async-training.html">verl async internals</a>
     <a href="async-rl-monitoring.html">Monitoring</a>
     <a href="reward-pipelining.html">Reward pipelining</a>
-    <a href="#compare">verl vs Miles</a>
+    <a href="#compare">System patterns</a>
     <a href="#refs">References</a>
   </div>
 </nav>
@@ -360,8 +360,8 @@
 <div class="hero">
   <span class="hero-pill">RL Systems</span>
   <h1>Async RL for LLM Post-Training</h1>
-  <p>Policy lag, importance sampling (token vs. sequence level), training-inference mismatch,
-  and the eliminate-vs-correct debate in modern async RL systems.</p>
+  <p>Scheduling regimes, policy-version staleness, three-policy correction,
+  training–inference mismatch, and the controls that make streaming RL reliable.</p>
 </div>
 
 <div class="page-wrap">
@@ -372,478 +372,600 @@
     This page covers the <em>async-specific</em> complications that arise when generation and training decouple.
     Systems walkthroughs: <a href="ppo-training-walkthrough.html">PPO in VeRL</a> · <a href="slime-miles-walkthrough.html">PPO in slime/Miles</a>.
     The environment side of the idle-GPU problem — slow env steps, sandbox fleets, oversubscription — is
-    <a href="env-scaling-sandboxing.html">Scaling Environments</a>.
+    <a href="env-scaling-sandboxing.html">Scaling Environments</a>. Ecosystem state:
+    <strong>September 2026</strong>.
   </div>
 
   <!-- ── §1 Sync bottleneck ─────────────────── -->
-  <h2 id="bottleneck">1. The Synchronous Bottleneck</h2>
+  <h2 id="bottleneck">1. What Async RL Is Trying to Remove</h2>
 
   <p>In synchronous on-policy RL, generation and training alternate in strict lockstep:</p>
 
   <pre><code>rollout → [wait for slowest trajectory] → compute rewards → train → repeat</code></pre>
 
-  <p>The wait is expensive. Autoregressive generation is sequential — each token requires a full forward pass — so rollout latency scales with response length. A 1024-token response takes seconds; a training step on the resulting batch takes milliseconds. All GPUs idle at the generation↔training boundary.</p>
+  <p>The problem is not simply that generation is slower than backpropagation. The ratio varies
+  with model size, sequence length, parallelism and hardware. The structural problem is that one
+  phase cannot make progress while the other owns the GPUs or while the batch waits for its
+  slowest dependency.</p>
 
-  <p>For short responses this is tolerable. For long-horizon reasoning (multi-step tool use, code, math) where rollouts run 2000–8000 tokens, the sync wait dominates wall-clock time.</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Barrier</th><th>Why capacity goes idle</th></tr>
+      <tr><td>Trajectory tail</td><td>A few long reasoning or tool-use episodes hold the entire rollout batch open.</td></tr>
+      <tr><td>Environment and grader tail</td><td>Sandboxes, tests and model judges complete at different times.</td></tr>
+      <tr><td>Phase switch</td><td>Colocated inference must release weights and KV cache before training can use the same memory.</td></tr>
+      <tr><td>Weight publication</td><td>Rollout workers cannot use the new policy until weights are reshaped, transferred and loaded.</td></tr>
+    </table>
+  </div>
+
+  <p>Async systems attack these barriers through streaming, buffering, admission control and
+  overlap. They do <em>not</em> make an individual rollout cheaper. The gain comes from keeping
+  useful work available when another request, service or phase is late.</p>
 
   <!-- ── §2 Async ──────────────────────────── -->
-  <h2 id="async">2. Async RL: Decoupled Loops</h2>
+  <h2 id="async">2. Async RL Is a Scheduling Family</h2>
 
-  <p>Async RL breaks the lockstep. Rollout workers and the trainer run as independent, continuously-executing services:</p>
+  <p>“Async” is not one architecture. Modern systems expose three scheduling regimes:</p>
 
-  <pre><code>rollout pool:   [gen] → [gen] → [gen] → ...      (fills a sample buffer)
-trainer:        [step] → [step] → [step] → ...   (drains the buffer)</code></pre>
+  <pre><code>sync
+  one pool:       [generate full batch] → [update] → [publish weights]
 
-  <p>The trainer never waits for generation to finish; the rollout pool never waits for a training step to complete. Measured speedup: <strong>2–3× over synchronous pipelines</strong> on real workloads.</p>
+collocated async
+  one pool:       [stream until enough] → [pause/abort requests] → [update] → [resume]
 
-  <p>The cost: by the time a rollout sample reaches the trainer, the policy has been updated \(K\) times. The sample is now <em>off-policy</em> — it was generated by \(\pi_{old}\) but will be used to update \(\pi_{new}\).</p>
+separate async
+  rollout pool:   [generate continuously] ───────────────────────────────▶
+  trainer pool:          [consume] → [update] → [consume] → [update] ───▶</code></pre>
 
-  <h3 id="collocated">2.5 The third regime: collocated async</h3>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Regime</th><th>GPU placement</th><th>What overlaps</th><th>Main cost</th></tr>
+      <tr>
+        <td><strong>Sync</strong></td>
+        <td>Usually one colocated pool</td>
+        <td>Requests may run concurrently, but generation and update remain batch barriers</td>
+        <td>Long-tail drain and phase bubbles</td>
+      </tr>
+      <tr>
+        <td><strong>Collocated async</strong></td>
+        <td>One pool time-shared by inference and training</td>
+        <td>Agent trajectories stay live across phase boundaries; enough completed samples can trigger training before every trajectory ends</td>
+        <td>Pause/abort, KV-cache rebuild and no simultaneous generation during the update</td>
+      </tr>
+      <tr>
+        <td><strong>Separate async</strong></td>
+        <td>Dedicated rollout and trainer pools</td>
+        <td>Generation and optimization execute concurrently through a bounded buffer</td>
+        <td>Extra GPUs, queue control, staleness and weight-transfer complexity</td>
+      </tr>
+    </table>
+  </div>
 
-  <p>The two pictures above are the ends of a spectrum, and the hardware bill is what separates them. Fully decoupled async needs <em>two</em> GPU pools — one generating, one training — plus two queues that drift at different rates. Synchronous training needs one pool and wastes it. Agent Lightning v1.0 (Microsoft, Aug 2026) names the middle option, which mainline verl exposes as <code>trainer_mode: colocate_async</code> alongside <code>sync</code> and <code>separate_async</code>:</p>
+  <h3 id="collocated">Collocated async: one pool, interrupted phases</h3>
 
-  <pre><code>sync:              [gen gen gen gen | wait for slowest] → [update] → ...        one pool, idle tail
-separate async:    pool A: [gen] [gen] [gen] ...   pool B: [update] [update] ...   two pools, no idle
-collocated async:  one pool: [gen gen gen] → stop admitting, drain → [update] → resume, partial rollouts carry over</code></pre>
+  <p>Agent Lightning v1.0 names the middle regime; current verl exposes
+  <code>trainer_mode: colocate_async</code>. Once enough data is ready, the system stops
+  admitting model work and switches the shared GPUs to training. The exact boundary is
+  implementation-specific: Agent Lightning waits for current model requests to complete, while
+  verl's V1 path can abort inference requests, release KV cache, update, then resubmit the kept
+  token prefix. In both cases, a long-lived <em>agent trajectory</em> can survive the phase
+  switch even though an individual model request cannot execute concurrently with training.</p>
 
-  <p>In collocated async, rollout and update <strong>time-share one GPU pool</strong>. Once enough rollout data has landed, the inference gateway stops accepting new requests, lets in-flight ones finish, parks any request that arrives during the update, and releases it when the rollout phase resumes. Rollouts that were mid-way simply continue under the new weights — the <a href="#lag">partial-rollout</a> case below — so the step never waits for the slowest trajectory. The agent or harness on the other side of the gateway sees a slow API call and nothing else, which is what makes the regime usable with <a href="harnessed-agentic-rl.html#async">harnesses you don't control</a>. Agent Lightning reports roughly <strong>2× end-to-end over sync on fewer GPUs than separate-pool async</strong>; treat the number as indicative (one sentence, no setup table) and the shape as the point.</p>
+  <p>This avoids waiting for the slowest trajectory without paying for a permanently separate
+  rollout fleet. Agent Lightning reports roughly 2× end-to-end speedup over its synchronous
+  setup while using fewer GPUs than separate-pool async; that number is workload-specific, not
+  a universal property of the schedule.</p>
+
+  <div class="note">
+    <strong>Two unrelated settings are often both called async.</strong>
+    An inference server may handle requests asynchronously while the trainer still waits for a
+    complete on-policy batch. In verl, <code>rollout.mode: async</code> selects server/request
+    concurrency; <code>trainer.v1.trainer_mode: colocate_async|separate_async</code> is what
+    permits training on older policy versions. Only the second meaning creates policy staleness.
+  </div>
 
   <!-- ── §3 Policy lag ──────────────────────── -->
-  <h2 id="lag">3. Policy Lag and Steady State</h2>
+  <h2 id="lag">3. Staleness Is a Distribution, Not One Steady-State Number</h2>
 
-  <h3>Definition</h3>
-
-  <p><strong>Policy lag \(K\)</strong>: the number of trainer steps by which the current training policy \(\pi_{new}\) leads the rollout policy \(\pi_{old}\) that generated a given sample.</p>
-
-  <ul>
-    <li>\(K = 0\): on-policy (synchronous)</li>
-    <li>\(K = 1\): sample generated one step behind current policy</li>
-    <li>\(K = K_{max}\): the discard threshold — samples older than this are dropped</li>
-  </ul>
-
-  <h3>Steady-State Lag</h3>
-
-  <p>In a running async system, the lag stabilizes when the rollout pool's production rate matches the trainer's consumption rate:</p>
+  <p>Stamp every sampled token or trajectory segment with the weight version that generated it.
+  If the trainer is at version \(v_{\mathrm{train}}\), its version lag is:</p>
 
   <div class="result">
-    <div class="result-label">Steady-state lag</div>
+    <div class="result-label">Version lag</div>
     \[
-      K_{steady} \approx \frac{T_{rollout}}{T_{train}} \times \frac{N_{rollout}}{N_{train}}
+      K_{i,t}=v_{\mathrm{train}}-v_{i,t}.
+    \]
+  </div>
+
+  <p>\(K=0\) means same-version data; it does <em>not</em> imply a synchronous scheduler. A
+  partial or multi-turn rollout may contain several \(v_{i,t}\) values, so report at least the
+  oldest, newest and mean version—or retain the version per segment. A single trajectory-level
+  scalar hides the oldest context that conditions all later actions.</p>
+
+  <h3>Where age comes from</h3>
+
+  <ul>
+    <li><strong>Generation age:</strong> updates completed while a long trajectory was still producing tokens or waiting on tools.</li>
+    <li><strong>Reward age:</strong> tests, judges or remote environments finished after generation.</li>
+    <li><strong>Queue age:</strong> a completed group waited in the buffer before the trainer consumed it.</li>
+    <li><strong>Publication age:</strong> rollout engines continued using an older checkpoint between weight synchronizations.</li>
+  </ul>
+
+  <p>A useful approximation is therefore based on measured delay, not a worker-count formula:</p>
+
+  <div class="result">
+    <div class="result-label">Operational approximation</div>
+    \[
+      K \approx K_{\mathrm{publication}}
+      +u\,(T_{\mathrm{generation}}+T_{\mathrm{reward}}+W_{\mathrm{queue}})
     \]
     <p style="font-size:0.88rem; color:var(--ink); margin-top:8px;">
-      \(T\) = per-step latency &nbsp;·&nbsp; \(N\) = number of workers per role
+      \(K_{\mathrm{publication}}\) = rollout engine's initial version lag ·
+      \(u\) = trainer updates per second. This estimates a distribution, not a guarantee.
     </p>
   </div>
 
-  <p><strong>Derivation:</strong> at steady state, the number of training steps completed while one rollout is in flight is \(T_{rollout}/T_{train}\). With \(N_{rollout}\) workers running in parallel, the effective lag per sample scales by \(N_{rollout}/N_{train}\).</p>
-
-  <h3>Two Regimes</h3>
+  <h3>Queue balance</h3>
 
   <div class="regime-grid">
     <div class="regime-card stall">
-      <h4>\(K_{max} &lt; K_{steady}\)</h4>
-      <p>Trainer stalls — rollout can't produce fast enough to keep the buffer full. Fix: more rollout workers, lower \(K_{max}\), or faster generation.</p>
+      <h4>Rollout production &lt; trainer demand</h4>
+      <p>The buffer empties and the trainer waits. More tolerated staleness cannot manufacture samples; increase rollout/environment capacity or reduce trainer demand.</p>
+    </div>
+    <div class="regime-card">
+      <h4>Rates approximately balanced</h4>
+      <p>A small bounded buffer absorbs jitter. This is the target operating region: low idle time without a growing age tail.</p>
     </div>
     <div class="regime-card collapse">
-      <h4>\(K_{max} \geq K_{steady}\)</h4>
-      <p>Trainer never waits; lag accumulates toward \(K_{max}\). Stability depends on IS correction quality at that lag. Too high → collapse.</p>
+      <h4>Rollout production &gt; trainer demand</h4>
+      <p>The queue and lag grow unless capacity, admission or freshness rules apply backpressure. Old work must eventually block, drop or retry.</p>
     </div>
   </div>
 
-  <p>The throughput gain from async is maximized by raising \(K_{max}\). The stability loss from doing so is the central problem.</p>
+  <p>Little's law, \(Q\approx\lambda W\), is useful for sizing a stable completed-sample buffer,
+  but it does not predict policy lag by itself. The age distribution also depends on rollout
+  duration, reward latency, sync cadence, partial-rollout policy and whether the freshness gate
+  uses each sample's newest, mean or <em>oldest</em> weight version.</p>
 
   <!-- ── §4 IS ──────────────────────────────── -->
-  <h2 id="is">4. Off-Policy Correction via Importance Sampling</h2>
-  <p style="font-size:0.9rem;color:var(--muted);margin:-0.4em 0 1em;">Applies equally to PPO and GRPO — the IS machinery is algorithm-agnostic.</p>
+  <h2 id="is">4. Three Policies and Three Different “Sequence” Quantities</h2>
 
-  <h3>The IS Objective</h3>
+  <p>Async implementations become easier to reason about when the policies are named explicitly:</p>
 
-  <p>The on-policy policy gradient objective is:</p>
-  \[
-    J(\theta) = \mathbb{E}_{\tau \sim \pi_\theta}\!\left[\sum_t A_t \log \pi_\theta(a_t|s_t)\right]
-  \]
+  <div class="table-wrap">
+    <table>
+      <tr><th>Policy</th><th>Role</th><th>When fixed</th></tr>
+      <tr>
+        <td>\(\mu\)</td>
+        <td><strong>Behavior policy:</strong> the rollout engine and weight version that sampled the token</td>
+        <td>At generation time, potentially per token or segment</td>
+      </tr>
+      <tr>
+        <td>\(\pi_{\mathrm{prox}}\)</td>
+        <td><strong>Proximal policy:</strong> the frozen anchor used for PPO clipping</td>
+        <td>At the beginning of the update or sync cycle</td>
+      </tr>
+      <tr>
+        <td>\(\pi_\theta\)</td>
+        <td><strong>Current policy:</strong> the actor being optimized</td>
+        <td>Changes after each optimizer step</td>
+      </tr>
+    </table>
+  </div>
 
-  <p>When \(\tau\) was generated by a behavior policy \(\pi_b \neq \pi_\theta\), reweight by the importance ratio to remain unbiased:</p>
+  <p>Decoupled PPO separates the rollout-to-proximal correction from the proximal-to-current
+  trust region:</p>
 
   <div class="result">
-    <div class="result-label">IS-corrected objective</div>
+    <div class="result-label">Three-policy surrogate (schematic)</div>
     \[
-      J_{IS}(\theta) = \mathbb{E}_{\tau \sim \pi_b}\!\left[w(\tau)\sum_t A_t \log \pi_\theta(a_t|s_t)\right]
+      b_t=\frac{\pi_{\mathrm{prox}}(a_t|s_t)}{\mu(a_t|s_t)},
+      \qquad
+      q_t=\frac{\pi_\theta(a_t|s_t)}{\pi_{\mathrm{prox}}(a_t|s_t)}
+    \]
+    \[
+      L(\theta)=-
+      \mathbb{E}_{(s,a)\sim\mu}
+      \left[
+        \operatorname{stopgrad}(\tilde b_t)\,
+        \min\!\left(q_t A_t,\operatorname{clip}(q_t,1-\epsilon_l,1+\epsilon_h)A_t\right)
+      \right].
     \]
   </div>
 
-  <p>In async RL, \(\pi_b = \pi_{old}\) (rollout policy at generation time) and \(\pi_\theta = \pi_{new}\) (current training policy).</p>
+  <p><strong>Bypass mode</strong> sets \(\pi_{\mathrm{prox}}=\mu\) and uses rollout log-probs
+  directly as the PPO anchor, avoiding a trainer-side old-log-prob forward pass. It is still a
+  mathematically meaningful two-policy objective; it is not restricted to perfectly on-policy
+  data. The trade-off is that behavior correction and proximal update control are no longer
+  independently tunable.</p>
 
-  <h3>Token-Level IS</h3>
+  <h3>Exact trajectory importance sampling</h3>
 
-  <p>Apply IS independently per token — the standard PPO formulation:</p>
+  <p>For a complete trajectory sampled from \(\mu\), the exact change-of-measure weight is:</p>
   \[
-    w_{tok}(\tau) = \prod_{t=1}^{T} \frac{\pi_{new}(a_t|s_t)}{\pi_{old}(a_t|s_t)}
+    W(\tau)=\frac{P_{\pi_{\mathrm{prox}}}(\tau)}{P_\mu(\tau)}
+    =\prod_{t=1}^{T} b_t.
   \]
 
-  <p>PPO's clipped surrogate bounds each per-token ratio \(r_t\) individually. <strong>Problem at high lag:</strong> each factor deviates slightly from 1; the product of \(T\) factors (e.g., \(T=512\)) has variance that grows <em>exponentially</em> with sequence length. Even small per-token deviations compound into extreme trajectory weights. Clipping controls the damage but introduces bias that <strong>grows with compute scale</strong> and cannot be fixed by increasing batch size.</p>
+  <p>This is the sequence product. For step-dependent returns, classical per-decision IS uses
+  prefix products through the relevant timestep. These estimators are exact under the usual
+  support assumptions, but products over thousands of autoregressive decisions have enormous
+  variance and can underflow or overflow numerically.</p>
 
-  <h3>Sequence-Level IS</h3>
+  <h3>Token-level rollout correction</h3>
 
-  <p>Treat the entire trajectory as the unit of reweighting:</p>
+  <p>What LLM systems commonly call <em>token-level IS</em> does <strong>not</strong> multiply
+  all token ratios. It applies each \(b_t\) independently to that token's policy-gradient term:</p>
   \[
-    w_{seq}(\tau) = \frac{\pi_{new}(\tau)}{\pi_{old}(\tau)} = \prod_{t=1}^{T} \frac{\pi_{new}(a_t|s_t)}{\pi_{old}(a_t|s_t)}
+    \hat g_{\mathrm{token}}
+    =\sum_{t=1}^{T}\tilde b_t\,A_t\,\nabla_\theta\log\pi_\theta(a_t|s_t).
   \]
 
-  <p>The formula is mathematically identical to \(w_{tok}\), but it is applied as a <strong>single scalar weight on the trajectory-level objective</strong> rather than per-token:</p>
+  <p>This has much lower variance and works well as a practical correction, but for a
+  sequence-level outcome reward it is not the exact trajectory change of measure. GSPO's
+  critique is precisely that GRPO uses one sampled token from each next-token distribution as
+  though it independently corrected the sequence objective.</p>
+
+  <h3>Sequence products versus GSPO's geometric score</h3>
+
+  <p>GSPO does not use the raw trajectory product as an unconstrained importance weight. It
+  defines a length-normalized sequence score:</p>
   \[
-    J_{seq}(\theta) = \mathbb{E}_{\tau \sim \pi_b}\!\left[w_{seq}(\tau) \cdot \hat{A}(\tau) \cdot \sum_t \log \pi_\theta(a_t|s_t)\right]
+    s_i(\theta)
+    =
+    \left(
+      \frac{\pi_\theta(y_i|x)}{\pi_{\mathrm{old}}(y_i|x)}
+    \right)^{1/|y_i|}
+    =
+    \exp\!\left(
+      \frac{1}{|y_i|}
+      \sum_t \log
+      \frac{\pi_\theta(y_{i,t}|x,y_{i,&lt;t})}
+           {\pi_{\mathrm{old}}(y_{i,t}|x,y_{i,&lt;t})}
+    \right),
   \]
-
-  <p>Why more robust: unbiased under any lag (no clipping distorts the correction). Cost: high variance — \(w_{seq}\) has even wider distribution than any individual \(r_t\). Mitigations:</p>
-  <ul>
-    <li><strong>Length normalization</strong> — use \(\exp(\log w_{seq} / T)\), the geometric mean per-token ratio; tractable range without bias</li>
-    <li><strong>Large batch</strong> — variance of \(w_{seq}\) decreases as \(1/N\); the estimator is consistent but needs larger \(N\)</li>
-  </ul>
-
-  <p>This is what GSPO (Qwen) and VeRL's <code>rollout_is=sequence</code> implement.</p>
-
-  <h3>Comparison</h3>
+  and clips the response as one optimization unit. The geometric mean keeps different response
+  lengths on a comparable numerical scale and aligns clipping with sequence-level reward. It is
+  a deliberate surrogate, <strong>not</strong> the exact unbiased trajectory IS weight.</p>
 
   <div class="table-wrap">
     <table>
+      <tr><th>Quantity</th><th>Definition</th><th>Strength</th><th>Cost / limitation</th></tr>
       <tr>
-        <th></th>
-        <th>Token-level IS</th>
-        <th>Sequence-level IS</th>
+        <td><strong>Per-token correction</strong></td>
+        <td>Use \(b_t\) independently</td>
+        <td>Low variance; localizes outliers</td>
+        <td>Biased for a sequence-level change of measure</td>
       </tr>
       <tr>
-        <td><strong>Bias under lag</strong></td>
-        <td>Structurally biased (clipping) — grows with scale</td>
-        <td>Unbiased — no clipping needed</td>
+        <td><strong>Exact trajectory IS</strong></td>
+        <td>\(\prod_t b_t\)</td>
+        <td>Exact change of measure under support assumptions</td>
+        <td>Variance and numerical range explode with horizon</td>
       </tr>
       <tr>
-        <td><strong>Variance</strong></td>
-        <td>Extreme tails at high \(K\)</td>
-        <td>High but controlled by batch size</td>
-      </tr>
-      <tr>
-        <td><strong>Stability at high \(K\)</strong></td>
-        <td>Collapses; can't be fixed by batch size</td>
-        <td>Holds longer; needs larger batch</td>
-      </tr>
-      <tr>
-        <td><strong>Common use</strong></td>
-        <td>PPO <code>ratio * advantage</code> per token</td>
-        <td>GSPO, VeRL <code>rollout_is=sequence</code></td>
+        <td><strong>Geometric sequence score</strong></td>
+        <td>\(\exp(\frac{1}{T}\sum_t\log q_t)\) in GSPO</td>
+        <td>Length-comparable sequence-level trust signal</td>
+        <td>Not exact IS; behavior depends on clipping/masking objective</td>
       </tr>
     </table>
   </div>
 
   <div class="note">
-    <strong>Low-bias compute-scaling hypothesis</strong> (Luke Huang): token-level IS is faster at small scale but hits a ceiling; sequence-level IS is slower to start but improves with scale. Long-horizon tasks raise the batch-size requirement for sequence IS.
+    Framework names are not a proof of semantics. In verl,
+    <code>rollout_is: sequence</code> means a product of token correction ratios broadcast back
+    over the sequence. GSPO's “sequence-level ratio” is the geometric mean. Other systems use
+    mean or max token KL only as a <em>rejection statistic</em>. Inspect the formula, not the
+    label.
   </div>
 
   <!-- ── §5 Stabilization ───────────────────── -->
-  <h2 id="stabilization">5. IS Stabilization Algorithms</h2>
+  <h2 id="stabilization">5. Stabilization: Weight, Clip, or Reject</h2>
 
-  <p>All of these trade bias for variance to prevent gradient explosions from large IS ratios. All fail at very high policy lag — they delay collapse, not prevent it.</p>
+  <p>Once \(b_t\) or \(W(\tau)\) has a heavy tail, the exact estimator may be unusable. Modern
+  systems deliberately trade bias, variance and sample efficiency in several orthogonal ways.
+  Keep these mechanisms separate from PPO clipping on \(q_t\).</p>
 
   <div class="step">
-    <div class="step-label">TIS / CISPO — Truncated IS</div>
-    <p>Clip per-token ratios to a bounded range:</p>
-    \[ \tilde{r}_t = \min(r_t,\; c) \qquad \text{where } r_t = \pi_{new}(a_t|s_t)/\pi_{old}(a_t|s_t) \]
-    <p>One-sided cutoff above threshold \(c\). Same operation as PPO's upper clip, applied in the IS reweighting context. VeRL exposes via <code>rollout_is=token</code>.</p>
+    <div class="step-label">Continuous weighting — token or sequence IS</div>
+    <p>Multiply the policy-gradient term by a detached correction weight. Token mode uses one
+    \(b_t\) per token; sequence mode uses one product \(W(\tau)=\prod_t b_t\) for the response.
+    This is the correction mechanism; it does not decide whether the sample remains in the
+    training mask.</p>
   </div>
 
   <div class="step">
-    <div class="step-label">MIS / IcePop — Masked IS</div>
-    <p>Drop entire samples whose trajectory-level IS ratio exceeds a threshold rather than clipping:</p>
-    \[ w = w_{seq}(\tau) \cdot \mathbf{1}[w_{seq}(\tau) \leq c] \]
-    <p>Cleaner than clipping (no gradient from extreme samples) but wastes data. IcePop is the DeepSeek/Minimax variant.</p>
+    <div class="step-label">TIS — truncate the continuous weight</div>
+    <p>Bound extreme correction coefficients, commonly with an upper cap:</p>
+    \[
+      \tilde b_t=\min(b_t,C)
+      \qquad\text{or}\qquad
+      \widetilde W(\tau)=\min(W(\tau),C).
+    \]
+    <p>Truncation lowers variance but biases the change of measure. Some implementations
+    normalize the resulting weights back to batch mean 1; that changes scale, not the lost tail.</p>
   </div>
 
   <div class="step">
-    <div class="step-label">M2PO — Masked Multi-step PO</div>
-    <p>Iteratively mask individual <em>tokens</em> (not full trajectories) until the remaining sample's variance satisfies a constraint. Finer-grained than MIS — keeps most of the sample, drops the specific high-ratio tokens.</p>
+    <div class="step-label">Ratio masking / IcePop-style bounds</div>
+    <p>Set a correction coefficient to zero outside a lower/upper interval instead of pinning
+    it to the boundary:</p>
+    \[
+      \tilde b_t=b_t\,
+      \mathbf{1}[C_{\mathrm{low}}\le b_t\le C_{\mathrm{high}}].
+    \]
+    <p>This removes extreme gradient contributions completely. It wastes those tokens but avoids
+    letting a clipped outlier continue to steer the update.</p>
   </div>
 
   <div class="step">
-    <div class="step-label">DeepSeek Masking</div>
-    <p>Mask out negative-advantage tokens with large log-ratios \(\log \pi_{new}/\pi_{old}\). Motivated by the observation that large negative-advantage updates with big ratios produce destabilizing large-magnitude gradients.</p>
+    <div class="step-label">Rejection sampling and trust-region masking</div>
+    <p>Change the binary response mask using a token- or sequence-level statistic: raw ratio,
+    summed/mean/max \(k_1\), \(k_2\), or \(k_3\) divergence estimates, or a sequence trust-region
+    bound. Sequence masking is attractive for long-horizon rewards because one extreme token can
+    invalidate the whole trajectory-level approximation; it also discards more expensive data.</p>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Mechanism</th><th>Acts on</th><th>Main benefit</th><th>Main cost</th></tr>
+      <tr><td>PPO clip</td><td>\(q_t=\pi_\theta/\pi_{\mathrm{prox}}\)</td><td>Limits movement during optimization</td><td>Biased surrogate when active</td></tr>
+      <tr><td>Token TIS</td><td>Each \(b_t=\pi_{\mathrm{prox}}/\mu\)</td><td>Low-variance rollout correction</td><td>Not exact sequence change of measure</td></tr>
+      <tr><td>Sequence TIS</td><td>\(\prod_t b_t\)</td><td>Sequence-consistent correction</td><td>Extreme variance and length sensitivity</td></tr>
+      <tr><td>Ratio / KL masking</td><td>Tokens or full sequences</td><td>Removes toxic tails</td><td>Throws away collected experience</td></tr>
+      <tr><td>GSPO-style clipping</td><td>Geometric sequence score</td><td>Matches sequence-level reward and normalizes length</td><td>Surrogate, not exact IS</td></tr>
+    </table>
+  </div>
+
+  <div class="note">
+    No correction recovers missing support: if \(\mu(a|s)=0\) where the target policy needs
+    probability mass, importance sampling has nothing to reweight. Nor can a ratio repair a
+    changed state or action sequence caused by retokenization, context rewriting or an altered
+    tool trace. Those are data-fidelity failures, not merely high-variance off-policy data.
   </div>
 
   <!-- ── §6 TIM ──────────────────────────────── -->
-  <h2 id="tim">6. Training-Inference Mismatch (TIM)</h2>
+  <h2 id="tim">6. Three Mismatches That Must Not Be Conflated</h2>
 
-  <p>Even without policy lag, a subtler source of off-policy data exists: the rollout engine (vLLM/SGLang) and training engine (FSDP/Megatron) <strong>produce different log-probabilities on identical weights and tokens</strong>. This silently converts "on-policy" data into off-policy without any lag at all.</p>
-
-  <p>The importance ratio \(\pi_{new}(a_t|s_t)/\pi_{old}(a_t|s_t)\) is supposed to be 1 for on-policy data. TIM makes it deviate from 1 by construction.</p>
-
-  <h3>Root Causes</h3>
-
-  <ol>
-    <li><strong>Batch-size-dependent accumulation order</strong> — standard GPU matmul and reductions accumulate floating-point additions in an order that depends on batch size and thread layout. Different batch sizes → different rounding → different log-probs on identical weights.</li>
-    <li><strong>TP-size-dependent accumulation</strong> — training uses FSDP (data-parallel) while rollout uses tensor parallelism. All-reduce operations in TP introduce rounding in a different order → log-prob divergence even for the same batch size.</li>
-    <li><strong>MoE routing instability</strong> — two separate forward passes can route tokens to different experts → completely different log-probs.</li>
-    <li><strong>Tokenization drift (TITO)</strong> — if rollout and training apply slightly different token preprocessing, sequences diverge before any computation. When an external agent harness owns the loop this stops being a numerics footnote and becomes the dominant mismatch source — non-injective decoding, chat-template re-rendering, tool-call re-serialisation and history rewriting; see <a href="harnessed-agentic-rl.html#text">why text cannot cross the seam</a> and <a href="harnessed-agentic-rl.html#behavior">the proxy's logprobs as the behavior policy</a>.</li>
-      <li><strong>Sparse-selection nondeterminism</strong> — with learned sparse attention (<a href="../transformer/sparse-attention.html">DSA</a>), each layer's indexer picks a top-\(k\) set of KV entries before attention runs. If rollout and trainer kernels break ties differently, they select <em>different entries</em>: the two forward passes are structurally different computations, not the same computation rounded differently. <a href="../transformer/glm-5.html#dsa">GLM-5</a> reports that non-deterministic CUDA/TileLang top-\(k\) collapsed RL within a few steps; deterministic <code>torch.topk</code> plus a frozen indexer fixed it. Same class of bug as MoE routing (3), one level down.</li>
-</ol>
-
-  <h3>Diagnosing TIM</h3>
-
-  <p>Standard aggregate KL \(\mathbb{D}_{KL}(\pi_{old} \| \pi_{new})\) <strong>hides</strong> early-stage TIM failure — it averages over both aligned and misaligned tokens. Better signals:</p>
-  <ul>
-    <li><strong><code>pg_clipfrac</code></strong> — fraction of tokens whose ratio \(r_t\) hits the PPO clip bound. Should be near zero when on-policy; TIM pushes it up even without lag.</li>
-    <li><strong>Pearson correlation</strong> between rollout log-probs and training log-probs across tokens — near 1.0 = aligned; falling = engines diverging.</li>
-    <li><strong>Sign-imbalanced loss distortion</strong> — after PPO clipping, a wrong ratio direction produces one-sided bias in the gradient visible as asymmetric clip patterns.</li>
-  </ul>
-
-  <div class="note" style="margin-top:0.8em;">
-    <strong>GRPO-specific amplifier:</strong> in GRPO, stale rollouts corrupt the group-relative baseline itself — the group-mean reward that defines each advantage was computed under \(\pi_{\theta_{\text{old}}}\), not \(\pi_\theta\). If policy lag is large during high-entropy exploration, the baseline shifts, silently biasing the z-scored advantages even when the IS ratio \(\rho_{i,t}\) is well-behaved. This makes GRPO more sensitive to staleness than PPO during early training when the policy is changing fastest.
+  <div class="table-wrap">
+    <table>
+      <tr><th>Mismatch</th><th>What differs</th><th>Can IS repair it?</th></tr>
+      <tr>
+        <td><strong>Temporal lag</strong></td>
+        <td>The rollout used an older weight version than the trainer.</td>
+        <td>Sometimes, if the exact behavior log-probs and support are preserved.</td>
+      </tr>
+      <tr>
+        <td><strong>Training–inference mismatch (TIM)</strong></td>
+        <td>Nominally identical weights and tokens produce different probabilities in rollout and training engines.</td>
+        <td>It can be reweighted or filtered, but correction adds variance/bias and may retain a deployment gap.</td>
+      </tr>
+      <tr>
+        <td><strong>Trajectory reconstruction mismatch</strong></td>
+        <td>The trainer sees different token IDs, context, tool serialization or history from what the model sampled against.</td>
+        <td><strong>No.</strong> The state/action pair changed; preserve tokens or fork the sample instead.</td>
+      </tr>
+    </table>
   </div>
 
-  <h3>Three Fix Families</h3>
+  <h3>Numerical TIM</h3>
+
+  <p>For the same nominal checkpoint and exact token prefix, compare rollout policy \(\mu\) with
+  the training implementation \(\pi_{\mathrm{train}}\):</p>
+  \[
+    \Delta_t =
+    \log\pi_{\mathrm{train}}(a_t|s_t)-\log\mu(a_t|s_t).
+  \]
+
+  <p>Sources include batch-dependent reduction order, different tensor-parallel reductions,
+  precision and quantization contracts, fused-kernel differences, MoE routing flips, and
+  nondeterministic sparse-attention top-\(k\) selection. These range from small numerical
+  perturbations to structurally different forward passes.</p>
+
+  <h3>Token fidelity is a separate prerequisite</h3>
+
+  <p>Decode–retokenize cycles, chat-template re-rendering, tool-call serialization, context
+  compaction and subagent branching can change \(s_t\) or \(a_t\) before the trainer evaluates
+  the sample. TITO, exact token capture and prefix/fork checks prevent that failure. Calling it
+  TIM understates the problem: once the token trajectory changes, the stored rollout log-prob is
+  no longer the probability of the action being trained. See
+  <a href="harnessed-agentic-rl.html#text">why text cannot cross the harness seam</a>.</p>
+
+  <h3>Diagnosis</h3>
+
+  <ul>
+    <li><strong>Controlled same-version replay:</strong> recompute the exact sampled tokens under
+    the trainer and compare absolute log-prob error and ratio tails.</li>
+    <li><strong>Distribution summaries:</strong> Pearson correlation, mean/max probability
+    difference, \(k_1/k_2/k_3\) divergence statistics and sequence-level maxima.</li>
+    <li><strong>Correction activation:</strong> TIS clip fractions and rejection rates show how
+    much of the batch the mismatch treatment changes.</li>
+    <li><strong>Keep PPO separate:</strong> in decoupled three-policy training,
+    <code>pg_clipfrac</code> measures \(\pi_\theta/\pi_{\mathrm{prox}}\), not
+    \(\pi_{\mathrm{prox}}/\mu\). Use rollout-correction metrics for TIM and staleness.</li>
+  </ul>
+
+  <div class="note">
+    Aggregate KL is necessary but insufficient. A small mean can coexist with a toxic ratio tail,
+    sign-asymmetric gradient distortion, or one dataset/harness whose mismatch is much worse than
+    the global average. The <a href="async-rl-monitoring.html">monitoring page</a> gives the full
+    diagnostic stack.
+  </div>
+
+  <h3>Mitigation families</h3>
 
   <div class="fix-grid">
     <div class="fix-card">
-      <h4>Eliminate</h4>
+      <h4>Eliminate or align</h4>
       <ul>
-        <li><strong>Batch-invariant kernels</strong> (Thinking Machines; DeepSeek V4) — deterministic accumulation regardless of batch size</li>
-        <li><strong>TBIK</strong> — TP-size determinism; the open part</li>
-        <li><strong>Rollout Routing Replay (R3)</strong> — force MoE training to use rollout's expert assignments</li>
-        <li><strong>TITO</strong> — tokenizer alignment</li>
+        <li>Batch-invariant and topology-aligned kernels</li>
+        <li>Matched precision and quantization contracts</li>
+        <li>Routing replay for MoE; deterministic sparse selection</li>
+        <li>Zero-KL alignment where the model/topology is explicitly supported</li>
       </ul>
     </div>
     <div class="fix-card">
-      <h4>Correct</h4>
+      <h4>Reduce</h4>
       <ul>
-        <li><strong>Token-level TIS</strong> — one-sided ratio clip (VeRL <code>rollout_correction</code>)</li>
-        <li><strong>GSPO</strong> — sequence-level IS; immune to MoE expert-activation volatility</li>
-        <li><strong>Decoupled PPO</strong> — split proximal from behavior policy</li>
-        <li><strong>Bypass old-logprobs</strong> — use rollout probs directly; on-policy only</li>
+        <li>Use a more stable precision where validated</li>
+        <li>Match TP degree and implementation paths</li>
+        <li>Shorten weight-sync intervals and queue residence</li>
+        <li>Keep sensitive layers out of aggressive quantization</li>
       </ul>
     </div>
     <div class="fix-card">
-      <h4>Precision</h4>
+      <h4>Correct or reject</h4>
       <ul>
-        <li><strong>FP16 over BF16</strong> — 10 vs 7 mantissa bits; cuts mismatch ~24× and outperforms best IS patch (~99% vs ~95% on MATH500). Cheapest fix.</li>
-        <li><strong>FP32 LM head</strong> — older trick; superseded by full FP16</li>
-        <li><strong>FP8 rollout + IS</strong> — quantized rollout widens gap; pair with TIS</li>
+        <li>Decoupled PPO with explicit \(\pi_{\mathrm{prox}}/\mu\)</li>
+        <li>Bypass mode using rollout log-probs as the proximal anchor</li>
+        <li>Token/sequence TIS and ratio/KL rejection masks</li>
+        <li>Sequence-level trust-region masking for long horizons</li>
       </ul>
     </div>
   </div>
 
-  <h3>MILES / slime: the Eliminate Camp in Practice</h3>
+  <p>The FP16 result belongs in the <em>reduce</em> family, not as a universal prescription.
+  One study reports roughly a 24× mismatch reduction and stronger MATH performance than its IS
+  baselines when switching BF16 RL fine-tuning to FP16. Whether that transfers depends on model,
+  kernels, topology and numerical stability.</p>
 
-  <p>MILES commits fully to the eliminate family: make SGLang and FSDP/Megatron bitwise-identical for the full forward pass. IS ratio ≡ 1 by construction — no correction needed. IS is retained only as a fallback for edge cases where bitwise identity can't be guaranteed (e.g., TP-size boundary).</p>
-
-  <p>The differentiating claim: eliminating the mismatch is strictly better than correcting for it, because IS correction itself introduces variance and potential bias. The open question is whether bitwise identity can be guaranteed at scale across all TP configurations.</p>
+  <p>Miles's Zero-KL Alignment demonstrates the eliminate path for supported configurations by
+  aligning attention, GEMM, operator precision and batching behavior across SGLang and the
+  trainer. Miles also retains IS, masking and low-precision recipes when exact alignment is not
+  available. It is therefore misleading to classify an entire framework as only “eliminate” or
+  only “correct.” These are per-recipe choices.</p>
 
   <!-- ── §7 VeRL knobs ──────────────────────── -->
-  <h2 id="knobs">7. Async VeRL: Three Knobs</h2>
-
-  <p>VeRL's fully-async mode controls the staleness tradeoff with three config parameters:</p>
+  <h2 id="knobs">7. The Controls That Actually Bound an Async Run</h2>
 
   <div class="table-wrap">
     <table>
-      <tr><th>Knob</th><th>What it controls</th></tr>
+      <tr><th>Control</th><th>Question it answers</th><th>Failure if omitted</th></tr>
+      <tr><td>Placement mode</td><td>Do rollout and training time-share GPUs or use separate pools?</td><td>Wrong resource model and misleading utilization expectations</td></tr>
+      <tr><td>In-flight admission</td><td>How many trajectories may be generating at once?</td><td>KV-cache pressure, environment overload and unbounded future work</td></tr>
+      <tr><td>Completed-buffer capacity</td><td>How far may rollout production run ahead?</td><td>Queue age grows even if the in-flight count is bounded</td></tr>
+      <tr><td>Weight-sync cadence</td><td>How many optimizer updates occur before rollout engines receive new weights?</td><td>Publication lag or excessive synchronization overhead</td></tr>
+      <tr><td>Freshness gate</td><td>Which version span is still trainable?</td><td>Arbitrarily stale samples enter the objective</td></tr>
+      <tr><td>Unused-sample policy</td><td>Drop, retry or wait for stale/failed groups?</td><td>Silent compute waste or reintroduced tail stalls</td></tr>
+      <tr><td>Partial-rollout policy</td><td>Drain, retract, abort/resubmit or resume in place?</td><td>Lost tokens, repeated prefill, or mixed-version trajectories without provenance</td></tr>
+      <tr><td>Evaluation placement</td><td>Shared engines, dedicated fleet or external evaluator?</td><td>Eval silently stalls rollout or is attributed to the wrong checkpoint</td></tr>
+    </table>
+  </div>
+
+  <h3>Current verl naming</h3>
+
+  <p>The V1 trainer uses <code>trainer.v1.trainer_mode:
+  sync|colocate_async|separate_async</code>. Its replay buffer applies a version-span gate such
+  as <code>max_off_policy_threshold</code>; the companion
+  <a href="verl-async-training.html">Async Training in verl</a> page traces the exact code path,
+  partial resubmission and checkpoint-engine weight synchronization.</p>
+
+  <p>The separate experimental <code>fully_async_policy</code> recipe uses
+  <code>trigger_parameter_sync_step</code>, <code>staleness_threshold</code> and
+  <code>partial_rollout</code>. Its <code>staleness_threshold</code> is a <em>fractional allowance
+  for stale production</em>, not a maximum age in policy versions. These namespaces describe
+  related mechanisms but are not interchangeable.</p>
+
+  <h3>Current Miles naming</h3>
+
+  <p>Miles uses a persistent rollout worker, a bounded data buffer and controls such as
+  <code>--async-max-concurrent-samples</code>,
+  <code>--async-data-buffer-capacity-factor</code>,
+  <code>--update-weights-interval</code> and <code>--max-weight-staleness</code>. Its
+  <code>--pause-generation-mode</code> determines whether requests retract and rebuild KV cache
+  or pause in place across weight publication.</p>
+
+  <h3>Monitor the causal chain</h3>
+
+  <pre><code>sample age
+  → rollout/train probability mismatch
+    → TIS or rejection activation
+      → PPO update clipping
+        → reward, entropy, gradient and evaluation outcome</code></pre>
+
+  <p>Log system state beside optimization state: queue depth and age, oldest/newest weight
+  version, discarded or retried groups, partial-span distribution, rollout/trainer idle ratios,
+  environment and grader failures, and weight-sync duration. The companion
+  <a href="async-rl-monitoring.html"><strong>Monitoring &amp; Diagnosis</strong></a> page
+  distinguishes <code>pg_tis_clipfrac</code> from <code>pg_clipfrac</code> and maps these
+  signals to concrete failure modes.</p>
+
+  <!-- ── §8 system patterns ───────────────────── -->
+  <h2 id="compare">8. Current System Patterns</h2>
+
+  <p>Frameworks increasingly support several choices rather than belonging to one permanent
+  “camp.” Compare a concrete recipe—placement, correction mode, precision and weight-transfer
+  path—not only the framework name.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>System</th><th>Scheduling</th><th>Correction / fidelity</th><th>Distinctive controls</th></tr>
       <tr>
-        <td><code>trigger_parameter_sync_step</code></td>
-        <td>How often the trainer pushes fresh weights to rollout workers (every \(N\) steps). Smaller \(N\) → fresher policy, more sync overhead.</td>
+        <td><strong>verl</strong></td>
+        <td>V1 sync, collocated async and separate async; separate experimental fully-async recipe</td>
+        <td>Decoupled three-policy or bypass modes; token/sequence IS plus independent rejection masks</td>
+        <td>Replay-buffer version gate, partial resubmission, NCCL/checkpoint-engine publication</td>
       </tr>
       <tr>
-        <td><code>staleness_threshold</code></td>
-        <td>Max age (in policy versions) before a sample is discarded. <code>0</code> ≈ synchronous; higher → more off-policy data tolerated.</td>
+        <td><strong>AReaL</strong></td>
+        <td>Separate streaming rollout and trainer pools with mixed-version batches</td>
+        <td>Decoupled PPO and explicit staleness filtering</td>
+        <td>Interruptible rollout workers, dynamic batching and parallel reward service</td>
       </tr>
       <tr>
-        <td><code>partial_rollout</code></td>
-        <td>Whether unfinished rollouts are saved and resumed across a weight update (vs. thrown away). Saves long in-flight rollouts; the resumed half is from the older policy.</td>
+        <td><strong>Miles</strong></td>
+        <td>Persistent fully async rollout worker and bounded group buffer; published large-scale recipe uses split trainer/inference nodes</td>
+        <td>TITO, routing replay, IS/masking, and Zero-KL Alignment for supported configurations</td>
+        <td>Sample-granularity admission, oldest-version staleness, retract/in-place pause, RDMA P2P or disk-delta weights</td>
+      </tr>
+      <tr>
+        <td><strong>Agent Lightning</strong></td>
+        <td>Harness-facing collocated async through an API gateway</td>
+        <td>Backend-dependent; rollout-level advantage and loss normalization in its verl trainer</td>
+        <td>Gateway admission pause is invisible to the external harness</td>
+      </tr>
+      <tr>
+        <td><strong>MiMo-V2.6 live run</strong></td>
+        <td>Announced fully async mixed-task, mixed-harness training</td>
+        <td>Publishes PPO/TIS metrics and train–inference KL; exact objective remains undisclosed</td>
+        <td>1,568 prompts × 16 rollouts, dynamic sampler, grader backlog, partial staleness and restart annotations</td>
       </tr>
     </table>
   </div>
 
-  <div class="note">
-    <strong>These are the <code>fully_async_policy</code> names.</strong> Current mainline verl exposes
-    the same ideas under a different config tree — <code>trainer.v1.trainer_mode</code> selects
-    <code>sync</code>/<code>colocate_async</code>/<code>separate_async</code>, staleness is bounded by an
-    integer <code>max_off_policy_threshold</code> rather than a fractional
-    <code>staleness_threshold</code>, and partial rollout is intrinsic to the async modes rather than a
-    separate flag. For the mechanism behind all of them — the replay-buffer eviction test, how an
-    aborted sequence is resumed, and the checkpoint-engine weight sync — see
-    <a href="verl-async-training.html"><strong>Async Training in verl</strong></a>.
-  </div>
+  <h3 id="slime-glm5">Large-scale cases and reported speedups</h3>
 
-  <p>The key staleness and alignment metrics to watch — <code>pg_clipfrac</code>, Pearson
-  correlation, IS ratio distribution, policy entropy, advantage variance, gradient norm, and
-  response length — are covered in the companion reference:
-  <a href="async-rl-monitoring.html"><strong>Monitoring &amp; Diagnosis for Async RL →</strong></a></p>
+  <p>GLM-5 remains a useful operational case for the older slime lineage: threshold-triggered
+  training, weight publication every \(K\) updates, optimizer-state reset at publication,
+  staleness filtering by the <em>oldest</em> version in a multi-turn trajectory, explicit
+  environment-failure masking, TITO, and double-sided token-ratio masking. Its later SAO work
+  (<a href="https://arxiv.org/abs/2607.07508">arXiv 2607.07508</a>) removes the GRPO group
+  synchronization barrier by moving to one rollout per prompt plus a value model. These are
+  recipe choices, not requirements of async RL itself.</p>
 
-  <!-- ── §8 verl vs Miles ─────────────────────── -->
-  <h2 id="compare">8. verl vs. slime/Miles as Async Systems</h2>
-
-
-  <p>Both systems run generation and training as decoupled loops, but they take opposite positions
-  on the two core async problems — policy lag and TIM — and that choice shapes every other
-  architectural decision.</p>
-
-  <h3>Different answers to the same two problems</h3>
-
-  <p><strong>Policy lag (K &gt; 0):</strong> samples in the buffer were generated by a policy
-  \(K\) steps behind the current trainer. Both systems face this.</p>
+  <p>The headline speed numbers below are not an apples-to-apples benchmark:</p>
 
   <ul>
-    <li><strong>verl</strong> — tolerate lag with IS correction. Configure
-    <code>staleness_threshold</code> to bound \(K_{max}\), apply token-level or sequence-level IS
-    to correct off-policy data, monitor health with <code>pg_clipfrac</code> and Pearson
-    correlation. The IS correction itself introduces variance that grows with \(K\) and sequence
-    length.</li>
-    <li><strong>slime/Miles</strong> — same lag exists, but TIM is zeroed first. The IS ratio
-    deviation that remains is entirely from policy drift (\(K\) steps of training), not from
-    numerical engine differences. In practice, small \(K\) (1–2 steps) with TIM eliminated often
-    keeps \(\rho \approx 1\) without any IS correction at all. IS is retained as a fallback for
-    larger lag or for cases where bitwise identity breaks down.</li>
+    <li><strong>AReaL:</strong> reports up to 2.57× throughput and scaling to 512 GPUs on its
+    evaluated reasoning/code workloads.</li>
+    <li><strong>verl fully_async_policy:</strong> reports 2.35–2.67× on Qwen2.5-7B with 128 GPUs
+    and no significant result degradation in its setup.</li>
+    <li><strong>Agent Lightning:</strong> reports roughly 2× end-to-end over its synchronous
+    baseline while using fewer GPUs than separate-pool async.</li>
+    <li><strong>Miles:</strong> publishes a 744B-A40B, 16-node GLM-5.2 recipe and detailed
+    continuous-rollout, buffer, evaluation and weight-transfer mechanics; its blog is a system
+    capability report, not the same benchmark as the rows above.</li>
+    <li><strong>MiMo:</strong> exposes live trainer and sampler telemetry, but has not yet
+    published the controlled ablations needed to attribute quality or speed to one mechanism.</li>
   </ul>
-
-  <p><strong>TIM (Training-Inference Mismatch):</strong> the rollout engine and training engine
-  produce different log-probs on identical weights, making even \(K=0\) data silently off-policy.</p>
-
-  <ul>
-    <li><strong>verl</strong> — correct or accept it. FP16 precision cuts TIM ~24× cheaply;
-    sequence-level IS is immune to MoE expert-routing volatility; token-level TIS clips the worst
-    deviations.</li>
-    <li><strong>slime/Miles</strong> — eliminate it. SGLang and Megatron run the same FP
-    precision, same TP degree, same attention kernel, same expert routing. IS ratio ≡ 1 by
-    construction at \(K=0\).</li>
-  </ul>
-
-  <h3>The TP constraint Miles pays for TIM elimination</h3>
-
-  <p>Floating-point accumulation is not associative. With TP=2, a row-parallel AllReduce sums two
-  partial products; with TP=4 it sums four different subsets of the weight matrix. The rounding
-  differs — SGLang at TP=4 is not bitwise-identical to Megatron at TP=2, even on the same
-  weights. TIM is reinstated.</p>
-
-  <p>This means <strong>the TP degree is frozen at launch and must match across both engines</strong>.
-  "Scaling up SGLang" in Miles is therefore <em>replica scale-out</em> — add more SGLang instances
-  each running at the same TP degree, load-balancing prompts across them — not TP
-  reconfiguration per instance. You can double rollout throughput on more GPUs; you cannot
-  change the per-instance parallelism without either a coordinated restart (both Megatron and
-  SGLang relaunch at new matching TP) or accepting IS correction for the mismatch period.</p>
-
-  <p>verl has no equivalent constraint: rollout (vLLM) and training (FSDP) already use IS
-  correction, so changing TP mid-run just widens the IS ratio slightly — no architectural
-  invariant is broken.</p>
-
-  <h3>Weight sync in the async loop</h3>
-
-  <p>In async mode both systems decouple weight sync from the per-step training loop — the push
-  happens every \(K\) steps, off the critical path. The mechanism differs:</p>
-
-  <ul>
-    <li><strong>verl</strong> — NCCL AllGather in-process. Rollout and training workers share a
-    process group; weight sync is a collective over an existing channel. Fast
-    (~seconds for 7B), but requires co-location: rollout capacity is fixed to the same GPU pool
-    as training.</li>
-    <li><strong>slime/Miles</strong> — HTTP push across a process boundary. Slower per sync
-    (~100–500 ms of serialization overhead on top of network), but the processes are independent.
-    Rollout capacity can live on a separate GPU pool or be scaled by adding replicas without
-    touching the training cluster.</li>
-  </ul>
-
-  <p>In sync mode (K=1), the HTTP latency sits on the critical path and is a real cost. In async
-  mode it is amortized over \(K\) training steps and largely absorbed, making the two mechanisms
-  comparable in effective overhead.</p>
-
-  <h3 id="slime-glm5">slime at 744B: GLM-5's production configuration</h3>
-
-  <p>The largest published slime run is <a href="../transformer/glm-5.html">GLM-5</a> (744B-A40B;
-  report §3.6.2 and §4.1). It reads as a checklist of what the decoupled loop in §2 needs once
-  trajectories are multi-turn and the model is a frontier MoE:</p>
-
-  <ul>
-    <li><strong>Threshold-triggered training.</strong> Inference engines on their own GPUs stream
-    trajectories continuously; a training step fires when the buffer reaches a preset trajectory
-    count. Weights are pushed to the rollout engines every \(K\) gradient updates.</li>
-    <li><strong>Optimizer reset at every push.</strong> After each weight sync the optimizer state is
-    reset. The rationale: the asynchronous update changed the optimization problem, so momentum
-    accumulated against the previous rollout distribution is itself stale. A lag-reduction lever §3
-    does not list, because it acts on the <em>optimizer's</em> memory rather than on the samples.</li>
-    <li><strong>Staleness filter on the oldest version.</strong> A multi-turn trajectory is generated
-    under a sequence of policy versions \((w_0, \dots, w_k)\); GLM-5 drops it if
-    \(w' - w_0 > \tau\) for the current policy \(w'\). Compare verl's per-sample
-    <code>staleness_threshold</code> in §7: keying on the <em>oldest</em> version is the
-    partial-rollout case, where the first turns of a long agent episode can be many syncs older
-    than the last.</li>
-    <li><strong>Environment-failure masking.</strong> Every sample records why it ended; trajectories
-    that failed because the environment collapsed (sandbox died, tool timed out) are excluded
-    rather than scored as failures, and groups are padded or dropped to keep the GRPO baseline
-    honest. Data hygiene of a kind that only exists once the environment is a fallible service.</li>
-    <li><strong>TITO gateway + double-sided token IS.</strong> The trainer consumes the inference
-    engine's exact token stream — no re-tokenization — and per-token ratios outside
-    \([1-\epsilon_l,\ 1+\epsilon_h]\) are masked from the gradient: the
-    <a href="#stabilization">IcePop</a> family above, with \(\beta = 2\).</li>
-  </ul>
-
-  <p>On the serving side the same run uses FP8 rollouts with MTP drafting, prefill/decode
-  disaggregation (a heavy prefill preempts in-flight decodes under DP-attention), and rollout-ID
-  consistent hashing to pin each multi-turn trajectory to one DP rank — see
-  <a href="../inference/rl-inference.html#optimizations">RL inference</a>. The algorithm is still
-  GRPO with a group of 32; the same team's later
-  <a href="https://arxiv.org/abs/2607.07508">SAO</a> drops the group for single-rollout sampling
-  with a value model, on the argument that the group is the async loop's synchronization barrier.</p>
-
-  <h3>Side-by-side</h3>
-
-  <div class="table-wrap">
-    <table>
-      <tr><th>Dimension</th><th>verl (async)</th><th>slime / Miles (async)</th></tr>
-      <tr>
-        <td>TIM baseline</td>
-        <td>Non-zero; corrected by FP16 / IS / TIS</td>
-        <td>≡ 0 by construction (TP must match)</td>
-      </tr>
-      <tr>
-        <td>Policy lag correction</td>
-        <td>IS required (token or sequence level)</td>
-        <td>IS optional at small \(K\); fallback at large \(K\) or TP mismatch</td>
-      </tr>
-      <tr>
-        <td>Weight sync primitive</td>
-        <td>NCCL AllGather in-process</td>
-        <td>HTTP push across process boundary</td>
-      </tr>
-      <tr>
-        <td>Rollout scale-out</td>
-        <td>Add co-located vLLM workers; TP freely changeable at restart</td>
-        <td>Add SGLang replicas at same TP; changing TP breaks TIM</td>
-      </tr>
-      <tr>
-        <td>Rollout pool placement</td>
-        <td>Co-located with training (same GPUs)</td>
-        <td>Separate GPU pools possible</td>
-      </tr>
-      <tr>
-        <td>Staleness knobs</td>
-        <td><code>trigger_parameter_sync_step</code>, <code>staleness_threshold</code>, <code>partial_rollout</code></td>
-        <td>Replica count, sync cadence, <code>max_policy_lag</code></td>
-      </tr>
-      <tr>
-        <td>Health signal at \(K=0\)</td>
-        <td><code>pg_clipfrac</code> &gt; 0 signals TIM</td>
-        <td><code>pg_clipfrac</code> ≈ 0 (TIM eliminated); rise signals TP mismatch or precision drift</td>
-      </tr>
-      <tr>
-        <td>MoE support</td>
-        <td>Dense-first; sequence-level IS handles routing volatility</td>
-        <td>Native EP + routing replay; TIM elimination covers MoE expert dispatch</td>
-      </tr>
-    </table>
-  </div>
 
   <div class="note">
-    <strong>Neither approach dominates in all regimes.</strong> verl's IS correction is more
-    flexible (works across TP configurations, handles larger \(K\)), but introduces variance that
-    grows with sequence length. Miles's TIM elimination is cleaner at small \(K\) but pays a
-    rigidity cost — the TP degree is effectively a deployment constant, not a tuning knob.
-    For large MoE models run at modest lag (\(K \leq 2\)), Miles's approach avoids the IS
-    variance accumulation that afflicts long-sequence PPO. For dense models or workloads that
-    require frequent TP changes, verl's correction path is more practical.
+    <strong>Practical choice:</strong> start synchronous while validating rewards, masks and
+    log-prob semantics. Use collocated async when GPUs are constrained and long-tail trajectories
+    dominate. Use separate async when continuous rollout, heterogeneous parallelism or independent
+    scaling justifies a second pool. In every mode, preserve exact tokens and sampling-time
+    log-probs before tuning correction thresholds.
   </div>
 
   <!-- ── §9 References ──────────────────────── -->
@@ -853,48 +975,52 @@ collocated async:  one pool: [gen gen gen] → stop admitting, drain → [update
   <div class="table-wrap">
     <table>
       <tr>
-        <td><a href="https://luk-huang.github.io/personal-website/blog/is-frontier-asynchronous-rl-solved.html">Is Frontier Async RL Solved?</a></td>
-        <td>Luke Huang — policy lag math, sequence vs token IS, low-bias compute-scaling hypothesis</td>
+        <td><a href="https://verl.readthedocs.io/en/latest/advance/fully_async.html">verl Fully Async Policy Trainer</a></td>
+        <td>Separate-pool streaming architecture, fractional stale-production allowance, partial rollout, metrics and 128-GPU experiments</td>
       </tr>
       <tr>
-        <td><a href="https://arxiv.org/abs/2507.18071">GSPO</a></td>
-        <td>Qwen sequence-level IS; MoE RL stability; removes routing replay</td>
+        <td><a href="https://verl.readthedocs.io/en/latest/algo/rollout_corr.html">verl Rollout Correction</a> · <a href="https://verl.readthedocs.io/en/latest/algo/rollout_corr_math.html">math</a></td>
+        <td>Current three-policy, bypass, token/sequence IS and independent rejection-sampling definitions</td>
       </tr>
       <tr>
-        <td><a href="https://arxiv.org/abs/2602.15763">GLM-5 technical report</a></td>
-        <td>Zhipu, Feb 2026 — slime at 744B-A40B (§8): threshold-triggered batches, optimizer reset per sync, oldest-version staleness filter, env-failure masking; deterministic top-k + frozen indexer for DSA under RL (§6)</td>
+        <td><a href="https://arxiv.org/abs/2505.24298">AReaL</a></td>
+        <td>Separate-pool streaming RL, mixed-version batches, staleness filtering and Decoupled PPO</td>
       </tr>
       <tr>
         <td><a href="https://arxiv.org/abs/2608.17528">Agent Lightning v1.0</a></td>
-        <td>Microsoft, Aug 2026 — collocated async (§2.5): one GPU pool time-shared between rollout and update, gateway-level pause invisible to the harness</td>
+        <td>Collocated async (§3.1 in the paper): one GPU pool time-shared between rollout and update behind a harness-facing gateway</td>
+      </tr>
+      <tr>
+        <td><a href="https://arxiv.org/abs/2507.18071">GSPO</a></td>
+        <td>Geometric-mean sequence ratio and response-level clipping; critique of token-level GRPO ratios</td>
+      </tr>
+      <tr>
+        <td><a href="https://arxiv.org/abs/2512.23075">Trust Region Masking</a></td>
+        <td>Sequence-level trust-region bounds and masking for long-horizon autoregressive policies</td>
+      </tr>
+      <tr>
+        <td><a href="https://arxiv.org/html/2605.14220">Diagnosing Training-Inference Mismatch</a></td>
+        <td>VeXact zero-mismatch baseline; TIM failure modes and correction ablations</td>
       </tr>
       <tr>
         <td><a href="https://arxiv.org/html/2510.26788v1">Defeating TIM via FP16</a></td>
-        <td>FP16 cuts mismatch ~24×; beats best IS patch</td>
+        <td>Precision-based mismatch reduction; results are recipe-specific, not a universal guarantee</td>
       </tr>
       <tr>
-        <td><a href="https://arxiv.org/html/2605.14220">Diagnosing TIM in LLM RL</a></td>
-        <td>TIM taxonomy; aggregate KL hides failure; VeXact bitwise reference</td>
+        <td><a href="https://www.lmsys.org/blog/2026-08-18-miles-v0-1/">Miles v0.1</a> · <a href="https://miles.radixark.com/docs/user-guide/fully-async">fully async docs</a></td>
+        <td>Bounded async buffer, sample-granularity admission, TITO/R3, evaluation modes and P2P/delta weight publication</td>
       </tr>
       <tr>
-        <td><a href="https://github.com/zhaochenyang20/Awesome-ML-SYS-Tutorial/blob/main/rlhf/slime/mismatch/blog-en.md">MILES blog</a></td>
-        <td>Bitwise-identical SGLang↔FSDP/Megatron; IS as fallback</td>
+        <td><a href="https://arxiv.org/abs/2602.15763">GLM-5 technical report</a></td>
+        <td>Large-MoE async practice: version filtering, environment-failure masking and deterministic sparse selection</td>
       </tr>
       <tr>
-        <td><a href="https://arxiv.org/abs/2511.17826">TBIK</a></td>
-        <td>Deterministic inference across TP sizes</td>
+        <td><a href="https://mimo.xiaomi.com/rl/#overview">MiMo-V2.6 live RL metrics</a> · <a href="https://x.com/_LuoFuli/status/2100296686719610932">announcement</a></td>
+        <td>Live fully async trainer, sampler, staleness, TIM, TIS, infrastructure and checkpoint-evaluation telemetry; recipe details pending</td>
       </tr>
       <tr>
-        <td><a href="https://newsletter.semianalysis.com/p/rl-systems-mind-the-gap-matching">RL Systems: Mind the Gap</a></td>
-        <td>Throughput-matching framework; four case studies (SemiAnalysis)</td>
-      </tr>
-      <tr>
-        <td><a href="https://verl.readthedocs.io/en/latest/advance/fully_async.html">VeRL fully-async docs</a></td>
-        <td><code>trigger_parameter_sync_step</code>, <code>staleness_threshold</code>, <code>partial_rollout</code></td>
-      </tr>
-      <tr>
-        <td><a href="https://github.com/sail-sg/slime">sail-sg/slime</a></td>
-        <td>Minimal RL framework built around TIM elimination</td>
+        <td><a href="verl-async-training.html">Async Training in verl</a> · <a href="async-rl-monitoring.html">Monitoring &amp; Diagnosis</a></td>
+        <td>Companion implementation and operations references in this site</td>
       </tr>
     </table>
   </div>
