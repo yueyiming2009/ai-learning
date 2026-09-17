@@ -279,7 +279,7 @@
   <div class="nav-links">
     <a href="../index.html">← All notes</a>
     <a href="../index.html#rl-rl-efficiency" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;" title="Back to Reinforcement Learning › RL Efficiency">↑ RL Efficiency</a>
-    <a href="#clipfrac">pg_clipfrac</a>
+    <a href="#clipfrac">PPO vs TIS clipping</a>
     <a href="#pearson">Pearson ρ</a>
     <a href="#entropy-collapse">Entropy collapse</a>
     <a href="#tis-trap">TIS trap</a>
@@ -309,32 +309,60 @@
 
   <p>These metrics fall into three groups: <em>staleness signals</em> (is the buffer too
   old?), <em>signal health</em> (is the gradient informative?), and <em>stability signals</em>
-  (is training about to collapse?). Most apply to any async RL system, not just VeRL.</p>
+  (is training about to collapse?). Most apply to any async RL system, not just VeRL. Before
+  interpreting any field containing <code>ratio</code> or <code>clipfrac</code>, identify
+  which pair of policies it compares.</p>
+
+  <div class="note">
+    <strong>Two ratios, two clipping layers.</strong> A decoupled async implementation can
+    distinguish the rollout behavior policy \(\mu\), the frozen proximal policy
+    \(\pi_{\mathrm{prox}}\) used for the current update, and the actor being optimized
+    \(\pi_\theta\):
+    \[
+      q_t = \frac{\pi_\theta(a_t|s_t)}{\pi_{\mathrm{prox}}(a_t|s_t)}
+      \qquad
+      b_t = \frac{\pi_{\mathrm{prox}}(a_t|s_t)}{\mu(a_t|s_t)}.
+    \]
+    PPO clipping constrains \(q_t\), the movement made <em>inside the optimizer update</em>.
+    TIS clips or masks \(b_t\), the mismatch already present when a rollout reaches the
+    trainer because of policy lag, engine numerics, quantization, or token reconstruction.
+    Older two-policy implementations may set \(\pi_{\mathrm{prox}}=\mu\) or log only one
+    combined ratio, which is why the same metric name can have different diagnostic meaning.
+  </div>
 
   <!-- ── §1 pg_clipfrac ────────────────────── -->
-  <h2 id="clipfrac">1. pg_clipfrac — Primary Staleness Gauge</h2>
+  <h2 id="clipfrac">1. pg_clipfrac — Proximal-Update Clipping</h2>
 
-  <p><code>pg_clipfrac</code> is the fraction of response tokens where the PPO importance ratio
-  hits the clip bound:</p>
+  <p>In a three-policy implementation, <code>pg_clipfrac</code> is the fraction of response
+  tokens where the PPO proximal ratio \(q_t\) leaves its allowed interval:</p>
   \[
-    \text{clipfrac} = \frac{1}{|\mathcal{T}|}\sum_{t \in \mathcal{T}}
-    \mathbf{1}\!\left[\left|\frac{\pi_{new}(a_t|s_t)}{\pi_{old}(a_t|s_t)} - 1\right| > \varepsilon\right]
+    \text{pg\_clipfrac} =
+    \frac{1}{|\mathcal{T}|}\sum_{t \in \mathcal{T}}
+    \mathbf{1}\!\left[q_t < 1-\varepsilon_{\mathrm{low}}
+    \;\lor\; q_t > 1+\varepsilon_{\mathrm{high}}\right].
   \]
-  <p>where \(\mathcal{T}\) is the set of non-padding response tokens and \(\varepsilon=0.2\) is
-  the PPO clip threshold.</p>
+  <p>Here \(\mathcal{T}\) is the set of non-padding response tokens. Some loggers count every
+  out-of-band ratio; others count only tokens for which PPO's clipped surrogate branch actually
+  wins. Check the implementation before comparing absolute values across frameworks.</p>
 
   <p><strong>What it catches:</strong></p>
   <ul>
-    <li><strong>Policy lag</strong> — as \(K\) grows, more ratios deviate from 1 → clipfrac rises.
-    A sudden jump after a weight sync interval increase is a direct lag signal.</li>
-    <li><strong>TIM</strong> — at \(K=0\) (freshly synced weights) clipfrac should be near zero.
-    A non-zero floor at \(K=0\) is the fingerprint of training-inference mismatch: the engines
-    agree on weights but not on log-probs.</li>
+    <li><strong>Repeated-update drift</strong> — later PPO epochs or minibatches move
+    \(\pi_\theta\) away from the frozen \(\pi_{\mathrm{prox}}\), so more ratios hit the bound.</li>
+    <li><strong>Update aggressiveness</strong> — a high learning rate, large advantages, or too
+    many optimization passes raises clipfrac even when the rollout data itself is fresh.</li>
+    <li><strong>Combined-ratio behavior in older stacks</strong> — if the denominator is the
+    rollout policy rather than a separate proximal snapshot, policy lag and TIM also enter this
+    metric. In that design <code>pg_clipfrac</code> mixes two failure modes that a three-policy
+    objective reports separately.</li>
   </ul>
 
-  <p><strong>Healthy range:</strong> ~5–20% during active learning. Near zero means the policy
-  is barely moving (too conservative or reward signal collapsed). Above ~50% consistently means
-  the gradient is being heavily truncated — effective learning rate has dropped to near zero.</p>
+  <p><strong>There is no implementation-independent healthy range.</strong> With several PPO
+  epochs, a moderate non-zero value can be normal and a sustained value above ~50% means most
+  updates are being truncated. With one actor iteration per fresh batch, however,
+  \(q_t \approx 1\) at measurement time and <code>pg_clipfrac = 0</code> can be exactly expected.
+  The policy-gradient loss can still be non-zero because the advantages still produce a
+  gradient; zero clipfrac means only that the proximal guardrail did not activate.</p>
 
   <p><strong>Metric keys —</strong>
     verl: <code>actor/pg_clipfrac</code> (combined upper+lower) and
@@ -344,20 +372,17 @@
 
   <h3>Asymmetry matters — track upper and lower clipfrac separately</h3>
 
-  <p>The aggregate clipfrac hides the direction of policy movement. The ratio
-  \(r_t = \pi_{new}(a_t)/\pi_{old}(a_t)\) can exceed the clip bound from either side:</p>
+  <p>The aggregate clipfrac hides the direction of proximal-policy movement. The ratio
+  \(q_t = \pi_\theta(a_t)/\pi_{\mathrm{prox}}(a_t)\) can leave the interval from either side:</p>
 
   <ul>
-    <li><strong>Upper clip</strong> \((r_t > 1+\varepsilon)\): \(\pi_{new}\) has increased the
-    probability of the sampled action relative to \(\pi_{old}\). Training is pushing the policy
-    <em>toward</em> this token.</li>
-    <li><strong>Lower clip</strong> \((r_t < 1-\varepsilon)\): \(\pi_{new}\) has decreased the
-    probability of the sampled action. Training is pushing the policy <em>away</em> from this
-    token.</li>
+    <li><strong>High ratio</strong> \((q_t > 1+\varepsilon_{\mathrm{high}})\):
+    \(\pi_\theta\) assigns more probability than the proximal snapshot.</li>
+    <li><strong>Low ratio</strong> \((q_t < 1-\varepsilon_{\mathrm{low}})\):
+    \(\pi_\theta\) assigns less probability than the proximal snapshot.</li>
   </ul>
 
-  <p>Whether that movement is correct depends on the advantage sign for that token. The four
-  combinations:</p>
+  <p>The advantage sign determines whether standard PPO actually activates the clipped branch:</p>
 
   <div class="table-wrap">
     <table>
@@ -367,63 +392,46 @@
         <th>Negative advantage \((A_t < 0)\)<br><span style="font-weight:400;font-size:0.85em;">action hurt — should avoid it</span></th>
       </tr>
       <tr>
-        <td><strong>Upper clip</strong><br><span style="font-size:0.85em;">\(\pi_{new}\) moved toward action</span></td>
-        <td style="color:var(--ok-fg);">✓ Normal — policy is reinforcing a good action. Expected during reward discovery.</td>
-        <td style="color:var(--bad-fg);">⚠ Wrong direction — policy is amplifying a harmful action. Signals TIM or stale IS ratios flipping the sign of the update.</td>
+        <td><strong>High ratio</strong><br><span style="font-size:0.85em;">actor moved toward action</span></td>
+        <td><strong>Clipping-active:</strong> caps excessive reinforcement of a helpful action.</td>
+        <td><strong>Normally unclipped:</strong> the actor moved toward an action with negative advantage; inspect optimizer noise or conflicting batches.</td>
       </tr>
       <tr>
-        <td><strong>Lower clip</strong><br><span style="font-size:0.85em;">\(\pi_{new}\) moved away from action</span></td>
-        <td style="color:var(--bad-fg);">⚠ Wrong direction — policy is unlearning a good action. Same root causes as above.</td>
-        <td style="color:var(--ok-fg);">✓ Normal — policy is suppressing a harmful action. Expected when negative-advantage tokens dominate.</td>
+        <td><strong>Low ratio</strong><br><span style="font-size:0.85em;">actor moved away from action</span></td>
+        <td><strong>Normally unclipped:</strong> the actor moved away from an action with positive advantage; inspect optimizer noise or conflicting batches.</td>
+        <td><strong>Clipping-active:</strong> caps excessive suppression of a harmful action.</td>
       </tr>
     </table>
   </div>
 
-  <p><strong>In a healthy run</strong> you expect mostly upper-clip on positive-advantage tokens
-  and lower-clip on negative-advantage tokens. These represent convergent learning — the policy
-  is moving in the direction the reward signal is pointing.</p>
-
-  <p><strong>When to worry:</strong> if lower-clipfrac is dominant <em>but</em> positive-advantage
-  tokens are the majority of the batch, the policy is unlearning its good behaviors — a reliable
-  sign of instability. Concretely this looks like: clipfrac is high, the reward curve has
-  plateaued or is falling, but the advantage distribution is still skewed positive (the critic
-  still sees value in the current actions). The most common causes:</p>
-  <ul>
-    <li><strong>Large policy lag</strong> — IS ratios computed against a stale
-    \(\pi_{old}\) can have the wrong magnitude or even wrong direction after many training
-    steps. Tighten the sync cadence.</li>
-    <li><strong>TIM flipping ratio directions</strong> — engine log-prob disagreement pushes
-    some \(r_t\) below 1 even when the policy hasn't actually moved away from those tokens.
-    Check pg_clipfrac floor at \(K=0\).</li>
-    <li><strong>Reward signal corruption</strong> — if the reward model or outcome verifier is
-    mislabeling good completions as bad, negative advantages accumulate for genuinely good
-    actions, producing coherent lower-clip on positive-advantage tokens.</li>
-  </ul>
+  <p>A logger that records all out-of-band ratios can populate all four cells; a logger that
+  records only activation of PPO's clipped surrogate should primarily populate
+  positive/high and negative/low. Large mass in the two normally-unclipped cells is still useful
+  as a directional diagnostic, but it is not itself evidence that PPO discarded those tokens.</p>
 
   <div class="note">
-    <strong>slime/Miles with TIM elimination:</strong> pg_clipfrac should stay near zero at
-    \(K=0\) by construction. A non-zero floor here signals a TP degree mismatch between SGLang
-    and Megatron, FP precision drift, or a failed weight sync. Miles also logs the TIM magnitude
-    directly: <code>train/train_rollout_logprob_abs_diff</code> (mean |log π<sub>train</sub> −
-    log π<sub>rollout</sub>| per token) and <code>train/train_rollout_kl</code> (KL(rollout ∥ train)
-    via the k3 estimator). These are zero by construction when TIM elimination holds and spike
-    immediately when it breaks.
+    <strong>True-on-policy/TIM elimination affects \(b_t\), not \(q_t\).</strong> Making SGLang
+    and Megatron bitwise equal sets \(\mu=\pi_{\mathrm{prox}}\), so TIS correction becomes 1.
+    PPO clipfrac can still rise after repeated optimizer passes because
+    \(\pi_\theta\) moves away from \(\pi_{\mathrm{prox}}\). Miles logs the behavior mismatch
+    directly through <code>train/train_rollout_logprob_abs_diff</code> and
+    <code>train/train_rollout_kl</code>.
   </div>
 
   <!-- ── §2 Pearson ─────────────────────────── -->
   <h2 id="pearson">2. Pearson Correlation — Log-prob Alignment</h2>
 
-  <p>Measures how well the rollout log-probs \(\log \pi_{old}\) and the recomputed training
-  log-probs \(\log \pi_{current}\) agree in <em>relative ordering</em> across all tokens in a
-  batch:</p>
+  <p>Measures how well the rollout behavior log-probs \(\log \mu\) and the recomputed
+  proximal/training log-probs \(\log \pi_{\mathrm{prox}}\) agree in <em>relative ordering</em>
+  across all tokens in a batch:</p>
   \[
-    \rho = \frac{\mathrm{Cov}(\log\pi_{old},\;\log\pi_{current})}
-               {\mathrm{Std}(\log\pi_{old})\cdot\mathrm{Std}(\log\pi_{current})}
+    \rho = \frac{\mathrm{Cov}(\log\mu,\;\log\pi_{\mathrm{prox}})}
+               {\mathrm{Std}(\log\mu)\cdot\mathrm{Std}(\log\pi_{\mathrm{prox}})}
   \]
   <p>where the vectors run over all \((sequence, position)\) pairs in the batch.</p>
 
   <p><strong>Why not just KL?</strong> KL divergence
-  \(\mathbb{D}_{KL}(\pi_{old}\|\pi_{current})\) is dominated by high-probability tokens and
+  \(\mathbb{D}_{KL}(\mu\|\pi_{\mathrm{prox}})\) is dominated by high-probability tokens and
   averages over the full batch — a few badly misaligned low-probability tokens produce
   extreme IS ratios but barely move aggregate KL. Pearson is scale-invariant: a constant
   offset between the two log-prob vectors (e.g., from a different softmax temperature or
@@ -433,15 +441,16 @@
 
   <h3>Connection to IS ratio variance</h3>
 
-  <p>If \(\log\pi_{old}\) and \(\log\pi_{current}\) are jointly distributed with correlation
+  <p>If \(\log\mu\) and \(\log\pi_{\mathrm{prox}}\) are jointly distributed with correlation
   \(\rho\) and roughly equal variance \(\sigma^2\), then:</p>
   \[
-    \mathrm{Var}(\log r_t) = \mathrm{Var}(\log\pi_{new} - \log\pi_{old})
+    \mathrm{Var}(\log b_t) = \mathrm{Var}(\log\pi_{\mathrm{prox}} - \log\mu)
     = 2\sigma^2(1 - \rho)
   \]
-  <p>At \(\rho = 0.97\): \(\mathrm{Var}(\log r_t) \approx 0.06\sigma^2\) — IS ratios tightly
-  clustered around 1. At \(\rho = 0.80\): \(\mathrm{Var}(\log r_t) \approx 0.40\sigma^2\) —
-  ratios scattered widely; many tokens above or below the PPO clip bounds on every step.</p>
+  <p>At \(\rho = 0.97\): \(\mathrm{Var}(\log b_t) \approx 0.06\sigma^2\) — behavior-correction
+  ratios tightly clustered around 1. At \(\rho = 0.80\):
+  \(\mathrm{Var}(\log b_t) \approx 0.40\sigma^2\) — ratios scattered widely; many tokens can
+  enter the TIS tails even when the separate PPO ratio \(q_t\) remains near 1.</p>
 
   <p><strong>Healthy:</strong> \(\rho \geq 0.97\). Below 0.90 is a warning; sustained drop
   below 0.85 typically precedes training collapse.</p>
@@ -539,28 +548,32 @@ Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
   <!-- ── §4 TIS trap ───────────────────────── -->
   <h2 id="tis-trap">4. TIS Constant-Corrector Trap</h2>
 
-  <p>TIS (Truncated IS) clips per-token ratios at a threshold \(c\):</p>
+  <p>TIS (Truncated IS) acts on the behavior-correction ratio
+  \(b_t=\pi_{\mathrm{prox}}(a_t|s_t)/\mu(a_t|s_t)\), not on PPO's proximal-update ratio
+  \(q_t\). Implementations use either a one-sided upper cap or a two-sided interval:</p>
   \[
-    \tilde{r}_t = \min(r_t,\; c)
+    \tilde{b}_t = \operatorname{clip}(b_t,\; c_{\mathrm{low}},\; c_{\mathrm{high}}).
   \]
   <p>When TIS is enabled and \(\rho\) stops falling and holds at its step-0 value (e.g., 0.8),
-  TIS has <strong>broken the feedback loop</strong> — not fixed TIM. By capping \(r_t\), TIS
+  TIS has <strong>broken the feedback loop</strong> — not fixed TIM. By bounding \(b_t\), TIS
   bounds the gradient updates, which slows entropy collapse, which prevents further amplification
   of TIM's Pearson effect. The Pearson stabilizes at exactly the baseline TIM level from step 0.</p>
 
-  <p>But at \(\rho = 0.80\), IS ratios are widely scattered, so a large fraction of tokens
-  exceeds the clip threshold \(c\) at every batch. TIS is doing significant corrective work on
+  <p>But at \(\rho = 0.80\), behavior-correction ratios are widely scattered, so a large
+  fraction of tokens can exceed the TIS bounds on every batch. TIS is doing significant corrective work on
   <em>every training step</em>, not occasionally. The gradient being computed is:</p>
 
   \[
-    \tilde{g} = \sum_t \min(r_t, c) \cdot \nabla\log\pi_\theta \cdot A_t
+    \tilde{g} = \sum_t \tilde{b}_t \cdot \nabla\log\pi_\theta \cdot A_t
   \]
   \[
-    \text{Signal thrown away} = \sum_{r_t > c} (r_t - c) \cdot \nabla\log\pi_\theta \cdot A_t
+    \text{Correction removed} =
+    \sum_t (b_t-\tilde{b}_t) \cdot \nabla\log\pi_\theta \cdot A_t
   \]
 
-  <p>The tokens being truncated are systematically those where \(\pi_{new}\) has moved most
-  relative to \(\pi_{old}\) — exactly the strongest learning signals. This introduces:</p>
+  <p>The tokens being truncated are those with the largest rollout-to-trainer mismatch. They
+  are not necessarily the strongest learning signals, but clipping them changes their weight
+  systematically. This introduces:</p>
 
   <ul>
     <li><strong>Reduced effective learning rate</strong> — the policy moves more slowly than
@@ -573,8 +586,43 @@ Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
   </ul>
 
   <p><strong>Diagnostic:</strong> log <code>tis_clipfrac</code> — the fraction of response tokens
-  where \(r_t > c\). If consistently above ~20–30%, TIS is in constant-corrector mode and the
-  gradient bias is substantial.</p>
+  where \(b_t\) leaves the configured correction interval. If consistently above ~20–30%, TIS
+  is in constant-corrector mode and the gradient bias is substantial.</p>
+
+  <h3>TIS tail × advantage-sign decomposition</h3>
+
+  <p>MiMo exposes four fields whose sum is <code>pg_tis_clipfrac</code>:</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Metric suffix</th><th>Condition</th><th>Interpretation</th></tr>
+      <tr>
+        <td><code>pos_high</code></td>
+        <td>\(A_t &gt; 0,\ b_t &gt; c_{\mathrm{high}}\)</td>
+        <td>Upper-tail correction on tokens carrying positive learning signal.</td>
+      </tr>
+      <tr>
+        <td><code>pos_low</code></td>
+        <td>\(A_t &gt; 0,\ b_t &lt; c_{\mathrm{low}}\)</td>
+        <td>Lower-tail correction on tokens carrying positive learning signal.</td>
+      </tr>
+      <tr>
+        <td><code>neg_high</code></td>
+        <td>\(A_t &lt; 0,\ b_t &gt; c_{\mathrm{high}}\)</td>
+        <td>Upper-tail correction on tokens carrying negative learning signal.</td>
+      </tr>
+      <tr>
+        <td><code>neg_low</code></td>
+        <td>\(A_t &lt; 0,\ b_t &lt; c_{\mathrm{low}}\)</td>
+        <td>Lower-tail correction on tokens carrying negative learning signal.</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>This decomposition answers whether truncation is symmetric or preferentially reweighting
+  positive or negative learning signal. Persistent concentration in one advantage-sign bucket
+  can create directional bias even when total <code>tis_clipfrac</code> looks modest.
+  “High” and “low” describe the correction ratio—not whether an action or reward is good or bad.</p>
 
   <p><strong>Metric keys —</strong>
     verl: <code>rollout_corr/rollout_is_ratio_fraction_high</code> (fraction of tokens above the
@@ -597,33 +645,34 @@ Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
   <!-- ── §5 IS ratio stats ──────────────────── -->
   <h2 id="is-stats">5. IS Ratio Statistics — Direct Off-Policy Quantification</h2>
 
-  <p>The per-token ratio \(r_t = \pi_{new}(a_t|s_t)/\pi_{old}(a_t|s_t)\) is the fundamental
-  quantity that clipfrac and Pearson are proxies for. Logging its full distribution directly
-  is more informative:</p>
+  <p>For async correctness, the fundamental per-token quantity is the behavior-correction
+  ratio \(b_t=\pi_{\mathrm{prox}}(a_t|s_t)/\mu(a_t|s_t)\). TIS clip fractions and Pearson are
+  summaries of this mismatch; logging the full distribution directly is more informative.
+  Keep it separate from the PPO ratio \(q_t\), whose distribution answers a different question.</p>
 
   <div class="table-wrap">
     <table>
       <tr><th>Statistic</th><th>Healthy</th><th>Warning</th><th>What it signals</th></tr>
       <tr>
-        <td>\(\mathbb{E}[r_t]\)</td>
+        <td>\(\mathbb{E}[b_t]\)</td>
         <td>≈ 1.0</td>
         <td>Drifting above or below 1</td>
         <td>Systematic policy shift direction</td>
       </tr>
       <tr>
-        <td>\(\max(r_t)\)</td>
+        <td>\(\max(b_t)\)</td>
         <td>&lt; 3–4</td>
         <td>Spikes &gt; 10</td>
         <td>Individual tokens driving gradient explosions</td>
       </tr>
       <tr>
-        <td>\(\mathrm{Var}(r_t)\)</td>
+        <td>\(\mathrm{Var}(b_t)\)</td>
         <td>Small and stable</td>
         <td>Growing over training</td>
         <td>Accumulating staleness or TIM</td>
       </tr>
       <tr>
-        <td>\(\mathbb{E}[\log r_t]\)</td>
+        <td>\(\mathbb{E}[\log b_t]\)</td>
         <td>≈ 0</td>
         <td>Consistently negative</td>
         <td>Policy being suppressed (lower-clip regime dominant)</td>
@@ -631,7 +680,7 @@ Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
     </table>
   </div>
 
-  <p>Log \(r_t\) in log-space where possible — it is approximately symmetric around 0 for
+  <p>Log \(b_t\) in log-space where possible — it is approximately symmetric around 0 for
   on-policy data, making outliers and drift easier to see than in ratio space where the
   distribution is right-skewed.</p>
 
@@ -842,6 +891,28 @@ Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
     </table>
   </div>
 
+  <p>The live data also separates the two clipping layers empirically. As observed on
+  September 17, both MiMo runs report:</p>
+
+  <ul>
+    <li><code>actor/pg_clipfrac = 0</code> and <code>actor/ppo_kl = 0</code> at every completed
+    step, globally and for inspected datasets such as <code>code/dataset-4onq</code>;</li>
+    <li><code>actor/updated_iter = 1</code> per step;</li>
+    <li>non-zero <code>partial/avg_staleness</code> and
+    <code>train_infer_diff/new_infer/kl</code>;</li>
+    <li>tiny but non-zero <code>pg_tis_clipfrac</code>, partitioned into
+    <code>{pos,neg}_{high,low}</code> buckets.</li>
+  </ul>
+
+  <p>This is strongly consistent with one proximal actor iteration per fresh training batch:
+  \(q_t\) is still 1 when measured, so PPO clipping never activates, while \(b_t\) still records
+  asynchronous rollout lag and train–inference mismatch. The policy-gradient loss remains
+  non-zero because advantages can drive an update without invoking the clipping branch. Xiaomi
+  has not published the optimizer code, so treat this as the explanation best supported by the
+  telemetry rather than a confirmed implementation detail. One UI detail follows directly:
+  selecting a logarithmic y-axis makes the all-zero <code>pg_clipfrac</code> series appear empty,
+  because zero is not representable on a log scale.</p>
+
   <p>The important design lesson is that an async-RL dashboard needs <em>causal context</em>,
   not only optimizer curves. MiMo publishes operator notices for trainer restarts, cluster-to-grader
   connectivity, VRAM failures and bad rollout data; it also marks redone steps. Without those
@@ -867,8 +938,8 @@ Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
       <tr><th>Metric</th><th>Healthy</th><th>Warning / What to do</th><th>verl key</th><th>Miles key</th></tr>
       <tr>
         <td><code>pg_clipfrac</code></td>
-        <td>5–20%</td>
-        <td>&lt;1% at K=0 = TIM; &gt;50% = gradient dead; non-zero floor at K=0 = TIM fingerprint</td>
+        <td>Update-schedule dependent</td>
+        <td>One proximal iteration: zero can be normal. Repeated epochs: sustained high values mean the PPO guardrail dominates. Not a direct staleness metric when TIS is logged separately.</td>
         <td><code>actor/pg_clipfrac</code><br><code>actor/pg_clipfrac_lower</code></td>
         <td><code>train/pg_clipfrac</code></td>
       </tr>
@@ -881,13 +952,20 @@ Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
       </tr>
       <tr>
         <td><code>tis_clipfrac</code></td>
-        <td>&lt;10% (safety net)</td>
+        <td>Low and stable (safety net)</td>
         <td>&gt;20–30% = TIS in constant-corrector mode; gradient bias is substantial; fix TIM source</td>
         <td><code>rollout_corr/rollout_is_ratio_fraction_high</code></td>
         <td><code>train/tis_clipfrac</code><br><code>train/tis_abs</code></td>
       </tr>
       <tr>
-        <td>\(\mathbb{E}[r_t]\), \(\max(r_t)\)</td>
+        <td>TIS sign/tail buckets</td>
+        <td>No persistent advantage-sign skew</td>
+        <td>One dominant <code>{pos,neg}_{high,low}</code> bucket = directional correction bias; inspect the underlying ratio distribution and reward mix</td>
+        <td><code>rollout_corr/…_fraction_high|low</code><br><small style="color:var(--muted);">advantage split may require custom logging</small></td>
+        <td style="color:var(--muted);font-size:0.88em;">Framework-specific/custom</td>
+      </tr>
+      <tr>
+        <td>\(\mathbb{E}[b_t]\), \(\max(b_t)\)</td>
         <td>≈ 1.0 · &lt;4</td>
         <td>Drift from 1 = systematic shift; max &gt;10 = gradient explosion risk</td>
         <td><code>rollout_corr/rollout_is_mean</code><br><code>rollout_corr/rollout_is_max</code></td>
@@ -897,7 +975,7 @@ Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
         <td>TIM magnitude</td>
         <td>≈ 0 (Miles); inferred (verl)</td>
         <td>Rising = engine mismatch growing or TP drift</td>
-        <td><em>inferred from</em> <code>actor/pg_clipfrac</code> floor at K=0</td>
+        <td><code>training/rollout_probs_diff_*</code><br><code>training/rollout_actor_probs_pearson_corr</code></td>
         <td><code>train/train_rollout_kl</code><br><code>train/train_rollout_logprob_abs_diff</code></td>
       </tr>
       <tr>
