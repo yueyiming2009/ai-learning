@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>CUDA Streams &amp; Events — Ordering GPU Work Without Blocking the Host</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #ffffff; --surface: #f8f9fa; --border: #e8eaed;
+      --text: #1a1a2e; --muted: #6b7280; --ink: #374151;
+      --accent: #b45309; --accent-light: #fef3c7;
+      --warning-bg: #fffbeb; --warning-border: #f59e0b; --warning-fg: #78350f;
+      --step-bg: #f9fafb; --step-border: #d1d5db;
+      --boxed-bg: #fff7ed; --boxed-border: #f97316;
+      --compare-bg: #eff6ff; --compare-border: #3b82f6; --compare-fg: #2563eb;
+      --code-bg: #1e1b4b; --code-text: #e2e8f0;
+      --nav-bg: rgba(255,255,255,0.92); --icode-bg: #f1f5f9;
+      --row-hover: #fafafa; --good-fg: #15803d; --bad-fg: #dc2626;
+      --amber-border: #fcd34d; --fig-bg: #ffffff;
+      --plot-grid: #eceef1; --plot-axis: #cbd5e1; --plot-label: #6b7280;
+      --copy: #2563eb; --copy-light: #dbeafe;
+      --kernel: #7c3aed; --kernel-light: #ede9fe;
+      --event: #0d9488; --event-light: #ccfbf1;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115; --surface: #171b21; --border: #262b33;
+        --text: #e5e7eb; --muted: #9aa1ab; --ink: #cbd5e1;
+        --accent: #fbbf24; --accent-light: #251c0b;
+        --warning-bg: #251c0b; --warning-border: #b45309; --warning-fg: #fcd34d;
+        --step-bg: #14181e; --step-border: #333a44;
+        --boxed-bg: #251c0b; --boxed-border: #c2410c;
+        --compare-bg: #101a2b; --compare-border: #1e40af; --compare-fg: #60a5fa;
+        --code-bg: #221f3d; --code-text: #e2e8f0;
+        --nav-bg: rgba(15,17,21,0.9); --icode-bg: #1c2531;
+        --row-hover: #191e25; --good-fg: #4ade80; --bad-fg: #f87171;
+        --amber-border: #78350f; --fig-bg: #14181e;
+        --plot-grid: #232830; --plot-axis: #3a4149; --plot-label: #9aa1ab;
+        --copy: #60a5fa; --copy-light: #101a2b;
+        --kernel: #a78bfa; --kernel-light: #21183a;
+        --event: #2dd4bf; --event-light: #0b2825;
+      }
+    }
+
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 0; line-height: 1.75; font-size: 16px; }
+    nav { position: sticky; top: 0; z-index: 100; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 52px; }
+    .nav-brand { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 0.9rem; color: var(--accent); text-decoration: none; white-space: nowrap; }
+    .nav-links { display: flex; gap: 4px; overflow-x: auto; flex: 1; }
+    .nav-links a { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; white-space: nowrap; transition: color 0.15s, background 0.15s; }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .nav-back { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); white-space: nowrap; transition: color 0.15s; margin-left: auto; flex-shrink: 0; }
+    .nav-back:hover { color: var(--text); }
+    .hero { background: linear-gradient(135deg, #78350f 0%, #b45309 100%); color: white; padding: 56px 24px 48px; text-align: center; }
+    .hero h1 { font-size: clamp(1.6rem, 4vw, 2.35rem); font-weight: 600; margin: 0 0 12px; letter-spacing: -0.025em; }
+    .hero p { margin: 0 auto; opacity: 0.88; font-size: 0.97rem; max-width: 760px; }
+    .hero-pill { display: inline-block; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 100px; font-size: 0.78rem; padding: 3px 12px; margin-bottom: 16px; letter-spacing: 0.04em; text-transform: uppercase; }
+    .page-wrap { max-width: 880px; margin: 0 auto; padding: 48px 24px 80px; }
+    h2 { font-size: 1.15rem; font-weight: 600; margin: 2.8em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); color: var(--text); }
+    h3 { font-size: 0.98rem; font-weight: 600; margin: 1.7em 0 0.4em; color: var(--ink); }
+    p { margin: 0.65em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.65em 0; }
+    li { margin-bottom: 0.42em; }
+    a { color: var(--accent); }
+    code { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
+    p code, li code, td code { background: var(--icode-bg); padding: 1px 6px; border-radius: 4px; font-size: 0.88em; color: var(--accent); }
+    pre { background: var(--code-bg); color: var(--code-text); border-radius: 10px; padding: 20px 24px; overflow-x: auto; font-size: 0.86rem; line-height: 1.6; margin: 1.2em 0; }
+    pre code { background: none; padding: 0; font-size: inherit; color: inherit; }
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+    th, td { border: 1px solid var(--border); padding: 9px 14px; text-align: left; vertical-align: top; }
+    th { background: var(--surface); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+    tr:hover td { background: var(--row-hover); }
+    td.good { color: var(--good-fg); font-weight: 600; }
+    td.bad { color: var(--bad-fg); }
+    .xref { background: var(--accent-light); border: 1px solid var(--amber-border); border-radius: 8px; padding: 12px 18px; margin: 1.4em 0; font-size: 0.92rem; }
+    .xref a { font-weight: 600; text-decoration: none; }
+    .xref a:hover { text-decoration: underline; }
+    .note { background: var(--warning-bg); border-left: 3px solid var(--warning-border); border-radius: 0 8px 8px 0; padding: 11px 16px; margin: 1em 0; font-size: 0.92em; color: var(--warning-fg); }
+    .compare { background: var(--compare-bg); border: 1.5px solid var(--compare-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; }
+    .compare-label { font-size: 0.8rem; font-weight: 600; color: var(--compare-fg); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+    .result { background: var(--boxed-bg); border: 1.5px solid var(--boxed-border); border-radius: 8px; padding: 16px 20px; margin: 1.25em 0; text-align: center; }
+    .result-label { font-size: 0.8rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+    .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 1.2em 0; }
+    .summary-card { background: var(--accent-light); border: 1px solid var(--amber-border); border-radius: 8px; padding: 14px 16px; }
+    .summary-card-label { font-size: 0.77rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+    .step { background: var(--step-bg); border: 1px solid var(--step-border); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 15px 19px; margin: 1.15em 0; }
+    .step-label { font-weight: 600; font-size: 0.84rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 7px; }
+    .equation { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 18px; margin: 1.1em 0; text-align: center; }
+
+    .queue-model { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; gap: 10px; align-items: center; margin: 1.35em 0; }
+    .queue-box { min-height: 112px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); padding: 13px 14px; }
+    .queue-box h3 { margin: 0 0 5px; color: var(--accent); font-size: 0.88rem; }
+    .queue-box p { margin: 0; font-size: 0.82rem; color: var(--muted); line-height: 1.55; }
+    .queue-arrow { color: var(--accent); font-weight: 600; }
+
+    .figure { background: var(--fig-bg); border: 1px solid var(--border); border-radius: 10px; padding: 18px 16px 14px; margin: 1.6em 0; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+    .figure canvas { width: 100%; height: 340px; display: block; }
+    .controls { display: flex; flex-wrap: wrap; gap: 16px 24px; margin: 0 4px 14px; }
+    .control { flex: 1 1 180px; }
+    .control label { display: flex; justify-content: space-between; gap: 12px; font-size: 0.8rem; font-weight: 600; color: var(--ink); margin-bottom: 5px; }
+    .control label .val { color: var(--accent); font-variant-numeric: tabular-nums; }
+    .control input[type=range] { width: 100%; accent-color: var(--accent); }
+    .legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px 20px; margin: 12px 4px 4px; }
+    .legend-item { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 0.8rem; }
+    .lg { width: 24px; height: 3px; border-radius: 2px; background: var(--c); display: inline-block; }
+    .lg.event { height: 14px; width: 3px; border-radius: 0; }
+    .readout { font-size: 0.86rem; color: var(--text); line-height: 1.6; margin: 14px 4px 2px; padding: 12px 14px; background: var(--step-bg); border: 1px solid var(--border); border-radius: 8px; }
+    .readout b { color: var(--accent); }
+    .figure-caption { font-size: 0.85rem; color: var(--muted); line-height: 1.6; margin: 14px 4px 2px; }
+    footer { border-top: 1px solid var(--border); padding: 28px 24px; text-align: center; font-size: 0.82rem; color: var(--muted); }
+
+    @media (max-width: 700px) {
+      .queue-model { grid-template-columns: 1fr; }
+      .queue-arrow { transform: rotate(90deg); justify-self: center; }
+    }
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+      .figure canvas { height: 360px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes">
+    <svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+    CUDA Streams
+  </a>
+  <div class="nav-links">
+    <a href="../index.html">&larr; All notes</a>
+    <a href="../index.html#systems-performance" style="border-right:1px solid var(--border);padding-right:12px;margin-right:4px;" title="Back to Systems &amp; Scaling &rsaquo; Performance">&uarr; Systems &middot; Performance</a>
+    <a href="#model">Model</a>
+    <a href="#ordering">Ordering</a>
+    <a href="#events">Events</a>
+    <a href="#overlap">Overlap</a>
+    <a href="#default-stream">Default stream</a>
+    <a href="#pytorch">PyTorch</a>
+    <a href="#timing">Timing &amp; errors</a>
+    <a href="#debugging">Debugging</a>
+  </div>
+  <a class="nav-back" href="../index.html">Home</a>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Systems &middot; GPU Runtime</span>
+  <h1>CUDA Streams &amp; Events</h1>
+  <p>Order GPU work without stopping the CPU: one stream gives FIFO semantics, multiple streams expose independent work, events connect them with device-side dependencies, and synchronization marks the rare points where the host truly must wait.</p>
+</div>
+
+<div class="page-wrap">
+
+  <div class="xref">
+    <strong>Where this sits:</strong> <a href="cuda.html">CUDA</a> explains the threads and memory that execute a kernel, including the <a href="cuda.html#barriers">in-kernel barrier and fence hierarchy</a>; this page explains how kernels and copies are submitted around them. <a href="cuda-graphs.html">CUDA Graphs</a> records this stream dependency model for replay, while <a href="pytorch-execution.html">the PyTorch execution model</a> shows why frameworks rely on asynchronous submission.
+  </div>
+
+  <p>A CUDA stream is often introduced as a queue, which is correct but incomplete. It is an <strong>ordering domain</strong>: commands submitted to one stream execute in issue order, while commands in different streams have no ordering unless you add one. The host normally keeps running after submission. The device scheduler starts any command whose dependencies are satisfied and whose required engines and resources are available.</p>
+
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">Same stream</div>
+      <p>FIFO. A later command cannot pass an earlier command in that stream.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Different streams</div>
+      <p>Potentially concurrent and otherwise unordered. Correctness needs an explicit dependency.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Event wait</div>
+      <p>Orders device work across streams without blocking the host thread.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Synchronization</div>
+      <p>Blocks the host until a stream, event, or the whole device reaches a boundary.</p>
+    </div>
+  </div>
+
+  <div class="result">
+    <div class="result-label">The central rule</div>
+    <p style="margin:0;"><strong>Streams grant permission to overlap; they do not guarantee overlap.</strong> Hardware engines, data dependencies, kernel resource usage, memory type, and hidden synchronization still decide what actually runs together.</p>
+  </div>
+
+  <h2 id="model">1. Three clocks: host submission, stream order, device execution</h2>
+
+  <div class="queue-model">
+    <div class="queue-box">
+      <h3>Host thread</h3>
+      <p>Calls runtime and library APIs. Asynchronous calls usually return after enqueueing, not after completion.</p>
+    </div>
+    <div class="queue-arrow">&rarr;</div>
+    <div class="queue-box">
+      <h3>Stream queues</h3>
+      <p>Preserve program order per stream and carry event dependencies between streams.</p>
+    </div>
+    <div class="queue-arrow">&rarr;</div>
+    <div class="queue-box">
+      <h3>GPU engines</h3>
+      <p>Compute engines and copy engines select ready work subject to available resources.</p>
+    </div>
+  </div>
+
+  <p>These clocks are deliberately decoupled. A launch such as <code>kernel&lt;&lt;&lt;grid, block, 0, stream&gt;&gt;&gt;(...)</code> can return while older work is still executing. The host may enqueue a long future schedule before the GPU reaches it. That decoupling hides launch latency and lets the CPU prepare the next batch, but it also explains two common surprises:</p>
+
+  <ul>
+    <li>A CPU timer around a launch measures <em>submission</em>, not kernel runtime.</li>
+    <li>An illegal memory access may be reported by a later synchronization call, not by the launch that caused it.</li>
+  </ul>
+
+  <div class="compare">
+    <div class="compare-label">A stream is not a reserved execution lane</div>
+    <p style="margin:0;">Creating eight streams does not divide the GPU into eight pieces. Streams describe readiness and ordering. The scheduler may interleave their thread blocks, run one command first, or serialize everything when a kernel consumes all SM, register, or shared-memory capacity.</p>
+  </div>
+
+  <h2 id="ordering">2. The ordering rules</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Relationship</th><th>What CUDA guarantees</th><th>What it does not guarantee</th></tr></thead>
+      <tbody>
+        <tr><td>Commands A then B in one stream</td><td>B begins only after the required effects of A are complete.</td><td>Host-side completion: an asynchronous submission can return before either command finishes.</td></tr>
+        <tr><td>Commands in two ordinary streams</td><td>No order unless an event, external semaphore, or host action adds one.</td><td>They will overlap, start in issue order, or make equal progress.</td></tr>
+        <tr><td><code>cudaStreamWaitEvent</code></td><td>Future work in the waiting stream stays pending until the recorded event completes; the host only enqueues the wait.</td><td>Host-side completion of the event.</td></tr>
+        <tr><td><code>cudaStreamSynchronize</code></td><td>The host returns only after previously submitted work in that stream completes.</td><td>Completion of unrelated streams.</td></tr>
+        <tr><td><code>cudaDeviceSynchronize</code></td><td>The host returns after previously submitted work on the device completes.</td><td>Good hot-path performance; this is the broadest host-side completion wait, not an in-kernel thread barrier.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Within one stream, this is enough to express a producer-consumer chain: copy input, run a kernel, copy output. Across streams, correctness must be made explicit. Host submission order alone is not a dependency:</p>
+
+<pre><code>// Wrong assumption: launch order across streams is not execution order.
+produce&lt;&lt;&lt;grid, block, 0, producer_stream&gt;&gt;&gt;(buffer);
+consume&lt;&lt;&lt;grid, block, 0, consumer_stream&gt;&gt;&gt;(buffer);</code></pre>
+
+  <p>The consumer is legal only after an event wait, a host synchronization, or another supported cross-stream primitive connects it to the producer.</p>
+
+  <h2 id="events">3. Events: dependencies without a host round trip</h2>
+
+  <p>An event is a marker inserted into a stream. Recording it says, "this event becomes complete after all earlier work in this stream." Waiting on it from another stream says, "do not begin later work here until that marker is complete." The CPU only enqueues those instructions and continues.</p>
+
+  <p>Enqueue the record before the wait. A stream wait captures the event's most recent recording at the time of the call; recording it again later does not retarget that wait. Waiting on an event that has never been recorded is a no-op, not a promise to wait for a future recording.</p>
+
+<pre><code>cudaStream_t copy_stream, compute_stream;
+cudaEvent_t input_ready, kernel_done;
+
+cudaStreamCreateWithFlags(&amp;copy_stream, cudaStreamNonBlocking);
+cudaStreamCreateWithFlags(&amp;compute_stream, cudaStreamNonBlocking);
+cudaEventCreateWithFlags(&amp;input_ready, cudaEventDisableTiming);
+cudaEventCreateWithFlags(&amp;kernel_done, cudaEventDisableTiming);
+
+cudaMemcpyAsync(d_x, h_x, bytes, cudaMemcpyHostToDevice, copy_stream);
+cudaEventRecord(input_ready, copy_stream);
+
+// Device-side dependency: the host does not block here.
+cudaStreamWaitEvent(compute_stream, input_ready, 0);
+kernel&lt;&lt;&lt;grid, block, 0, compute_stream&gt;&gt;&gt;(d_x, d_y);
+cudaEventRecord(kernel_done, compute_stream);
+
+do_independent_cpu_work();
+cudaEventSynchronize(kernel_done);  // Wait only when the result is needed.</code></pre>
+
+  <div class="step">
+    <div class="step-label">Read the dependency, not the API sequence</div>
+    <p style="margin:0;"><code>input_ready</code> creates the edge copy &rarr; kernel. <code>kernel_done</code> creates a narrow host-consumption boundary. Replacing either event with <code>cudaDeviceSynchronize()</code> would be correct but would erase unrelated concurrency.</p>
+  </div>
+
+  <p>Use events created with <code>cudaEventDisableTiming</code> when they exist only for ordering. Use timing-enabled events when you need device elapsed time. Events can also bridge library calls because cuBLAS, cuDNN, NCCL, and framework kernels all participate in the same stream ordering model when their handles or calls use the intended stream.</p>
+
+  <p>Completion does not copy <code>d_y</code> into host memory: enqueue a dependent D2H transfer and wait for that transfer before reading its host destination. These snippets focus on ordering; production code must check CUDA return values and launch errors, and release streams, events, and buffers when no longer needed.</p>
+
+  <h2 id="overlap">4. Copy/compute overlap and the pipeline it creates</h2>
+
+  <p>Suppose each of \(N\) chunks needs an H2D copy taking \(C\) and a kernel taking \(K\). One stream serializes every stage:</p>
+
+  <div class="equation">
+    \[
+      T_{\text{serial}} = N(C+K).
+    \]
+  </div>
+
+  <p>With pinned host memory, independent buffers, a copy engine, and at least two streams, chunk \(i+1\) can copy while chunk \(i\) computes. Ignoring launch overhead, the ideal two-stage pipeline is</p>
+
+  <div class="equation">
+    \[
+      T_{\text{pipeline}} \approx C + K + (N-1)\max(C,K).
+    \]
+  </div>
+
+  <div class="figure">
+    <div class="controls">
+      <div class="control">
+        <label for="chunks">Chunks <span class="val" id="chunks-val">6</span></label>
+        <input id="chunks" type="range" min="2" max="8" step="1" value="6">
+      </div>
+      <div class="control">
+        <label for="copy-ms">H2D per chunk <span class="val" id="copy-val">3 ms</span></label>
+        <input id="copy-ms" type="range" min="1" max="8" step="1" value="3">
+      </div>
+      <div class="control">
+        <label for="kernel-ms">Kernel per chunk <span class="val" id="kernel-val">5 ms</span></label>
+        <input id="kernel-ms" type="range" min="1" max="8" step="1" value="5">
+      </div>
+    </div>
+    <canvas id="plot-pipeline" aria-label="Timeline comparing one serialized CUDA stream with a double-buffered copy and compute pipeline"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--copy)"></span> H2D copy</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--kernel)"></span> kernel</span>
+      <span class="legend-item"><span class="lg event" style="--c:var(--event)"></span> dependency-ready point</span>
+    </div>
+    <div class="readout" id="pipeline-readout"></div>
+    <p class="figure-caption">
+      <strong>Overlap removes idle slots, not work.</strong> This idealized model uses one H2D engine, one compute lane, and two reusable input buffers, with no launch overhead or bandwidth contention. Its steady-state throughput is limited by the slower stage, \(\max(C,K)\), after paying one fill and one drain. Green markers show copy completion; a kernel may still wait for the compute lane.
+    </p>
+  </div>
+
+  <p>A compact double-buffer pattern alternates two non-blocking streams and two device input buffers. Assume both streams and buffers are already created, every <code>host_chunk[i]</code> is pinned, and every <code>output[i]</code> names distinct device output storage. Reusing a stream every other chunk automatically prevents that stream's input buffer from being overwritten before its previous kernel finishes:</p>
+
+<pre><code>for (int i = 0; i &lt; chunks; ++i) {
+    int slot = i % 2;
+    cudaStream_t s = streams[slot];
+
+    cudaMemcpyAsync(device_buffer[slot], host_chunk[i], bytes,
+                    cudaMemcpyHostToDevice, s);
+    kernel&lt;&lt;&lt;grid, block, 0, s&gt;&gt;&gt;(device_buffer[slot], output[i]);
+}</code></pre>
+
+  <p>Keep each host source unchanged until its copy completes. After enqueueing, synchronize both streams before freeing their buffers, or record a completion event in each and make the next consumer wait on both. The snippet schedules work; returning from the loop is not a completion boundary.</p>
+
+  <h3>The four conditions for real overlap</h3>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Condition</th><th>Why it matters</th><th>Typical failure</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Pinned host memory</strong></td><td>DMA can access it directly; use <code>cudaMallocHost</code>/<code>cudaHostAlloc</code> or a framework pinned allocator.</td><td>Pageable memory forces staging and may make an "async" copy block or serialize.</td></tr>
+        <tr><td><strong>Separate streams and buffers</strong></td><td>One stream is FIFO, and one buffer cannot be overwritten while its consumer still reads it.</td><td>All stages use the default stream or reuse one allocation too early.</td></tr>
+        <tr><td><strong>Available engines</strong></td><td>The device needs an asynchronous copy engine, and direction-specific engines determine H2D/D2H concurrency.</td><td>The hardware or transfer direction cannot overlap as assumed.</td></tr>
+        <tr><td><strong>No hidden serialization</strong></td><td>Host waits, legacy-default-stream dependencies, and shared bandwidth can remove the expected overlap or its speedup.</td><td>A synchronization between chunks drains the pipeline, or copy/kernel bandwidth contention lengthens both stages.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Overlapping <em>two kernels</em> additionally needs spare blocks, registers, shared memory, and scheduler capacity. Copy/compute overlap is different: a DMA copy can run on a copy engine while a kernel occupies all SMs, though they may still contend for memory bandwidth.</p>
+
+  <div class="note">
+    <strong>Host-buffer lifetime is part of correctness.</strong> The source of an asynchronous H2D copy must remain valid and unchanged until that copy completes. Pinned memory makes overlap possible; it does not make early reuse safe.
+  </div>
+
+  <p>Stream priorities, created with <code>cudaStreamCreateWithPriority</code>, influence which <em>pending</em> work the scheduler prefers. They are hints, not hard reservations or guaranteed preemption. A long-running kernel may still delay urgent work depending on the architecture and its scheduling granularity.</p>
+
+  <h2 id="default-stream">5. The default stream can add ordering you did not write</h2>
+
+  <p>CUDA has two default-stream modes. Confusing them is a classic source of "why did this serialize?" bugs, especially when code from several libraries meets in one process.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Mode</th><th>Semantics</th><th>Practical guidance</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Legacy default stream</strong><br><code>0</code> / <code>cudaStreamLegacy</code></td><td>Acts as a synchronizing stream with other blocking streams in the same context. Work can acquire implicit edges that are absent from the source.</td><td>Do not rely on it as an accidental global barrier. Explicit events state intent better.</td></tr>
+        <tr><td><strong>Per-thread default stream</strong><br><code>cudaStreamPerThread</code></td><td>Each host thread gets a default stream that behaves like an ordinary stream rather than the legacy null stream.</td><td>Know how every translation unit was compiled; mixed assumptions are difficult to reason about.</td></tr>
+        <tr><td><strong>Explicit non-blocking stream</strong><br><code>cudaStreamNonBlocking</code></td><td>Does not synchronize with the legacy default stream merely because it is the default.</td><td class="good">Prefer explicit streams and explicit dependencies in reusable runtime code.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Libraries add one more layer: a cuBLAS or cuDNN handle has an associated stream, and NCCL collectives are enqueued into the stream passed to the call. If a handle silently remains on stream 0, a carefully designed side-stream pipeline can collapse back into serialization or race with work that was expected to precede it.</p>
+
+  <h2 id="pytorch">6. PyTorch: current streams, waits, and allocator lifetime</h2>
+
+  <p>PyTorch enqueues CUDA operators on the <strong>current stream for that device</strong>. Most user code stays on the default stream, so ordinary operator order appears synchronous even though the CPU is running ahead. Side streams require both execution ordering and storage-lifetime bookkeeping:</p>
+
+<pre><code>import torch
+
+default = torch.cuda.current_stream()
+side = torch.cuda.Stream()
+
+# Side-stream work must wait for x's prior producers.
+side.wait_stream(default)
+with torch.cuda.stream(side):
+    y = stage1(x)
+    x.record_stream(side)       # Keep x's storage alive through this use.
+
+# Future default-stream work waits without blocking Python.
+default.wait_stream(side)
+z = stage2(y)
+y.record_stream(default)        # Keep y alive through the consumer work.</code></pre>
+
+  <div class="step">
+    <div class="step-label">Two different problems, two different tools</div>
+    <ul style="margin:0;">
+      <li><code>wait_stream</code> / <code>wait_event</code> protects <strong>data dependencies</strong>: a consumer must not execute before its producer.</li>
+      <li><code>record_stream</code> protects <strong>allocator lifetime</strong>: PyTorch's caching allocator must not recycle a tensor's storage while another stream may still touch it.</li>
+    </ul>
+  </div>
+
+  <p>For input pipelines, pinned DataLoader memory plus <code>tensor.to("cuda", non_blocking=True)</code> permits H2D copies to overlap with useful work. The flag alone is not a guarantee: pageable input, immediate consumption on the same stream, or a later host read can still remove the overlap.</p>
+
+  <div class="note">
+    <strong>Operations that return a CUDA value to Python synchronize.</strong> Common examples include <code>.item()</code>, many <code>.cpu()</code> paths, and printing values that must be materialized. Keep scalar decisions on-device or move them outside the hot region when possible.
+  </div>
+
+  <h2 id="timing">7. Timing and asynchronous errors</h2>
+
+  <h3>Use events for device time</h3>
+
+<pre><code>cudaEvent_t start, stop;
+cudaEventCreate(&amp;start);
+cudaEventCreate(&amp;stop);
+
+cudaEventRecord(start, stream);
+kernel&lt;&lt;&lt;grid, block, 0, stream&gt;&gt;&gt;(x);
+cudaEventRecord(stop, stream);
+
+cudaEventSynchronize(stop);
+float milliseconds = 0.0f;
+cudaEventElapsedTime(&amp;milliseconds, start, stop);</code></pre>
+
+  <p>Events are timestamped in the device timeline, so this measures queued GPU work between the markers rather than the few microseconds the CPU spent issuing it. Warm up first, repeat enough times to reduce noise, and keep the endpoints in a dependency chain that actually brackets the work you mean to measure.</p>
+
+  <h3>Errors can surface later</h3>
+
+  <p>A launch can fail in two phases. Configuration errors such as an invalid grid can be reported immediately by <code>cudaGetLastError()</code> or <code>cudaPeekAtLastError()</code>. Execution faults such as an illegal device address happen asynchronously and are commonly reported by a later event/stream/device synchronization or blocking transfer.</p>
+
+  <div class="compare">
+    <div class="compare-label">Debug mode is not benchmark mode</div>
+    <p style="margin:0;">A synchronization after every launch is useful while isolating a fault, and <code>CUDA_LAUNCH_BLOCKING=1</code> makes framework stack traces easier to attribute. Both destroy the asynchronous schedule. Remove them before measuring performance.</p>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Boundary</th><th>Host behavior</th><th>Scope</th></tr></thead>
+      <tbody>
+        <tr><td>Kernel launch / most async APIs</td><td>Returns after submission</td><td>No completion boundary</td></tr>
+        <tr><td><code>cudaEventSynchronize(event)</code></td><td>Blocks</td><td>Work needed to complete that event</td></tr>
+        <tr><td><code>cudaStreamSynchronize(stream)</code></td><td>Blocks</td><td>Previously queued work in one stream</td></tr>
+        <tr><td><code>cudaDeviceSynchronize()</code></td><td>Blocks</td><td>Previously queued work on the device</td></tr>
+        <tr><td>Blocking D2H copy / host value read</td><td>Blocks</td><td>Dependencies needed to make host-visible data valid</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Allocations can also be scheduling boundaries. Traditional <code>cudaMalloc</code>/<code>cudaFree</code> are poor choices in a hot asynchronous path because allocation management may synchronize. Stream-ordered pools and <code>cudaMallocAsync</code>/<code>cudaFreeAsync</code> attach allocation lifetime to stream order, which is the same idea PyTorch's caching allocator implements at framework level.</p>
+
+  <h2 id="debugging">8. Read the profiler as a dependency graph</h2>
+
+  <p>Nsight Systems is the first tool for streams: it shows CPU launch calls, CUDA API time, stream lanes, copy engines, kernels, events, and gaps on one timeline. Nsight Compute answers the next question: if streams are independent but kernels still serialize, does one kernel consume all the resources needed for concurrency?</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Symptom</th><th>Likely cause</th><th>What to inspect</th></tr></thead>
+      <tbody>
+        <tr><td>All work appears on one lane</td><td>Library handle or framework context still uses the default stream.</td><td>Stream IDs on API calls and handle configuration.</td></tr>
+        <tr><td>Async H2D copies do not overlap kernels</td><td>Pageable host memory, same-stream submission, buffer reuse, or unavailable copy engines.</td><td>Memory type, stream IDs, device copy-engine capabilities, event edges.</td></tr>
+        <tr><td>Two streams serialize large kernels</td><td>The first kernel saturates SM slots, registers, shared memory, or another execution resource.</td><td>Occupancy and per-kernel resource usage in Nsight Compute.</td></tr>
+        <tr><td>CPU timing says a kernel takes almost zero time</td><td>The timer measured enqueue latency.</td><td>CUDA events or a deliberate synchronization around end-to-end timing.</td></tr>
+        <tr><td>Wrong data appears intermittently</td><td>Missing cross-stream wait or early buffer reuse.</td><td>Producer-consumer event chain and allocation lifetime.</td></tr>
+        <tr><td>An error points at an innocent later call</td><td>An earlier asynchronous kernel fault surfaced at the next boundary.</td><td>Immediate launch-error checks, then temporary narrow synchronizations.</td></tr>
+        <tr><td>PyTorch output corrupts after side-stream use</td><td>Dependency or caching-allocator lifetime was not recorded.</td><td><code>wait_stream</code>/<code>wait_event</code> and <code>record_stream</code>.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="result">
+    <div class="result-label">A reliable design sequence</div>
+    <p style="margin:0;">First draw the true producer-consumer DAG. Put naturally ordered chains in one stream. Add events only at cross-stream edges. Add host waits only where the CPU consumes a result. Then profile to see whether the hardware can exploit the concurrency you exposed.</p>
+  </div>
+
+  <div class="xref">
+    <strong>Primary references:</strong>
+    NVIDIA's <a href="https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/asynchronous-execution.html">asynchronous execution guide</a>,
+    the CUDA Runtime API's <a href="https://docs.nvidia.com/cuda/cuda-runtime-api/api-sync-behavior.html">API synchronization behavior</a>,
+    and PyTorch's <a href="https://docs.pytorch.org/docs/stable/notes/cuda.html#cuda-streams">CUDA stream semantics</a>.
+  </div>
+
+  <h2 id="where-next">Where this leads</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>If you want...</th><th>Go to</th></tr></thead>
+      <tbody>
+        <tr><td>The thread, warp, memory, and kernel model beneath stream work</td><td><a href="cuda.html">CUDA — The SIMT Programming Model &rarr;</a></td></tr>
+        <tr><td>Why eager ML programs generate long launch queues</td><td><a href="pytorch-execution.html">The PyTorch Execution Model &rarr;</a></td></tr>
+        <tr><td>To record a stable stream DAG and replay it with one host launch</td><td><a href="cuda-graphs.html">CUDA Graphs &rarr;</a></td></tr>
+        <tr><td>How multi-GPU collectives join the same asynchronous model</td><td><a href="nccl.html">NCCL &rarr;</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+<footer>Personal ML notes &middot; <a href="https://github.com/yueyiming2009/ai-learning" style="color:inherit;text-decoration:underline;">source on GitHub</a></footer>
+
+<script>
+(function () {
+  'use strict';
+
+  var canvas = document.getElementById('plot-pipeline');
+  var chunksInput = document.getElementById('chunks');
+  var copyInput = document.getElementById('copy-ms');
+  var kernelInput = document.getElementById('kernel-ms');
+  var chunksVal = document.getElementById('chunks-val');
+  var copyVal = document.getElementById('copy-val');
+  var kernelVal = document.getElementById('kernel-val');
+  var readout = document.getElementById('pipeline-readout');
+  if (!canvas || !chunksInput || !copyInput || !kernelInput || !readout) return;
+
+  var ctx = canvas.getContext('2d');
+
+  function cssVar(name, fallback) {
+    var value = getComputedStyle(document.body).getPropertyValue(name).trim();
+    return value || fallback;
+  }
+
+  function schedules(n, copyMs, kernelMs) {
+    var serial = [];
+    var time = 0;
+    var i;
+    for (i = 0; i < n; i++) {
+      serial.push({ kind: 'copy', chunk: i, start: time, end: time + copyMs });
+      time += copyMs;
+      serial.push({ kind: 'kernel', chunk: i, start: time, end: time + kernelMs });
+      time += kernelMs;
+    }
+
+    var copies = [];
+    var kernels = [];
+    var kernelEnds = [];
+    var copyReady = 0;
+    var computeReady = 0;
+    for (i = 0; i < n; i++) {
+      var bufferReady = i >= 2 ? kernelEnds[i - 2] : 0;
+      var copyStart = Math.max(copyReady, bufferReady);
+      var copyEnd = copyStart + copyMs;
+      var kernelStart = Math.max(copyEnd, computeReady);
+      var kernelEnd = kernelStart + kernelMs;
+      copies.push({ kind: 'copy', chunk: i, start: copyStart, end: copyEnd });
+      kernels.push({ kind: 'kernel', chunk: i, start: kernelStart, end: kernelEnd });
+      copyReady = copyEnd;
+      computeReady = kernelEnd;
+      kernelEnds.push(kernelEnd);
+    }
+
+    return {
+      serial: serial,
+      copies: copies,
+      kernels: kernels,
+      serialEnd: time,
+      pipelineEnd: kernelEnds[kernelEnds.length - 1]
+    };
+  }
+
+  function roundedRect(x, y, w, h, radius) {
+    var r = Math.min(radius, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function draw() {
+    var n = parseInt(chunksInput.value, 10);
+    var copyMs = parseInt(copyInput.value, 10);
+    var kernelMs = parseInt(kernelInput.value, 10);
+    var plan = schedules(n, copyMs, kernelMs);
+
+    chunksVal.textContent = String(n);
+    copyVal.textContent = copyMs + ' ms';
+    kernelVal.textContent = kernelMs + ' ms';
+
+    var dpr = window.devicePixelRatio || 1;
+    var W = canvas.clientWidth;
+    var H = canvas.clientHeight;
+    if (W === 0 || H === 0) return;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+
+    var grid = cssVar('--plot-grid', '#eceef1');
+    var axis = cssVar('--plot-axis', '#cbd5e1');
+    var label = cssVar('--plot-label', '#6b7280');
+    var text = cssVar('--text', '#1a1a2e');
+    var copyColor = cssVar('--copy', '#2563eb');
+    var copyLight = cssVar('--copy-light', '#dbeafe');
+    var kernelColor = cssVar('--kernel', '#7c3aed');
+    var kernelLight = cssVar('--kernel-light', '#ede9fe');
+    var eventColor = cssVar('--event', '#0d9488');
+
+    var left = W < 560 ? 78 : 108;
+    var right = 18;
+    var top = 30;
+    var bottom = 28;
+    var plotW = Math.max(40, W - left - right);
+    var maxTime = plan.serialEnd;
+    var x = function (t) { return left + (t / maxTime) * plotW; };
+
+    ctx.font = '11px Inter, -apple-system, sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 1;
+
+    var tickCount = 5;
+    var tick;
+    for (tick = 0; tick <= tickCount; tick++) {
+      var t = maxTime * tick / tickCount;
+      var px = x(t);
+      ctx.strokeStyle = grid;
+      ctx.beginPath();
+      ctx.moveTo(px, top);
+      ctx.lineTo(px, H - bottom);
+      ctx.stroke();
+      ctx.fillStyle = label;
+      ctx.textAlign = tick === 0 ? 'left' : (tick === tickCount ? 'right' : 'center');
+      ctx.fillText(Math.round(t) + ' ms', px, H - 12);
+    }
+
+    var serialY = 70;
+    var copyY = H < 350 ? 190 : 210;
+    var kernelY = copyY + 68;
+    var barH = 30;
+
+    ctx.fillStyle = text;
+    ctx.textAlign = 'left';
+    ctx.font = '600 12px Inter, -apple-system, sans-serif';
+    ctx.fillText('One stream', 4, serialY + barH / 2);
+    ctx.fillText('H2D engine', 4, copyY + barH / 2);
+    ctx.fillText('Compute', 4, kernelY + barH / 2);
+
+    ctx.font = '10px Inter, -apple-system, sans-serif';
+
+    function drawBar(item, y) {
+      var x0 = x(item.start);
+      var x1 = x(item.end);
+      var width = Math.max(1, x1 - x0);
+      var isCopy = item.kind === 'copy';
+      roundedRect(x0, y, width, barH, 4);
+      ctx.fillStyle = isCopy ? copyLight : kernelLight;
+      ctx.fill();
+      ctx.strokeStyle = isCopy ? copyColor : kernelColor;
+      ctx.stroke();
+      if (width > 19) {
+        ctx.fillStyle = isCopy ? copyColor : kernelColor;
+        ctx.textAlign = 'center';
+        ctx.fillText((isCopy ? 'H' : 'K') + item.chunk, x0 + width / 2, y + barH / 2);
+      }
+    }
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(left, top, plotW, H - top - bottom);
+    ctx.clip();
+
+    plan.serial.forEach(function (item) { drawBar(item, serialY); });
+    plan.copies.forEach(function (item) { drawBar(item, copyY); });
+    plan.kernels.forEach(function (item) { drawBar(item, kernelY); });
+
+    plan.copies.forEach(function (item) {
+      var px = x(item.end);
+      ctx.strokeStyle = eventColor;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(px, copyY + barH);
+      ctx.lineTo(px, kernelY);
+      ctx.stroke();
+      ctx.lineWidth = 1;
+    });
+
+    ctx.restore();
+    ctx.strokeStyle = axis;
+    ctx.beginPath();
+    ctx.moveTo(left, top);
+    ctx.lineTo(left, H - bottom);
+    ctx.moveTo(left, serialY + barH + 15);
+    ctx.lineTo(left + plotW, serialY + barH + 15);
+    ctx.stroke();
+
+    var speedup = plan.serialEnd / plan.pipelineEnd;
+    readout.innerHTML =
+      '<b>One stream:</b> ' + plan.serialEnd + ' ms &nbsp;&middot;&nbsp; ' +
+      '<b>double-buffer pipeline:</b> ' + plan.pipelineEnd + ' ms &nbsp;&middot;&nbsp; ' +
+      '<b>illustrative speedup:</b> ' + speedup.toFixed(2) + '&times;. ' +
+      (copyMs === kernelMs
+        ? 'The stages are balanced, so neither engine waits much after pipeline fill.'
+        : (copyMs > kernelMs
+          ? 'Copies are the bottleneck; compute repeatedly waits for the next chunk.'
+          : 'Compute is the bottleneck; most later copies hide behind kernels.'));
+  }
+
+  [chunksInput, copyInput, kernelInput].forEach(function (input) {
+    input.addEventListener('input', draw);
+  });
+
+  var raf = null;
+  window.addEventListener('resize', function () {
+    if (raf) cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(draw);
+  });
+  if (window.matchMedia) {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', draw);
+  }
+
+  draw();
+})();
+</script>
+
+</body>
+</html>

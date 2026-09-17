@@ -217,6 +217,7 @@
     <a href="#memory">Memory &amp; coalescing</a>
     <a href="#warps">Warps</a>
     <a href="#tiled-matmul">Tiled matmul</a>
+    <a href="#barriers">Barriers</a>
     <a href="#machinery">Streams &amp; PTX</a>
     <a href="#ladder">The ladder</a>
   </div>
@@ -226,7 +227,7 @@
 <div class="hero">
   <span class="hero-pill">GPU Kernels · CUDA</span>
   <h1>CUDA — The SIMT Programming Model</h1>
-  <p>The layer under everything: threads, warps, blocks and grids, the memory spaces and coalescing rules, and two canonical kernels — the substrate that Triton, CuTe DSL, and cuTile all compile down to.</p>
+  <p>The layer under everything: threads, warps, blocks and grids, memory and coalescing, the barrier/fence hierarchy, and two canonical kernels — the substrate that Triton, CuTe DSL, and cuTile all compile down to.</p>
 </div>
 
 <div class="page-wrap">
@@ -449,11 +450,306 @@ cudaMemcpy(host_c, c, n * <span class="kw">sizeof</span>(<span class="kw">float<
   <p>And the honest coda: this classic kernel, the peak of introductory CUDA, reaches only a modest fraction of a modern GPU's throughput — it runs on plain FMA units. Tensor cores are reached through warp-level MMA instructions (<code>mma.sync</code>, <code>wgmma</code>, <code>tcgen05</code>) with elaborate operand layouts, plus async copies (<code>cp.async</code>, <a href="../hardware/gpu-hardware.html#datamove">TMA</a>) to keep them fed — exactly the machinery the <a href="cute-dsl.html#gemm">CuTe atom table</a> catalogs. The gap between this page's matmul and those kernels is the reason the rest of the shelf exists.</p>
 
   <!-- ══════════════════════════════════════════ -->
+  <h2 id="barriers">Synchronization: barriers, fences, scopes, and phases</h2>
+
+  <p>A parallel algorithm is correct only if a consumer cannot outrun its producer. CUDA exposes several synchronization tools, but they solve different problems. A <strong>barrier</strong> names a group of threads, waits for the required participants, and establishes memory visibility across the synchronization point. A <strong>fence</strong> orders one thread’s memory operations at a chosen scope but does not make another thread wait. Confusing the two is a classic source of races.</p>
+
+  <div class="result">
+    <div class="result-label">The barrier contract</div>
+    <p style="margin:0;">For participating threads, writes completed before arrival become visible to reads after the matching wait. The barrier answers both <em>“has everyone reached the handoff?”</em> and <em>“may I safely observe what they wrote?”</em></p>
+  </div>
+
+  <h3>Barrier, fence, atomic, or kernel boundary?</h3>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Primitive</th><th>Waits for peers?</th><th>Orders memory?</th><th>Use it for</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Barrier</strong></td><td>Yes, for a named participant group</td><td>Yes, at the barrier’s scope</td><td>Shared-memory handoffs, collective phases, producer/consumer stages.</td></tr>
+        <tr><td><strong>Fence</strong></td><td class="bad">No</td><td>Orders the calling thread’s accesses at block/device/system scope</td><td>Publishing data before a separate flag or atomic notification.</td></tr>
+        <tr><td><strong>Atomic</strong></td><td>Only through an explicit protocol</td><td>For the atomic location and selected memory order</td><td>Counters, locks, work queues, producer-ready flags.</td></tr>
+        <tr><td><strong>Kernel boundary / event</strong></td><td>Orders whole launches or streams</td><td>Yes, according to stream/event semantics</td><td>Communication between independent CTAs when an in-kernel grid barrier is unavailable.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note">
+    <strong>A fence is not a notification.</strong> <code>__threadfence()</code> can ensure payload writes are ordered before a later flag write, but another thread still needs an atomic/flag protocol to learn that the payload is ready. Likewise, an atomic counter does not automatically make unrelated data visible unless the surrounding memory-order protocol does.
+  </div>
+
+  <h3>Fences order one thread’s accesses</h3>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Fence</th><th>C++ equivalent</th><th>Ordering scope</th></tr></thead>
+      <tbody>
+        <tr><td><code>__threadfence_block()</code></td><td><code>cuda::atomic_thread_fence(cuda::memory_order_seq_cst, cuda::thread_scope_block)</code></td><td>Threads in the caller’s CTA.</td></tr>
+        <tr><td><code>__threadfence()</code></td><td><code>cuda::atomic_thread_fence(cuda::memory_order_seq_cst, cuda::thread_scope_device)</code></td><td>Threads on the device.</td></tr>
+        <tr><td><code>__threadfence_system()</code></td><td><code>cuda::atomic_thread_fence(cuda::memory_order_seq_cst, cuda::thread_scope_system)</code></td><td>Device threads, host threads, and peer devices.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>These functions constrain the observed order of the <em>calling thread’s</em> reads and writes. They do not wait for another thread, flush every cache by themselves, or prevent a data race. A correct publication protocol combines an ordered payload write with a separately synchronized flag—normally an atomic store/release paired with an atomic load/acquire.</p>
+
+  <h3>The scope ladder: synchronize the smallest group that shares the data</h3>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Scope</th><th>CUDA interface</th><th>Who participates</th><th>Important condition</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Warp / tile</strong></td><td><code>__syncwarp(mask)</code>, <code>thread_block_tile&lt;N&gt;::sync()</code></td><td>The lanes named by the mask or cooperative-group tile</td><td>Every named, non-exited lane must execute the matching synchronization.</td></tr>
+        <tr><td><strong>CTA / block</strong></td><td><code>__syncthreads()</code>, <code>thread_block::sync()</code></td><td>Every thread in one block</td><td>The call must be reached uniformly by the whole block.</td></tr>
+        <tr><td><strong>Selected block threads</strong></td><td><code>cuda::barrier&lt;thread_scope_block&gt;</code></td><td>The explicitly counted arrivals</td><td>Initialize the expected count and obey the reusable phase protocol.</td></tr>
+        <tr><td><strong>Thread-block cluster</strong></td><td><code>cluster_group::sync()</code> or split <code>barrier_arrive/barrier_wait</code></td><td>All threads in co-scheduled cluster CTAs</td><td>Requires cluster launch support (Hopper, compute capability 9.0+).</td></tr>
+        <tr><td><strong>Grid</strong></td><td><code>grid_group::sync()</code></td><td>All threads in a cooperatively launched grid</td><td>The launch must guarantee every block can be resident together.</td></tr>
+        <tr><td><strong>Across grids/devices</strong></td><td>Streams, events, kernel boundaries, host/device protocols</td><td>Launches rather than arbitrary in-kernel threads</td><td>There is no ordinary system-wide equivalent of <code>__syncthreads()</code> inside a kernel.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>At PTX level, the ordinary whole-CTA rendezvous generally becomes a <code>bar.sync</code> operation. PTX also exposes a small fixed set of named barriers and optional arrival counts, but CUDA C++ and Cooperative Groups should express ordinary group synchronization unless a hand-written PTX protocol is truly required.</p>
+
+  <p>The performance rule follows the correctness hierarchy: prefer a warp barrier over a CTA barrier when only one warp communicates; prefer a CTA barrier over a cluster or grid barrier when the data is local. Wider barriers coordinate more execution resources and are harder to schedule.</p>
+
+  <h3><code>__syncthreads()</code>: the whole-block rendezvous</h3>
+
+  <p><code>__syncthreads()</code> waits until every non-exited thread in the CTA reaches the same dynamic barrier. It also makes prior shared- and global-memory accesses by those threads visible to the block after the barrier. The two calls in the tiled matmul above protect different hazards:</p>
+
+  <ol>
+    <li>The first prevents a consumer from reading <code>As</code>/<code>Bs</code> before another thread has written its element.</li>
+    <li>The second prevents a fast thread from overwriting the shared-memory stage for tile \(k+1\) while a slow thread still reads tile \(k\).</li>
+  </ol>
+
+  <p>CUDA also provides voting variants that perform the same full-block barrier and return a reduction of a predicate:</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Intrinsic</th><th>Returned value after all threads arrive</th></tr></thead>
+      <tbody>
+        <tr><td><code>__syncthreads_count(p)</code></td><td>Number of block threads for which \(p\ne0\).</td></tr>
+        <tr><td><code>__syncthreads_and(p)</code></td><td>Nonzero iff \(p\) is nonzero for every block thread.</td></tr>
+        <tr><td><code>__syncthreads_or(p)</code></td><td>Nonzero iff \(p\) is nonzero for at least one block thread.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>The deadlock rule: participation must be uniform</h3>
+
+  <p>A block-wide barrier may appear in a branch only when the condition evaluates identically for the whole block. A partial final block makes this tempting code invalid:</p>
+
+<pre><code><span class="cm">// WRONG: divergent barrier participation is undefined and can deadlock.</span>
+<span class="kw">if</span> (global_i &lt; n) {
+    smem[threadIdx.x] = input[global_i];
+    __syncthreads();
+    consume(smem);
+}
+
+<span class="cm">// RIGHT: predicate the work, not the whole-block rendezvous.</span>
+<span class="kw">bool</span> active = global_i &lt; n;
+smem[threadIdx.x] = active ? input[global_i] : <span class="num">0.f</span>;
+__syncthreads();
+<span class="kw">if</span> (active)
+    consume(smem);</code></pre>
+
+  <p>A helper called by only half the block or a loop whose trip count differs across live threads can hide the same invalid participation. Exited threads are excluded from <code>__syncthreads()</code>, but an early return can still omit data that peers need. Explicitly counted <code>cuda::barrier</code> arrivals are different: a departing participant must satisfy or adjust its arrival obligation, usually with <code>arrive_and_drop()</code>. Cooperative Groups makes the intended participant set explicit in collective helpers.</p>
+
+  <h3>Warp synchronization: do not rely on accidental lockstep</h3>
+
+  <p><code>__syncwarp(mask)</code> waits for the non-exited lanes named in <code>mask</code> and orders memory among those lanes. Each caller must name itself, and all named lanes must execute a corresponding call with the same mask. This matters on modern GPUs with independent thread scheduling: warp lanes often execute together, but “the warp is lockstep” is not a substitute for synchronization when lanes exchange data through shared or global memory.</p>
+
+  <p>For a full warp where all 32 lanes reach the ballot before branching, let <code>1 &lt;= active_lanes &lt;= 32</code> and give that warp its own shared-memory <code>scratch</code> slice:</p>
+
+<pre><code><span class="kw">unsigned</span> mask = __ballot_sync(<span class="num">0xffffffffu</span>, lane &lt; active_lanes);
+
+<span class="kw">if</span> (lane &lt; active_lanes) {
+    scratch[lane] = value;
+    __syncwarp(mask);
+    <span class="kw">if</span> (lane + <span class="num">1</span> &lt; active_lanes)
+        value += scratch[lane + <span class="num">1</span>];
+}</code></pre>
+
+  <p>Do not use an <code>__activemask()</code> snapshot to infer the complete logical participant set: independently scheduled lanes may reach it in different subsets. Compute the mask at a collective point with a known valid membership mask. If the scratch slice is reused in a loop, add a matching barrier after the reads and before the next overwrite.</p>
+
+  <p>Register shuffles such as <code>__shfl_down_sync(mask, ...)</code> already name their participating lanes and synchronize that exchange. Use <code>__syncwarp</code> when the handoff happens through memory or separate instructions.</p>
+
+  <h3>Cooperative Groups: make the participant set part of the API</h3>
+
+  <p>Cooperative Groups replaces an implicit assumption (“surely the whole block called this function”) with an explicit group object:</p>
+
+<pre><code><span class="kw">namespace</span> cg = cooperative_groups;
+
+<span class="kw">auto</span> block = cg::this_thread_block();
+<span class="kw">auto</span> warp  = cg::tiled_partition&lt;<span class="num">32</span>&gt;(block);
+
+block.sync();  <span class="cm">// equivalent participant set to __syncthreads()</span>
+warp.sync();   <span class="cm">// only this 32-thread tile</span></code></pre>
+
+  <p>Hopper adds a <code>cluster_group</code>. Its CTAs are guaranteed to be co-scheduled, so <code>cluster.sync()</code> can protect accesses to <strong>distributed shared memory</strong>. The cluster interface also has split <code>barrier_arrive()</code>/<code>barrier_wait(token)</code> operations. A <code>grid_group</code> offers the same shape across a whole grid, but <code>grid.sync()</code> is legal only for a cooperative launch sized so every block can reside concurrently; ordinary kernels still synchronize independent CTAs by ending the kernel and launching the next one.</p>
+
+  <h3><code>cuda::barrier</code>: split arrival from waiting</h3>
+
+  <p><code>__syncthreads()</code> combines arrival and waiting in one call. <code>cuda::barrier</code> separates them, allowing a thread to announce “my writes are published” and do independent work before it actually needs its peers’ data:</p>
+
+<pre><code><span class="kw">#include</span> &lt;cuda/barrier&gt;
+<span class="kw">#include</span> &lt;cooperative_groups.h&gt;
+<span class="kw">#include</span> &lt;utility&gt;
+
+<span class="kw">using</span> BlockBarrier = cuda::barrier&lt;cuda::thread_scope_block&gt;;
+
+<span class="dec">__global__</span> <span class="kw">void</span> <span class="fn">split_phase</span>(<span class="kw">float</span>* data) {
+    <span class="dec">__shared__</span> BlockBarrier ready;
+    <span class="kw">auto</span> block = cooperative_groups::this_thread_block();
+
+    <span class="kw">if</span> (block.thread_rank() == <span class="num">0</span>)
+        init(&amp;ready, block.size());        <span class="cm">// expected arrivals per phase</span>
+    block.sync();                          <span class="cm">// bootstrap initialization</span>
+
+    publish_my_piece(data);
+    <span class="kw">auto</span> token = ready.arrive();          <span class="cm">// nonblocking + memory fence</span>
+    do_work_that_needs_no_peer_data();
+    ready.wait(std::move(token));          <span class="cm">// wait for this phase to advance</span>
+    consume_everyones_pieces(data);
+}</code></pre>
+
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">Expected arrivals</div>
+      <p><code>init</code> sets the number of arrivals needed to complete each reusable phase. It need not equal the full block size.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Arrival token</div>
+      <p><code>arrive()</code> returns a token tied to the current phase; <code>wait(token)</code> blocks only while that phase remains current.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Automatic reset</div>
+      <p>Once all required arrivals and any attached asynchronous work complete, the phase advances and the pending count resets for the next use.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Early departure</div>
+      <p><code>arrive_and_drop()</code> arrives now and reduces the expected participant count for future phases.</p>
+    </div>
+  </div>
+
+  <p><code>arrive_and_wait()</code> is the combined convenience operation. A phase token may only be used for its phase or the immediately preceding one, and a thread must observe phase completion before racing ahead into a later reuse. If all threads in a block or warp simply need a rendezvous, NVIDIA recommends <code>__syncthreads()</code> or <code>__syncwarp()</code>; the explicit barrier earns its complexity when participation is selective or arrival can overlap useful work.</p>
+
+  <h3>mbarrier: the shared-memory state machine underneath async pipelines</h3>
+
+  <p>Starting with Ampere (compute capability 8.0), block-scoped <code>cuda::barrier</code> operations can use hardware acceleration from the PTX <strong>mbarrier</strong> family. An mbarrier is an opaque 8-byte, 8-byte-aligned object in shared memory. Unlike the small fixed set of CTA <code>bar.sync</code> slots, mbarrier objects are allocated by the program and are limited primarily by shared-memory capacity. Hopper (compute capability 9.0) adds the transaction-count mechanism used by TMA below.</p>
+
+  <p>Each phase tracks more than “how many threads arrived”:</p>
+
+  <div class="result">
+    <div class="result-label">Ordinary mbarrier primary-phase completion</div>
+    \[
+      \text{phase complete}
+      \iff
+      \text{pending arrivals}=0
+      \;\land\;
+      \text{transaction count}=0.
+    \]
+  </div>
+
+  <p>PTX 9.3 adds <code>.layout::v1</code> barriers with payload reports and a conditional phase for fabric operations. The ordinary <code>.layout::v0</code> TMA example here only needs the core arrival/transaction-count model.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>PTX operation</th><th>Role in the state machine</th></tr></thead>
+      <tbody>
+        <tr><td><code>mbarrier.init</code></td><td>Initialize the object and expected arrival count before any participant uses it.</td></tr>
+        <tr><td><code>mbarrier.arrive</code></td><td>Decrement pending arrivals and return state associated with the current phase.</td></tr>
+        <tr><td><code>mbarrier.arrive_drop</code></td><td>Arrive in this phase and reduce the expected arrival count for subsequent phases.</td></tr>
+        <tr><td><code>mbarrier.expect_tx</code> / <code>arrive.expect_tx</code></td><td>Add asynchronous work—often TMA bytes—to the phase’s transaction count.</td></tr>
+        <tr><td><code>mbarrier.complete_tx</code></td><td>Issued by the completing async operation to subtract finished transactions.</td></tr>
+        <tr><td><code>mbarrier.test_wait</code> / <code>try_wait</code></td><td>Test phase completion using state or parity; higher-level waits repeat until it succeeds.</td></tr>
+        <tr><td><code>mbarrier.inval</code></td><td>Invalidate the object before its shared-memory bytes are repurposed.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Schematic PTX for one TMA load phase on Hopper or newer looks like this. One thread owns initialization, arrival, waiting, consumption, and invalidation in this example; <code>dst</code> is a suitably aligned shared-memory tile and <code>map</code> is an already-published tensor map:</p>
+
+<pre><code><span class="cm">// Shared storage is a .b64 object aligned to 8 bytes.</span>
+mbarrier.init.shared::cta.b64              [bar], <span class="num">1</span>;
+fence.proxy.async.shared::cta;            <span class="cm">// publish initialization to TMA</span>
+mbarrier.arrive.expect_tx.shared::cta.b64  state, [bar], bytes;
+
+<span class="cm">// An async engine later performs complete_tx as work finishes.</span>
+cp.async.bulk.tensor.2d.shared::cluster.global
+    .mbarrier::complete_tx::bytes [dst], [map, {x, y}], [bar];
+
+wait_ready:
+mbarrier.try_wait.shared::cta.b64          ready, [bar], state;
+@!ready bra wait_ready;
+<span class="cm">// ...consume the loaded tile; after the final phase...</span>
+mbarrier.inval.shared::cta.b64             [bar];</code></pre>
+
+  <p>The proxy fence makes the initialized barrier visible to the asynchronous copy engine; waiting once without checking the predicate is not sufficient. With multiple threads, also publish initialization to every participant before first use, have each consumer observe the full phase before reading, and ensure all users are finished before invalidation or buffer reuse.</p>
+
+  <p>The object automatically advances and resets when both counters reach zero. Before an arrival in the following phase, at least one waiter must have observed successful completion of the previous phase. That rule prevents a fast producer from lapping a slow consumer and confusing a reused parity token.</p>
+
+  <p>Conceptually, arrival publishes prior writes and a successful wait acquires them for the consumer. Asynchronous engines introduce an additional <em>memory proxy</em>: when ordinary threads produce shared-memory data for TMA to store, a proxy fence is still required before the engine reads it. Correct barrier counts cannot repair missing memory-order edges.</p>
+
+  <div class="note">
+    <strong>Cluster barriers are directional.</strong> A thread may signal an mbarrier in another CTA’s distributed shared memory with supported arrive/transaction operations, but waiting is performed by threads that own the barrier’s local shared-memory address. TMA multicast uses this one-way signaling to complete barriers in several destination CTAs.
+  </div>
+
+  <h3>Producer/consumer pipelines need “full” and “empty” handoffs</h3>
+
+  <p>A ring-buffer stage has two ownership transitions. The producer must wait until consumers release the stage as <strong>empty</strong>; after filling it—possibly through TMA—it signals <strong>full</strong>. Consumers wait for full, compute, then signal empty. Double buffering needs both transitions for both buffers; otherwise a producer can overwrite a tile still in use even if the initial load barrier is correct.</p>
+
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">Producer acquire</div>
+      <p>Wait for the empty phase before writing or launching an asynchronous load into the stage.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Producer commit</div>
+      <p>Publish ordinary writes or attach TMA transaction bytes to the stage’s full barrier.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Consumer wait</div>
+      <p>Observe the full phase before WGMMA or scalar code reads the staged tile.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Consumer release</div>
+      <p>Signal that all reads are finished before the ring slot wraps around to the producer.</p>
+    </div>
+  </div>
+
+  <p>This is the primitive beneath <a href="../hardware/gpu-hardware.html#datamove">TMA’s transaction-barrier protocol</a>, the <a href="cutlass.html#mainloop">CUTLASS producer/consumer mainloop</a>, and the barrier choreography hidden by <a href="cutile.html#tiled-matmul">cuTile</a>. CUDA C++ libraries package the phase arithmetic because one wrong expected count or one skipped release becomes a silent race or a kernel-wide deadlock.</p>
+
+  <h3>Barrier checklist</h3>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Question</th><th>If the answer is wrong</th></tr></thead>
+      <tbody>
+        <tr><td>What exact group shares the data?</td><td>An unnecessarily wide barrier wastes parallelism, while a narrow one leaves a race.</td></tr>
+        <tr><td>Will every required participant reach the same dynamic barrier?</td><td>Divergence or early exit can deadlock the group.</td></tr>
+        <tr><td>Are writes before arrival and reads after wait?</td><td>The rendezvous occurs but protects the wrong phase of memory access.</td></tr>
+        <tr><td>Does a reused stage have both full and empty handoffs?</td><td>The producer overwrites data that consumers still use.</td></tr>
+        <tr><td>Does an async operation contribute the correct transaction count?</td><td>The phase completes early or never completes.</td></tr>
+        <tr><td>Do normal-thread and async-engine accesses cross a memory proxy?</td><td>A required proxy fence may be missing even though the barrier counts are correct.</td></tr>
+        <tr><td>Could independent work run between arrive and wait?</td><td>If not, prefer the simpler built-in barrier for the group.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="xref">
+    <strong>Primary references:</strong>
+    NVIDIA’s <a href="https://docs.nvidia.com/cuda/archive/12.6.0/cuda-c-programming-guide/index.html#synchronization-functions">CUDA synchronization functions</a>,
+    <a href="https://docs.nvidia.com/cuda/archive/12.6.0/cuda-c-programming-guide/index.html#aw-barrier"><code>cuda::barrier</code> guide</a>,
+    <a href="https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier">PTX mbarrier reference</a>,
+    and the <a href="https://developer.nvidia.com/blog/cooperative-groups/">Cooperative Groups introduction</a>.
+  </div>
+
+  <!-- ══════════════════════════════════════════ -->
   <h2 id="machinery">The machinery: streams, and what a kernel compiles to</h2>
 
   <h3>Streams: the asynchrony model</h3>
 
-  <p>All device work — kernels, copies — is issued into <strong>streams</strong>: in-order queues that execute concurrently with the host and with each other. One stream gives you CPU/GPU overlap for free (launches return immediately); multiple streams overlap copies with compute (<code>cudaMemcpyAsync</code> from pinned host memory) or run independent kernels side by side. <code>cudaEvent</code>s mark points in a stream for timing and cross-stream ordering; <code>cudaStreamSynchronize</code>/<code>cudaDeviceSynchronize</code> block the host. This queue model is what PyTorch rides — and repeated launch overhead into it is what <a href="cuda-graphs.html">CUDA Graphs exist to amortize</a>.</p>
+  <p>All device work — kernels, copies — is issued into <strong>streams</strong>: ordering domains whose commands execute FIFO. Different streams are otherwise unordered and may run concurrently when the hardware has resources; <code>cudaEvent</code>s add precise cross-stream dependencies without blocking the host. Synchronization is the separate act of making the CPU wait. The dedicated <a href="cuda-streams.html">CUDA Streams &amp; Events page</a> develops that model through default-stream semantics, pinned-memory copy/compute overlap, timing, asynchronous errors, and PyTorch's stream-aware allocator lifetime. Repeated host launch overhead into these queues is what <a href="cuda-graphs.html">CUDA Graphs exist to amortize</a>.</p>
 
   <h3>NVCC, PTX, SASS: the compilation contract</h3>
 
@@ -483,6 +779,7 @@ cudaMemcpy(host_c, c, n * <span class="kw">sizeof</span>(<span class="kw">float<
   <h2 id="where-next">Where this leads</h2>
 
   <ul>
+    <li><strong><a href="cuda-streams.html">CUDA Streams &amp; Events</a></strong> — same-stream order, cross-stream dependencies, copy/compute overlap, and the synchronization boundaries around kernels.</li>
     <li><strong><a href="triton-kernels.html">GPU Kernels in Triton</a></strong> — the same vector add and a fused softmax, with threads handed to a compiler.</li>
     <li><strong><a href="cute-dsl.html">GPU Kernels in CuTe DSL</a></strong> — thread-level control kept, index arithmetic replaced by layout algebra.</li>
     <li><strong><a href="cutile.html">GPU Kernels in cuTile</a></strong> — CUDA's own tile-level model, and Tile IR as the PTX bet one level up.</li>
