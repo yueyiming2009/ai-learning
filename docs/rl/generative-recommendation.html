@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="How generative recommendation represents items and slates, where reinforcement learning fits, and what public evidence actually shows. Includes an exact six-item slate optimization demo.">
+  <title>RL for Generative Recommendation — Concepts &amp; Landscape</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <script>
+    window.MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #ffffff; --surface: #f8fafb; --border: #dfe5e9;
+      --text: #17252d; --muted: #52616c; --accent: #0f766e;
+      --accent-light: #ecfdf5; --nav-bg: rgba(255,255,255,0.94);
+      --note-bg: #eff6ff; --note-border: #3b82f6;
+      --fig-bg: #ffffff; --plot-grid: #e8edf0; --plot-axis: #83939f;
+      --plot-tick: #52616c; --plot-gray: #64748b; --plot-violet: #6d28d9;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1418; --surface: #171f25; --border: #303c45;
+        --text: #e5edf2; --muted: #acbac5; --accent: #5eead4;
+        --accent-light: #102c28; --nav-bg: rgba(15,20,24,0.94);
+        --note-bg: #142335; --note-border: #60a5fa;
+        --fig-bg: #141c22; --plot-grid: #28343e; --plot-axis: #7b8b99;
+        --plot-tick: #acbac5; --plot-gray: #b0becd; --plot-violet: #b69afc;
+      }
+    }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font: 16px/1.75 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    a { color: var(--accent); text-underline-offset: 3px; }
+    a:hover { text-decoration-thickness: 2px; }
+    a:focus-visible, input:focus-visible, button:focus-visible, [tabindex]:focus-visible {
+      outline: 3px solid var(--accent); outline-offset: 4px;
+    }
+    .skip-link { position: absolute; left: 12px; top: -80px; z-index: 200; padding: 8px; background: var(--bg); }
+    .skip-link:focus { top: 8px; }
+    nav {
+      position: sticky; top: 0; z-index: 100; display: flex; align-items: center;
+      gap: 22px; min-height: 54px; padding: 9px 24px; border-bottom: 1px solid var(--border);
+      background: var(--nav-bg); backdrop-filter: blur(8px);
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0;
+      color: var(--accent); font-weight: 600; font-size: 0.88rem; text-decoration: none;
+    }
+    .nav-home { flex-shrink: 0; }
+    .nav-links { display: flex; gap: 4px; overflow-x: auto; min-width: 0; }
+    .nav-links a { color: var(--muted); text-decoration: none; font-size: 0.82rem; padding: 4px 9px; white-space: nowrap; }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); border-radius: 6px; }
+    .hero { padding: 52px 24px 46px; color: #fff; text-align: center; background: linear-gradient(130deg, #12363e, #115e59 60%, #0f766e); }
+    .hero-pill { display: inline-block; padding: 3px 12px; border: 1px solid #ffffff60; border-radius: 30px; font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .hero h1 { margin: 16px 0 12px; font-size: clamp(1.7rem, 4vw, 2.6rem); line-height: 1.25; letter-spacing: -0.025em; }
+    .hero p { max-width: 720px; margin: 0 auto; color: #deeeeb; }
+    .page-wrap { max-width: 1100px; margin: 0 auto; padding: 32px 24px 72px; }
+    section { scroll-margin-top: 94px; }
+    h2 { margin: 2.5em 0 0.8em; padding-bottom: 9px; border-bottom: 2px solid var(--border); font-size: 1.35rem; line-height: 1.4; }
+    h3 { margin: 1.6em 0 0.4em; font-size: 1.05rem; }
+    p { margin: 0.7em 0; }
+    ul, ol { padding-left: 1.5em; }
+    li { margin: 0.4em 0; }
+    code { border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; background: var(--surface); font-size: 0.9em; }
+    .muted, .small { color: var(--muted); }
+    .small { font-size: 0.88rem; }
+    .note, .takeaway { margin: 1.4em 0; padding: 15px 20px; border-left: 3px solid var(--note-border); border-radius: 0 8px 8px 0; background: var(--note-bg); }
+    .takeaway { background: var(--accent-light); border-color: var(--accent); }
+    .note p:first-child, .takeaway p:first-child { margin-top: 0; }
+    .note p:last-child, .takeaway p:last-child { margin-bottom: 0; }
+    .sequence { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 18px; padding-bottom: 18px; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
+    .definitions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 1.2em 0; }
+    .definition { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; }
+    .definition dt { font-weight: 650; color: var(--accent); }
+    .definition dd { margin: 4px 0 0; font-size: 0.93rem; }
+    .equation { overflow-x: auto; padding: 10px 14px; margin: 1.2em 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+    caption { text-align: left; font-size: 0.9rem; color: var(--muted); padding: 0 0 9px; }
+    th, td { padding: 10px 12px; text-align: left; vertical-align: top; border: 1px solid var(--border); }
+    th { background: var(--surface); font-weight: 650; }
+    .landscape-table { min-width: 1080px; table-layout: fixed; }
+    .landscape-table th:first-child { width: 14%; }
+    .landscape-table th:nth-child(2) { width: 17%; }
+    .landscape-table th:nth-child(3) { width: 25%; }
+    .landscape-table th:nth-child(4) { width: 21%; }
+    .landscape-table th:nth-child(5) { width: 23%; }
+    .tag { display: inline-block; font-size: 0.76rem; font-weight: 600; border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; margin-bottom: 5px; background: var(--surface); }
+    .figure {
+      background: var(--fig-bg); border: 1px solid var(--border); border-radius: 10px;
+      padding: 18px 16px 14px; margin: 1.6em 0; box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .figure canvas { width: 100%; height: 300px; display: block; }
+    .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; justify-content: center; margin-top: 12px; font-size: 0.82rem; color: var(--text); }
+    .legend-item { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, var(--plot-gray) 0 5px, transparent 5px 9px); }
+    .figure-caption { font-size: 0.85rem; color: var(--muted); line-height: 1.6; margin: 14px 4px 2px; }
+    .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; margin: 8px 0 4px; }
+    .controls label { font-weight: 600; }
+    .controls input { flex: 1 1 160px; min-width: 100px; accent-color: var(--accent); }
+    .controls output { min-width: 3em; font-variant-numeric: tabular-nums; font-weight: 650; }
+    button { border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); padding: 8px 12px; font: inherit; cursor: pointer; }
+    button:hover { border-color: var(--accent); }
+    .demo-detail { display: grid; grid-template-columns: minmax(190px, 0.8fr) minmax(0, 1.7fr); gap: 18px; align-items: start; }
+    .catalog th, .catalog td { padding: 5px 9px; }
+    .results { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 0 0 12px; }
+    .result { padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+    .result strong { display: block; font-size: 0.86rem; }
+    .result .slate { display: block; font-size: 1.3rem; font-weight: 650; letter-spacing: 0.08em; margin: 5px 0; }
+    .result p { font-size: 0.85rem; margin: 3px 0; font-variant-numeric: tabular-nums; }
+    .result.optimal { border-color: var(--plot-violet); }
+    .source-list { font-size: 0.9rem; }
+    .source-list li { margin-bottom: 12px; scroll-margin-top: 94px; }
+    footer { border-top: 1px solid var(--border); padding: 25px 24px; text-align: center; font-size: 0.85rem; color: var(--muted); }
+    @media (max-width: 680px) {
+      nav { flex-wrap: wrap; gap: 3px; padding: 8px 16px; }
+      .nav-links { width: 100%; }
+      .nav-brand { font-size: 0.84rem; }
+      .hero { padding: 36px 16px; }
+      .page-wrap { padding: 24px 16px 52px; }
+      .definitions, .demo-detail { grid-template-columns: 1fr; }
+      .controls label { flex-basis: 100%; }
+      .figure { padding: 14px 10px; }
+      .results { gap: 8px; }
+      .result { padding: 10px; }
+      .legend-item { white-space: normal; }
+      .lg { flex-shrink: 0; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <nav aria-label="Page navigation">
+    <a class="nav-brand" href="../index.html" aria-label="Home — all notes">
+      <svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+      RL for Generative Recommendation
+    </a>
+    <div class="nav-links">
+      <a href="#scope">Actions</a><a href="#architecture">Architecture</a><a href="#objective">Slate utility</a>
+      <a href="#routes">Training routes</a><a href="#landscape">Landscape</a><a href="#validity">Limits</a>
+      <a href="generative-ranking-training.html">Next: training →</a>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <span class="hero-pill">Reinforcement Learning · Part 1 of 2</span>
+    <h1>RL for Generative Recommendation<br>Concepts &amp; Landscape</h1>
+    <p>First identify what the model generates. Then ask what its reward measures—and which evidence connects optimization to better recommendations for real users.</p>
+  </header>
+
+  <main class="page-wrap" id="main">
+    <div class="sequence">
+      <span><strong>1 · Concepts &amp; landscape</strong> → 2 · Ranking RL training</span>
+      <a href="generative-ranking-training.html">Continue to the detailed training loop →</a>
+    </div>
+    <div class="takeaway">
+      <p><strong>The central distinction:</strong> generative recommendation specifies an <em>action representation and model family</em>; reinforcement learning specifies a <em>way to optimize a policy</em>. Neither implies the other.</p>
+      <p>A model can generate catalog IDs with supervised training alone. A conventional recommender can use RL without generating text. A list generator only learns useful list interactions if its data, objective, and constraints actually teach them.</p>
+    </div>
+
+    <section id="scope">
+      <h2>1. What is being generated?</h2>
+      <p>A familiar recommender pipeline is <strong>retrieval → ranking → reranking → serving</strong>. Retrieval reduces a large catalog to candidates; ranking estimates relevance or outcomes; reranking applies list-level objectives and constraints. These are functional roles, not a rule that every product must have three separate models.</p>
+
+      <dl class="definitions">
+        <div class="definition"><dt>Item</dt><dd>A recommendable entity: a video, product, song, article, or another catalog entry. Its ID is not the item’s natural-language description.</dd></div>
+        <div class="definition"><dt>Slate</dt><dd>An ordered collection of items shown together. Position and co-occurrence can affect utility; a page may have additional row and layout structure.</dd></div>
+        <div class="definition"><dt>Request</dt><dd>One decision occasion, conditioned on available user history, context, eligibility rules, and possibly an explicit candidate set.</dd></div>
+        <div class="definition"><dt>Session</dt><dd>An overloaded industry term. It can mean a request-sized item batch, a browsing visit with several requests, or a longer interaction sequence. Check each paper’s definition.</dd></div>
+      </dl>
+
+      <div class="table-wrap" tabindex="0" role="region" aria-label="Generated action types">
+        <table>
+          <caption>“Generative recommendation” can replace different pieces of the pipeline.</caption>
+          <thead><tr><th scope="col">Form</th><th scope="col">Generated action</th><th scope="col">What still matters</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Generative retrieval</th><td>One or more catalog IDs, often represented as token sequences, retrieved directly from user context.</td><td>Catalog coverage, valid IDs, recall, and efficient search. A downstream ranker may remain.</td></tr>
+            <tr><th scope="row">Constrained candidate-set reranking</th><td>An ordering or subset of an already supplied candidate set.</td><td>Cannot recover a good item that retrieval omitted. Candidate order must not become a label shortcut.</td></tr>
+            <tr><th scope="row">End-to-end item-and-list generation</th><td>A sequence of items, where later selections can depend on earlier selections.</td><td>Eligibility, deduplication, diversity, and serving remain necessary even when retrieval and ranking are unified.</td></tr>
+            <tr><th scope="row">Whole-page generation</th><td>Structured choices such as rows, entities within rows, and their ordering.</td><td>Hierarchy, row/entity candidate constraints, page validity, and the page’s engagement objective.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><strong>Generative does not necessarily mean an LLM, natural-language output, or RL.</strong> A compact encoder–decoder trained to emit discrete IDs is generative too. Reasoning text is optional; even a training-time reasoning model may serve direct outputs after distillation.</p>
+    </section>
+
+    <section id="architecture">
+      <h2>2. From a user request to an exact catalog action</h2>
+      <h3>Two common item representations</h3>
+      <ul>
+        <li><strong>Item token:</strong> one dedicated token per item. Identity is direct, but the vocabulary grows with the catalog and new items require an update strategy.</li>
+        <li><strong>Semantic-ID sequence:</strong> represent an item with several discrete codes, for example <code>[12, 7, 43]</code>. Codes may be learned from item embeddings, allowing shared coarse-to-fine structure. A shared prefix is a modeling choice, not a guarantee of human-interpretable meaning.</li>
+      </ul>
+      <p>User conditioning \(x\) can include interaction history, profile/context features, request intent, and candidate metadata. An encoder may summarize this context for a decoder, or a decoder-only model may consume a serialized context prefix. History length, feature freshness, and privacy constraints remain recommendation-system design problems.</p>
+      <div class="equation">
+        \[
+          \pi_\theta(y\mid x)
+          = \prod_{t=1}^{T}\pi_\theta(y_t\mid x,y_{&lt;t}),
+          \qquad
+          y=\operatorname{encode}(i_1,\ldots,i_K).
+        \]
+      </div>
+      <p>Here \(y_t\) is an <strong>output token</strong>, not necessarily a complete item. An item can span several tokens; a slate can contain separators or structural tokens. At the item level, a list policy can be written as \(\pi_\theta(i_1,\ldots,i_K\mid x)=\prod_k \pi_\theta(i_k\mid x,i_{&lt;k})\). This permits earlier choices to influence later ones without proving that the model has learned a desirable joint objective.</p>
+
+      <h3>Generation must end in a valid, eligible item</h3>
+      <p>Decoding free-form text that resembles an item ID is not enough. Catalog-aware systems can use a trie of valid semantic-ID prefixes, candidate-specific masks, or a grammar for structured pages. Apply the allowed-token mask and renormalize at each step; the complete code must resolve to an exact catalog entry. Shared-code collisions need a disambiguating suffix or another explicit resolution mechanism.</p>
+      <p>For a no-repeat slate, eligibility changes after each completed item. Inventory, geography, safety, and commercial rules can further restrict the action set. Training, rollout sampling, log-probability calculation, and serving must agree on what distribution these constraints define. See <a href="behavior-policy.html">behavior policies</a> and <a href="../foundations/log-probs.html">log probabilities</a> for the probability bookkeeping.</p>
+      <div class="note">
+        <p><strong>A representation is not a planner.</strong> Generating 30 semantic-ID tokens for a single request does not establish 30 user-interaction steps. Token-prefix credit assignment and long-horizon user decision-making are different problems.</p>
+      </div>
+    </section>
+
+    <section id="objective">
+      <h2>3. Imitating logged choices is not the same as optimizing a slate</h2>
+      <p>Supervised fine-tuning (SFT) often teaches the model to reproduce a target item or list, using a next-token loss such as \(-\sum_t\log\pi_\theta(y_t^*\mid x,y_{&lt;t}^*)\). Targets may come from logs, a teacher, or curated examples. This teaches format and useful behavior, but can inherit the historical system’s exposure patterns and optimization priorities.</p>
+      <p>A desired outcome might instead balance relevance, redundancy, satisfaction, and business guardrails. <strong>Conventional rankers can model item interactions too</strong>: listwise scoring, cross-item attention, and constrained reranking are not exclusive to generation. The useful distinction is the objective and action space—not “independent old models” versus “joint new models.”</p>
+
+      <h3>A small exact example: relevance versus redundancy</h3>
+      <p>Choose three different items from a six-item catalog. A slate is ordered, so there are \(6\cdot5\cdot4=120\) possibilities. Use position weights \(w=[1,0.8,0.6]\) and these deliberately simple quantities:</p>
+      <div class="equation">
+        \[
+          B(s)=\frac{\sum_{k=1}^{3}w_k q_{i_k}}{2.4},
+          \qquad
+          D(s)=\frac{\sum_{1\leq j&lt;k\leq3}\mathbf{1}[c_{i_j}=c_{i_k}]}{3},
+          \qquad
+          U_\lambda(s)=B(s)-\lambda D(s).
+        \]
+      </div>
+      <p>\(q_i\) is the assigned relevance score and \(c_i\) is the category. Redundancy \(D\) is the fraction of the three unordered pairs sharing a category. Compare the fixed relevance-ranked slate <strong>A → B → C</strong> with an <strong>exhaustive search over all 120 slates</strong> under exactly the same utility.</p>
+
+      <figure class="figure" aria-labelledby="slate-figure-title">
+        <h3 id="slate-figure-title" style="margin-top:0">When does a more diverse slate win?</h3>
+        <div class="controls">
+          <label for="redundancy-weight">Redundancy penalty λ</label>
+          <input id="redundancy-weight" type="range" min="0" max="0.5" step="0.005" value="0.2" aria-describedby="slider-help">
+          <output id="lambda-value" for="redundancy-weight">0.200</output>
+          <button id="reset-demo" type="button">Reset to 0.2</button>
+        </div>
+        <p class="small" id="slider-help">Move the slider or use the arrow keys. The dashed vertical line marks the selected λ; the optimum is recomputed from every ordered slate.</p>
+        <canvas id="plot-slate" role="img" aria-label="Toy slate utility versus redundancy penalty: fixed ABC compared with the exact slate optimum." aria-describedby="slate-caption demo-summary">
+          Exact slate optimum and fixed ABC utility over λ from 0 to 0.5. Numerical results are available below.
+        </canvas>
+        <div class="legend" aria-hidden="true">
+          <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span>Exact slate optimum</span>
+          <span class="legend-item"><span class="lg dash"></span>Fixed relevance order ABC</span>
+        </div>
+        <div class="demo-detail">
+          <div class="table-wrap">
+            <table class="catalog">
+              <caption>Known toy catalog</caption>
+              <thead><tr><th scope="col">Item</th><th scope="col">Category</th><th scope="col">Score</th></tr></thead>
+              <tbody>
+                <tr><th scope="row">A</th><td>Tech</td><td>0.95</td></tr>
+                <tr><th scope="row">B</th><td>Tech</td><td>0.90</td></tr>
+                <tr><th scope="row">C</th><td>Tech</td><td>0.85</td></tr>
+                <tr><th scope="row">D</th><td>Cooking</td><td>0.78</td></tr>
+                <tr><th scope="row">E</th><td>Travel</td><td>0.74</td></tr>
+                <tr><th scope="row">F</th><td>Science</td><td>0.70</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div style="padding-top:18px">
+            <div class="results">
+              <div class="result">
+                <strong>Fixed relevance order</strong>
+                <span class="slate">A → B → C</span>
+                <p>Base relevance: <span id="fixed-base">0.908333</span></p>
+                <p>Redundancy: <span id="fixed-redundancy">100.0%</span></p>
+                <p>Utility: <strong id="fixed-utility" style="display:inline">0.708333</strong></p>
+              </div>
+              <div class="result optimal">
+                <strong>Exact slate optimum</strong>
+                <span class="slate" id="optimal-slate">A → D → E</span>
+                <p>Base relevance: <span id="optimal-base">0.840833</span></p>
+                <p>Redundancy: <span id="optimal-redundancy">0.0%</span></p>
+                <p>Utility: <strong id="optimal-utility" style="display:inline">0.840833</strong></p>
+              </div>
+            </div>
+            <p class="small" id="demo-summary" role="status" aria-live="polite" aria-atomic="true">At λ = 0.200, the exact optimum is A → D → E with utility 0.840833, versus ABC at 0.708333; improvement 0.132500. All 120 slates are searched.</p>
+            <p class="small">At λ = 0, ABC is optimal at 0.908333. At λ = 0.2, ADE wins at 0.840833. At λ = 0.5, ADE still wins while ABC drops to 0.408333.</p>
+          </div>
+        </div>
+        <figcaption class="figure-caption" id="slate-caption">
+          <strong>Optimizing the whole slate can change the answer.</strong> ABC falls linearly as its three same-category pairs are penalized; the exact optimum switches from ABC to ABD to ADE and then stays flat. This is a known, hand-written toy utility—not measured human behavior, a realistic reward oracle, or evidence that RL beats a conventional reranker. Exact search supplies the answer here; no policy is trained.
+        </figcaption>
+        <noscript><p class="note">JavaScript is disabled: the controls and plot are inactive. The catalog, equations, and numerical examples above remain available; the displayed result uses λ = 0.2.</p></noscript>
+      </figure>
+      <p>At scale, exhaustive search is usually infeasible. A learned policy may amortize the search into fast generation, but reward quality, exploration, and approximation error now matter. Merely outputting a list does not cause the model to optimize \(U_\lambda\); it needs training signal that distinguishes the slates.</p>
+    </section>
+
+    <section id="routes">
+      <h2>4. Three training routes—and a separate reward axis</h2>
+      <p>Many systems start from a supervised model and combine several methods. The following categories describe the <em>update mechanism</em>, not a mandatory progression toward RL.</p>
+      <div class="table-wrap" tabindex="0" role="region" aria-label="Training mechanisms compared">
+        <table>
+          <thead><tr><th scope="col">Route</th><th scope="col">Training signal and update</th><th scope="col">Main limitation</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Supervised / reward-weighted learning</th><td>SFT fits target tokens; reward-weighted fitting emphasizes higher-value examples. Other supervised objectives include weighted binary classification over scored examples.</td><td>Learns from supplied targets or examples and their weights. Its support and selection bias depend on how examples were collected.</td></tr>
+            <tr><th scope="row">Preference learning: DPO / ORPO</th><td>Increase the relative likelihood or odds of a preferred response over a rejected one. DPO typically uses a reference policy; ORPO combines a supervised term with an odds-ratio preference term.</td><td>Pair construction defines what “better” means. These are <strong>not PPO/GRPO-style sampled-return policy-gradient updates</strong>, even when a paper describes the larger system as RL.</td></tr>
+            <tr><th scope="row">Policy-gradient RL: PPO / GRPO and variants</th><td>Sample actions, score rewards, estimate advantages, and update action probabilities with mechanisms such as clipping and a reference KL penalty. PPO commonly learns a value baseline; GRPO uses relative rewards within sampled groups.</td><td>Exploration, unreliable rewards, low-signal groups, and distribution mismatch can dominate optimizer choice. Named variants are not interchangeable.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>For the mechanics, see <a href="dpo-loss.html">DPO</a>, <a href="ppo.html">PPO</a>, <a href="grpo.html">GRPO</a>, and the broader <a href="rlhf.html">RLHF pipeline</a>. The <a href="generative-ranking-training.html">next page</a> specializes rollout, reward, masking, advantage, and policy-update bookkeeping to ranking.</p>
+
+      <h3>Orthogonal question: where does the reward come from?</h3>
+      <div class="table-wrap" tabindex="0" role="region" aria-label="Reward evidence sources">
+        <table>
+          <thead><tr><th scope="col">Reward source</th><th scope="col">What is observed</th><th scope="col">What is not established</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Logged-label metric</th><td>Score a generated ranking using labels on logged candidates: e.g. NDCG, Recall, or AUC, where the metric is defined.</td><td>The real response to a new slate or new exposure is not observed. Historical labels may depend on position and selection.</td></tr>
+            <tr><th scope="row">Learned reward model (RM)</th><td>A predictor scores generated items, lists, or pages; it may be trained on genuine engagement data.</td><td>A prediction for a hypothetical page is not actual feedback on that page. Optimization can exploit model errors.</td></tr>
+            <tr><th scope="row">Actual user feedback</th><td>The deployed policy exposes recommendations; impressions and later responses are joined to those actions.</td><td>A raw behavioral metric is not automatically satisfaction or causal long-term value. Delay, censoring, assignment, and guardrails still matter.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="note">
+        <p><strong>On-policy generation ≠ real-user exposure.</strong> Sampling fresh lists from the current policy and scoring them against fixed labels or an RM can be on-policy for the optimizer, entirely offline with respect to users. DPO pairs can also be refreshed using generated samples. Conversely, real feedback collected under an older deployed policy is not automatically on-policy for the current training checkpoint.</p>
+      </div>
+    </section>
+
+    <section id="landscape">
+      <h2>5. Public landscape: read the evidence, not only the acronym</h2>
+      <p class="small"><strong>Last verified: 17 September 2026.</strong> Selected sources from 2025–August 2026; not exhaustive. All results below are author-reported. This dated research snapshot is separate from the durable distinctions above.</p>
+      <p>The same “generative recommendation + RL” label covers different action spaces, optimizers, reward sources, and evaluation settings. An online A/B result is evidence for its tested treatment—not automatically a measurement of the isolated RL component.</p>
+      <p class="small">On narrow screens, scroll the table horizontally; each row uses the same action / training / evidence / boundary schema.</p>
+      <div class="table-wrap" tabindex="0" role="region" aria-label="Dated public generative recommendation landscape">
+        <table class="landscape-table">
+          <caption>Selected primary-source claims, with explicit offline/online boundaries.</caption>
+          <thead><tr><th scope="col">System / source</th><th scope="col">Generated action</th><th scope="col">Training / reward</th><th scope="col">Evidence</th><th scope="col">Boundary</th></tr></thead>
+          <tbody>
+            <tr>
+              <th scope="row"><a href="https://arxiv.org/html/2502.18965v1">OneRec</a><br><span class="small">February 2025 · v1</span></th>
+              <td>Encoder–decoder emits semantic-ID lists. “Session-wise” here denotes a request batch of roughly 5–10 videos.</td>
+              <td>SFT plus iterative <strong>DPO</strong>. An RM scores beam-generated lists to construct preference pairs.</td>
+              <td><span class="tag">Online A/B reported</span><br>Kuaishou deployment evaluation accompanies offline experiments.</td>
+              <td>This original paper uses preference optimization, not PPO. Request-batch generation does not establish multi-session planning.</td>
+            </tr>
+            <tr>
+              <th scope="row"><a href="https://arxiv.org/html/2508.20900v2">OneRec V2</a><br><span class="small">2025 · v2</span></th>
+              <td>Generative video recommendation using semantic IDs.</td>
+              <td>Custom <strong>GBPO</strong> (gradient-stabilized policy optimization), real-user feedback with duration-bucketed watch-time reward, and continued streaming SFT. Compares RM, user-feedback, and hybrid rewards using previously exposed items.</td>
+              <td><span class="tag">Online A/B reported</span><br>On-policy data comes from its own deployed recommendations. Reports app-stay-time improvements on Kuaishou and Kuaishou Lite.</td>
+              <td>The headline online gains are for the full system, not a clean isolated GBPO effect. Reward shaping and stay-time metrics do not prove learned long-horizon planning.</td>
+            </tr>
+            <tr>
+              <th scope="row"><a href="https://arxiv.org/html/2606.31984v2">GR2</a><br><span class="small">June/July 2026 · v2</span></th>
+              <td>Semantic-ID candidate ranking; reasoning behavior is distilled into direct-output serving.</td>
+              <td>Semantic-ID midtraining; teacher reasoning/SFT or on-policy distillation; <strong>DAPO</strong> with format and AUC/NDCG ranking reward from logged labels, with an optional judge.</td>
+              <td><span class="tag">Offline held-out metrics</span><br>§6.1: about 70k training sessions from one day; held-out February 1–9 impression lists. Reported +18.7% Recall@1 and +9.6% NDCG@3 are ranking metrics.</td>
+              <td>Not online engagement lift, despite industrial-traffic/deployment language. Documents input-order preservation and position-bias reward hacks.</td>
+            </tr>
+            <tr>
+              <th scope="row"><a href="https://arxiv.org/html/2606.31031v2">Netflix GenPage</a><br><span class="small">June 2026; revised 1 August · v2</span></th>
+              <td>Autoregressive whole pages: rows and entities drawn from existing candidate sets.</td>
+              <td>Pretraining plus <strong>weighted binary classification (WBC)</strong>, or experimental <strong>Dr.GRPO</strong> via verl/vLLM using a page RM and KL toward the pretrained model. RM targets derive from actual engagement.</td>
+              <td><span class="tag">Online: WBC only</span><br>The approximately 200M-parameter WBC model reports +0.24% engagement and 20% lower latency. RL results are offline experiments.</td>
+              <td><strong>RL was not shipped online.</strong> The RM predicts hypothetical pages; the paper explicitly notes circularity in RM-based evaluation. WBC is weighted binary classification, not simply behavior cloning.</td>
+            </tr>
+            <tr>
+              <th scope="row"><a href="https://arxiv.org/html/2608.04809v1">DEGR</a><br><span class="small">5 August 2026 · v1</span></th>
+              <td>JD generative reranking over supplied candidates.</td>
+              <td>Supervised loss, exploration/diversity mechanisms, and adaptive reward-weighted <strong>ORPO</strong>. Authors describe a hybrid RL framework.</td>
+              <td><span class="tag">Online A/B reported</span><br>Reports user click-through rate (UCTR) and page-view gains; accepted to KDD 2026 ADS.</td>
+              <td>Classify its preference update by mechanism: it is not GRPO. Full-system gains do not isolate a policy-gradient RL contribution.</td>
+            </tr>
+            <tr>
+              <th scope="row"><a href="https://arxiv.org/abs/2608.11980v2">HCGRec</a><br><span class="small">August 2026 · v2</span></th>
+              <td>Semantic-ID item generation with training-time prefix hints.</td>
+              <td>Supervised supplied-prefix tokens plus a <strong>GRPO</strong>-trained sampled suffix, addressing all-zero exact-item reward groups when early branches exclude the target.</td>
+              <td><span class="tag">Offline benchmarks</span><br>Evidence for a sparse-reward training technique, not a reported production deployment.</td>
+              <td>Target-derived training hints are not information available at ordinary inference. Credit and loss masks must distinguish supplied tokens from sampled actions.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p><strong>Version names matter.</strong> The original OneRec’s DPO should not be conflated with the <a href="https://arxiv.org/abs/2506.13695">June 2025 OneRec technical report</a>’s later RM-based policy-gradient method, ECPO, or with OneRec V2’s GBPO/user-feedback setup. Cite the actual paper and version rather than assigning one optimizer to the entire family.</p>
+      <div class="takeaway">
+        <p><strong>Three separate claims to audit:</strong> (1) the complete system improves an online metric; (2) an RL component improves a controlled comparison; (3) the reward predicts the outcome of interest. Evidence for one does not automatically establish the others. An online metric and an offline NDCG gain are also not directly comparable effect sizes.</p>
+      </div>
+    </section>
+
+    <section id="validity">
+      <h2>6. What can fail—and what would count as convincing evidence?</h2>
+      <h3>Exposure bias: unshown is not negative</h3>
+      <p>Logs record what the historical policy chose to expose, at particular positions, to particular users. An unshown item has an <strong>unobserved outcome</strong>, not a negative label. Even a shown-but-unclicked item may not have been examined. Changing a list can alter attention and item interactions, so replaying the old labels on a new list is a surrogate evaluation, not observed counterfactual engagement.</p>
+      <p>The update ratio \(\pi_\theta(y_t\mid x,y_{&lt;t})/\pi_{\text{old}}(y_t\mid x,y_{&lt;t})\) concerns the policy that sampled the training action. <strong>It does not, by itself, correct historical logging-policy exposure bias.</strong> Off-policy evaluation requires its own estimand, logged propensities or justified models, adequate action support, and care with slate/position effects. Exact-slate propensity estimates can have severe variance. See <a href="../foundations/importance-sampling.html">importance sampling</a>.</p>
+
+      <h3>Sparse groups and seductive reward shortcuts</h3>
+      <p>With exact-item rewards and a huge catalog, every sampled completion may miss the target. A GRPO group with identical rewards provides no relative reward direction; numerical epsilon avoids division by zero but does not create information. Early semantic-ID mistakes can eliminate the target before later tokens are sampled. HCGRec’s hints are one proposed training intervention—not a license to leak the target into inference.</p>
+      <p>Ranking rewards can be hacked by copying candidate input order, exploiting position-label correlations, repeating a high-scoring item, emitting malformed lists that a permissive parser accepts, or satisfying an RM rather than a user. Format validity should be checked separately from quality; enforce exact IDs, membership, no repeats, and slate length. Shuffle candidate order where appropriate, audit label leakage, and keep an independent evaluation path. <a href="verifier-reward-design.html">Reward and verifier design</a> explains why the evaluator is part of the learning system.</p>
+
+      <h3>Cold start, constraints, and serving are not optional details</h3>
+      <ul>
+        <li><strong>Cold start and catalog churn:</strong> shared semantic codes can reuse item features, but do not guarantee discovery of new items. Codebooks, ID mappings, eligibility, and fresh feedback must remain synchronized.</li>
+        <li><strong>Hard constraints versus soft rewards:</strong> unavailable or prohibited items should not become admissible merely because another reward term is high. A reranking policy also remains bounded by candidate recall.</li>
+        <li><strong>Latency and policy mismatch:</strong> beam width, token length, reasoning, caching, and candidate masking affect cost. Greedy or beam-search serving differs from stochastic rollout sampling; verify the deployed decision rule, not only the training sampler.</li>
+        <li><strong>Metric trade-offs:</strong> watch time, clicks, novelty, supplier coverage, and user satisfaction can conflict. Normalization or shaping helps define a signal; it does not establish that the signal is the desired outcome.</li>
+      </ul>
+
+      <h3>A true long-horizon problem has users and transitions</h3>
+      <div class="equation">
+        \[
+          J(\pi)=\mathbb{E}_{\pi,P}\!\left[\sum_{n=0}^{H-1}\gamma^n r_n\right],
+          \quad a_n=\text{a slate or page},\quad
+          s_{n+1}\sim P(\,\cdot\mid s_n,a_n).
+        \]
+      </div>
+      <p>Here \(n\) indexes <strong>user decision occasions</strong>, not output tokens. The state may include history, evolving interests, and fatigue; an action changes subsequent observations and possibly future preferences. Those states are often only partially observed. Optimizing this objective requires meaningful trajectories, delayed-outcome attribution, and evidence that the model learns beyond an immediate proxy. A terminal reward on a token sequence can instead train a one-request policy—often usefully viewed as a contextual-bandit problem at the user level.</p>
+      <p>Calling an output a “session,” training on several items at once, or reporting app stay time does not establish multi-session planning. For the larger production feedback loop, see <a href="production-agent-learning.html">production agent learning</a>.</p>
+
+      <h3>An evidence ladder for a ranking project</h3>
+      <ol>
+        <li><strong>Validity and offline generalization:</strong> exact-item/constraint checks; time-separated, leakage-audited evaluation; metrics broken down by user cohorts, candidate sources, and cold-start items.</li>
+        <li><strong>Independent outcome evidence:</strong> do not judge an RM-optimized policy only with that same RM. Use held-out observed outcomes, independent audits, and, where feasible, randomized exposure.</li>
+        <li><strong>Controlled online A/B:</strong> specify the randomization unit, exposure, duration, uncertainty, delayed metrics, and safety/business guardrails. Measure real engagement separately from predicted reward.</li>
+        <li><strong>Isolate the RL contribution:</strong> compare SFT-only, preference/reward-weighted, and policy-gradient variants with matched architecture, candidates, data access, and serving budget. If the treatment changes all of them, report a whole-system gain—not an isolated RL gain.</li>
+      </ol>
+      <div class="takeaway">
+        <p><strong>Next: make one ranking update concrete.</strong> Fix the candidate set and action format, sample valid no-repeat slates, define a defensible reward, compute group advantages, and account for the actual behavior policy.</p>
+        <p><a href="generative-ranking-training.html"><strong>Part 2 — Generative Ranking: RL Training →</strong></a></p>
+      </div>
+    </section>
+
+    <section id="sources">
+      <h2>Sources &amp; further reading</h2>
+      <p class="small">Primary sources for the dated landscape. Version-pinned HTML is used where available in this snapshot; the technical-report link is the cited arXiv record.</p>
+      <ol class="source-list">
+        <li><a href="https://arxiv.org/html/2502.18965v1">OneRec, arXiv:2502.18965v1</a> — February 2025. Session-wise semantic-ID lists, iterative DPO, and the original online experiment.</li>
+        <li><a href="https://arxiv.org/abs/2506.13695">OneRec technical report, arXiv:2506.13695</a> — June 2025. Later RM-based policy-gradient ECPO; distinct from the original DPO paper.</li>
+        <li><a href="https://arxiv.org/html/2508.20900v2">OneRec V2, arXiv:2508.20900v2</a> — 2025. GBPO, reward-source comparisons, duration-bucketed user feedback, and online system evidence.</li>
+        <li><a href="https://arxiv.org/html/2606.31984v2">GR2, arXiv:2606.31984v2</a> — June/July 2026. DAPO ranking rewards, documented reward hacks, and §6.1 held-out impression-list evaluation.</li>
+        <li><a href="https://arxiv.org/html/2606.31031v2">Netflix GenPage, arXiv:2606.31031v2</a> — June 2026, revised 1 August. Whole-page generation; online WBC versus unshipped experimental RL; RM-evaluation caveats.</li>
+        <li><a href="https://arxiv.org/html/2608.04809v1">DEGR, arXiv:2608.04809v1</a> — 5 August 2026. JD reranking, adaptive reward-weighted ORPO, and reported online system gains.</li>
+        <li><a href="https://arxiv.org/abs/2608.11980v2">HCGRec, arXiv:2608.11980v2</a> — August 2026. Hint-conditioned semantic-ID learning for sparse GRPO rewards; offline benchmarks.</li>
+      </ol>
+    </section>
+  </main>
+  <footer>
+    <a href="../index.html">← All learning notes</a> · <a href="generative-ranking-training.html">Next: detailed ranking RL training →</a>
+  </footer>
+
+  <script id="slate-demo">
+    'use strict';
+
+    const TOY_CATALOG = Object.freeze([
+      { id: 'A', category: 'Tech', score: 0.95 },
+      { id: 'B', category: 'Tech', score: 0.90 },
+      { id: 'C', category: 'Tech', score: 0.85 },
+      { id: 'D', category: 'Cooking', score: 0.78 },
+      { id: 'E', category: 'Travel', score: 0.74 },
+      { id: 'F', category: 'Science', score: 0.70 }
+    ].map(Object.freeze));
+    const POSITION_WEIGHTS = Object.freeze([1, 0.8, 0.6]);
+
+    function enumerateSlates(catalog, length) {
+      if (!Number.isInteger(length) || length < 0 || length > catalog.length) return [];
+      if (length === 0) return [[]];
+      return catalog.flatMap((item, index) =>
+        enumerateSlates(catalog.filter((_, other) => other !== index), length - 1)
+          .map(suffix => [item, ...suffix])
+      );
+    }
+
+    function slateRelevance(slate, weights = POSITION_WEIGHTS) {
+      return slate.reduce((sum, item, index) => sum + weights[index] * item.score, 0)
+        / weights.reduce((sum, weight) => sum + weight, 0);
+    }
+
+    function slateRedundancy(slate) {
+      let shared = 0;
+      const pairs = slate.length * (slate.length - 1) / 2;
+      for (let i = 0; i < slate.length; i++) {
+        for (let j = i + 1; j < slate.length; j++) {
+          if (slate[i].category === slate[j].category) shared++;
+        }
+      }
+      return pairs === 0 ? 0 : shared / pairs;
+    }
+
+    function slateUtility(slate, lambda) {
+      return slateRelevance(slate) - lambda * slateRedundancy(slate);
+    }
+
+    function bestSlate(slates, lambda) {
+      return slates.reduce((best, slate) => {
+        const utility = slateUtility(slate, lambda);
+        // Preserve catalog order for numerical ties so labels do not flicker at crossings.
+        return !best || utility > best.utility + 1e-12 ? { slate, utility } : best;
+      }, null);
+    }
+
+    (function () {
+      const slates = enumerateSlates(TOY_CATALOG, 3);
+      const fixedSlate = TOY_CATALOG.slice(0, 3);
+      const canvas = document.getElementById('plot-slate');
+      const slider = document.getElementById('redundancy-weight');
+      const lambdaOutput = document.getElementById('lambda-value');
+      const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+      function drawPlot(canvasElement, cfg) {
+        const cssW = canvasElement.clientWidth;
+        const cssH = canvasElement.clientHeight;
+        if (!cssW || !cssH) return;
+        const ctx = canvasElement.getContext('2d');
+        if (!ctx) return;
+        const dpr = window.devicePixelRatio || 1;
+        canvasElement.width = Math.round(cssW * dpr);
+        canvasElement.height = Math.round(cssH * dpr);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, cssW, cssH);
+
+        const mL = 48, mR = 16, mT = 26, mB = 48;
+        const pw = cssW - mL - mR, ph = cssH - mT - mB;
+        const { xMin, xMax, yMin, yMax } = cfg;
+        const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
+        const Y = y => mT + (yMax - y) / (yMax - yMin) * ph;
+
+        ctx.font = '11px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = cssVar('--plot-grid');
+        ctx.fillStyle = cssVar('--plot-tick');
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        cfg.xTicks.forEach(t => {
+          const px = X(t);
+          ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+          ctx.fillText(t.toFixed(1), px, mT + ph + 6);
+        });
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        cfg.yTicks.forEach(t => {
+          const py = Y(t);
+          ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+          ctx.fillText(t.toFixed(1), mL - 8, py);
+        });
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.fillText('Toy utility U', mL, 4);
+        ctx.textAlign = 'center';
+        ctx.fillText('Redundancy penalty λ', mL + pw / 2, cssH - 16);
+
+        ctx.strokeStyle = cssVar('--plot-axis');
+        ctx.lineWidth = 1.25;
+        if (yMin <= 0 && yMax >= 0) {
+          ctx.beginPath(); ctx.moveTo(mL, Y(0)); ctx.lineTo(mL + pw, Y(0)); ctx.stroke();
+        }
+        if (xMin <= 0 && xMax >= 0) {
+          ctx.beginPath(); ctx.moveTo(X(0), mT); ctx.lineTo(X(0), mT + ph); ctx.stroke();
+        }
+
+        ctx.save();
+        ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+        ctx.lineJoin = 'round';
+        cfg.series.forEach(series => {
+          ctx.beginPath();
+          ctx.lineWidth = series.width || 2;
+          ctx.strokeStyle = cssVar(series.color);
+          ctx.setLineDash(series.dash || []);
+          const samples = 260;
+          for (let i = 0; i <= samples; i++) {
+            const x = xMin + (xMax - xMin) * i / samples;
+            const px = X(x), py = Y(series.fn(x));
+            if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+          }
+          ctx.stroke();
+        });
+
+        ctx.setLineDash([3, 4]);
+        ctx.strokeStyle = cssVar('--accent');
+        ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(X(cfg.selected), mT); ctx.lineTo(X(cfg.selected), mT + ph); ctx.stroke();
+        ctx.setLineDash([]);
+        cfg.series.forEach(series => {
+          ctx.beginPath();
+          ctx.arc(X(cfg.selected), Y(series.fn(cfg.selected)), 4, 0, 2 * Math.PI);
+          ctx.fillStyle = cssVar(series.color);
+          ctx.fill();
+        });
+        ctx.restore();
+      }
+
+      function render() {
+        const lambda = Number(slider.value);
+        const optimum = bestSlate(slates, lambda);
+        const fixedUtility = slateUtility(fixedSlate, lambda);
+        const label = optimum.slate.map(item => item.id).join(' → ');
+        const setText = (id, value) => { document.getElementById(id).textContent = value; };
+        lambdaOutput.value = lambda.toFixed(3);
+        slider.setAttribute('aria-valuetext', lambda.toFixed(3));
+        setText('fixed-base', slateRelevance(fixedSlate).toFixed(6));
+        setText('fixed-redundancy', (100 * slateRedundancy(fixedSlate)).toFixed(1) + '%');
+        setText('fixed-utility', fixedUtility.toFixed(6));
+        setText('optimal-slate', label);
+        setText('optimal-base', slateRelevance(optimum.slate).toFixed(6));
+        setText('optimal-redundancy', (100 * slateRedundancy(optimum.slate)).toFixed(1) + '%');
+        setText('optimal-utility', optimum.utility.toFixed(6));
+        setText('demo-summary', `At λ = ${lambda.toFixed(3)}, the exact optimum is ${label} with utility ${optimum.utility.toFixed(6)}, versus ABC at ${fixedUtility.toFixed(6)}; improvement ${(optimum.utility - fixedUtility).toFixed(6)}. All ${slates.length} slates are searched.`);
+        drawPlot(canvas, {
+          xMin: 0, xMax: 0.5, yMin: -0.05, yMax: 1.05,
+          xTicks: [0, 0.1, 0.2, 0.3, 0.4, 0.5], yTicks: [0, 0.2, 0.4, 0.6, 0.8, 1],
+          selected: lambda,
+          series: [
+            { fn: value => bestSlate(slates, value).utility, color: '--plot-violet', width: 2.75 },
+            { fn: value => slateUtility(fixedSlate, value), color: '--plot-gray', width: 2, dash: [5, 4] }
+          ]
+        });
+      }
+
+      let frame;
+      function scheduleRender() {
+        cancelAnimationFrame(frame);
+        frame = requestAnimationFrame(render);
+      }
+      slider.addEventListener('input', scheduleRender);
+      document.getElementById('reset-demo').addEventListener('click', () => {
+        slider.value = '0.2';
+        scheduleRender();
+      });
+      window.addEventListener('resize', scheduleRender);
+      const colorScheme = window.matchMedia('(prefers-color-scheme: dark)');
+      if (colorScheme.addEventListener) colorScheme.addEventListener('change', scheduleRender);
+      render();
+    })();
+  </script>
+</body>
+</html>

@@ -87,7 +87,9 @@ substrate, the per-block wrapping order, async TP, float8, reshardable checkpoin
 From first-principles RL theory to LLM post-training and the systems that run it.
 **Theory:** MDP → value functions → Monte Carlo → TD → DQN → policy gradient → PPO → MCTS →
 AlphaZero → tree search for LLMs. **Alignment:** RLHF, GRPO, DPO, DeepSeek-R1, cascade RL,
-distillation. **Agentic:** ReAct, the agent-architecture landscape (Deep Agents, graphs,
+distillation, and generative recommendation (retrieval vs ranking, slate rewards, and a dated
+research/production landscape), paired with a worked ranking-RL training loop and interactive
+policy updates. **Agentic:** ReAct, the agent-architecture landscape (Deep Agents, graphs,
 delegation, handoffs, reflection, and search), agentic RL over long horizons, multi-turn tool-use
 training in verl, harness/trainer decoupling, and gated learning from real-world production experience.
 **Environments:** the training-environment stack — anatomy + ecosystem landscape,

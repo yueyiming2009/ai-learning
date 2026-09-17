@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Generative Ranking RL - Training Walkthrough</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #fff; --surface: #f8f9fa; --text: #1a1a2e; --muted: #6b7280;
+      --border: #e8eaed; --accent: #0d9488; --accent-light: #f0fdfa;
+      --nav-bg: rgba(255,255,255,0.94); --note-bg: #eff6ff; --note-fg: #1e40af;
+      --warning-bg: #fffbeb; --warning-fg: #92400e; --fig-bg: #fff;
+      --plot-grid: #eceef1; --plot-axis: #c7cbd1; --plot-tick: #6b7280;
+      --plot-gray: #9ca3af; --plot-violet: #6d28d9; --plot-teal: #0d9488;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115; --surface: #171b21; --text: #e5e7eb; --muted: #9aa1ab;
+        --border: #262b33; --accent: #2dd4bf; --accent-light: #10201e;
+        --nav-bg: rgba(15,17,21,0.94); --note-bg: #101a2b; --note-fg: #93c5fd;
+        --warning-bg: #251c0b; --warning-fg: #fcd34d; --fig-bg: #14181e;
+        --plot-grid: #232830; --plot-axis: #56606f; --plot-tick: #9aa1ab;
+        --plot-gray: #9ca3af; --plot-violet: #a78bfa; --plot-teal: #2dd4bf;
+      }
+    }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.75 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
+    a { color: var(--accent); }
+    nav { position: sticky; top: 0; z-index: 100; display: flex; align-items: center; gap: 20px; height: 52px; padding: 0 24px; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
+    .nav-brand { display: inline-flex; align-items: center; gap: 7px; font-size: 0.9rem; font-weight: 600; white-space: nowrap; text-decoration: none; }
+    .nav-links { display: flex; gap: 16px; overflow-x: auto; min-width: 0; }
+    .nav-links a { font-size: 0.82rem; white-space: nowrap; text-decoration: none; color: var(--muted); }
+    a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+    .hero { padding: 54px 24px 46px; text-align: center; color: #fff; background: linear-gradient(135deg, #134e4a, #0d9488); }
+    .hero h1 { font-size: clamp(1.5rem, 4vw, 2.2rem); line-height: 1.3; margin: 12px 0; }
+    .hero p { max-width: 690px; margin: auto; opacity: 0.93; }
+    .hero-pill { display: inline-block; border: 1px solid rgba(255,255,255,0.4); border-radius: 100px; padding: 3px 12px; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    .page-wrap { max-width: 940px; margin: auto; padding: 36px 24px 70px; }
+    h2 { margin: 2.6em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); font-size: 1.22rem; scroll-margin-top: 70px; }
+    h3 { font-size: 1rem; margin-top: 1.6em; }
+    p { margin: 0.7em 0; }
+    li { margin-bottom: 0.5em; }
+    code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; font-size: 0.88em; }
+    pre { overflow-x: auto; padding: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; line-height: 1.65; font-size: 0.86rem; }
+    pre code { border: 0; padding: 0; }
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+    th, td { padding: 10px 12px; border: 1px solid var(--border); text-align: left; vertical-align: top; }
+    th { background: var(--surface); font-weight: 600; }
+    caption { text-align: left; color: var(--muted); margin-bottom: 8px; }
+    .note, .warning, .step { border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 14px 18px; margin: 1.2em 0; }
+    .note { background: var(--note-bg); color: var(--note-fg); }
+    .warning { background: var(--warning-bg); color: var(--warning-fg); border-color: #d97706; }
+    .step { background: var(--surface); }
+    .equation { overflow-x: auto; padding: 4px 0; }
+    .figure { background: var(--fig-bg); border: 1px solid var(--border); border-radius: 10px; padding: 18px 16px 14px; margin: 1.6em 0; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+    .figure canvas { width: 100%; height: 300px; display: block; }
+    .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; justify-content: center; margin-top: 12px; font-size: 0.82rem; color: var(--text); }
+    .legend-item { display: flex; align-items: center; gap: 7px; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, var(--plot-gray) 0 5px, transparent 5px 9px); }
+    .figure-caption { font-size: 0.85rem; color: var(--muted); line-height: 1.6; margin: 14px 4px 2px; }
+    .controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 24px; margin-bottom: 18px; }
+    .controls label { display: block; font-size: 0.85rem; }
+    .controls input, .controls select { width: 100%; }
+    input { accent-color: var(--accent); }
+    select, button { font: inherit; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 6px 10px; }
+    button { cursor: pointer; }
+    button:disabled { cursor: default; opacity: 0.5; }
+    .status { background: var(--surface); padding: 12px; border-radius: 6px; font-size: 0.86rem; font-variant-numeric: tabular-nums; }
+    .small { font-size: 0.87rem; color: var(--muted); }
+    footer { border-top: 1px solid var(--border); padding: 24px; text-align: center; color: var(--muted); font-size: 0.82rem; }
+    @media (max-width: 600px) {
+      nav { padding: 0 12px; gap: 14px; }
+      .nav-brand { font-size: 0.8rem; }
+      .hero { padding: 38px 16px; }
+      .page-wrap { padding: 24px 16px 50px; }
+      .controls { grid-template-columns: 1fr; }
+      th, td { padding: 8px; }
+    }
+  </style>
+</head>
+<body>
+<nav aria-label="Page navigation">
+  <a class="nav-brand" href="../index.html" aria-label="Home - all notes">
+    <svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+    Ranking RL
+  </a>
+  <div class="nav-links">
+    <a href="#record">Data</a><a href="#policy">Policy</a><a href="#rollout">Rollout</a><a href="#reward">Reward</a><a href="#update">Update</a><a href="#explorer">Explorer</a><a href="#deployment">Deployment</a>
+  </div>
+</nav>
+<header class="hero">
+  <span class="hero-pill">Recommendation &middot; Part 2 &middot; Training walkthrough</span>
+  <h1>Generative Ranking RL</h1>
+  <p>One request, six candidates, three positions, four rollouts. Follow the probabilities, rewards, masks, and gradients that turn a generated ranking into a policy update.</p>
+</header>
+<main class="page-wrap">
+  <p><strong>Start with:</strong> <a href="generative-recommendation.html">RL for Generative Recommendation &mdash; Concepts &amp; Landscape</a>. For the general algorithm, see <a href="grpo.html">GRPO</a>; for distributed execution, see the <a href="grpo-training-walkthrough.html">verl training walkthrough</a>.</p>
+  <div class="note"><strong>This is a worked teaching example, not a reproduction of an industrial system.</strong> We rerank a fixed candidate set, use a known toy reward, and expose a six-parameter policy so every update can be checked. A production transformer would condition its logits on rich user context and the full output prefix.</div>
+
+  <h2 id="record">1. The training record: context is not feedback</h2>
+  <p>The request asks for three recommendations. The user context and eligible candidate set are captured <em>before</em> the outcome. The catalog is the same as in Part 1; relevance scores below are illustrative, not measured click probabilities.</p>
+  <div class="table-wrap">
+    <table>
+      <caption>Six eligible candidates for one request</caption>
+      <thead><tr><th scope="col">Item</th><th scope="col">Category</th><th scope="col">Toy relevance</th></tr></thead>
+      <tbody>
+        <tr><td>A</td><td>Tech</td><td>0.95</td></tr><tr><td>B</td><td>Tech</td><td>0.90</td></tr>
+        <tr><td>C</td><td>Tech</td><td>0.85</td></tr><tr><td>D</td><td>Cooking</td><td>0.78</td></tr>
+        <tr><td>E</td><td>Travel</td><td>0.74</td></tr><tr><td>F</td><td>Science</td><td>0.70</td></tr>
+      </tbody>
+    </table>
+  </div>
+<pre><code>request: user/history snapshot, request time, eligible candidates
+rollout: ordered item IDs, valid-action masks, rollout log-probabilities
+versions: policy checkpoint, catalog, tokenizer, reward model
+feedback, if exposed: displayed order, observation window, outcomes
+logging information, if available: exposure/sampling propensities</code></pre>
+  <p>Future clicks, conversions, and watch time are reward supervision, not request features. A logged non-click is not proof of dislike: the item may not have been examined. An item not shown has no observed outcome for that request.</p>
+
+  <h2 id="policy">2. The supervised starting point and the masked policy</h2>
+  <p>A real system first learns a useful generator from logged interactions or curated slates, usually with teacher-forced next-token prediction. Context tokens do not receive the output loss. A fixed three-item output here needs neither padding nor an end token; variable-length production outputs need explicit termination and loss masks.</p>
+  <div class="equation">\[
+    \mathcal L_{\mathrm{SFT}}=-\sum_{t=1}^{3}\log \pi_\theta(a_t\mid x,a_{&lt;t},C).
+  \]</div>
+  <p>Let \(V_t=C\setminus\{a_1,\ldots,a_{t-1}\}\) be the remaining eligible items. Sampling is without replacement:</p>
+  <div class="equation">\[
+    p_\theta(j\mid h_t)=
+    \begin{cases}
+      \displaystyle\frac{\exp z_\theta(h_t,j)}{\sum_{k\in V_t}\exp z_\theta(h_t,k)},&amp;j\in V_t,\\
+      0,&amp;j\notin V_t,
+    \end{cases}
+    \qquad
+    \pi_\theta(S\mid x,C)=\prod_{t=1}^{3}p_\theta(a_t\mid h_t).
+  \]</div>
+  <p><strong>In the explorer only,</strong> \(z_\theta(h_t,j)=z_j\): six shared item logits, with prefix dependence only through the no-repeat mask. We start all logits at zero to make the arithmetic transparent. This uniform initialization is <em>not</em> a recommendation to train a production policy from scratch, and the toy policy cannot represent every possible context-dependent slate preference.</p>
+  <div class="warning"><strong>Mask first, normalize second, log third.</strong> The rollout log-probability must be the probability that actually generated the token. Logging an unmasked softmax, or ignoring temperature/top-k changes, gives the wrong training ratio. The example uses temperature 1 and no top-k truncation. A rollout engine and learner must agree on their sampling distribution and its support.</div>
+
+  <h2 id="rollout">3. Four rollouts become a batch</h2>
+  <p>There are \(6\cdot5\cdot4=120\) distinct ordered slates. With uniform logits, the conditional probabilities are \(1/6,1/5,1/4\), so every slate has probability \(1/120\), and sequence log-probability \(-\log120\approx-4.78749\).</p>
+  <p>Use the fixed group <strong>ABC, ADE, BDF, CEF</strong> as one illustrative possible realization of four independent samples from that policy. This group is deliberately held fixed so updates are reproducible; it is not an exhaustive or representative sample of the 120 slates. Sampling without replacement is <em>within each slate</em>, not across rollouts.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Tensor</th><th scope="col">Shape in this example</th><th scope="col">Meaning</th></tr></thead>
+      <tbody>
+        <tr><td>Output IDs</td><td><code>[4, 3]</code></td><td>Flattened request &times; group dimension; one ID per item</td></tr>
+        <tr><td>Allowed-item mask / conditional probabilities</td><td><code>[4, 3, 6]</code></td><td>Remove previously selected items at each prefix</td></tr>
+        <tr><td>Old and current gathered log-probabilities</td><td><code>[4, 3]</code></td><td>Log-probability of the selected action, not all six actions</td></tr>
+        <tr><td>Outcome rewards / group advantages</td><td><code>[4]</code></td><td>One scalar per slate; broadcast over its three action tokens</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>For multiple requests, compute advantages within each request's group before flattening; do not compare rewards across unrelated users. With semantic IDs, an item may occupy several tokens, so the output length and token-level validity masks change. Multiple code sequences resolving to the same item also require item-level deduplication.</p>
+
+  <h2 id="reward">4. Score a slate, not a fictional user response</h2>
+  <p>Define position weights \(w=(1,0.8,0.6)\), item relevance \(v\), and the fraction of same-category pairs \(D(S)\). Our hidden-in-practice but known-in-this-demo utility is:</p>
+  <div class="equation">\[
+    B(S)=\frac{\sum_{t=1}^{3}w_t v_{a_t}}{2.4},\qquad
+    D(S)=\frac{1}{3}\sum_{t&lt;u}\mathbf1[c(a_t)=c(a_u)],\qquad
+    U(S)=B(S)-0.2D(S).
+  \]</div>
+  <p>The default reward model predicts \(\hat R=U\) exactly, an intentionally optimistic teaching case. The biased mode instead predicts \(B+0.4D\): it rewards redundant Tech items. The flat mode gives every output 0.5. These are three explicit synthetic functions, not fitted production models.</p>
+  <div class="table-wrap">
+    <table>
+      <caption>Default rewards before any policy update</caption>
+      <thead><tr><th scope="col">Slate</th><th scope="col">Relevance \(B\)</th><th scope="col">Redundancy \(D\)</th><th scope="col">Reward \(U\)</th></tr></thead>
+      <tbody>
+        <tr><td>ABC</td><td>0.90833</td><td>1</td><td>0.70833</td></tr>
+        <tr><td>ADE</td><td>0.84083</td><td>0</td><td>0.84083</td></tr>
+        <tr><td>BDF</td><td>0.81000</td><td>0</td><td>0.81000</td></tr>
+        <tr><td>CEF</td><td>0.77583</td><td>0</td><td>0.77583</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>In production, a learned reward model makes predictions for unexposed candidate slates. Real feedback is available only for exposed recommendations. A metric computed against historical engagement labels may be exactly calculable without being a valid counterfactual reward for a new ordering.</p>
+
+  <h2 id="update">5. One GRPO-style update, with the policies kept distinct</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Policy</th><th scope="col">Role</th><th scope="col">Frozen during these updates?</th></tr></thead>
+      <tbody>
+        <tr><td>\(\pi_{\mathrm{old}}\)</td><td>Generated this rollout group; denominator of the update ratio</td><td>Yes</td></tr>
+        <tr><td>\(\pi_{\mathrm{ref}}\)</td><td>Behavior to stay near, often the SFT checkpoint; target of the KL penalty</td><td>Yes</td></tr>
+        <tr><td>\(\pi_\theta\)</td><td>Current trainable policy</td><td>No</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>They happen to be identical at initialization here, but their roles differ. Neither frozen policy is automatically the production logging policy that selected a historical exposure. See <a href="behavior-policy.html">behavior policies</a> and <a href="../foundations/importance-sampling.html">importance sampling</a>.</p>
+  <h3>Group-relative advantages</h3>
+  <div class="equation">\[
+    \bar R=\frac{1}{G}\sum_iR_i,\quad
+    s=\sqrt{\frac1G\sum_i(R_i-\bar R)^2},\quad
+    A_i=\frac{R_i-\bar R}{s+10^{-8}},\quad G=4.
+  \]</div>
+  <p>We use the population standard deviation over this group and stop gradients through rewards and advantages. Each of a slate's three tokens receives the same \(A_i\). This is outcome-level credit, not evidence that each token was individually beneficial. The normalization defines this variant's update; it should not be mistaken for an unbiased estimator of every possible reward objective.</p>
+  <p>For the default group, \(\bar R=0.78375\), \(s\approx0.049239\), and the advantages for ABC, ADE, BDF, CEF are approximately <strong>&minus;1.5316, +1.1593, +0.5331, &minus;0.1608</strong>. ABC has the highest independent relevance but the lowest slate utility because all three items share a category.</p>
+  <h3>Token ratios, clipping, and exact conditional KL</h3>
+  <div class="equation">\[
+    \rho_{i,t}=\exp(\log p_\theta(a_{i,t}\mid h_{i,t})-\log p_{\mathrm{old}}(a_{i,t}\mid h_{i,t})),
+  \]\[
+    J=\frac{1}{GL}\sum_{i,t}\left[
+      \min\left(\rho_{i,t}A_i,\operatorname{clip}(\rho_{i,t},1-\epsilon,1+\epsilon)A_i\right)
+      -\beta K_{i,t}\right],\qquad L=3,
+  \]\[
+    K_{i,t}=\sum_{j\in V_{i,t}}p_\theta(j\mid h_{i,t})
+      \log\frac{p_\theta(j\mid h_{i,t})}{p_{\mathrm{ref}}(j\mid h_{i,t})}.
+  \]</div>
+  <p>The demo computes this six-action KL exactly at the <em>sampled prefixes</em>. This is a tractable pedagogical alternative to sampled token-KL estimators, not a claim to reproduce a particular GRPO library. Averaging over these old-policy prefixes is not the same as exactly computing full-sequence KL under the new policy.</p>
+  <p>At an active, unclipped token, the reward gradient with respect to any allowed logit is \(\rho A(\mathbf1[j=a]-p_j)\). The conditional KL gradient is \(p_j(\log(p_j/q_j)-K)\), where \(q=p_{\mathrm{ref}}\). Sum over tokens, divide by \(GL\), subtract the KL gradient, then take <strong>gradient ascent</strong>: \(z\leftarrow z+\eta\nabla_zJ\).</p>
+  <div class="step"><strong>A concrete first-token calculation.</strong> At initialization, \(p_{\mathrm{old}}(A)=p_\theta(A)=1/6\). Its log-probability gradient is \(5/6\) for A and \(-1/6\) for each other item. For the positive-advantage ADE slate, multiply that vector by \(A_{\mathrm{ADE}}/12\). Repeat at prefixes A and AD with the remaining five and four actions. At this first step, all ratios are 1 and every KL gradient is zero.</div>
+  <p>After summing all twelve token contributions and taking a step with \(\eta=1\), the six logits become approximately <code>[-0.04499, -0.09513, -0.14706, 0.17629, 0.07986, 0.03103]</code>. A still decreases overall despite appearing in ADE: its shared logit also receives the negative ABC contribution. Recompute the masked softmax to obtain the probabilities shown below.</p>
+  <p>Clipping makes the reward term locally flat when a positive-advantage action has \(\rho&gt;1+\epsilon\), or a negative-advantage action has \(\rho&lt;1-\epsilon\). It does not project the policy into a hard trust region: shared parameters and the KL term can still change those probabilities. \(\beta\) therefore affects later steps here, not the identical-policy first step.</p>
+<pre><code>freeze rollout policy and reference; generate a fresh group
+score each slate; compute advantages within its request
+for a small number of minibatch updates:
+    recompute masked current log-probabilities at sampled prefixes
+    ratio = exp(current_logp - frozen_rollout_logp)
+    objective = mean(clipped_surrogate - beta * conditional_KL)
+    maximize objective
+refresh rollout policy and generate NEW groups</code></pre>
+
+  <h2 id="explorer">6. Explore the update and its failure modes</h2>
+  <p>The plot evaluates all 120 slates under the updated policy, not just the four training outputs. It shows exact expectations under the <em>toy</em> distribution; real systems do not get to observe this omniscient utility curve. Each control change recomputes a deterministic run from uniform logits.</p>
+  <div class="figure">
+    <div class="controls">
+      <label for="reward-mode">Reward model
+        <select id="reward-mode"><option value="balanced">Balanced: relevance - 0.2 redundancy</option><option value="biased">Biased: relevance + 0.4 redundancy</option><option value="flat">Flat: reward = 0.5 for every slate</option></select>
+      </label>
+      <label for="learning-rate">Learning rate <output id="learning-rate-value" for="learning-rate">1.00</output>
+        <input id="learning-rate" type="range" min="0" max="3" value="1" step="0.05">
+      </label>
+      <label for="kl-weight">Reference KL weight <output id="kl-weight-value" for="kl-weight">0.10</output>
+        <input id="kl-weight" type="range" min="0" max="1" value="0.1" step="0.05">
+      </label>
+      <label for="clip-range">Clip range <output id="clip-range-value" for="clip-range">0.20</output>
+        <input id="clip-range" type="range" min="0.05" max="0.4" value="0.2" step="0.05">
+      </label>
+      <label for="update-step">Inspect update <output id="update-step-value" for="update-step">1</output>
+        <input id="update-step" type="range" min="0" max="20" value="1" step="1">
+      </label>
+      <div><button id="next-step" type="button">Next update</button> <button id="reset-controls" type="button">Reset</button></div>
+    </div>
+    <canvas id="plot-policy-update" aria-label="Changes in expected predicted reward and underlying toy utility over twenty updates on one frozen rollout group" aria-describedby="update-caption">The numerical expectations and their changes are also reported below the plot.</canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span>Predicted reward change</span>
+      <span class="legend-item"><span class="lg" style="background:repeating-linear-gradient(90deg,var(--plot-teal) 0 5px,transparent 5px 9px)"></span>Underlying toy utility change</span>
+    </div>
+    <p id="update-caption" class="figure-caption"><strong>Optimizing a proxy need not optimize the user objective.</strong> The x-axis is update count; the y-axis is the change in expected score from update 0, with an automatically rescaled range. Absolute scores appear below. In balanced mode the curves coincide. Switch to biased mode to see predicted reward rise while underlying toy utility falls, or flat mode to remove the reward gradient. Twenty updates on one group are a stress test, not a recommended training schedule. Lines interpolate integer updates.</p>
+    <p id="update-status" class="status" role="status">Enable JavaScript to calculate policy updates and exact toy expectations.</p>
+    <div class="table-wrap">
+      <table>
+        <caption>Four frozen rollout slates: probability is over all 120 possible outputs, not normalized over these four</caption>
+        <thead><tr><th scope="col">Slate</th><th scope="col">Reward</th><th scope="col">Advantage</th><th scope="col">Old probability</th><th scope="col">Current probability</th></tr></thead>
+        <tbody id="rollout-rows"></tbody>
+      </table>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <caption>First-position probabilities after the selected update</caption>
+        <thead><tr><th scope="col">Item</th><th scope="col">Old probability</th><th scope="col">Current probability</th><th scope="col">Change</th></tr></thead>
+        <tbody id="probability-rows"></tbody>
+      </table>
+    </div>
+    <noscript><p>The interactive explorer requires JavaScript. The fixed catalog, default reward table, uniform rollout probabilities, and complete update equations above remain readable without it.</p></noscript>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Failure</th><th scope="col">What to inspect</th><th scope="col">What it does not prove</th></tr></thead>
+      <tbody>
+        <tr><td>Equal-reward group</td><td>All advantages are zero; this run stays uniform. Away from the reference, KL could still move the policy.</td><td>More identical-reward rollouts do not create a learning signal.</td></tr>
+        <tr><td>Reward mismatch</td><td>Compare changes in predicted reward and true toy utility, not their absolute scales.</td><td>A growing reward-model score is not an independent evaluation.</td></tr>
+        <tr><td>Concentration / collapse</td><td>First-position entropy and probability shifts; full slate coverage also matters in production.</td><td>Four diverse sampled slates do not guarantee a diverse learned policy.</td></tr>
+        <tr><td>Stale-group overfitting</td><td>Active clipped-surrogate terms and divergence from the reference.</td><td>Clipping does not make indefinite reuse of one group safe.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="deployment">7. From this toy batch to real deployment</h2>
+  <h3>Two distinct feedback paths</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Reward-model rollout path</th><th scope="col">Logged user-feedback path</th></tr></thead>
+      <tbody><tr><td>Generate alternative slates for a context; predict their rewards; update the policy.</td><td>Learn from recommendations actually exposed, with measured outcomes, timestamps, and the available logging-policy information.</td></tr>
+      <tr><td>New model samples can be on-policy even though no user sees them.</td><td>Fresh data are not automatically on-policy: other retrieval routes, rerankers, constraints, and checkpoint lag affect exposure.</td></tr>
+      <tr><td>Guard against reward-model extrapolation and exploitation.</td><td>Handle selection/position bias, delayed or censored outcomes, and poor policy support. Counterfactual correction depends on identification assumptions and usable propensities.</td></tr></tbody>
+    </table>
+  </div>
+  <p>You cannot turn one exposed slate into four GRPO rewards merely by rearranging it. Item outcomes may change with position and neighbors. A response model or additional assumptions are needed to score the alternatives. Likewise, the token-level ratio in Section 5 is not a general correction for the historical production system's exposure bias.</p>
+  <h3>What a production-ready loop adds</h3>
+  <ol>
+    <li><strong>Independent evaluation:</strong> time-respecting held-out data, strong supervised baselines, reward diagnostics, and counterfactual estimates where support and assumptions permit. Separate reward-model evaluation from the model being optimized.</li>
+    <li><strong>Serving invariants:</strong> current eligibility, valid catalog IDs, no unwanted duplicates, stable tokenizer/catalog versions, latency budgets, and safe fallbacks to the existing recommendation path.</li>
+    <li><strong>Controlled exposure:</strong> randomized tests with user-experience guardrails, suitable outcome windows, and rollback. An offline NDCG improvement is not an online engagement improvement.</li>
+    <li><strong>Fresh learning:</strong> join feedback to the exact exposure and model version; update reward models and policies on appropriate schedules. Refresh rollouts rather than indefinitely replaying a stale group.</li>
+  </ol>
+  <p>These mechanisms connect to the <a href="production-agent-learning.html">production learning loop</a>, <a href="async-rl.html">asynchronous RL</a>, and <a href="async-rl-monitoring.html">policy-lag monitoring</a>. If the generator becomes a full-catalog retriever, constrained semantic-ID decoding and retrieval coverage become additional concerns; the six-candidate reranking example does not model them.</p>
+  <div class="note"><strong>The horizon is still one request.</strong> Three generated item tokens are not three observed user transitions. Planning for retention or future preference discovery requires an explicit user-state/transition formulation or a carefully justified long-term value target, not just a longer generated list.</div>
+
+  <h2 id="sources">Sources and related pages</h2>
+  <p class="small">The numerical explorer is original illustrative code, not a claimed implementation of any system below. Primary-source details checked 17 September 2026.</p>
+  <ul>
+    <li><a href="generative-recommendation.html">Part 1: Concepts &amp; Landscape</a> &mdash; architecture distinctions and the dated evidence table.</li>
+    <li><a href="grpo.html">GRPO</a>, <a href="ppo.html">PPO</a>, and <a href="dpo-loss.html">DPO</a> &mdash; algorithm foundations; preference-pair training is a different update from the one worked here.</li>
+    <li><a href="https://arxiv.org/html/2508.20900v2">OneRec-V2 technical report, v2 (2025)</a>, Section 3 &mdash; direct user-feedback rewards, duration-aware shaping, and custom stabilized policy optimization.</li>
+    <li><a href="https://arxiv.org/html/2606.31031v2">GenPage, v2 (2026)</a>, Sections 5.3 and 8 &mdash; page-level reward-model RL with Dr. GRPO; the reported online test used WBC, not RL.</li>
+    <li><a href="https://arxiv.org/html/2606.31984v2">GR2 technical report, v2 (2026)</a>, Sections 4 and 6 &mdash; DAPO ranking rewards, reward shortcuts, and held-out impression-list evaluation.</li>
+    <li><a href="https://arxiv.org/abs/2608.11980v2">HCGRec, v2 (August 2026)</a> &mdash; sparse exact-item rewards and hint-aware credit for semantic-ID generation.</li>
+  </ul>
+</main>
+<footer>Personal ML notes &middot; <a href="generative-recommendation.html">Recommendation concepts</a> &middot; <a href="../index.html#rl">All RL notes</a></footer>
+<script>
+(function () {
+  const items = [
+    { id: 'A', category: 'Tech', relevance: 0.95 },
+    { id: 'B', category: 'Tech', relevance: 0.90 },
+    { id: 'C', category: 'Tech', relevance: 0.85 },
+    { id: 'D', category: 'Cooking', relevance: 0.78 },
+    { id: 'E', category: 'Travel', relevance: 0.74 },
+    { id: 'F', category: 'Science', relevance: 0.70 }
+  ];
+  const weights = [1, 0.8, 0.6];
+  const group = [[0, 1, 2], [0, 3, 4], [1, 3, 5], [2, 4, 5]];
+  const initialLogits = items.map(() => 0);
+  const allSlates = [];
+  for (let a = 0; a < 6; a++) {
+    for (let b = 0; b < 6; b++) {
+      for (let c = 0; c < 6; c++) {
+        if (a !== b && a !== c && b !== c) allSlates.push([a, b, c]);
+      }
+    }
+  }
+  function baseUtility(slate) {
+    return slate.reduce((sum, item, t) => sum + weights[t] * items[item].relevance, 0) / 2.4;
+  }
+  function redundancy(slate) {
+    let pairs = 0;
+    for (let t = 0; t < slate.length; t++) {
+      for (let u = t + 1; u < slate.length; u++) {
+        if (items[slate[t]].category === items[slate[u]].category) pairs++;
+      }
+    }
+    return pairs / 3;
+  }
+  function trueUtility(slate) { return baseUtility(slate) - 0.2 * redundancy(slate); }
+  function reward(slate, mode) {
+    if (mode === 'balanced') return trueUtility(slate);
+    if (mode === 'biased') return baseUtility(slate) + 0.4 * redundancy(slate);
+    if (mode === 'flat') return 0.5;
+    throw new Error('Unknown reward mode: ' + mode);
+  }
+  function probabilities(logits, prefix) {
+    const allowed = logits.map((_, j) => !prefix.includes(j));
+    const max = Math.max(...logits.filter((_, j) => allowed[j]));
+    const masses = logits.map((z, j) => allowed[j] ? Math.exp(z - max) : 0);
+    const sum = masses.reduce((a, b) => a + b, 0);
+    return masses.map(value => value / sum);
+  }
+  function slateProbability(logits, slate) {
+    return slate.reduce((value, action, t) => value * probabilities(logits, slate.slice(0, t))[action], 1);
+  }
+  function advantages(mode) {
+    const rewards = group.map(slate => reward(slate, mode));
+    const mean = rewards.reduce((a, b) => a + b, 0) / group.length;
+    const sd = Math.sqrt(rewards.reduce((sum, r) => sum + (r - mean) ** 2, 0) / group.length);
+    return rewards.map(r => (r - mean) / (sd + 1e-8));
+  }
+  function objectiveAndGradient(logits, mode, beta, clip) {
+    const gradient = items.map(() => 0);
+    const adv = advantages(mode);
+    const scale = 1 / (group.length * weights.length);
+    let objective = 0, meanKL = 0, activeTerms = 0;
+    group.forEach((slate, i) => slate.forEach((action, t) => {
+      const prefix = slate.slice(0, t);
+      const p = probabilities(logits, prefix);
+      const old = probabilities(initialLogits, prefix);
+      const ref = probabilities(initialLogits, prefix);
+      const ratio = p[action] / old[action];
+      const clipped = Math.max(1 - clip, Math.min(1 + clip, ratio));
+      const active = !(adv[i] > 0 && ratio > 1 + clip) && !(adv[i] < 0 && ratio < 1 - clip);
+      const kl = p.reduce((sum, value, j) => value > 0 ? sum + value * Math.log(value / ref[j]) : sum, 0);
+      objective += scale * (Math.min(ratio * adv[i], clipped * adv[i]) - beta * kl);
+      meanKL += scale * kl;
+      if (active && adv[i] !== 0) activeTerms++;
+      p.forEach((value, j) => {
+        if (value === 0) return;
+        const policyGrad = active ? ratio * adv[i] * ((j === action ? 1 : 0) - value) : 0;
+        const klGrad = value * (Math.log(value / ref[j]) - kl);
+        gradient[j] += scale * (policyGrad - beta * klGrad);
+      });
+    }));
+    return { gradient, objective, meanKL, activeTerms };
+  }
+  function evaluate(logits, mode) {
+    let predicted = 0, utility = 0;
+    allSlates.forEach(slate => {
+      const p = slateProbability(logits, slate);
+      predicted += p * reward(slate, mode);
+      utility += p * trueUtility(slate);
+    });
+    const first = probabilities(logits, []);
+    const entropy = -first.reduce((sum, p) => p > 0 ? sum + p * Math.log(p) : sum, 0);
+    return { predicted, utility, entropy };
+  }
+  function simulate(mode, rate, beta, clip, steps) {
+    let logits = initialLogits.slice();
+    const history = [];
+    for (let step = 0; step <= steps; step++) {
+      const update = objectiveAndGradient(logits, mode, beta, clip);
+      history.push({ logits: logits.slice(), ...evaluate(logits, mode), ...update });
+      logits = logits.map((z, j) => z + rate * update.gradient[j]);
+    }
+    return history;
+  }
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  function drawPlot(canvas, cfg) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+    const mL = 44, mR = 14, mT = 14, mB = 30;
+    const pw = cssW - mL - mR, ph = cssH - mT - mB;
+    const X = x => mL + (x - cfg.xMin) / (cfg.xMax - cfg.xMin) * pw;
+    const Y = y => mT + (cfg.yMax - y) / (cfg.yMax - cfg.yMin) * ph;
+    ctx.font = '11px Inter, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(t => {
+      ctx.beginPath(); ctx.moveTo(X(t), mT); ctx.lineTo(X(t), mT + ph); ctx.stroke();
+      ctx.fillText(String(t), X(t), mT + ph + 6);
+    });
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(t => {
+      ctx.beginPath(); ctx.moveTo(mL, Y(t)); ctx.lineTo(mL + pw, Y(t)); ctx.stroke();
+      ctx.fillText(String(t), mL - 8, Y(t));
+    });
+    ctx.strokeStyle = cssVar('--plot-axis'); ctx.lineWidth = 1.25;
+    if (cfg.yMin <= 0 && cfg.yMax >= 0) {
+      ctx.beginPath(); ctx.moveTo(mL, Y(0)); ctx.lineTo(mL + pw, Y(0)); ctx.stroke();
+    }
+    if (cfg.xMin <= 0 && cfg.xMax >= 0) {
+      ctx.beginPath(); ctx.moveTo(X(0), mT); ctx.lineTo(X(0), mT + ph); ctx.stroke();
+    }
+    ctx.save(); ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip(); ctx.lineJoin = 'round';
+    cfg.series.forEach(series => {
+      ctx.beginPath(); ctx.strokeStyle = cssVar(series.color);
+      ctx.lineWidth = series.width || 2; ctx.setLineDash(series.dash || []);
+      for (let i = 0; i <= 260; i++) {
+        const x = cfg.xMin + (cfg.xMax - cfg.xMin) * i / 260;
+        if (i === 0) ctx.moveTo(X(x), Y(series.fn(x)));
+        else ctx.lineTo(X(x), Y(series.fn(x)));
+      }
+      ctx.stroke();
+    });
+    ctx.setLineDash([4, 4]); ctx.strokeStyle = cssVar('--plot-gray'); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(X(cfg.selected), mT); ctx.lineTo(X(cfg.selected), mT + ph); ctx.stroke();
+    ctx.setLineDash([]); ctx.restore();
+  }
+  function fillRows(body, rows) {
+    body.textContent = '';
+    rows.forEach(values => {
+      const row = document.createElement('tr');
+      values.forEach(value => {
+        const cell = document.createElement('td');
+        cell.textContent = value;
+        row.appendChild(cell);
+      });
+      body.appendChild(row);
+    });
+  }
+  const controls = {
+    mode: document.getElementById('reward-mode'),
+    rate: document.getElementById('learning-rate'),
+    beta: document.getElementById('kl-weight'),
+    clip: document.getElementById('clip-range'),
+    step: document.getElementById('update-step')
+  };
+  const signed = value => (value >= 0 ? '+' : '') + value.toFixed(5);
+  let history = [];
+  function render() {
+    const step = Number(controls.step.value);
+    const current = history[step], start = history[0];
+    ['learning-rate', 'kl-weight', 'clip-range'].forEach(id => {
+      document.getElementById(id + '-value').value = Number(document.getElementById(id).value).toFixed(2);
+    });
+    document.getElementById('update-step-value').value = String(step);
+    document.getElementById('next-step').disabled = step === 20;
+    const interpolate = key => x => {
+      const lo = Math.floor(x), hi = Math.min(history.length - 1, lo + 1);
+      return history[lo][key] + (history[hi][key] - history[lo][key]) * (x - lo) - start[key];
+    };
+    const changes = history.flatMap(point => [point.predicted - start.predicted, point.utility - start.utility]);
+    const low = Math.min(0, ...changes), high = Math.max(0, ...changes);
+    const padding = Math.max(0.001, (high - low) * 0.15);
+    const rawStep = (high - low + 2 * padding) / 5;
+    const power = 10 ** Math.floor(Math.log10(rawStep));
+    const tickStep = [1, 2, 5, 10].find(n => n * power >= rawStep) * power;
+    const yMin = Math.floor((low - padding) / tickStep) * tickStep;
+    const yMax = Math.ceil((high + padding) / tickStep) * tickStep;
+    const yTicks = Array.from({ length: Math.round((yMax - yMin) / tickStep) + 1 },
+      (_, i) => Number((yMin + i * tickStep).toPrecision(8)));
+    drawPlot(document.getElementById('plot-policy-update'), {
+      xMin: 0, xMax: 20, yMin, yMax,
+      xTicks: [0, 5, 10, 15, 20], yTicks, selected: step,
+      series: [
+        { fn: interpolate('predicted'), color: '--plot-violet', width: 3 },
+        { fn: interpolate('utility'), color: '--plot-teal', width: 2, dash: [6, 3] }
+      ]
+    });
+    document.getElementById('update-status').textContent =
+      'Update ' + step + ': predicted reward ' + current.predicted.toFixed(5) + ' (' + signed(current.predicted - start.predicted) +
+      '); toy utility ' + current.utility.toFixed(5) + ' (' + signed(current.utility - start.utility) +
+      '). First-position entropy ' + current.entropy.toFixed(4) + ' nats (uniform: ' + Math.log(6).toFixed(4) +
+      '); sampled-prefix mean KL ' + current.meanKL.toFixed(5) + '; active nonzero reward terms ' + current.activeTerms + '/12.';
+    const adv = advantages(controls.mode.value);
+    fillRows(document.getElementById('rollout-rows'), group.map((slate, i) => [
+      slate.map(j => items[j].id).join(''), reward(slate, controls.mode.value).toFixed(5),
+      adv[i].toFixed(4), '0.008333', slateProbability(current.logits, slate).toFixed(6)
+    ]));
+    const first = probabilities(current.logits, []);
+    fillRows(document.getElementById('probability-rows'), items.map((item, j) => [
+      item.id, '0.166667', first[j].toFixed(6), signed(first[j] - 1 / 6)
+    ]));
+  }
+  function recompute() {
+    history = simulate(controls.mode.value, Number(controls.rate.value), Number(controls.beta.value), Number(controls.clip.value), 20);
+    render();
+  }
+  [controls.rate, controls.beta, controls.clip].forEach(control => control.addEventListener('input', recompute));
+  controls.mode.addEventListener('change', recompute);
+  controls.step.addEventListener('input', render);
+  document.getElementById('next-step').addEventListener('click', () => {
+    controls.step.value = String(Math.min(20, Number(controls.step.value) + 1));
+    render();
+  });
+  document.getElementById('reset-controls').addEventListener('click', () => {
+    controls.mode.value = 'balanced'; controls.rate.value = '1'; controls.beta.value = '0.1';
+    controls.clip.value = '0.2'; controls.step.value = '1'; recompute();
+  });
+  recompute();
+  let raf;
+  window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(render); });
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
+})();
+</script>
+</body>
+</html>
