@@ -88,8 +88,9 @@ From first-principles RL theory to LLM post-training and the systems that run it
 **Theory:** MDP → value functions → Monte Carlo → TD → DQN → policy gradient → PPO → MCTS →
 AlphaZero → tree search for LLMs. **Alignment:** RLHF, GRPO, DPO, DeepSeek-R1, cascade RL,
 distillation, and generative recommendation (retrieval vs ranking, slate rewards, and a dated
-research/production landscape), paired with a worked ranking-RL training loop and interactive
-policy updates. **Agentic:** ReAct, the agent-architecture landscape (Deep Agents, graphs,
+research/production landscape), paired with a worked ranking-RL training loop, interactive
+policy updates, a comparison with general/LLM RL, and a separate-project GenRank–verl integration
+guide (ownership, batch/probability contracts, and packaging). **Agentic:** ReAct, the agent-architecture landscape (Deep Agents, graphs,
 delegation, handoffs, reflection, and search), agentic RL over long horizons, multi-turn tool-use
 training in verl, harness/trainer decoupling, and gated learning from real-world production experience.
 **Environments:** the training-environment stack — anatomy + ecosystem landscape,

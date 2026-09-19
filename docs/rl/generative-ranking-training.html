@@ -53,7 +53,7 @@
     .hero-pill { display: inline-block; border: 1px solid rgba(255,255,255,0.4); border-radius: 100px; padding: 3px 12px; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
     .page-wrap { max-width: 940px; margin: auto; padding: 36px 24px 70px; }
     h2 { margin: 2.6em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); font-size: 1.22rem; scroll-margin-top: 70px; }
-    h3 { font-size: 1rem; margin-top: 1.6em; }
+    h3 { font-size: 1rem; margin-top: 1.6em; scroll-margin-top: 70px; }
     p { margin: 0.7em 0; }
     li { margin-bottom: 0.5em; }
     code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; font-size: 0.88em; }
@@ -103,17 +103,38 @@
     Ranking RL
   </a>
   <div class="nav-links">
-    <a href="#record">Data</a><a href="#policy">Policy</a><a href="#rollout">Rollout</a><a href="#reward">Reward</a><a href="#update">Update</a><a href="#explorer">Explorer</a><a href="#deployment">Deployment</a>
+    <a href="#comparison">vs. standard RL</a><a href="#record">Data</a><a href="#policy">Policy</a><a href="#rollout">Rollout</a><a href="#reward">Reward</a><a href="#update">Update</a><a href="#explorer">Explorer</a><a href="#deployment">Deployment</a><a href="#verl-integration">verl integration</a>
   </div>
 </nav>
 <header class="hero">
   <span class="hero-pill">Recommendation &middot; Part 2 &middot; Training walkthrough</span>
   <h1>Generative Ranking RL</h1>
-  <p>One request, six candidates, three positions, four rollouts. Follow the probabilities, rewards, masks, and gradients that turn a generated ranking into a policy update.</p>
+  <p>What ranking changes about RL, one complete policy update, and the integration seams when a separate GenRank project uses verl to run training.</p>
 </header>
 <main class="page-wrap">
   <p><strong>Start with:</strong> <a href="generative-recommendation.html">RL for Generative Recommendation &mdash; Concepts &amp; Landscape</a>. For the general algorithm, see <a href="grpo.html">GRPO</a>; for distributed execution, see the <a href="grpo-training-walkthrough.html">verl training walkthrough</a>.</p>
   <div class="note"><strong>This is a worked teaching example, not a reproduction of an industrial system.</strong> We rerank a fixed candidate set, use a known toy reward, and expose a six-parameter policy so every update can be checked. A production transformer would condition its logits on rich user context and the full output prefix.</div>
+
+  <h2 id="comparison">Before the walkthrough: GenRank versus standard RL</h2>
+  <p><strong>GenRank is a task/model specialization, not a replacement for reinforcement learning.</strong> Here the name means a project that generates rankings, not a claim about a particular private implementation or named optimizer. Such a model can be trained with SFT, preference learning, or policy-gradient RL. When it uses GRPO, the ranking-specific work is largely in the action representation, data, constraints, reward, and evaluation; the distributed optimizer need not be rewritten.</p>
+  <div class="table-wrap" tabindex="0" role="region" aria-label="General RL, LLM post-training, and ranking RL compared">
+    <table>
+      <caption>Two useful baselines for &ldquo;standard RL&rdquo;; these are common setups, not mutually exclusive categories.</caption>
+      <thead><tr><th scope="col">Concern</th><th scope="col">General sequential RL</th><th scope="col">Single-response LLM RL</th><th scope="col">Generative ranking RL here</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Observation / context</th><td>Environment state or a partially observed history.</td><td>Prompt and generated prefix.</td><td>User/request snapshot, candidate features and eligibility, plus the selected-item prefix.</td></tr>
+        <tr><th scope="row">Action</th><td>An environment action; it can be discrete, continuous, or structured.</td><td>A token; the completed response is the task-level output.</td><td>An item-ID token or semantic-ID code; the completed slate is the task-level action.</td></tr>
+        <tr><th scope="row">Horizon</th><td>Actions can change the environment and future rewards.</td><td>Several token decisions may lead to one terminal score; tool-using agents add external transitions.</td><td>Several item/code decisions form one recommendation request. They do not by themselves model future user visits.</td></tr>
+        <tr><th scope="row">Valid actions</th><td>Environment-specific bounds or masks.</td><td>Vocabulary, termination, and sometimes grammar/tool constraints.</td><td>Candidate membership, exact catalog resolution, no repeats, and request-specific business rules. Valid support changes with the prefix.</td></tr>
+        <tr><th scope="row">Reward evidence</th><td>Environment feedback or a learned/simulated reward.</td><td>A verifier, preference RM, or other task score.</td><td>Slate metrics, a response RM, or delayed feedback on exposed items. Historical labels do not reveal outcomes for arbitrary new slates.</td></tr>
+        <tr><th scope="row">Learning update</th><td>Many choices: value-based methods, actor&ndash;critic, policy gradients.</td><td>PPO/GRPO commonly update sampled-token likelihoods.</td><td>The same policy-gradient machinery can update ranking tokens, provided grouping, masks, probabilities, and rewards mean the right thing.</td></tr>
+        <tr><th scope="row">Evaluation</th><td>Return under the evaluated environment and policy.</td><td>Held-out task success and independent quality/safety measurements.</td><td>Validity, ranking quality, coverage/diversity, and ultimately controlled user-outcome evidence, with exposure and position effects accounted for.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p><strong>What stays the same:</strong> sample a policy, score its actions, estimate advantages, differentiate action log-probabilities, and synchronize updated weights. <strong>What changes:</strong> the meaning of those actions and scores, and how the allowed distribution is constructed. Constraints and learned rewards also exist outside recommendation; their catalog- and exposure-specific semantics are the important difference here.</p>
+  <p>A one-request slate policy is naturally a <strong>contextual bandit at the user-interaction level</strong>, with an autoregressive factorization inside its action. To optimize a sequence of user decisions, add actual transitions, trajectory construction, delayed credit, and a return/value formulation. Merely emitting more item tokens or using PPO instead of GRPO does not add that horizon.</p>
+  <p>The next seven sections work through the six-candidate example. For code ownership and interfaces rather than the arithmetic, jump to <a href="#verl-integration">the separate-project verl integration guide</a>.</p>
 
   <h2 id="record">1. The training record: context is not feedback</h2>
   <p>The request asks for three recommendations. The user context and eligible candidate set are captured <em>before</em> the outcome. The catalog is the same as in Part 1; relevance scores below are illustrative, not measured click probabilities.</p>
@@ -313,6 +334,121 @@ refresh rollout policy and generate NEW groups</code></pre>
   <p>These mechanisms connect to the <a href="production-agent-learning.html">production learning loop</a>, <a href="async-rl.html">asynchronous RL</a>, and <a href="async-rl-monitoring.html">policy-lag monitoring</a>. If the generator becomes a full-catalog retriever, constrained semantic-ID decoding and retrieval coverage become additional concerns; the six-candidate reranking example does not model them.</p>
   <div class="note"><strong>The horizon is still one request.</strong> Three generated item tokens are not three observed user transitions. Planning for retention or future preference discovery requires an explicit user-state/transition formulation or a carefully justified long-term value target, not just a longer generated list.</div>
 
+  <h2 id="verl-integration">8. Separate-project integration with verl</h2>
+  <div class="note"><strong>Design guide, not an audited source map.</strong> No separate GenRank repository or pinned verl revision is specified here. The ownership boundaries and contract below are a proposed integration pattern. Example package paths and payload names are illustrative, not installed APIs. The linked upstream documentation describes available mechanisms; verify signatures, worker paths, and backend support against the versions used by the project.</div>
+  <p><strong>A separate repository does not require a separate service.</strong> Keep the ranking implementation in an installable project and load its adapters into the training runtime. Use an RPC/service boundary only where there is an actual reason, such as an independently served reward model. See <a href="verl-architecture.html#abstractions">verl's batch and worker abstractions</a> and <a href="verl-architecture.html#loop">controller loop</a> for the framework side.</p>
+<pre><code>GenRank project                         verl + selected backends
+-----------------------------           -----------------------------
+request / candidate adapter ----------&gt; dataset and batch transport
+model + item encoding adapters -------&gt; learner and rollout model loaders
+valid-action policy ------------------&gt; rollout sampling AND learner log-probs
+slate parser + reward adapter --------&gt; reward execution and result alignment
+evaluation + export rules &lt;------------ checkpoint / run artifacts
+                                        grouping, advantages, actor updates
+                                        worker placement, sharding, weight sync</code></pre>
+  <p>The arrows represent in-process/worker interfaces unless deliberately deployed otherwise. verl can orchestrate the computation without understanding what an item, eligible candidate, or meaningful engagement reward is.</p>
+
+  <h3 id="verl-ownership">8.1 Ownership: domain semantics versus execution</h3>
+  <div class="table-wrap" tabindex="0" role="region" aria-label="GenRank and verl integration ownership">
+    <table>
+      <thead><tr><th scope="col">Seam</th><th scope="col">GenRank project owns</th><th scope="col">verl / backend responsibility and integration check</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Request data</th><td>Time-correct context, candidate snapshot, stable item mapping, reward-only labels, and request/group identity.</td><td>Load, repeat, shard, and reorder batches. The adapter must preserve per-row metadata through every transformation; candidate labels must not enter model inputs.</td></tr>
+        <tr><th scope="row">Model and encoding</th><td>Architecture, feature conditioning, tokenizer/codebook, output head, and checkpoint conversion where needed.</td><td>Instantiate compatible learner and rollout implementations. A model that loads in a training library is not automatically supported by vLLM/SGLang or a Megatron backend.</td></tr>
+        <tr><th scope="row">Sampling and log-probs</th><td>Candidate/trie masks, deduplication state, termination rules, and the precise policy distribution.</td><td>Execute generation and differentiable likelihood calculation. A rollout-only logits processor does not automatically modify learner or reference log-probs.</td></tr>
+        <tr><th scope="row">Reward</th><td>Exact token-to-slate parsing, validity decisions, RM inputs or metric computation, and reward-component diagnostics.</td><td>Schedule scoring and align returned rewards to samples. Distinguish a model-invalid output from a missing catalog, RM timeout, or other infrastructure failure.</td></tr>
+        <tr><th scope="row">Advantage and loss</th><td>Choose the recipe and define which generated decisions get credit. Own any genuinely custom estimator/objective.</td><td>Reuse supported GRPO/PPO estimators, clipping, reduction, and KL mechanisms when their semantics match. &ldquo;Ranking&rdquo; alone does not require a new loss.</td></tr>
+        <tr><th scope="row">Distributed execution</th><td>Declare model/backend compatibility and make project code/assets available on every worker.</td><td>Resource pools, distributed optimizer, collectives, and weight transfer. Custom parameter names/shapes still require compatible loading and synchronization.</td></tr>
+        <tr><th scope="row">Evaluation and export</th><td>Independent quality/outcome evaluation, serving constraints, item resolution, and versioned deployment bundle.</td><td>Produce checkpoints and run metrics; a checkpoint is not by itself a usable ranking service or proof of user benefit.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p><strong>Choose the smallest sufficient extension.</strong> A backend-supported language model emitting ordinary text IDs might need only data and reward adapters if unconstrained generation is intentional. Dedicated item tokens require matching vocabulary/embedding support. Candidate-masked generation requires a probability contract across rollout and learner. Custom encoders, feature tensors, pointer heads, or semantic-ID decoders may require model, batch, and backend adapters as well. If the selected backend cannot represent the model, choose a compatible backend or implement that support before scaling the run.</p>
+
+  <h3 id="verl-contract">8.2 The batch contract: more than prompt and reward</h3>
+  <p>Let \(B\) be requests, \(G\) sampled slates per request, \(N=BG\), and \(T\) the padded output-token length. For the toy batch, \(B=1\), \(G=4\), \(T=3\). A semantic-ID slate can have many more tokens than items.</p>
+  <div class="table-wrap" tabindex="0" role="region" aria-label="Logical ranking training batch contract">
+    <table>
+      <caption>Logical fields to map explicitly into the pinned framework API; this is not a copy-paste DataProto schema.</caption>
+      <thead><tr><th scope="col">Payload</th><th scope="col">Shape / scope</th><th scope="col">Invariant</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Context and candidate snapshot</th><td>One per request, associated with each of its \(G\) samples.</td><td>Same request features, candidate-to-token mapping, and eligibility snapshot in generation, rescoring, and reward evaluation.</td></tr>
+        <tr><th scope="row">Group ID and sample ID</th><td>\([N]\) each.</td><td>The group identifies one request sampling group, not all requests from a user. The sample identifies one rollout. Recover both after shuffling, filtering, and worker gather.</td></tr>
+        <tr><th scope="row">Prompt/output IDs and conditioning tensors</th><td>Prompt length varies; output \([N,T]\).</td><td>Preserve exact sampled IDs, order, and model-specific features. Decoding to text and retokenizing is not guaranteed to reconstruct the action.</td></tr>
+        <tr><th scope="row">Attention, response, and policy-loss masks</th><td>Input- or output-aligned as appropriate.</td><td>Attention visibility is not action credit. Exclude padding, context, and supplied hints from policy-gradient loss; specify treatment of sampled EOS and structural tokens.</td></tr>
+        <tr><th scope="row">Valid-action reconstruction</th><td>Per request plus sampled prefix, or explicit allowed-token data.</td><td>Recreate the same support at every output position. A dense \([N,T,V]\) mask is not required if a versioned trie/mapping reconstructs it exactly.</td></tr>
+        <tr><th scope="row">Behavior / old / reference log-probs</th><td>Gathered action log-probs \([N,T]\).</td><td>Name each distribution explicitly. Gather the same token at the same causal position; do not substitute unmasked log-probs for constrained ones.</td></tr>
+        <tr><th scope="row">Slate reward and diagnostics</th><td>One reward \([N]\), plus validity and component scores.</td><td>Score each slate once. If the reward API uses token rewards, place a terminal score once at the intended valid output position rather than repeating it \(T\) times and summing.</td></tr>
+        <tr><th scope="row">Versions and decoding settings</th><td>Per run or per sample when versions can differ.</td><td>Record policy/rollout version, catalog/codebook/tokenizer, constraint and reward versions, temperature, and truncation settings. Async samples need their actual generating version.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>In a <code>DataProto</code>-based path, tensor inputs belong in <code>batch</code>, row-aligned metadata can live in <code>non_tensor_batch</code>, and batch-wide settings in <code>meta_info</code>. Merely putting candidates in <code>extra_info</code> does not prove that every worker receives or uses them: trace the selected dataset, rollout, reward, and learner paths. Per-request data must not be placed in batch-global metadata that will not follow row permutations.</p>
+  <p>For GRPO, compute one advantage per slate within its request group, then broadcast it only onto the chosen sampled-token loss positions. Broadcasting the <em>advantage</em> is different from duplicating the <em>terminal reward</em>. If invalid samples are filtered, preserve group membership and explicitly handle empty, singleton, or equal-reward groups; do not regroup surviving samples just by reshaping adjacent rows. For multi-token item IDs, specify whether the objective is token-, item-, or slate-weighted: changing the reduction changes the objective.</p>
+
+  <h3 id="verl-probabilities">8.3 The critical seam: rollout and learner must mean the same policy</h3>
+  <p>The no-repeat mask in Section 2 is part of the probability distribution, not just output cleanup. At the sampled prefix AB, C has probability \(1/4\) under the uniform constrained policy, not \(1/6\). If the numerator uses the mask but the stored denominator does not, the ratio is already \(1.5\) before a single weight update.</p>
+<pre><code>Same weights, sampled slate ABC:
+correct masked probabilities:       [1/6, 1/5, 1/4]
+incorrect unmasked probabilities:   [1/6, 1/6, 1/6]
+masked / unmasked ratios:           [1.0, 1.2, 1.5]
+correct masked / masked ratios:     [1.0, 1.0, 1.0]</code></pre>
+  <p>Mask reconstruction must reach the differentiable current-policy calculation, the frozen denominator calculation where used, and the reference calculation for a KL defined over the same constrained action space. Ensure the reference has nonzero probability wherever that KL needs it. Sampling temperature and top-k/top-p truncation also alter probabilities; a framework's returned &ldquo;log-probability&rdquo; is not proof that all these transformations were included. Removing duplicates after generation would change the action without supplying its correct probability.</p>
+  <p><strong>The toy's old policy and verl's old-policy field need not mean the same thing.</strong> Section 5 deliberately sets \(\pi_{\mathrm{old}}\) to the actual behavior policy. A production framework can distinguish four roles: rollout behavior \(\pi_{\mathrm{rollout}}\), a frozen learner-side PPO anchor \(\pi_{\mathrm{old}}\), current learner \(\pi_\theta\), and KL reference \(\pi_{\mathrm{ref}}\). Backend numerics, decoding, and checkpoint lag can separate the first two even when they nominally share a model.</p>
+  <div class="equation">\[
+    \rho^{\mathrm{PPO}}_t=\frac{p_\theta(a_t\mid h_t)}{p_{\mathrm{old}}(a_t\mid h_t)},
+    \qquad
+    c_t=\frac{p_{\mathrm{old}}(a_t\mid h_t)}{p_{\mathrm{rollout}}(a_t\mid h_t)}.
+  \]</div>
+  <p>These are distinct ratios. The <a href="https://verl.readthedocs.io/en/latest/algo/rollout_corr.html">upstream rollout-correction guide</a> describes decoupled and bypass modes; choose the supported mode deliberately rather than renaming one field and assuming equivalence. Token versus sequence correction, clipping, and rejection have different bias/variance trade-offs. Corrections do not restore actions with zero sampling support or fix exposure bias in historical user feedback. Start with a synchronous, temperature-1, untruncated valid-action sampler to isolate the contract before introducing those additional differences.</p>
+  <div class="warning"><strong>A custom reward hook cannot repair a broken likelihood.</strong> Correct scalar slate scores are insufficient if the learner optimizes a different action distribution. Conversely, matching masked probabilities does not make a biased engagement proxy a trustworthy reward. Test both seams independently.</div>
+
+  <h3 id="verl-packaging">8.4 Keep the project separate; make its runtime reproducible</h3>
+  <p>An illustrative layout keeps domain code reusable and isolates the framework adapter:</p>
+<pre><code>genrank-project/
+  pyproject.toml
+  src/genrank/
+    data.py, model.py, item_codec.py, constraints.py, reward.py
+    integrations/verl/      # batch / worker / backend adapters as needed
+  configs/                 # ranking recipe composed with pinned verl config
+  tests/                   # contract tests plus independent evaluation fixtures
+
+Training environment:
+  installed GenRank artifact + pinned verl + compatible rollout/train backends
+  versioned checkpoint, tokenizer/codebook, catalog, and reward artifacts</code></pre>
+  <p>The path names are suggestions, not required modules. Prefer public extension points to copying the trainer into the project. If the pinned version lacks a required hook, isolate and document a narrow extension or patch, with its compatibility test; do not hide a process-local monkey patch in the launcher.</p>
+  <p>For a supported text-response path, verl's <a href="https://verl.readthedocs.io/en/latest/preparation/reward_function.html">documented custom reward hook</a> uses <code>custom_reward_function.path</code> and <code>custom_reward_function.name</code>, with a callable accepting <code>data_source</code>, <code>solution_str</code>, <code>ground_truth</code>, and <code>extra_info</code>. That is one concrete out-of-tree seam, not a complete ranking integration. It is suitable only if the decoded response preserves item identity and all required reward inputs arrive. For special item tokens or structured tensors, use a compatible token-aware reward adapter rather than assuming a text decoder preserves them.</p>
+  <p>A local editable install on the driver does not install the project on remote Ray workers. Distribute the reviewed package and required assets through the job's worker environment/image; check imports and any model/backend registration in fresh worker processes. File-based hook paths must exist wherever they are loaded. Keep model initialization, tokenizer IDs, embedding/output-head sizes, parameter conversion, and weight synchronization compatible on both training and rollout workers.</p>
+  <p>Record an immutable run manifest: GenRank revision, verl revision, backend versions, resolved configuration, data snapshot, reward version, and checkpoint/tokenizer/catalog identifiers. A training-resume checkpoint needs optimizer/scheduler and relevant run state; a serving export additionally needs the item codec, feature schema, and decoding/eligibility rules. Neither bundle should silently pick up the latest catalog or tokenizer.</p>
+
+  <h3 id="verl-trace">8.5 One batch across the boundary</h3>
+  <ol>
+    <li><strong>GenRank prepares one request.</strong> Context and six candidates are model inputs; hidden relevance/outcome labels are available only to the reward/evaluation path. The adapter attaches stable request, sampling-group, and artifact identifiers.</li>
+    <li><strong>verl expands and dispatches four samples.</strong> Each retains the same candidate snapshot. The configured rollout backend loads the supported GenRank model and samples three valid items using the ranking constraints.</li>
+    <li><strong>The adapter returns exact experience.</strong> Output IDs, sampled-action masks, actual behavior log-probs, sample identity, and policy version remain aligned. GenRank resolves each output to a slate and scores it once.</li>
+    <li><strong>verl prepares the learning batch.</strong> Compute frozen-anchor/reference log-probs as required, apply the chosen mismatch handling, and calculate group-relative advantages. The GenRank adapter supplies any features and constraint reconstruction needed by these paths.</li>
+    <li><strong>The learner performs the update.</strong> Recompute differentiable current log-probs on the sampled prefixes; use the selected clipped loss, KL, and reduction. Reuse the distributed optimizer instead of implementing ranking-specific collectives.</li>
+    <li><strong>Synchronize, evaluate, and export.</strong> Transfer updated weights to the rollout backend before the next synchronous group. Check independent ranking metrics and validity, and save the versioned artifacts needed for resume or serving.</li>
+  </ol>
+  <p>The explorer's exact six-action conditional KL is a teaching choice. Reusing a stock sampled-token KL estimator does not reproduce that exact toy objective automatically; document the estimator and whether KL enters the reward, the loss, or both intentionally. Likewise, a stock GRPO configuration may use a different standard-deviation convention or length reduction from Section 5.</p>
+
+  <h3 id="verl-checks">8.6 Contract checks before a distributed run</h3>
+  <div class="table-wrap" tabindex="0" role="region" aria-label="Separate-project integration acceptance checks">
+    <table>
+      <thead><tr><th scope="col">Check</th><th scope="col">Required result</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Codec and eligibility</th><td>Round-trip item IDs exactly; reject unknown, duplicate, ineligible, or incomplete outputs explicitly. Define the insufficient-candidate and empty-support behavior instead of sampling an all-masked softmax.</td></tr>
+        <tr><th scope="row">Probability parity</th><td>On frozen weights, identical inputs, masks, and decoding settings, verify the toy probabilities \(1/6,1/5,1/4\) and probability \(1/120\) per slate. Compare actual backend log-probs with an explicit numerical tolerance; unexplained discrepancies block training.</td></tr>
+        <tr><th scope="row">Metadata transport</th><td>Use at least two distinct requests, expand groups, permute rows, shard/gather, and filter a sample. Candidate mappings, reward results, and group IDs must still match the originating sample.</td></tr>
+        <tr><th scope="row">Credit and reward accounting</th><td>Context, padding, and supplied hints receive no policy-gradient credit. One terminal score sums back to one slate reward; equal-reward groups have zero relative reward advantage.</td></tr>
+        <tr><th scope="row">One update</th><td>With the exact toy objective, reproduce Section 5's logits within a stated tolerance. For a different production recipe, use its own expected-loss/gradient fixture rather than claiming numerical equivalence to the toy.</td></tr>
+        <tr><th scope="row">Worker startup and synchronization</th><td>A fresh worker imports the project and resolves assets; a tiny update changes rollout weights to the expected version. Resume restores the matching model and artifact versions, not just a readable weight file.</td></tr>
+        <tr><th scope="row">Failure handling and serving</th><td>Model-invalid slates get the documented validity outcome; RM outages, missing assets, and version mismatches surface as errors or explicitly accounted-for failed samples, never ordinary zero rewards. Serving applies the intended constraints and is evaluated under its actual greedy/beam/sampling rule.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p><strong>Bottom line:</strong> keep recommendation semantics in GenRank and distributed RL execution in verl, with an explicit adapter contract between them. &ldquo;It runs&rdquo; is weaker than &ldquo;the sampled slate, reward, and differentiated likelihood describe the same decision.&rdquo;</p>
+
   <h2 id="sources">Sources and related pages</h2>
   <p class="small">The numerical explorer is original illustrative code, not a claimed implementation of any system below. Primary-source details checked 17 September 2026.</p>
   <ul>
@@ -322,6 +458,13 @@ refresh rollout policy and generate NEW groups</code></pre>
     <li><a href="https://arxiv.org/html/2606.31031v2">GenPage, v2 (2026)</a>, Sections 5.3 and 8 &mdash; page-level reward-model RL with Dr. GRPO; the reported online test used WBC, not RL.</li>
     <li><a href="https://arxiv.org/html/2606.31984v2">GR2 technical report, v2 (2026)</a>, Sections 4 and 6 &mdash; DAPO ranking rewards, reward shortcuts, and held-out impression-list evaluation.</li>
     <li><a href="https://arxiv.org/abs/2608.11980v2">HCGRec, v2 (August 2026)</a> &mdash; sparse exact-item rewards and hint-aware credit for semantic-ID generation.</li>
+  </ul>
+  <p class="small">Integration references consulted 19 September 2026. These are moving upstream documentation pages, not evidence of the separate project's installed version or implemented hooks.</p>
+  <ul>
+    <li><a href="https://verl.readthedocs.io/en/latest/preparation/prepare_data.html">verl: Prepare Data for Post-Training</a> and <a href="https://verl.readthedocs.io/en/latest/preparation/reward_function.html">Implement Reward Function for Dataset</a> &mdash; standard data fields and the documented external reward-function interface.</li>
+    <li><a href="https://verl.readthedocs.io/en/latest/advance/dpo_extension.html">verl: Extend to other RL(HF) algorithms</a> &mdash; distributed worker computations and single-controller orchestration as separate extension concerns.</li>
+    <li><a href="https://verl.readthedocs.io/en/latest/algo/rollout_corr.html">verl: Rollout Correction</a> &mdash; behavior versus frozen learner policy, decoupled/bypass modes, and mismatch handling.</li>
+    <li><a href="verl-architecture.html">verl Architecture</a>, <a href="grpo-training-walkthrough.html">GRPO Training Walkthrough</a>, and <a href="behavior-policy.html">Behavior Policies</a> &mdash; the generic execution and probability bookkeeping behind the adapter.</li>
   </ul>
 </main>
 <footer>Personal ML notes &middot; <a href="generative-recommendation.html">Recommendation concepts</a> &middot; <a href="../index.html#rl">All RL notes</a></footer>
