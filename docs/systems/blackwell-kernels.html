@@ -213,6 +213,7 @@
     <a href="#tcgen05">tcgen05.mma</a>
     <a href="#cta-pairs">CTA pairs</a>
     <a href="#kernel-shape">Kernel shape</a>
+    <a href="#epilogue">Epilogue</a>
     <a href="#block-scaled">Block-scaled MMA</a>
     <a href="#reaching">Reaching it</a>
   </div>
@@ -234,7 +235,7 @@
   <!-- ══════════════════════════════════════════ -->
   <h2 id="what-changed">The trajectory completes: the MMA becomes an engine</h2>
 
-  <p>Each tensor-core generation has moved the MMA further away from being "an instruction some threads execute" and closer to being <strong>an independent machine the kernel programs</strong>. Ampere's <code>mma.sync</code> is executed by a warp in lockstep, operands and results in that warp's registers. Hopper's <code>wgmma</code> widened issue to a 128-thread warpgroup, made execution asynchronous, and let operands come straight from shared memory — but accumulators still occupied the issuing threads' registers, chaining the compute warps to the output. Blackwell's fifth-generation instruction family, <code>tcgen05</code>, severs the last link: <strong>one thread</strong> issues the MMA, operands are shared-memory descriptors, and the accumulator lives in a new dedicated on-chip memory — <strong>TMEM</strong> — that no register ever holds. NVIDIA's own docs call the operation UMMA; completion is reported asynchronously through an <a href="cuda.html#barriers">mbarrier</a>, exactly like a <a href="../hardware/gpu-hardware.html#datamove">TMA copy</a>. The tensor core is now, architecturally, a peer of the copy engine: you enqueue work, you get a signal when it's done.</p>
+  <p>Each tensor-core generation has moved the MMA further away from being "an instruction some threads execute" and closer to being <strong>an independent machine the kernel programs</strong>. Ampere's <code>mma.sync</code> is executed by a warp in lockstep, operands and results in that warp's registers. Hopper's <code>wgmma</code> widened issue to a 128-thread warpgroup, made execution asynchronous, and let operands come straight from shared memory — but accumulators still occupied the issuing threads' registers, chaining the compute warps to the output. Blackwell's fifth-generation instruction family, <code>tcgen05</code>, severs the last link: <strong>one thread</strong> issues the MMA, operands are described separately, and the accumulator lives in a new dedicated on-chip memory — <strong>TMEM</strong> — rather than the issuing threads' registers. Epilogue warps later load its values into registers for postprocessing. NVIDIA's own docs call the operation UMMA; completion is reported asynchronously through an <a href="cuda.html#barriers">mbarrier</a>, exactly like a <a href="../hardware/gpu-hardware.html#datamove">TMA copy</a>. The tensor core is now, architecturally, a peer of the copy engine: you enqueue work, you get a signal when it's done.</p>
 
   <div class="figure">
     <div class="evo">
@@ -259,7 +260,7 @@
         <div class="evo-sub">Blackwell · sm_100</div>
         <div class="evo-row"><b>Issued by</b><strong>1 thread</strong>, fully async</div>
         <div class="evo-row"><b>Operands</b>A: smem <em>or TMEM</em>; B: smem</div>
-        <div class="evo-row"><b>Accumulator</b><strong>TMEM</strong> — never registers</div>
+        <div class="evo-row"><b>Accumulator</b><strong>TMEM</strong> during MMA accumulation</div>
         <div class="evo-row"><b>Completion</b>mbarrier, like a TMA copy</div>
       </div>
     </div>
@@ -360,12 +361,12 @@
       </div>
       <div>
         <strong>Read path · epilogue warps</strong>
-        <p id="tmem-read-path">T0 → tcgen05.ld → registers → epilogue → HBM. Warp 0 reads lanes 0–31, warp 1 reads 32–63, warp 2 reads 64–95, and warp 3 reads 96–127.</p>
+        <p id="tmem-read-path">T0 → tcgen05.ld / wait → FP32 registers → scale + C + bias → ReLU → BF16 → store. Warp 0 reads lanes 0–31, warp 1 reads 32–63, warp 2 reads 64–95, and warp 3 reads 96–127.</p>
       </div>
     </div>
     <p class="tmem-status" id="tmem-status" aria-live="polite">After T0's MMA completion is signaled, its epilogue can read T0 while the tensor core accumulates a different output tile in T1.</p>
     <p class="figure-caption" id="tmem-caption">
-      <strong>Allocate vertically; pipeline horizontally.</strong> Each tile spans all 128 lanes but only N columns. Each grid block groups <strong>32 lanes × 32 columns</strong>, not one cell; one physical cell is 32 bits (4 bytes), so \(128 \times 512 \times 4 = 256\) KiB. W0–W3 are warp indices <em>within a warpgroup</em>; highlighting one reader does not change the allocation or stop the other warps. Snapshots illustrate ordering, not cycle-accurate timing.
+      <strong>Allocate vertically; pipeline horizontally.</strong> Each tile spans all 128 lanes but only N columns. Each grid block groups <strong>32 lanes × 32 columns</strong>, not one cell; one physical cell is 32 bits (4 bytes), so \(128 \times 512 \times 4 = 256\) KiB. W0–W3 are warp indices <em>within a warpgroup</em>; highlighting one reader does not change the allocation or stop the other warps. Snapshots illustrate ordering, not cycle-accurate timing. The <a href="#epilogue">epilogue walkthrough</a> unpacks the read path.
     </p>
     <noscript><p>The interactive diagram needs JavaScript. For N=256, T0 uses columns 0–255 and T1 uses 256–511 across all 128 lanes. The tensor core fills one slot while four epilogue warps read the other, each reading its own 32-lane band. Together the two slots use all 256 KiB.</p></noscript>
   </div>
@@ -403,7 +404,7 @@
   <!-- ══════════════════════════════════════════ -->
   <h2 id="kernel-shape">The sm_100 kernel shape: everyone moves data</h2>
 
-  <p>Put the pieces together and the <a href="cutlass.html#mainloop">Hopper producer/consumer picture</a> reorganizes. Consumers no longer exist in the old sense — no warpgroup holds an accumulator. The CTA becomes a set of small specialized crews around two asynchronous engines (TMA and the tensor core):</p>
+  <p>Put the pieces together and the <a href="cutlass.html#mainloop">Hopper producer/consumer picture</a> reorganizes. Consumers no longer exist in the old sense — a compute warpgroup need not hold the long-lived MMA accumulator in registers. The CTA becomes a set of small specialized crews around two asynchronous engines (TMA and the tensor core), with epilogue warps loading register fragments for the final scalar/vector work:</p>
 
   <div class="figure">
     <div class="pipe">
@@ -417,13 +418,38 @@
       </div>
       <div class="pipe-row">
         <span class="pipe-label">epilogue WG<br>(4 warps)</span>
-        <div class="pipe-seg seg-idle" style="grid-column: span 3;">wait / previous tile</div><div class="pipe-seg seg-epi" style="grid-column: span 4;">tcgen05.ld → regs → gmem (prior tile, from TMEM ping-pong)</div>
+        <div class="pipe-seg seg-idle" style="grid-column: span 3;">wait / previous tile</div><div class="pipe-seg seg-epi" style="grid-column: span 4;">TMEM → registers → epilogue math → store</div>
       </div>
     </div>
     <p class="figure-caption">
-      <strong>Nobody computes in the mainloop.</strong> A load warp drives TMA; the MMA warp's single thread enqueues UMMAs against smem-stage barriers; a 4-warp epilogue warpgroup (one warp per TMEM lane-quarter) drains the <em>previous</em> tile's accumulator while the current one fills — the TMEM ping-pong from the figure above. Persistent kernels add a scheduler warp fetching the next tile assignment. Compare the Hopper timeline on the CUTLASS page: same choreography, but the "consumer" role has split into a one-thread issuer and a data-movement epilogue.
+      <strong>MMA issue is control work; epilogue warps still compute.</strong> A load warp drives TMA; the MMA warp's single thread enqueues UMMAs against smem-stage barriers; a 4-warp epilogue warpgroup (one warp per TMEM lane-quarter) transforms and stores the <em>previous</em> tile's accumulator while the current one fills — the TMEM ping-pong from the figure above. Persistent kernels add a scheduler warp fetching the next tile assignment. Compare the Hopper timeline on the CUTLASS page: same choreography, but the "consumer" role has split into a one-thread issuer and an epilogue that performs both data movement and postprocessing.
     </p>
   </div>
+
+  <h3 id="epilogue">Inside the epilogue: load, wait, transform, convert, store</h3>
+
+  <p>Use the <a href="cutlass.html#epilogue-example">CUTLASS running example</a>: scale the accumulator, add the scaled residual and per-column bias in FP32, apply ReLU, then round to BF16. The matrix product is complete in TMEM; it is <em>not</em> yet the final stored tensor. For one completed 128×N tile, the path is:</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Stage</th><th>Work and ownership</th><th>What must be ready</th></tr></thead>
+      <tbody>
+        <tr><td>1 · Wait for MMA</td><td>Epilogue consumers wait on the completion barrier associated with the tile's MMAs.</td><td>The result includes all required K slices. Issuing <code>tcgen05.commit</code> alone is not a wait.</td></tr>
+        <tr><td>2 · TMEM → registers</td><td>Each epilogue warp collectively issues its <code>tcgen05.ld</code> copies over its accessible 32-lane band, followed by <code>tcgen05.wait::ld</code> before using the returned values.</td><td>The TMEM allocation stays valid and is not overwritten while readers still need it.</td></tr>
+        <tr><td>3 · FP32 epilogue math</td><td>Thread/value coordinates identify C and <code>bias[j]</code>. Load those inputs, scale, add, and apply ReLU in registers. Skip C's data load if the implementation specializes \(\beta=0\).</td><td>Auxiliary inputs are ready; boundary predicates protect their loads. These are real scalar/vector instructions and memory accesses.</td></tr>
+        <tr><td>4 · Convert and arrange</td><td>Round the FP32 result to BF16 and map the fragment to an output-copy layout.</td><td>Preserve each value's logical \((i,j)\) and edge predicate through any redistribution.</td></tr>
+        <tr><td>5 · Store D</td><td>Issue coalesced global stores, or stage an output tile in shared memory for a TMA store.</td><td>A staged path needs its shared-memory visibility and asynchronous-store completion protocol before reusing that staging space.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p><strong>Why stage in shared memory if the result is already in registers?</strong> A TMEM load layout and a good global-store layout need not assign the same values to neighboring threads. A shared-memory exchange can change that distribution, and a TMA store takes its source from shared memory. A direct register-store path can avoid this stage when its mapping is already suitable. Neither choice changes the epilogue's mathematical expression; see the <a href="cute-dsl.html#epilogue">CuTe layout view</a>.</p>
+
+  <div class="note">
+    <strong>Two different reuse points.</strong> A TMEM slot may be overwritten once <em>all</em> consumers have finished the TMEM loads they need and the kernel signals that handoff — even if they are still computing or storing from register copies. Shared-memory output staging has its own later reuse point: an asynchronous store must no longer be reading it. A single warp finishing is not permission to recycle a slot that other warps still need.
+  </div>
+
+  <p>The tradeoff is therefore not “epilogues are free.” Bias/residual reads, conversion instructions, register pressure, and optional smem traffic can become the bottleneck next to fast tensor cores. Fusion removes the global accumulator temporary, not these costs; the <a href="cutlass.html#epilogue-traffic">fused-versus-unfused traffic model</a> counts exactly what disappears.</p>
 
   <p>Two habits of thought carry over anyway: the pipeline is still governed by mbarriers around smem stages, and occupancy is still a budget game — just with TMEM columns joining registers and shared memory as the resources being rationed (deep-pipeline, one-or-two-CTA-per-SM configurations are the norm). And note what got <em>harder</em>: with tensor-core FLOPs doubled but smem bandwidth and SFU throughput not, the surrounding scalar work — softmax being the canonical case — is now the part most likely to be your bottleneck. That asymmetry, and the FMA-pipe exponential trick it forced, is the subject of the <a href="../inference/flash-attention.html">FA-4 section</a>.</p>
 
@@ -632,7 +658,7 @@
       : `Highlighted: warp ${warpSelect.value}, lanes ${Number(warpSelect.value) * 32}–${Number(warpSelect.value) * 32 + 31}. The other three readers still run.`;
     readPath.textContent = phase.read === null
       ? 'No TMEM reads in this snapshot.'
-      : `After the MMA completion barrier: T${phase.read} → tcgen05.ld → tcgen05.wait::ld → registers → epilogue → HBM. ${readers}`;
+      : `After the MMA completion barrier: T${phase.read} → tcgen05.ld → tcgen05.wait::ld → FP32 registers → scale + C + bias → ReLU → BF16 → store D. ${readers}`;
     canvas.setAttribute('aria-label', `TMEM: 128 lanes by 512 columns. ${slots} ${phase.write === null ? 'No MMA writer.' : 'MMA writes T' + phase.write + '.'} ${phase.read === null ? 'No epilogue reader.' : 'Epilogue reads T' + phase.read + '. ' + readers}`);
     drawTmem(n, phase, allocated, warpSelect.value);
   }

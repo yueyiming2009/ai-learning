@@ -46,6 +46,7 @@
       --violet-border: #ddd6fe;
       --note-fg: #78350f;
       --fig-bg: #fcfcfd;
+      --plot-unfused: #b45309;
     }
 
     @media (prefers-color-scheme: dark) {
@@ -84,6 +85,7 @@
         --violet-border: #4c1d95;
         --note-fg: #fcd34d;
         --fig-bg: #12161c;
+        --plot-unfused: #fbbf24;
       }
     }
 
@@ -155,6 +157,16 @@
       line-height: 1.6;
       margin: 14px 4px 2px;
     }
+    .figure canvas { width: 100%; height: 300px; display: block; }
+    .figure canvas[hidden] { display: none; }
+    .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; justify-content: center; margin-top: 12px; font-size: 0.82rem; }
+    .legend-item { display: flex; align-items: center; gap: 7px; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .epilogue-controls { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
+    .epilogue-controls label { flex: 1 1 140px; font-size: 0.82rem; font-weight: 600; }
+    .epilogue-controls select { display: block; width: 100%; margin-top: 4px; padding: 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; }
+    .epilogue-controls select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .epilogue-readout { font-size: 0.88rem; font-weight: 600; }
 
     /* ── Tiling hierarchy ────────────────────── */
     .tier { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr auto 1fr; gap: 8px; align-items: stretch; }
@@ -360,11 +372,134 @@ cutlass::Status status = gemm_op(args);         <span class="cm">// launches the
   <p>Persistent scheduling is also what the <a href="cutile.html#tiled-matmul">cuTile persistent matmul</a> and Triton's persistent kernels imitate at their altitude — CUTLASS is where the pattern was industrialized.</p>
 
   <!-- ══════════════════════════════════════════ -->
-  <h2 id="epilogues">Epilogues: the free real estate at the end of a GEMM</h2>
+  <h2 id="epilogues">Epilogues: from accumulators to the stored output</h2>
 
-  <p>When the mainloop finishes, the result is sitting in registers — and anything you compute <em>now</em> is free of HBM traffic, while anything you defer to a separate kernel costs a full round-trip of the output. That makes the epilogue the single most valuable fusion site in deep learning: bias add, activation, residual add, per-channel scales, and the quantize-to-FP8-plus-amax pattern of low-precision serving all belong there.</p>
+  <p>The <strong>mainloop</strong> reduces over K to produce matrix-product accumulators. The <strong>epilogue</strong> turns those accumulators into the final output: scaling, auxiliary loads, activation, dtype conversion, layout rearrangement, and stores. Ampere/Hopper MMAs leave accumulators in registers; Blackwell's <code>tcgen05</code> leaves them in <a href="blackwell-kernels.html#tmem">TMEM</a>, which the epilogue loads into registers. Fusing this work into GEMM <strong>avoids intermediate output traffic</strong> and a separate kernel launch — not all computation or all memory traffic.</p>
 
-  <p>CUTLASS grew from fixed epilogues (<code>LinearCombination</code>: \(D = \alpha AB + \beta C\)) to the <strong>Epilogue Visitor Tree (EVT)</strong>: you describe the post-GEMM computation as a small expression tree over named nodes — accumulator in, auxiliary tensor loads, elementwise ops, reductions, stores out — and the epilogue collective compiles the tree into the kernel tail, with its own tiling and smem staging. It is a compiler for kernel tails, and it's how one GEMM instantiation serves the dozens of fusion variants an inference stack needs. Beyond epilogues, the same library machinery covers <strong>grouped GEMM</strong> (one launch, thousands of differently-shaped expert GEMMs — the <a href="../inference/moe-serving.html">MoE workhorse</a>), convolution as implicit GEMM, and 2:4 structured sparsity.</p>
+  <h3 id="epilogue-example">A running example: residual + bias + ReLU + BF16</h3>
+
+  <p>Let \(A\) be \(M \times K\), \(B\) be \(K \times N\), and \(C,D\) be \(M \times N\). Use BF16 A/B/C storage, FP32 accumulation and epilogue arithmetic, FP32 scalars \(\alpha,\beta\), and an FP32 bias vector of length N. Bias is indexed by <strong>output column j</strong> and broadcast over rows:</p>
+
+  <div style="overflow-x:auto;">
+  \[
+    \begin{aligned}
+      \mathrm{acc}_{ij} &amp;= \sum_k A_{ik} B_{kj},\\
+      z_{ij} &amp;= \alpha\,\mathrm{acc}_{ij} + \beta\,C_{ij} + b_j,\\
+      D_{ij} &amp;= \operatorname{BF16}_{\mathrm{rn}}\!\left(\operatorname{ReLU}(z_{ij})\right).
+    \end{aligned}
+  \]
+  </div>
+
+  <p>The conversion happens <em>after</em> the FP32 math and activation; “rn” means round to nearest, ties to even. \(C\) is an optional residual/source tensor, <em>not</em> the accumulator. When \(\beta=0\), a specialized epilogue can skip loading C. An API may still require a valid C descriptor or pointer; check its contract.</p>
+
+<pre><code>One 2-by-2 output fragment; alpha = 1, beta = 0.5:
+
+acc  = [[-2,  3],     C = [[ 2, 4],     bias = [0.5, -1]
+        [ 4, -1]]          [-2, 6]]
+
+z    = [[-0.5, 4],    D = [[0,   4],
+        [ 3.5, 1]]         [3.5, 1]]</code></pre>
+
+  <p>For element \((0,0)\), the epilogue reads <code>acc=-2</code>, <code>C=2</code>, and <code>bias[0]=0.5</code>: \(-2 + 0.5(2) + 0.5 = -0.5\), ReLU produces 0, and the store writes BF16 zero. These small values are exactly representable; general inputs can differ numerically if you move conversion earlier or change floating-point operation order.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Tile stage</th><th>What the kernel actually does</th></tr></thead>
+      <tbody>
+        <tr><td>Finish accumulation</td><td>Wait for the tile's asynchronous MMAs. If split-K is used, first combine the partial results needed by this epilogue.</td></tr>
+        <tr><td>Acquire accumulator fragments</td><td>Use the owning threads' registers on Hopper, or load TMEM fragments into epilogue-warps' registers on Blackwell. A fragment is a thread's assigned values, not necessarily a contiguous row.</td></tr>
+        <tr><td>Fetch C and bias</td><td>Map fragment slots to global \((i,j)\); load C only if needed and broadcast <code>bias[j]</code>. Guard edge-tile loads as well as stores.</td></tr>
+        <tr><td>Transform and convert</td><td>Evaluate the expression in FP32, apply ReLU, then convert to BF16.</td></tr>
+        <tr><td>Arrange and store</td><td>Use a valid output-copy layout. Some schedules exchange values through shared memory so neighboring threads can issue coalesced stores, or stage a tile for a TMA store.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p><strong>The math does not specify the store layout.</strong> An MMA distributes values for efficient tensor-core execution, not necessarily for efficient output writes. The epilogue collective owns this second tiling/copy problem. Direct register-to-global stores, shared-memory exchange, and shared-memory-to-global TMA are different implementations; shared-memory staging is not mandatory in every kernel. See the <a href="cute-dsl.html#epilogue">CuTe fragment-to-output pseudocode</a> and the <a href="blackwell-kernels.html#epilogue">Blackwell load/wait/compute/store path</a>.</p>
+
+  <h3 id="epilogue-traffic">What fusion saves: one intermediate write/read pair</h3>
+
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">Unfused · two kernels</div>
+      <p>GEMM → <strong>write FP32 acc to global memory</strong>.<br>Pointwise kernel → <strong>read acc</strong> → scale + C + bias + ReLU → write BF16 D.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Fused · one kernel</div>
+      <p>GEMM → keep acc <strong>on chip</strong> → scale + C + bias + ReLU → write BF16 D.<br>No global-memory accumulator temporary.</p>
+    </div>
+  </div>
+
+  <p>Hold the arithmetic and storage types fixed. The unfused baseline materializes FP32 accumulators (4 bytes/element), then one pointwise kernel performs the entire epilogue and writes BF16 D (2 bytes/element). Counting <strong>only this output path</strong>:</p>
+
+  <div style="overflow-x:auto;">
+  \[
+    B_{\mathrm{unfused}} = MN(4+4+2), \qquad
+    B_{\mathrm{fused}} = MN(2), \qquad
+    \Delta B = 8MN\ \text{bytes}.
+  \]
+  </div>
+
+  <div class="figure" id="epilogue-traffic-explorer">
+    <div class="epilogue-controls">
+      <label for="epilogue-m">Output rows M
+        <select id="epilogue-m">
+          <option value="512">512</option><option value="1024">1024</option><option value="2048">2048</option><option value="4096" selected>4096</option><option value="8192">8192</option>
+        </select>
+      </label>
+      <label for="epilogue-n">Output columns N
+        <select id="epilogue-n">
+          <option value="512">512</option><option value="1024">1024</option><option value="2048">2048</option><option value="4096" selected>4096</option><option value="8192">8192</option>
+        </select>
+      </label>
+    </div>
+    <p class="epilogue-readout" id="epilogue-traffic-readout" aria-live="polite">4096 × 4096: unfused 160 MiB; fused 32 MiB; saved 128 MiB.</p>
+    <canvas id="plot-epilogue-traffic" role="img" aria-label="Unfused output traffic is ten bytes per element; fused output traffic is two bytes per element" aria-describedby="epilogue-traffic-readout epilogue-traffic-caption">
+      At 4096 by 4096 elements, removing one FP32 temporary write and read saves 128 MiB. The final BF16 output still costs 32 MiB to write.
+    </canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-unfused);"></span> Unfused: 10 bytes/element</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--accent);"></span> Fused: 2 bytes/element</span>
+    </div>
+    <p id="epilogue-plot-note" style="font-size:0.85rem;"></p>
+    <p class="figure-caption" id="epilogue-traffic-caption"><strong>The missing traffic is the intermediate, not the final output.</strong> Dots mark the selected shape; the horizontal axis is \(MN / 2^{20}\) elements and the vertical axis is MiB. A/B traffic, C and bias loads, auxiliary outputs, and spills are excluded. Those costs do not disappear with fusion; cache behavior also means logical global-memory bytes are not a direct prediction of HBM bytes or runtime.</p>
+    <noscript><p>The controls need JavaScript; the equations above give the same calculation for any M and N.</p></noscript>
+  </div>
+
+  <p>More generally, removing one intermediate of s bytes per element saves approximately \(2MNs\) logical bytes. A 16-bit temporary saves fewer bytes but rounds earlier than this FP32 baseline, so changing the temporary type is also a numerical change. Even here, the <strong>5× reduction is only for the counted output traffic</strong>, not for whole-GEMM traffic or execution time.</p>
+
+  <h3 id="epilogue-evt">Map the expression to an Epilogue Visitor Tree</h3>
+
+  <p>CUTLASS's fixed <code>LinearCombination</code> epilogue implements \(D=\alpha AB+\beta C\). An <strong>Epilogue Visitor Tree (EVT)</strong> composes accumulator fetches, scalar/vector/tensor loads, computation, and optional reduction/store visitors into a larger expression. Conceptually, our example becomes:</p>
+
+<pre><code>store D: convert to BF16, round to nearest-even
+  ReLU (FP32)
+    add
+      add
+        multiply(alpha, accumulator)
+        multiply(beta, load C[i,j] as FP32)
+      broadcast(load bias[j] as FP32)</code></pre>
+
+  <p>This is an <strong>expression diagram, not literal C++ template syntax</strong>. The epilogue collective supplies iteration, output-copy layout, synchronization, and staging around it. Hopper's <code>Sm90EVT</code> visitors and architecture-specific fusion callbacks are not an arbitrary cross-architecture API: choose a supported fusion operation or custom visitor tree with a compatible epilogue schedule. CUTLASS's <a href="https://github.com/NVIDIA/cutlass/blob/main/examples/49_hopper_gemm_with_collective_builder/49_collective_builder.cu">collective-builder example</a> shows a concrete alpha/beta tree and its schedule constraints. <a href="cublas.html#epilogue-example">cuBLASLt</a> exposes a predefined menu instead of a programmable tree.</p>
+
+  <h3 id="epilogue-limits">Fusion has correctness boundaries and real costs</h3>
+
+  <ul>
+    <li><strong>Finish reductions before nonlinear work.</strong> Split-K partials \(-2\) and \(3\) sum to 1: <code>ReLU(-2 + 3) = 1</code>, but <code>ReLU(-2) + ReLU(3) = 3</code>. Combine partial accumulators before ReLU and final rounding; apply \(\beta C\) and bias once, not once per partial.</li>
+    <li><strong>Budget the epilogue itself.</strong> Auxiliary loads, activation instructions, live registers, shared-memory staging, and barriers can reduce occupancy or compete with the next tile's mainloop. Benchmark the complete fused kernel against the unfused baseline, especially for small K.</li>
+    <li><strong>A reduction node needs a defined scope.</strong> Quantization's <code>amax</code> or a row reduction is not simply another elementwise operation. If its domain spans threads, warps, or CTAs, the implementation needs the appropriate communication; some operations require workspace or another kernel rather than an unsupported EVT fusion.</li>
+    <li><strong>Preserve numerical and training semantics.</strong> Compute precision, rounding, NaN handling, and any auxiliary values needed for backward are part of the contract. Saving a GELU auxiliary tensor still costs a store; fusing does not make it free.</li>
+  </ul>
+
+  <div class="xref">
+    <strong>Read each layer once:</strong> this section owns the math and traffic model;
+    <a href="cublas.html#epilogue-example">cuBLASLt</a> shows a supported library configuration,
+    <a href="cute-dsl.html#epilogue">CuTe DSL</a> explains fragment coordinates and stores,
+    and <a href="blackwell-kernels.html#epilogue">Blackwell</a> explains TMEM lifetimes.
+    NVIDIA's <a href="https://github.com/NVIDIA/cutlass/blob/main/media/docs/cpp/efficient_gemm.md#epilogue">efficient GEMM guide</a> describes the classic shared-memory exchange epilogue.
+  </div>
+
+  <p>Beyond epilogues, CUTLASS also covers <strong>grouped GEMM</strong> (one launch, many differently-shaped expert GEMMs — the <a href="../inference/moe-serving.html">MoE workhorse</a>), convolution as implicit GEMM, and 2:4 structured sparsity. These are separate capabilities, not postprocessing steps in the expression tree.</p>
 
   <!-- ══════════════════════════════════════════ -->
   <h2 id="practice">In practice: the profiler, the build times, and when to reach for it</h2>
@@ -405,6 +540,112 @@ cutlass::Status status = gemm_op(args);         <span class="cm">// launches the
 </div>
 
 <footer>Personal ML notes · <a href="https://github.com/yueyiming2009/ai-learning" style="color:inherit;text-decoration:underline;">source on GitHub</a></footer>
+
+<script>
+(() => {
+  const canvas = document.getElementById('plot-epilogue-traffic');
+  const rows = document.getElementById('epilogue-m');
+  const columns = document.getElementById('epilogue-n');
+  const readout = document.getElementById('epilogue-traffic-readout');
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    canvas.hidden = true;
+    document.getElementById('epilogue-plot-note').textContent = 'Canvas is unavailable in this browser; the controls still update the traffic calculation.';
+  }
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+  function drawPlot(canvas, cfg) {
+    if (!ctx) return;
+    const width = canvas.clientWidth, height = canvas.clientHeight;
+    if (!width || !height) return;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    const left = 42, right = 14, top = 24, bottom = 46;
+    const pw = width - left - right, ph = height - top - bottom;
+    const X = value => left + (value - cfg.xMin) / (cfg.xMax - cfg.xMin) * pw;
+    const Y = value => top + (cfg.yMax - value) / (cfg.yMax - cfg.yMin) * ph;
+
+    ctx.font = '11px ui-monospace, monospace';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--border');
+    ctx.fillStyle = cssVar('--muted');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(tick => {
+      ctx.beginPath(); ctx.moveTo(X(tick), top); ctx.lineTo(X(tick), top + ph); ctx.stroke();
+      ctx.fillText(String(tick), X(tick), top + ph + 7);
+    });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(tick => {
+      ctx.beginPath(); ctx.moveTo(left, Y(tick)); ctx.lineTo(left + pw, Y(tick)); ctx.stroke();
+      ctx.fillText(String(tick), left - 7, Y(tick));
+    });
+    ctx.strokeStyle = cssVar('--muted');
+    ctx.lineWidth = 1.25;
+    ctx.beginPath();
+    ctx.moveTo(left, top); ctx.lineTo(left, Y(0)); ctx.lineTo(left + pw, Y(0)); ctx.stroke();
+    ctx.textAlign = 'left';
+    ctx.fillText('Output-path traffic (MiB)', 0, 10, width);
+    ctx.textAlign = 'center';
+    ctx.fillText('Output elements / 2^20', left + pw / 2, height - 7, pw);
+
+    ctx.save();
+    ctx.beginPath(); ctx.rect(left, top, pw, ph); ctx.clip();
+    ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = cssVar('--muted');
+    ctx.beginPath(); ctx.moveTo(X(cfg.markerX), top); ctx.lineTo(X(cfg.markerX), top + ph); ctx.stroke();
+    ctx.setLineDash([]);
+    cfg.series.forEach(series => {
+      ctx.beginPath();
+      ctx.strokeStyle = cssVar(series.color);
+      ctx.lineWidth = 2.5;
+      for (let i = 0; i <= 260; i++) {
+        const x = cfg.xMin + (cfg.xMax - cfg.xMin) * i / 260;
+        if (i === 0) ctx.moveTo(X(x), Y(series.fn(x)));
+        else ctx.lineTo(X(x), Y(series.fn(x)));
+      }
+      ctx.stroke();
+    });
+    ctx.restore();
+    cfg.series.forEach(series => {
+      ctx.beginPath();
+      ctx.fillStyle = cssVar(series.color);
+      ctx.arc(X(cfg.markerX), Y(series.fn(cfg.markerX)), 4, 0, 2 * Math.PI);
+      ctx.fill();
+    });
+  }
+
+  function render() {
+    const m = Number(rows.value), n = Number(columns.value);
+    const elements = m * n / (2 ** 20);
+    const format = value => value.toLocaleString('en-US', { maximumFractionDigits: 2 });
+    readout.textContent = `${m} × ${n}: unfused ${format(10 * elements)} MiB; fused ${format(2 * elements)} MiB; saved ${format(8 * elements)} MiB.`;
+    canvas.setAttribute('aria-label', `Output traffic comparison. ${readout.textContent}`);
+    drawPlot(canvas, {
+      xMin: 0, xMax: 64, yMin: 0, yMax: 680,
+      xTicks: [0, 16, 32, 48, 64], yTicks: [0, 160, 320, 480, 640],
+      markerX: elements,
+      series: [
+        { fn: x => 10 * x, color: '--plot-unfused' },
+        { fn: x => 2 * x, color: '--accent' }
+      ]
+    });
+  }
+  rows.addEventListener('change', render);
+  columns.addEventListener('change', render);
+  render();
+  let frame;
+  window.addEventListener('resize', () => {
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(render);
+  });
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
+})();
+</script>
 
 </body>
 </html>

@@ -226,6 +226,7 @@
     <a href="#dsl">The DSL</a>
     <a href="#worked-kernel">Worked kernel</a>
     <a href="#gemm">GEMM</a>
+    <a href="#epilogue">Epilogue</a>
     <a href="#vs-triton">vs Triton</a>
   </div>
   <a class="nav-back" href="../index.html">Home</a>
@@ -572,10 +573,10 @@ tiler_mn, tv_layout = cute.make_layout_tv(thr_layout, val_layout) <span class="c
 
   <p>This table is the practical argument for thread-level control: each generation's flagship instruction imposes <em>stranger</em> layouts (wgmma's smem operand descriptors, TMEM accumulators), and the layout algebra is the tool that keeps them composable. The canonical GEMM skeleton, condensed from the CUTLASS examples (<code>sgemm.py</code> shows the full Ampere version):</p>
 
-<pre><code><span class="cm"># one CTA owns tile (bidx, bidy) of C and marches over K — shapes in comments</span>
+<pre><code><span class="cm"># one CTA owns tile (bidx, bidy) of D and marches over K — shapes in comments</span>
 gA = cute.local_tile(mA, (bM, bK), (bidx, <span class="kw">None</span>))    <span class="cm"># (bM, bK, K/bK)</span>
 gB = cute.local_tile(mB, (bN, bK), (bidy, <span class="kw">None</span>))    <span class="cm"># (bN, bK, K/bK)</span>
-gC = cute.local_tile(mC, (bM, bN), (bidx, bidy))    <span class="cm"># (bM, bN)</span>
+gD = cute.local_tile(mD, (bM, bN), (bidx, bidy))    <span class="cm"># (bM, bN)</span>
 
 <span class="cm"># stage tiles through shared memory with a gmem→smem tiled copy (cp.async / TMA atom)</span>
 thr_g2s = tiled_copy_g2s.get_slice(tidx)
@@ -586,7 +587,7 @@ tAsA = thr_g2s.partition_D(sA)                      <span class="cm"># dest:   i
 thr_mma = tiled_mma.get_slice(tidx)
 tCsA = thr_mma.partition_A(sA)
 tCrA = thr_mma.make_fragment_A(tCsA)                <span class="cm"># register operands, MMA-shaped</span>
-acc  = thr_mma.make_fragment_C(thr_mma.partition_C(gC))
+acc  = thr_mma.make_fragment_C(thr_mma.partition_C(gD))
 
 <span class="kw">for</span> k <span class="kw">in</span> cutlass.range(num_k_tiles):                <span class="cm"># the mainloop</span>
     cute.copy(atom_g2s, tAgA[<span class="kw">None</span>, k], tAsA[<span class="kw">None</span>, k % STAGES])  <span class="cm"># prefetch next stage</span>
@@ -596,6 +597,50 @@ acc  = thr_mma.make_fragment_C(thr_mma.partition_C(gC))
 </code></pre>
 
   <p>Every arrow in the dataflow — gmem→smem, smem→reg, reg→tensor core — is the same three-step cascade as the elementwise kernel with a different atom plugged in, and multi-stage pipelining is just a <code>STAGES</code>-deep smem layout plus an async-copy schedule. FlashAttention in CuTe DSL is this skeleton with two MMAs, an online-softmax rescale between them, and the <a href="../inference/flash-attention.html">tiling logic</a> expressed as — of course — layouts.</p>
+
+  <h3 id="epilogue">Finish the kernel: accumulator fragments are not yet output stores</h3>
+
+  <p>The register-fragment skeleton above is Ampere-style; Hopper adds asynchronous MMA completion, and Blackwell needs an explicit <a href="blackwell-kernels.html#epilogue">TMEM-to-register epilogue load</a>. In every case, a fragment slot must be associated with its <strong>logical output coordinate</strong> before reading a residual or bias and writing the result. The MMA API calls this an accumulator “C” fragment even when the destination tensor is named D; do not confuse it with the optional residual tensor C below.</p>
+
+  <p>For the <a href="cutlass.html#epilogue-example">shared running example</a>, keep scaling, residual addition, and per-column bias addition in FP32, then apply ReLU and round to BF16. The following is <strong>algorithmic pseudocode, not executable CuTe DSL</strong>: helper names describe layout and synchronization duties rather than inventing a portable copy atom or barrier API.</p>
+
+<pre><code>coords = output_coordinates_in_accumulator_layout(tile_origin)
+reg_acc = acquire_completed_accumulator_fragment()
+out = zeroed_register_fragment_like(reg_acc)
+valid = predicate_fragment_like(reg_acc)
+
+for v in fragment_slots(reg_acc):
+    i, j = coords[v]
+    valid[v] = (i &lt; M) and (j &lt; N)
+    if valid[v]:
+        value = alpha * fp32(reg_acc[v])
+        if beta != 0:
+            value += beta * fp32(load(C, i, j))
+        value += fp32(load(bias, j))
+        out[v] = bf16_round_nearest_even(relu(value))
+
+store_view = redistribute_for_output_copy(out, coords, valid)
+predicated_store(D, store_view)</code></pre>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Pseudocode duty</th><th>What the CuTe implementation must supply</th></tr></thead>
+      <tbody>
+        <tr><td>Coordinate partition</td><td>Tile an identity-coordinate tensor and partition it consistently with the accumulator ownership, as with <code>thr_mma.partition_C</code> for a register MMA. A fragment's linear slot number is not generally a contiguous output column. A Blackwell load must use the coordinates matching its TMEM copy layout.</td></tr>
+        <tr><td>Acquire the fragment</td><td>Finish the required MMA waits; on Blackwell, finish the TMEM loads before evaluating register values. The single MMA-issuing thread is not the owner of every output value.</td></tr>
+        <tr><td>Load C and bias</td><td>Use the same logical coordinates and bounds predicates. Bias is a vector indexed by j, broadcast along M; it is not a full M×N allocation. Convert auxiliary values to the epilogue compute type.</td></tr>
+        <tr><td>Redistribute and store</td><td>Select a tiled copy and a compatible source/destination layout. Carry coordinates and validity with the values; merely reinterpreting a register array under another layout does not move values between threads.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p><strong>Redistribution may be a no-op, or it may be a real exchange.</strong> A compatible direct-store mapping can use register values immediately. Another schedule writes shared memory, synchronizes the participating threads, and reads it under a store-friendly mapping; a TMA epilogue instead stages shared memory for the bulk store. Follow that schedule's visibility and buffer-lifetime protocol. All participating threads must reach required collective operations even when some of their output elements are masked off.</p>
+
+  <div class="note">
+    <strong>Vectorization has a boundary condition.</strong> A vector store needs suitable address alignment and every element it touches to be valid. Testing only the first element of a vector can overrun the last tile. Use a legal predicated copy atom or a narrower tail path; never load out-of-range C/bias values and hope a masked final store makes it safe.
+  </div>
+
+  <p>This layer explains <em>where each value goes</em>; the <a href="cutlass.html#epilogue-evt">CUTLASS EVT view</a> explains <em>which expression to compute</em>, and <a href="cublas.html#epilogue-example">cuBLASLt</a> offers a supported fixed configuration without exposing those layouts. Rounding, split-K reduction ordering, and supported reduction scopes still follow the <a href="cutlass.html#epilogue-limits">same correctness rules</a>.</p>
 
   <!-- ══════════════════════════════════════════ -->
   <h2 id="vs-triton">CuTe DSL vs. Triton: choosing your altitude</h2>

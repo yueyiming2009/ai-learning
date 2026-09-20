@@ -294,33 +294,120 @@ cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
   <!-- ══════════════════════════════════════════ -->
   <h2 id="cublaslt">cublasLt: the API deep learning actually calls</h2>
 
-  <p>By 2019 the classic API was drowning: dtype combinations × layouts × tensor-core generations × the epilogue fusions every network wants. <strong>cublasLt</strong> (CUDA 10.1) restructured matmul as a <em>configured object</em> rather than a function name — and it is what PyTorch calls for your Linear layers:</p>
-
-<pre><code><span class="cm">// 1 · describe the operation: compute type + epilogue</span>
-cublasLtMatmulDesc_t op;
-cublasLtMatmulDescCreate(&amp;op, CUBLAS_COMPUTE_32F, CUDA_R_32F);
-cublasLtEpilogue_t epi = CUBLASLT_EPILOGUE_BIAS;          <span class="cm">// or RELU_BIAS, GELU_BIAS…</span>
-cublasLtMatmulDescSetAttribute(op, CUBLASLT_MATMUL_DESC_EPILOGUE, &amp;epi, <span class="kw">sizeof</span>(epi));
-cublasLtMatmulDescSetAttribute(op, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &amp;bias, <span class="kw">sizeof</span>(bias));
-
-<span class="cm">// 2 · describe the matrices: dtype, shape, ld — row-major is now a legal order</span>
-cublasLtMatrixLayout_t La, Lb, Lc;
-cublasLtMatrixLayoutCreate(&amp;La, CUDA_R_16F, m, k, lda);   <span class="cm">// …order attribute settable</span>
-
-<span class="cm">// 3 · ask the heuristic for kernels, then run the best one</span>
-cublasLtMatmulHeuristicResult_t algos[<span class="num">8</span>]; <span class="kw">int</span> found;
-cublasLtMatmulAlgoGetHeuristic(lt, op, La, Lb, Lc, Lc, pref, <span class="num">8</span>, algos, &amp;found);
-cublasLtMatmul(lt, op, &amp;alpha, A, La, B, Lb, &amp;beta, C, Lc, D, Lc,
-               &amp;algos[<span class="num">0</span>].algo, workspace, ws_size, stream);
-</code></pre>
+  <p>By 2019 the classic API was drowning: dtype combinations × layouts × tensor-core generations × the epilogue fusions every network wants. <strong>cublasLt</strong> (CUDA 10.1) restructured matmul as a <em>configured object</em> rather than a function name. It is a common backend for framework linear layers; the exact dispatch depends on shapes, dtypes, framework version, and enabled fusions. Describe the operation and matrices, query candidate algorithms, then launch one — the checked configuration below makes that sequence concrete.</p>
 
   <p>Three ideas matter more than the boilerplate:</p>
 
   <ul>
-    <li><strong>Epilogues as attributes.</strong> Bias add, ReLU/GELU (with auxiliary output for the backward pass), and scaling ride inside the GEMM's register tail instead of costing an extra kernel and an HBM round-trip of the output — the sealed-box version of <a href="cutlass.html#epilogues">CUTLASS's EVT</a>, limited to the menu NVIDIA ships. PyTorch's <code>addmm</code> (Linear with bias) maps straight onto <code>CUBLASLT_EPILOGUE_BIAS</code>.</li>
+    <li><strong>Epilogues as attributes.</strong> Bias, ReLU/GELU, and scaling can be fused before the final output store, avoiding a separate kernel and intermediate output traffic — the sealed-box version of <a href="cutlass.html#epilogues">CUTLASS's EVT</a>, limited to the supported menu. Accumulator storage and the store path depend on architecture; Blackwell may read TMEM into registers first. Bias/residual loads, activation instructions, and any backward auxiliary output still cost work and traffic.</li>
     <li><strong>The heuristic is a query, not an oracle.</strong> <code>GetHeuristic</code> returns <em>candidates</em>; serious users (TensorRT, inference stacks) benchmark the top few on their real shapes and cache the winner. That's autotuning re-entering through the API's front door.</li>
     <li><strong>FP8 lives here.</strong> Hopper/Blackwell FP8 GEMM is a cublasLt exclusive: E4M3/E5M2 inputs with per-tensor scale pointers, higher-precision accumulate, an <code>amax</code> output for computing the next iteration's scales — the primitive under <a href="../inference/inference-quantization.html">FP8 serving</a> and FP8 training recipes. On Blackwell the same machinery extends to <a href="blackwell-kernels.html#block-scaled">block-scaled NVFP4/MX matmul</a>: 4-bit storage with an FP8-type scale factor per 16/32-element block, applied inside the MMA. Workspace (a few MB) stops being optional if you want the fast algorithms.</li>
     </ul>
+
+  <h3 id="epilogue-example">A concrete cuBLASLt epilogue: BF16 bias + ReLU</h3>
+
+  <p>Choose a documented configuration: one non-batched matmul, non-transposed A/B, <strong>column-major BF16 A/B/C/D</strong>, FP32 compute and host scalars, and <code>CUBLASLT_EPILOGUE_RELU_BIAS</code>. The library adds bias <em>before</em> ReLU. Its bias vector has <strong>M elements, one per row of D</strong>, broadcast across all N columns:</p>
+
+  <div style="overflow-x:auto;">
+  \[
+    D_{ij}=\operatorname{BF16}\!\left(\operatorname{ReLU}\!\left(
+      \alpha\sum_k A_{ik}B_{kj}+\beta C_{ij}+b_i\right)\right).
+  \]
+  </div>
+
+  <div class="note">
+    <strong>Bias-axis trap:</strong> this is \(b_i\), not the \(b_j\) in the <a href="cutlass.html#epilogue-example">CUTLASS running example</a>. For a row-major linear layer \(Y=XW\) with a bias per output feature, a common solution is to present \(Y^\mathsf{T}=W^\mathsf{T}X^\mathsf{T}\) using column-major views and swapped operands, with C transformed consistently. Then features are rows from the library's perspective. Do not just change the memory-order flag and assume the fusion remains supported.
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Object</th><th>Logical shape</th><th>Storage for this example</th></tr></thead>
+      <tbody>
+        <tr><td>A</td><td>128 × 64</td><td>BF16, column-major, <code>lda=128</code></td></tr>
+        <tr><td>B</td><td>64 × 64</td><td>BF16, column-major, <code>ldb=64</code></td></tr>
+        <tr><td>C / D</td><td>128 × 64 each</td><td>Separate BF16 allocations, column-major, <code>ldc=ldd=128</code></td></tr>
+        <tr><td>Bias</td><td>128 elements</td><td>Packed device vector, stride 1; BF16 here because its default type follows D</td></tr>
+        <tr><td>Scalars / workspace</td><td>\(\alpha=1,\ \beta=0.5\)</td><td>Host FP32 scalars; 4 MiB device workspace, 256-byte aligned</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p><strong>Host-side configuration excerpt, not a standalone program.</strong> Assume <code>lt</code> and <code>stream</code> exist, A/B/C/D/bias and workspace have been allocated with suitable alignment, and inputs are ready in the stream's dependency order. Include <code>cublasLt.h</code>, <code>cuda_runtime.h</code>, <code>cstdio</code>, and <code>cstdlib</code>. <code>LT_CHECK</code> and <code>CUDA_CHECK</code> denote checked wrappers that report the failing call/status and terminate on error; production code should additionally use scoped ownership for recoverable error paths.</p>
+
+<pre><code>const int m = 128, n = 64, k = 64;
+const size_t ws_size = 4 * 1024 * 1024;
+const float alpha = 1.0f, beta = 0.5f;
+
+cublasLtMatmulDesc_t op;
+LT_CHECK(cublasLtMatmulDescCreate(&amp;op, CUBLAS_COMPUTE_32F, CUDA_R_32F));
+cublasOperation_t no_transpose = CUBLAS_OP_N;
+LT_CHECK(cublasLtMatmulDescSetAttribute(
+    op, CUBLASLT_MATMUL_DESC_TRANSA, &amp;no_transpose, sizeof(no_transpose)));
+LT_CHECK(cublasLtMatmulDescSetAttribute(
+    op, CUBLASLT_MATMUL_DESC_TRANSB, &amp;no_transpose, sizeof(no_transpose)));
+cublasLtPointerMode_t host_scalars = CUBLASLT_POINTER_MODE_HOST;
+LT_CHECK(cublasLtMatmulDescSetAttribute(
+    op, CUBLASLT_MATMUL_DESC_POINTER_MODE, &amp;host_scalars, sizeof(host_scalars)));
+cublasLtEpilogue_t epi = CUBLASLT_EPILOGUE_RELU_BIAS;
+LT_CHECK(cublasLtMatmulDescSetAttribute(
+    op, CUBLASLT_MATMUL_DESC_EPILOGUE, &amp;epi, sizeof(epi)));
+LT_CHECK(cublasLtMatmulDescSetAttribute(
+    op, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &amp;bias, sizeof(bias)));
+
+cublasLtMatrixLayout_t La, Lb, Lc, Ld;
+LT_CHECK(cublasLtMatrixLayoutCreate(&amp;La, CUDA_R_16BF, m, k, m));
+LT_CHECK(cublasLtMatrixLayoutCreate(&amp;Lb, CUDA_R_16BF, k, n, k));
+LT_CHECK(cublasLtMatrixLayoutCreate(&amp;Lc, CUDA_R_16BF, m, n, m));
+LT_CHECK(cublasLtMatrixLayoutCreate(&amp;Ld, CUDA_R_16BF, m, n, m));
+
+cublasLtMatmulPreference_t pref;
+LT_CHECK(cublasLtMatmulPreferenceCreate(&amp;pref));
+LT_CHECK(cublasLtMatmulPreferenceSetAttribute(
+    pref, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &amp;ws_size, sizeof(ws_size)));
+cublasLtMatmulHeuristicResult_t candidates[8] = {};
+int found = 0, chosen = -1;
+LT_CHECK(cublasLtMatmulAlgoGetHeuristic(
+    lt, op, La, Lb, Lc, Ld, pref, 8, candidates, &amp;found));
+for (int i = 0; i &lt; found; ++i) {
+    if (candidates[i].state == CUBLAS_STATUS_SUCCESS) {
+        chosen = i;
+        break;
+    }
+}
+if (chosen &lt; 0) {
+    std::fprintf(stderr, "No supported ReLU+bias algorithm for this configuration\n");
+    std::exit(EXIT_FAILURE);
+}
+LT_CHECK(cublasLtMatmul(
+    lt, op, &amp;alpha, A, La, B, Lb, &amp;beta, C, Lc, D, Ld,
+    &amp;candidates[chosen].algo, workspace, ws_size, stream));
+CUDA_CHECK(cudaStreamSynchronize(stream));
+
+LT_CHECK(cublasLtMatmulPreferenceDestroy(pref));
+LT_CHECK(cublasLtMatrixLayoutDestroy(La));
+LT_CHECK(cublasLtMatrixLayoutDestroy(Lb));
+LT_CHECK(cublasLtMatrixLayoutDestroy(Lc));
+LT_CHECK(cublasLtMatrixLayoutDestroy(Ld));
+LT_CHECK(cublasLtMatmulDescDestroy(op));</code></pre>
+
+  <p>Matrix layouts default to column-major, so element \((i,j)\) of C/D is at <code>i + j*m</code>; the bias is <code>bias[i]</code>. Descriptors and scalars do not initialize the data buffers. For a simple sanity case, fill A with 1, B with 0.5, C with 2, and bias with −40 for rows 0–63 and 1 for rows 64–127. The product is 32 everywhere, so every column of D should contain <strong>64 zeros followed by 64 values of 34</strong>. This exposes a mistaken bias axis instead of hiding it behind a constant bias.</p>
+
+  <p>The synchronization is deliberate in this teaching excerpt: it surfaces asynchronous execution errors before inspecting D or releasing buffers. A production stream pipeline normally uses its own event/dependency and resource-lifetime policy instead of synchronizing after every matmul. The caller still owns the handle, stream, data buffers, and workspace. No returned candidate, a failed candidate state, or a failed launch is an error to handle, not permission to index <code>candidates[0]</code> blindly.</p>
+
+  <ul>
+    <li><strong>Support is a combination, not a checkbox.</strong> ReLU-plus-bias modes are not supported with row-major D in the documented cuBLASLt matmul support table. Dtype, transpose, alignment, batching mode, workspace, toolkit, and GPU all affect available algorithms. Descriptor creation alone does not establish launch support.</li>
+    <li><strong>Bias type is not automatically FP32.</strong> This BF16-output example leaves the bias-type attribute at its default, making bias BF16 even though compute/scalars are FP32. Consult the supported datatype table before overriding <code style="overflow-wrap:anywhere;">CUBLASLT_MATMUL_DESC_BIAS_DATA_TYPE</code>.</li>
+    <li><strong>Zero beta changes the work, not the API contract.</strong> Setting beta to zero can avoid reading old C values, but do not drop C's descriptor or pass a null pointer without checking the API's validity rules. The example deliberately uses a valid C allocation.</li>
+    <li><strong>Stock menu versus custom fusion.</strong> The enum selects supported expressions, not an arbitrary program. For a different bias axis, custom activation, reduction, or output layout, first see whether a supported view/configuration expresses it; otherwise use <a href="cutlass.html#epilogue-evt">CUTLASS fusion</a> or a custom kernel.</li>
+  </ul>
+
+  <div class="xref">
+    <strong>Keep the layers separate:</strong> the <a href="cutlass.html#epilogue-traffic">traffic model</a> explains why fusion helps;
+    <a href="cute-dsl.html#epilogue">CuTe</a> and <a href="blackwell-kernels.html#epilogue">Blackwell</a> explain implementation details hidden by this API.
+    Primary references: NVIDIA's <a href="https://docs.nvidia.com/cuda/cublas/index.html#cublasltepilogue-t">epilogue enum</a>,
+    <a href="https://docs.nvidia.com/cuda/cublas/index.html#cublasltmatmul">matmul support table</a>,
+    and <a href="https://docs.nvidia.com/cuda/cublas/index.html#cublasltmatmulalgogetheuristic">heuristic-result contract</a>.
+  </div>
 
   <!-- ══════════════════════════════════════════ -->
   <h2 id="inside">Inside the box: a dispatcher over a kernel zoo</h2>
