@@ -46,6 +46,7 @@
       --rose-border: #fecdd3;
       --note-fg: #78350f;
       --fig-bg: #fcfcfd;
+      --tmem-read: #0d9488;
     }
 
     @media (prefers-color-scheme: dark) {
@@ -84,6 +85,7 @@
         --rose-border: #881337;
         --note-fg: #fcd34d;
         --fig-bg: #12161c;
+        --tmem-read: #2dd4bf;
       }
     }
 
@@ -167,12 +169,23 @@
     .evo-hopper { border-top: 3px solid #16a34a; }
     .evo-bw     { border-top: 3px solid var(--accent); }
 
-    /* ── TMEM budget bar ─────────────────────── */
-    .tmem-bar { display: flex; height: 44px; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
-    .tmem-seg { display: flex; align-items: center; justify-content: center; font-family: ui-monospace, Menlo, monospace; font-size: 0.7rem; font-weight: 600; text-align: center; line-height: 1.3; }
-    .tmem-a { background: var(--accent); color: #fff; opacity: 0.85; }
-    .tmem-b { background: var(--accent-light); color: var(--accent); border-left: 2px dashed var(--border); }
-    .tmem-scale { display: flex; justify-content: space-between; font-family: ui-monospace, Menlo, monospace; font-size: 0.68rem; color: var(--muted); margin-top: 5px; }
+    /* ── TMEM layout explorer ────────────────── */
+    .figure canvas { width: 100%; height: 330px; display: block; }
+    .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; justify-content: center; margin-top: 12px; font-size: 0.82rem; color: var(--text); }
+    .legend-item { display: flex; align-items: center; gap: 7px; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, var(--muted) 0 5px, transparent 5px 9px); }
+    .tmem-controls { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
+    .tmem-controls label { flex: 1 1 160px; font-size: 0.8rem; font-weight: 600; }
+    .tmem-controls select { display: block; width: 100%; margin-top: 4px; padding: 7px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; }
+    .tmem-controls select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .tmem-controls select:disabled { opacity: 0.55; }
+    .tmem-budget { font-size: 0.85rem; font-weight: 600; }
+    .tmem-flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin-top: 14px; }
+    .tmem-flow > div { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 0.82rem; }
+    .tmem-flow p { margin: 4px 0 0; }
+    .tmem-flow strong { display: block; }
+    .tmem-status { font-size: 0.88rem; margin-top: 14px; }
 
     /* ── Pipeline timeline ───────────────────── */
     .pipe { display: flex; flex-direction: column; gap: 7px; }
@@ -251,16 +264,47 @@
       </div>
     </div>
     <p class="figure-caption">
-      <strong>Three generations, one direction: decouple the MMA from threads.</strong> The issue width collapses (32 → 128 → 1 threads) while the instruction grows (16×8×16 → 64×N×16 → 128×256×16 per CTA), and the accumulator migrates out of the register file entirely. Every structural novelty of Blackwell kernels — the MMA warp, TMEM epilogues, CTA pairs — follows from this last panel.
+      <strong>Three generations, one direction: decouple the MMA from threads.</strong> The issue width collapses (32 → 128 → 1 threads) while the <em>matrix tile covered by one instruction</em> grows (16×8×16 → 64×N×16 → up to 128×256×16 in Blackwell's single-CTA mode, for FP16/BF16), and the accumulator migrates out of the register file entirely. The worked example below separates tile size from thread count.
     </p>
   </div>
+
+  <h3 id="mma-shapes">What “the instruction grows” means: the same tile in 256 → 2 → 1 MMAs</h3>
+
+  <p>An MMA (matrix multiply-accumulate) with shape <strong>\(M \times N \times K\)</strong> performs:</p>
+
+  \[
+    D_{M \times N} = A_{M \times K}\,B_{K \times N} + C_{M \times N}.
+  \]
+
+  <p><strong>\(M \times N\) is the output tile; \(K\) is the reduction depth per instruction.</strong> A \(16 \times 8 \times 16\) MMA multiplies a \(16 \times 16\) A tile by a \(16 \times 8\) B tile, updating 128 output values with a length-16 dot product each. “Grows” refers to this matrix work, not the instruction's encoded size or the number of issuing threads. In the FP16/BF16 comparison above, the output footprint grows while the reduction depth stays 16.</p>
+
+  <p><strong>Hold the work fixed:</strong> update one \(128 \times 256\) output tile using one \(K=16\) slice. Choose Hopper's \(N=256\) variant and Blackwell's large single-CTA shape:</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Instruction</th><th>M × N × K per MMA</th><th>Logical MMAs for this slice</th><th>Issue threads per MMA</th></tr></thead>
+      <tbody>
+        <tr><td>Ampere <code>mma.sync</code></td><td>16 × 8 × 16</td><td>\((128/16)(256/8) = 256\)</td><td>32 (one warp)</td></tr>
+        <tr><td>Hopper <code>wgmma</code></td><td>64 × 256 × 16</td><td>\((128/64)(256/256) = 2\)</td><td>128 (four warps)</td></tr>
+        <tr><td>Blackwell <code>tcgen05.mma</code></td><td>128 × 256 × 16</td><td>\((128/128)(256/256) = 1\)</td><td>1</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Each row updates the same <strong>32,768 output values</strong>. The counts are logical MMA operations across the output tile, not per-thread counts or a prescription for assigning warps. Hopper's \(N\) is a supported instruction-selected width, not an arbitrary runtime dimension; Blackwell also supports smaller shapes. Its single issuing thread <em>submits the operation</em> to the tensor-core hardware, which computes and accumulates asynchronously in TMEM — the thread does not calculate all those values itself.</p>
+
+  <div class="note">
+    <strong>256 → 2 → 1 instructions is not a 256× speedup.</strong> A larger instruction can occupy the tensor-core hardware over multiple cycles; throughput, data movement, and scheduling still determine runtime. These counts exclude operand loads, synchronization, and the epilogue.
+  </div>
+
+  <p><strong>One slice is not the full GEMM.</strong> For a full reduction dimension of 1024, these shapes need \(1024/16 = 64\) successive accumulation steps. And “per CTA” here means <code>cta_group::1</code>, not one instruction for the CTA's entire kernel: the <a href="#cta-pairs">2-SM / CTA-pair mode</a> instead lets two CTAs cooperate on an effective \(256 \times N\) output tile.</p>
 
   <p>Why force this on kernel authors? Because Hopper's design had hit two walls. <strong>Registers:</strong> a warpgroup holding a large fp32 accumulator spends most of its register budget on it, capping how many roles (softmax, correction, epilogue) a kernel can staff — the constraint that shaped FA-3. <strong>Issue overhead:</strong> warp-wide issue burns instruction bandwidth that single-thread issue doesn't. Moving accumulation into dedicated storage with its own high-bandwidth datapath frees both — at the price of a new memory space you must explicitly manage.</p>
 
   <!-- ══════════════════════════════════════════ -->
   <h2 id="tmem">TMEM: the accumulator gets its own address space</h2>
 
-  <p><strong>Tensor Memory</strong> is 256 KB per SM, physically organized as a 2-D array of <strong>128 lanes × 512 columns</strong> of 32-bit cells (a TMEM address encodes lane in its upper half, column in its lower). It is not a cache and not shared memory — it is scratchpad wired into the tensor core's datapath, and it comes with unusually explicit rules:</p>
+  <p><strong>Tensor Memory</strong> is 256 KiB per SM, physically organized as a 2-D array of <strong>128 lanes × 512 columns</strong> of 32-bit cells (a TMEM address encodes lane in its upper half, column in its lower). It is not a cache and not shared memory — it is scratchpad wired into the tensor core's datapath, and it comes with unusually explicit rules:</p>
 
   <ul>
     <li><strong>You allocate it yourself</strong>, at runtime, with <code>tcgen05.alloc</code> — in units of whole columns, a power of two, minimum 32 columns — and free it with <code>tcgen05.dealloc</code>. Forgetting to free is a real bug class: the SM cannot schedule new work needing TMEM until it's released. CUTLASS wraps this in a <code>TmemAllocator</code>; the CuTe DSL exposes the same object.</li>
@@ -268,16 +312,65 @@
     <li><strong>It is the new occupancy axis.</strong> A 128×256 fp32 accumulator occupies 256 columns — <em>half of TMEM</em>. Sizing accumulators, ping-pong buffers, and scale-factor storage against the 512-column budget is to Blackwell what register/smem budgeting is on Hopper.</li>
   </ul>
 
-  <div class="figure">
-    <div class="tmem-bar">
-      <div class="tmem-seg tmem-a" style="flex:256;">acc tile 0 — 128×256 fp32 · 256 cols</div>
-      <div class="tmem-seg tmem-b" style="flex:256;">acc tile 1 (ping-pong) · 256 cols</div>
+  <div class="figure" id="tmem-explorer">
+    <h3 style="margin-top:0;">Explore the 2-D layout: two output buffers, one SM</h3>
+    <p style="font-size:0.88rem;">This single-CTA example reserves one allocation starting at column 0 and divides it into two <strong>128×N FP32 accumulator slots</strong>, T0 and T1. These are output buffers, not the input matrices A/B or two CTAs. A TMEM <em>lane</em> is a storage row, not a CUDA thread lane.</p>
+    <div class="tmem-controls">
+      <label for="tmem-width">Columns per tile (N)
+        <select id="tmem-width">
+          <option value="64">64 — 32 KiB per tile</option>
+          <option value="128">128 — 64 KiB per tile</option>
+          <option value="256" selected>256 — 128 KiB per tile</option>
+        </select>
+      </label>
+      <label for="tmem-phase">Kernel snapshot
+        <select id="tmem-phase">
+          <option value="0">1. Allocate both slots</option>
+          <option value="1">2. Accumulate T0</option>
+          <option value="2" selected>3. Fill T1 / drain T0</option>
+          <option value="3">4. Reuse T0 / drain T1</option>
+          <option value="4">5. Final drain of T0</option>
+          <option value="5">6. Release allocation</option>
+        </select>
+      </label>
+      <label for="tmem-warp">Highlight epilogue reader
+        <select id="tmem-warp">
+          <option value="all">All four warps</option>
+          <option value="0">Warp 0 — lanes 0–31</option>
+          <option value="1">Warp 1 — lanes 32–63</option>
+          <option value="2">Warp 2 — lanes 64–95</option>
+          <option value="3">Warp 3 — lanes 96–127</option>
+        </select>
+      </label>
     </div>
-    <div class="tmem-scale"><span>column 0</span><span>256</span><span>511</span></div>
-    <p class="figure-caption">
-      <strong>The 512-column budget, spent.</strong> One SM's TMEM (128 lanes deep, shown edge-on) holding the canonical configuration: two 128×256 fp32 accumulators in ping-pong, so the epilogue can drain one tile while the MMA fills the other — exactly the two-query-tile scheme FA-4 runs. Smaller accumulators, fp16 accumulation, or block-scale metadata change the split, but every Blackwell kernel does some version of this arithmetic.
+    <p class="tmem-budget" id="tmem-budget">512 / 512 columns reserved · 256 / 256 KiB · 0 columns free</p>
+    <canvas id="plot-tmem" role="img" aria-label="TMEM: 128 lanes by 512 columns, split into two accumulator buffers" aria-describedby="tmem-budget tmem-status tmem-caption">
+      TMEM has 128 rows and 512 columns of 32-bit cells. At N=256, T0 occupies columns 0–255 and T1 occupies columns 256–511, both across all 128 rows.
+    </canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--accent);"></span> W: MMA writes</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--tmem-read);"></span> R: epilogue reads</span>
+      <span class="legend-item"><span class="lg dash"></span> Reserved / idle</span>
+      <span class="legend-item">Free: outside the allocation</span>
+    </div>
+    <div class="tmem-flow">
+      <div>
+        <strong>Write path · tensor core</strong>
+        <p id="tmem-write-path">HBM → TMA → shared-memory A/B → tcgen05.mma → T1.</p>
+      </div>
+      <div>
+        <strong>Read path · epilogue warps</strong>
+        <p id="tmem-read-path">T0 → tcgen05.ld → registers → epilogue → HBM. Warp 0 reads lanes 0–31, warp 1 reads 32–63, warp 2 reads 64–95, and warp 3 reads 96–127.</p>
+      </div>
+    </div>
+    <p class="tmem-status" id="tmem-status" aria-live="polite">After T0's MMA completion is signaled, its epilogue can read T0 while the tensor core accumulates a different output tile in T1.</p>
+    <p class="figure-caption" id="tmem-caption">
+      <strong>Allocate vertically; pipeline horizontally.</strong> Each tile spans all 128 lanes but only N columns. Each grid block groups <strong>32 lanes × 32 columns</strong>, not one cell; one physical cell is 32 bits (4 bytes), so \(128 \times 512 \times 4 = 256\) KiB. W0–W3 are warp indices <em>within a warpgroup</em>; highlighting one reader does not change the allocation or stop the other warps. Snapshots illustrate ordering, not cycle-accurate timing.
     </p>
+    <noscript><p>The interactive diagram needs JavaScript. For N=256, T0 uses columns 0–255 and T1 uses 256–511 across all 128 lanes. The tensor core fills one slot while four epilogue warps read the other, each reading its own 32-lane band. Together the two slots use all 256 KiB.</p></noscript>
   </div>
+
+  <p><strong>Reading a coordinate:</strong> in this FP32 layout, <code>TMEM[40, 300]</code> is row 40, column 300 — T1's local column 44 when \(N=256\), in warp 1's accessible lane band. Its address is <code>(40 &lt;&lt; 16) | 300 = 0x0028012c</code>, a lane/column encoding, <em>not</em> a linear byte offset. Other MMA shapes and packed dtypes have their own layouts; this illustration deliberately uses the simple 128-row FP32 case. See NVIDIA's <a href="https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#tensor-memory-addressing">TMEM addressing</a> and <a href="https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#tcgen05-tensor-memory-ld-st-access-restrictions">warp access restrictions</a>.</p>
 
   <p>The payoff for this bookkeeping is what it evicts: with accumulators gone, the register file returns to the <em>rest</em> of the kernel. Softmax scratch, dequant tables, multiple concurrent roles per CTA — the things Hopper kernels rationed registers for — get their budget back. That, more than raw FLOPs, is what "deeper warp specialization" means on this architecture.</p>
 
@@ -392,6 +485,168 @@
 </div>
 
 <footer>Personal ML notes · <a href="https://github.com/yueyiming2009/ai-learning" style="color:inherit;text-decoration:underline;">source on GitHub</a></footer>
+
+<script>
+(() => {
+  const canvas = document.getElementById('plot-tmem');
+  const widthSelect = document.getElementById('tmem-width');
+  const phaseSelect = document.getElementById('tmem-phase');
+  const warpSelect = document.getElementById('tmem-warp');
+  const budget = document.getElementById('tmem-budget');
+  const status = document.getElementById('tmem-status');
+  const writePath = document.getElementById('tmem-write-path');
+  const readPath = document.getElementById('tmem-read-path');
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    status.textContent = 'The 2-D diagram is unavailable because this browser does not support canvas. The text below describes the same layout.';
+    [widthSelect, phaseSelect, warpSelect].forEach(select => { select.disabled = true; });
+    return;
+  }
+
+  const phases = [
+    { write: null, read: null, note: 'tcgen05.alloc reserves both slots; their contents are not initialized. Allocation is in whole columns across all 128 lanes.' },
+    { write: 0, read: null, note: 'One thread issues MMAs into T0; the tensor core initializes and then accumulates over K slices. T1 is reserved but idle. No epilogue reads unfinished results.' },
+    { write: 1, read: 0, note: "After T0's MMA completion is signaled, its epilogue can read T0 while the tensor core accumulates a different output tile in T1." },
+    { write: 0, read: 1, note: "Reuse T0 only after its previous readers finish. Once T1's MMA completion is signaled, drain T1 while T0 accumulates the next output tile." },
+    { write: null, read: 0, note: "At the end of this example, wait for the last T0 MMA to complete and drain T0. T1 is already drained; no new MMAs are issued." },
+    { write: null, read: null, note: 'After all MMAs and TMEM reads finish, tcgen05.dealloc releases the allocation. The columns are available for later work; deallocation does not zero them.' }
+  ];
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+  function drawTmem(n, phase, allocated, warp) {
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    if (!width || !height) return;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+
+    const left = 62, top = 48, plotWidth = width - left - 12, plotHeight = height - top - 46;
+    const x = col => left + col / 512 * plotWidth;
+    const y = lane => top + lane / 128 * plotHeight;
+    const text = cssVar('--text'), muted = cssVar('--muted'), border = cssVar('--border');
+    const writeColor = cssVar('--accent'), readColor = cssVar('--tmem-read');
+    ctx.font = '11px ui-monospace, monospace';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = muted;
+    ctx.textAlign = 'left';
+    ctx.fillText('128 lanes (rows)', 0, 12);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(left, top, plotWidth, plotHeight);
+    ctx.clip();
+    ctx.fillStyle = cssVar('--bg');
+    ctx.fillRect(left, top, plotWidth, plotHeight);
+
+    if (allocated) {
+      for (let tile = 0; tile < 2; tile++) {
+        const color = phase.write === tile ? writeColor : phase.read === tile ? readColor : muted;
+        ctx.globalAlpha = 0.12;
+        ctx.fillStyle = color;
+        ctx.fillRect(x(tile * n), top, x(n) - left, plotHeight);
+      }
+      if (phase.read !== null && warp !== 'all') {
+        ctx.globalAlpha = 0.24;
+        ctx.fillStyle = readColor;
+        ctx.fillRect(x(phase.read * n), y(Number(warp) * 32), x(n) - left, plotHeight / 4);
+      }
+    }
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = border;
+    ctx.lineWidth = 1;
+    for (let col = 0; col <= 512; col += 32) {
+      ctx.beginPath(); ctx.moveTo(x(col), top); ctx.lineTo(x(col), y(128)); ctx.stroke();
+    }
+    for (let lane = 0; lane <= 128; lane += 32) {
+      ctx.beginPath(); ctx.moveTo(left, y(lane)); ctx.lineTo(x(512), y(lane)); ctx.stroke();
+    }
+    ctx.restore();
+
+    ctx.strokeStyle = muted;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(left, top, plotWidth, plotHeight);
+    ctx.textAlign = 'center';
+    if (allocated) {
+      for (let tile = 0; tile < 2; tile++) {
+        const writing = phase.write === tile, reading = phase.read === tile;
+        ctx.strokeStyle = writing ? writeColor : reading ? readColor : muted;
+        ctx.lineWidth = 2;
+        ctx.setLineDash(writing || reading ? [] : [4, 4]);
+        ctx.strokeRect(x(tile * n) + 1, top + 1, x(n) - left - 2, plotHeight - 2);
+        ctx.setLineDash([]);
+        ctx.fillStyle = text;
+        ctx.fillText('T' + tile, x((tile + 0.5) * n), top - 13);
+        const tileWidth = x(n) - left;
+        const label = writing ? (tileWidth > 150 ? 'MMA writes' : 'W') : reading ? (tileWidth > 150 ? 'Epilogue reads' : 'R') : 'idle';
+        ctx.font = '600 13px ui-monospace, monospace';
+        ctx.fillText(label, x((tile + 0.5) * n), top + plotHeight / 2 + 15, Math.max(12, tileWidth - 4));
+        ctx.font = '11px ui-monospace, monospace';
+      }
+      if (phase.read !== null && warp !== 'all') {
+        ctx.strokeStyle = readColor;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(x(phase.read * n) + 2, y(Number(warp) * 32) + 2, x(n) - left - 4, plotHeight / 4 - 4);
+      }
+    }
+    if (!allocated || n < 256) {
+      ctx.fillStyle = muted;
+      ctx.fillText('Free', x(allocated ? n + 256 : 256), top + plotHeight / 2 + 15);
+    }
+
+    for (let w = 0; w < 4; w++) {
+      const middle = y(w * 32 + 16);
+      ctx.textAlign = 'right';
+      ctx.fillStyle = phase.read !== null && warp === String(w) ? readColor : text;
+      ctx.fillText('W' + w, left - 9, middle - 8);
+      ctx.fillStyle = muted;
+      ctx.fillText((w * 32) + '–' + (w * 32 + 31), left - 9, middle + 8);
+    }
+    const ticks = width < 400 ? [0, 256, 512] : [0, 128, 256, 384, 512];
+    for (const col of ticks) {
+      ctx.textAlign = col === 0 ? 'left' : col === 512 ? 'right' : 'center';
+      ctx.fillStyle = muted;
+      ctx.fillText(String(col), x(col), y(128) + 15);
+    }
+    ctx.textAlign = 'center';
+    ctx.fillText('Column boundaries (indices 0–511)', left + plotWidth / 2, height - 6, plotWidth);
+  }
+
+  function render() {
+    const n = Number(widthSelect.value);
+    const phaseIndex = Number(phaseSelect.value);
+    const phase = phases[phaseIndex];
+    const allocated = phaseIndex !== 5;
+    const used = allocated ? 2 * n : 0;
+    warpSelect.disabled = phase.read === null;
+    budget.textContent = `${used} / 512 columns reserved · ${used / 2} / 256 KiB · ${512 - used} columns free`;
+    const slots = allocated ? `T0: columns 0–${n - 1}; T1: columns ${n}–${2 * n - 1}; each spans lanes 0–127.` : 'No allocated slots.';
+    status.textContent = `${slots} ${phase.note}`;
+    writePath.textContent = phase.write === null
+      ? 'No MMA writes in this snapshot.'
+      : `HBM → TMA → shared-memory A/B → tcgen05.mma → T${phase.write}. One issuing thread; the tensor core does the matrix work.`;
+    const readers = warpSelect.value === 'all'
+      ? 'Warp 0: lanes 0–31; warp 1: 32–63; warp 2: 64–95; warp 3: 96–127.'
+      : `Highlighted: warp ${warpSelect.value}, lanes ${Number(warpSelect.value) * 32}–${Number(warpSelect.value) * 32 + 31}. The other three readers still run.`;
+    readPath.textContent = phase.read === null
+      ? 'No TMEM reads in this snapshot.'
+      : `After the MMA completion barrier: T${phase.read} → tcgen05.ld → tcgen05.wait::ld → registers → epilogue → HBM. ${readers}`;
+    canvas.setAttribute('aria-label', `TMEM: 128 lanes by 512 columns. ${slots} ${phase.write === null ? 'No MMA writer.' : 'MMA writes T' + phase.write + '.'} ${phase.read === null ? 'No epilogue reader.' : 'Epilogue reads T' + phase.read + '. ' + readers}`);
+    drawTmem(n, phase, allocated, warpSelect.value);
+  }
+
+  [widthSelect, phaseSelect, warpSelect].forEach(select => select.addEventListener('change', render));
+  render();
+  let frame;
+  window.addEventListener('resize', () => {
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(render);
+  });
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
+})();
+</script>
 
 </body>
 </html>

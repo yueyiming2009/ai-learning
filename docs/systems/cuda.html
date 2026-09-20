@@ -218,7 +218,8 @@
     <a href="#warps">Warps</a>
     <a href="#tiled-matmul">Tiled matmul</a>
     <a href="#barriers">Barriers</a>
-    <a href="#machinery">Streams &amp; PTX</a>
+    <a href="#machinery">Streams</a>
+    <a href="#compilation">PTX, cubin &amp; SASS</a>
     <a href="#ladder">The ladder</a>
   </div>
   <a class="nav-back" href="../index.html">Home</a>
@@ -751,9 +752,158 @@ mbarrier.inval.shared::cta.b64             [bar];</code></pre>
 
   <p>All device work — kernels, copies — is issued into <strong>streams</strong>: ordering domains whose commands execute FIFO. Different streams are otherwise unordered and may run concurrently when the hardware has resources; <code>cudaEvent</code>s add precise cross-stream dependencies without blocking the host. Synchronization is the separate act of making the CPU wait. The dedicated <a href="cuda-streams.html">CUDA Streams &amp; Events page</a> develops that model through default-stream semantics, pinned-memory copy/compute overlap, timing, asynchronous errors, and PyTorch's stream-aware allocator lifetime. Repeated host launch overhead into these queues is what <a href="cuda-graphs.html">CUDA Graphs exist to amortize</a>.</p>
 
-  <h3>NVCC, PTX, SASS: the compilation contract</h3>
+  <h3 id="compilation">PTX, cubin, and SASS: follow one kernel through compilation</h3>
 
-  <p><code>nvcc</code> splits source into host code (handed to your C++ compiler) and device code, which lowers twice: to <strong>PTX</strong>, a stable virtual ISA, and then via <code>ptxas</code> to <strong>SASS</strong>, the actual machine code of a specific architecture (<code>sm_80</code>, <code>sm_90</code>, <code>sm_100</code>…). Binaries ship both; when a new GPU meets old code, the driver JIT-compiles the embedded PTX — the forward-compatibility mechanism that let two decades of CUDA outlive every architecture it was written on. That story only bends at tensor cores, whose instructions changed shape every generation — the gap <a href="cutile.html#tile-ir">Tile IR</a> was invented to close, one level of abstraction up.</p>
+  <p><code>nvcc</code> is a compiler <em>driver</em>: it sends host code to a C++ compiler and drives a separate device-code pipeline. <strong>PTX is the virtual instruction set; SASS is the native GPU instruction set; cubin is a binary container.</strong> They are not three interchangeable names for assembly.</p>
+
+  <div class="figure">
+    <div class="hier">
+      <div class="hier-box">
+        <h4>CUDA source</h4>
+        <p class="hier-note"><code>vector_add.cu</code><br>Device frontend compiles the kernel; host compiler handles <code>main()</code>.</p>
+      </div>
+      <div class="hier-arrow" aria-hidden="true">→</div>
+      <div class="hier-box">
+        <h4>PTX · virtual ISA</h4>
+        <p class="hier-note"><code>vector_add.ptx</code><br>Text instructions and virtual registers. Input to <code>ptxas</code> or the driver's JIT compiler.</p>
+      </div>
+      <div class="hier-arrow" aria-hidden="true">→</div>
+      <div class="hier-box">
+        <h4>cubin · native image</h4>
+        <p class="hier-note"><code>vector_add.sm80.cubin</code><br>ELF container: native instruction bytes, symbols, and metadata. Disassemble it to read SASS.</p>
+      </div>
+    </div>
+    <p class="figure-caption"><strong>SASS is inside the cubin, not a mandatory fourth build artifact.</strong> A <code>.sass</code> text file below is just a saved disassembly. A host executable can embed multiple cubins and PTX in a <em>fatbinary</em>; what actually ships depends on the build flags.</p>
+  </div>
+
+  <div class="note">
+    <strong>Walkthrough environment:</strong> a Linux CUDA Toolkit 12+ installation with a supported host C++ compiler and <code>nvcc</code>, <code>ptxas</code>, <code>cuobjdump</code>, and <code>nvdisasm</code> on <code>PATH</code>. Compilation and inspection do not require a GPU; the final runs require an NVIDIA GPU and a compatible driver. The native targets below are A100 (<code>sm_80</code>) and H100 (<code>sm_90</code>), with ordinary <code>compute_80</code> PTX as a fallback. Use a scratch directory for the generated files.
+  </div>
+
+  <div class="step" id="compilation-source">
+    <div class="step-label">1 · Give the compiler a complete program</div>
+    <p>Save this as <code>vector_add.cu</code>. It is the <a href="#vector-add">same vector-add kernel</a>, now with a small checked host program. <code>extern "C"</code> keeps the kernel's symbol readable in the dumps. Managed memory keeps setup short; this is a compilation exercise, not a memory-transfer benchmark.</p>
+<pre><code>#include &lt;cuda_runtime.h&gt;
+#include &lt;cstdio&gt;
+#include &lt;cstdlib&gt;
+
+extern "C" __global__
+void vector_add(const float* a, const float* b, float* c, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i &lt; n) c[i] = a[i] + b[i];
+}
+
+void check(cudaError_t status) {
+    if (status != cudaSuccess) {
+        std::fprintf(stderr, "CUDA: %s\n", cudaGetErrorString(status));
+        std::exit(EXIT_FAILURE);
+    }
+}
+
+int main() {
+    constexpr int n = 8;
+    float* data = nullptr;
+    check(cudaMallocManaged(&amp;data, 3 * n * sizeof(float)));
+    for (int i = 0; i &lt; n; ++i) {
+        data[i] = float(i);
+        data[n + i] = float(2 * i);
+    }
+    vector_add&lt;&lt;&lt;1, 32&gt;&gt;&gt;(data, data + n, data + 2 * n, n);
+    check(cudaGetLastError());
+    check(cudaDeviceSynchronize());
+    bool ok = true;
+    for (int i = 0; i &lt; n; ++i) {
+        if (data[2 * n + i] != float(3 * i)) {
+            std::fprintf(stderr, "Mismatch at %d: got %g, expected %g\n",
+                         i, data[2 * n + i], double(3 * i));
+            ok = false;
+        }
+    }
+    check(cudaFree(data));
+    std::printf("%s: %d elements\n", ok ? "PASS" : "FAIL", n);
+    return ok ? EXIT_SUCCESS : EXIT_FAILURE;
+}</code></pre>
+  </div>
+
+  <div class="step" id="compilation-ptx">
+    <div class="step-label">2 · Stop at PTX: the virtual program</div>
+<pre><code>nvcc -O3 -lineinfo --ptx -arch=compute_80 vector_add.cu -o vector_add.ptx
+sed -n '1,100p' vector_add.ptx</code></pre>
+    <p><code>--ptx</code> stops before native code generation: this file is device code, not a host executable. Look for <code>.version</code> (PTX language version), <code>.target sm_80</code> (required target features, despite the <code>sm_</code> spelling), and the <code>.entry vector_add</code> kernel. The command's <code>compute_80</code> selects the virtual architecture; it does not mean this text is already A100 machine code.</p>
+    <p>Trace the kernel's operations using these landmarks. Register names and exact instruction choices vary by toolkit and optimization; this is a reading guide, not a byte-for-byte expected dump:</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Source operation</th><th>PTX landmarks</th></tr></thead>
+        <tbody>
+          <tr><td>Find the thread's element</td><td><code>%ctaid.x</code>, <code>%ntid.x</code>, <code>%tid.x</code>; integer multiply-add such as <code>mad.lo.s32</code></td></tr>
+          <tr><td>Check <code>i &lt; n</code></td><td><code>setp</code> predicate comparison and a predicated branch</td></tr>
+          <tr><td>Load two inputs, add, store</td><td><code>ld.global.f32</code> → <code>add.f32</code> → <code>st.global.f32</code></td></tr>
+          <tr><td>Temporary values</td><td>Virtual names such as <code>%r</code>, <code>%rd</code>, and <code>%f</code>; not final physical register assignments</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="step" id="compilation-cubin">
+    <div class="step-label">3 · Assemble a cubin, then read its SASS</div>
+<pre><code>ptxas -arch=sm_80 -lineinfo -v vector_add.ptx -o vector_add.sm80.cubin
+nvdisasm -g vector_add.sm80.cubin &gt; vector_add.sm80.sass
+cuobjdump --dump-resource-usage vector_add.sm80.cubin
+sed -n '1,160p' vector_add.sm80.sass</code></pre>
+    <p><code>ptxas</code> does target-specific optimization, instruction selection, scheduling, and register allocation — not just text-to-byte translation. Its <code>-v</code> output reports resources such as registers and spills. The resulting <strong>cubin is an ELF file</strong> containing native code and supporting metadata; it is not a CPU executable, so do not try to run <code>./vector_add.sm80.cubin</code>.</p>
+    <p><code>nvdisasm</code> decodes those instruction bytes into SASS; <code>-g</code> includes source-line information when available from <code>-lineinfo</code>. In the kernel's code section, look for thread/block ID reads such as <code>S2R</code>, integer address arithmetic such as <code>IMAD</code>, global loads/stores such as <code>LDG</code>/<code>STG</code>, and <code>FADD</code> for the addition. Native registers such as <code>R0</code> and predicates such as <code>P0</code> are no longer PTX's virtual names. Instruction suffixes, ordering, and register counts depend on the target and compiler.</p>
+    <p><strong>Tool boundary:</strong> <code>nvdisasm</code> takes a standalone cubin and offers richer disassembly. <code>cuobjdump</code> can also inspect cubins, but can additionally find device code embedded in executables, objects, libraries, and fatbinary files. The resource report here is the compiled kernel's register/local/shared-memory usage, not the host program's managed-memory allocation.</p>
+  </div>
+
+  <div class="step" id="compilation-fatbinary">
+    <div class="step-label">4 · Package native images and a PTX fallback</div>
+<pre><code>nvcc -O3 -lineinfo vector_add.cu -o vector_add \
+  -gencode arch=compute_80,code=sm_80 \
+  -gencode arch=compute_90,code=sm_90 \
+  -gencode arch=compute_80,code=compute_80
+
+cuobjdump --list-elf ./vector_add
+cuobjdump --list-ptx ./vector_add
+cuobjdump --dump-ptx ./vector_add
+cuobjdump --dump-sass ./vector_add</code></pre>
+    <p>This rebuilds from the source; it does not consume the earlier standalone <code>.ptx</code> or <code>.cubin</code> files. The output is a <strong>host executable</strong> with a fatbinary of device alternatives: an <code>sm_80</code> cubin, an <code>sm_90</code> cubin, and retained <code>compute_80</code> PTX. Look for both native targets in <code>--list-elf</code> and the PTX entry in <code>--list-ptx</code>; file names and metadata vary by toolkit.</p>
+    <p>In each <code>-gencode</code>, <strong><code>arch=compute_XX</code></strong> selects the frontend's virtual feature set; <strong><code>code=sm_XX</code></strong> emits native code, while <strong><code>code=compute_XX</code></strong> retains PTX for later compilation. Only the third line above requests retained PTX. A transient PTX intermediate during a native build is <em>not</em> proof that PTX shipped. Conversely, PTX-only packaging need not include any native cubin. Using <code>--fatbin</code> instead of building an executable emits a standalone device-only fatbinary, without <code>main()</code>.</p>
+    <div class="note"><strong>Inspect what shipped, not what you assume shipped.</strong> <code>cuobjdump --dump-sass</code> shows embedded native images, not the machine code the driver might later JIT for a different GPU.</div>
+  </div>
+
+  <div class="step" id="compilation-jit">
+    <div class="step-label">5 · Observe native loading versus driver JIT</div>
+    <p>Under normal settings, the driver uses a compatible native cubin when available; otherwise it can compile compatible embedded PTX for the installed GPU. If neither path is usable, loading/launching the kernel fails. For the build above:</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>GPU</th><th>Normal path for this executable</th></tr></thead>
+        <tbody>
+          <tr><td>A100 · <code>sm_80</code></td><td>Load the embedded <code>sm_80</code> cubin</td></tr>
+          <tr><td>H100 · <code>sm_90</code></td><td>Load the embedded <code>sm_90</code> cubin</td></tr>
+          <tr><td>B200 · <code>sm_100</code></td><td>No compatible native image in this build: JIT the retained PTX, or reuse its driver-cache result</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>On a CUDA-equipped machine, start with no conflicting JIT environment overrides and run these separately. Each assignment applies only to that command:</p>
+<pre><code>./vector_add
+CUDA_FORCE_PTX_JIT=1 CUDA_CACHE_DISABLE=1 ./vector_add
+CUDA_DISABLE_PTX_JIT=1 ./vector_add</code></pre>
+    <p>The first run should print <code>PASS: 8 elements</code> on each GPU above with a suitable driver. The second ignores embedded cubins and disables the on-disk compilation cache, exercising PTX compilation rather than a cached result; it should also pass. The third forbids PTX JIT: it should pass on A100/H100, but fail on B200 for this particular build. That failure is an intentional check for missing compatible native code, not a numerical bug.</p>
+    <p>Normally the driver caches JIT results across runs, so “PTX fallback” does not mean recompiling on every launch. First-use latency and steady-state execution are different measurements; this tiny program demonstrates selection, not performance.</p>
+  </div>
+
+  <div class="note">
+    <strong>Forward compatibility has conditions.</strong> The GPU must satisfy the PTX target's feature requirements, and the driver must understand the emitted PTX <em>language version</em>. A new toolkit can emit a PTX version an older driver cannot parse even with <code>compute_80</code>. Native cubin compatibility follows compute-capability rules, not arbitrary cross-generation portability; architecture-specific targets such as <code>sm_90a</code> also have stricter rules than the ordinary targets used here.
+  </div>
+
+  <p><strong>Connect this back to Blackwell:</strong> <code>tcgen05.mma</code> is a PTX-level operation, so the <a href="blackwell-kernels.html#mma-shapes">256 → 2 → 1 MMA comparison</a> describes logical instruction work, not a measured native instruction count or cycle ratio. SASS reveals the target-specific lowering; profiling reveals its cost. JIT-compiling this old-feature-set vector add on Blackwell does not turn it into a TMEM/2-SM tensor-core kernel. That distinction is also why <a href="cutile.html#tile-ir">Tile IR</a> makes its portability promise at the higher tile-operation level.</p>
+
+  <div class="xref">
+    <strong>Primary references:</strong>
+    <a href="https://docs.nvidia.com/cuda/cuda-compiler-driver-nvcc/index.html#gpu-compilation">NVCC compilation and architecture selection</a>,
+    <a href="https://docs.nvidia.com/cuda/cuda-binary-utilities/index.html">CUDA Binary Utilities: cubin, cuobjdump, nvdisasm</a>,
+    and <a href="https://docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/environment-variables.html">CUDA environment variables for JIT and caching</a>.
+  </div>
 
   <!-- ══════════════════════════════════════════ -->
   <h2 id="ladder">The ladder out: when to write CUDA in 2026</h2>
