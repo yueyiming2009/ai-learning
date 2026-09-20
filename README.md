@@ -28,6 +28,10 @@ The site index ([`docs/index.html`](https://yueyiming2009.github.io/ai-learning)
 canonical, complete list of pages, organized into six top-level domains. The summaries
 below are a high-level map, not an exhaustive index.
 
+Use **Search pages** on the site index to filter cards by title, description, tag, or
+category. Searches are case-insensitive and match all entered words. Clear the search
+(or press Escape) to restore the full index and its previous expanded domains.
+
 ### 01 · Deep Learning Foundations — [docs/foundations/](docs/foundations/)
 Worked derivations from scratch, each standing alone from the transformer — the notation, the
 probabilistic principle behind the losses, the gradients through each component, the optimizer
