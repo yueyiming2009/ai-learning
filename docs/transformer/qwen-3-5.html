@@ -373,6 +373,7 @@
       height: 300px;
       display: block;
     }
+    .figure canvas[hidden] { display: none; }
     .legend {
       display: flex;
       flex-wrap: wrap;
@@ -473,6 +474,8 @@
     <a href="#parameters">Parameter ledger</a>
     <a href="#sft-memory">SFT memory</a>
     <a href="#sharding">Sharding layouts</a>
+    <a href="#megatron">Megatron EP / TP</a>
+    <a href="#collective-paths">Collectives &amp; bandwidth</a>
     <a href="#sft-checklist">SFT recipe</a>
     <a href="#summary">Summary</a>
   </div>
@@ -521,8 +524,10 @@
     <div class="compare-label">Reading this as a training guide</div>
     The architecture tour below uses <strong>397B-A17B</strong>, not a generic Qwen3.5 config.
     Jump to the <a href="#parameters">exact parameter ledger</a> for the 27B / 35B / 397B differences,
-    the <a href="#sft-memory">interactive memory budget</a>, or the
-    <a href="#sharding">concrete sharding layouts</a>. The SFT estimates default to
+    the <a href="#sft-memory">interactive memory budget</a>, the
+    <a href="#megatron">Megatron EP/TP explorer and launch example</a>, or the
+    <a href="#collective-paths">forward/backward collective and bandwidth calculations</a>.
+    The SFT estimates default to
     <strong>text-only, full-parameter AdamW, without vision or MTP</strong>; other scopes are called out.
     Sparse activation saves compute, not storage for the unselected experts.
   </div>
@@ -1378,7 +1383,352 @@ optimizer = torch.optim.AdamW(model.parameters(), lr=5e-6)</code></pre>
     Start at CP=1 unless the measured activation limit calls for a verified hybrid-model CP path.
   </p>
 
-  <h2 id="sft-checklist">12. An Efficient SFT Run Is More Than a Sharding Flag</h2>
+  <h2 id="megatron">12. Megatron in Practice — EP Is Not Expert TP</h2>
+  <p>
+    Use <a href="../systems/megatron-lm.html#bridge">Megatron Bridge</a>'s Qwen3.5 provider and SFT
+    recipes, built on Megatron-Core. Generic <code>pretrain_gpt.py</code> flags do not supply the
+    hybrid model implementation or convert its checkpoint. The following names are from the
+    <a href="https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/c4067f501aebefe03f27813f8ac0e4fe835249dd/scripts/training/run_recipe.py">pinned Bridge recipe runner</a>;
+    its short options are not the same CLI syntax as Megatron-LM's pretraining entry point.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Bridge model field</th><th>Runner option</th><th>What it partitions</th></tr>
+      <tr><td><code>tensor_model_parallel_size</code></td><td><code>-tp</code></td><td>Dense mixer projections and dense/shared FFNs; not automatically the routed expert matrices</td></tr>
+      <tr><td><code>expert_model_parallel_size</code></td><td><code>-ep</code></td><td>Expert IDs: each owner gets \(E/EP\) experts per layer</td></tr>
+      <tr><td><code>expert_tensor_parallel_size</code></td><td><code>-etp</code></td><td>Matrices <em>inside</em> each routed expert; abbreviated ETP below</td></tr>
+      <tr><td><code>pipeline_model_parallel_size</code></td><td><code>-pp</code></td><td>Decoder stages; account separately for embeddings, vision, loss and MTP</td></tr>
+      <tr><td><code>context_parallel_size</code></td><td><code>-cp</code></td><td>Context; fixed to 1 in this walkthrough</td></tr>
+      <tr><td><code>sequence_parallel</code></td><td><code>model.sequence_parallel=true</code></td><td>Sequence-sharded activations inside the dense TP group; no extra world-size multiplier</td></tr>
+    </table>
+  </div>
+  <p>
+    <strong>Set ETP explicitly.</strong> In Bridge's topology helper, an unspecified ETP inherits TP.
+    With separate dense/expert layouts, TP=2, EP=8, ETP=1 means two-way dense tensor parallelism,
+    eight-way expert ownership, and <em>no</em> tensor split inside an expert.
+    TP=2, EP=4, ETP=2 instead gives each expert to a two-GPU team.
+    Both expert layouts consume eight ranks per expert replica, but their collectives differ.
+  </p>
+  <div class="step">
+    <div class="step-label">35B-A3B: what is physically split?</div>
+    <p><strong>EP=8, ETP=1:</strong> each rank owns 32 expert IDs. Each expert retains its full
+      \([512,2048]\) gate/up matrices and \([2048,512]\) down matrix, so its routed bank has
+      100,663,296 parameters, or 192 MiB in BF16.</p>
+    <p><strong>EP=4, ETP=2:</strong> each rank participates in 64 expert IDs, holding half of each
+      expert's matrices: gate/up \([256,2048]\), down \([2048,256]\). The same 100,663,296 parameters
+      fit on each rank, but expert-TP communication now complements EP dispatch.</p>
+    <p><strong>Dense TP=2:</strong> the full-attention query-plus-gate projection is logically
+      \([8192,2048]\), split into \([4096,2048]\) per rank. K and V each become \([256,2048]\);
+      the output projection becomes \([2048,2048]\) per rank and its partial results must be summed.
+      These are logical weight shapes, not a prescription for slicing Megatron's packed storage.
+      Norms and the router are not all divided by TP; the provider owns their mapping.</p>
+  </div>
+
+  <h3>Interactive expert-ownership and state budget</h3>
+  <p>
+    This isolates <strong>one decoder layer's routed expert bank</strong>. It does not include
+    shared experts, attention/GDN, vocabulary matrices, vision, MTP, activations or temporary gathers,
+    and is not a whole-model fit prediction. PP affects how many ranks remain per stage; this plot
+    does not assume that the tuned 17/23-layer pipeline is balanced.
+    For \(P_e=3dm\), define local routed parameters \(R=EP^{-1}ETP^{-1}E P_e\) and
+    expert data-parallel replicas \(D_e=N/(PP\cdot EP\cdot ETP)\).
+  </p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Expert-only quantity</th><th>Bytes per rank, per layer</th></tr>
+      <tr><td>BF16 resident expert weights, before any DP parameter sharding</td><td>\(2R\)</td></tr>
+      <tr><td>16-byte layout with optimizer-only DP sharding (ZeRO-1-style)</td><td>\((4+12/D_e)R\)</td></tr>
+      <tr><td>Ideal full DP sharding of that same layout</td><td>\(16R/D_e=16E P_e PP/N\)</td></tr>
+    </table>
+  </div>
+  <p>
+    The last expression is independent of EP/ETP at fixed \(N,PP\): changing the model-parallel
+    split trades replication for ownership, rather than creating more total memory.
+    It still changes live weights, communication and GEMM size. These two 16-byte state policies
+    are illustrative; the cited NVIDIA recipes can use FP32 gradients and different DP sharding.
+    Do not treat either curve as their measured peak.
+  </p>
+  <div class="figure">
+    <div class="plot-controls">
+      <label>MoE checkpoint
+        <select id="ep-model"><option value="35">35B-A3B</option><option value="397">397B-A17B</option></select>
+      </label>
+      <label>Total GPUs \(N\)
+        <select id="ep-world">
+          <option value="8">8</option><option value="16" selected>16</option>
+          <option value="32">32</option><option value="64">64</option><option value="128">128</option>
+        </select>
+      </label>
+      <label>PP stages
+        <select id="ep-pp"><option value="1">1</option><option value="2" selected>2</option><option value="4">4</option></select>
+      </label>
+      <label>Dense TP
+        <select id="ep-tp"><option value="1">1</option><option value="2">2</option></select>
+      </label>
+      <label>Expert ownership EP
+        <select id="ep-degree">
+          <option value="1">1</option><option value="2">2</option><option value="4">4</option>
+          <option value="8" selected>8</option><option value="16">16</option>
+          <option value="32">32</option><option value="64">64</option>
+        </select>
+      </label>
+      <label>Expert tensor split ETP
+        <select id="ep-etp"><option value="1">1</option><option value="2">2</option><option value="4">4</option></select>
+      </label>
+    </div>
+    <canvas id="plot-expert-memory" aria-label="Per-layer routed expert weight and training-state memory versus expert parallel degree, at fixed world size, pipeline degree and expert tensor degree."></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span> BF16 expert weights</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-amber)"></span> optimizer-only DP sharding</span>
+      <span class="legend-item"><span class="lg dash" style="--c:var(--plot-teal)"></span> ideal full DP sharding</span>
+    </div>
+    <output id="ep-readout" class="plot-readout" aria-live="polite"
+      for="ep-model ep-world ep-pp ep-tp ep-degree ep-etp">35B-A3B: dense DP=8, expert DP=1; 32 expert IDs per rank, each unsplit. Routed weights: 0.1875 GiB per layer; 16-byte expert state: 1.5000 GiB per layer.</output>
+    <p class="figure-caption">
+      <strong>Dense TP does not shrink the routed bank when ETP is fixed.</strong> The amber dot is
+      the selected EP setting. With 16 GPUs and PP=2, EP=8/ETP=1 and EP=4/ETP=2 have the same
+      expert memory, but different execution and communication. Invalid rank products are rejected,
+      not rounded. Arithmetic validity does not certify backend, dispatcher or physical topology
+      support; keep fast groups local and inspect the actual rank map.
+    </p>
+  </div>
+  <p>
+    The explorer deliberately limits dense TP to 1 or 2 for these two-KV-head MoE checkpoints.
+    The dense 27B model has four KV heads and an upstream TP=4 preset, but no EP bank to plot.
+    In all cases, require integral dense/expert DP degrees, \(EP\mid E\), head-compatible TP and
+    an expert width divisible by ETP. The CP=1 rank products are the ones in §11.
+  </p>
+
+  <h3>Launch a known recipe before changing the mesh</h3>
+  <details class="ledger">
+    <summary>16-GPU 35B-A3B example: TP=1, PP=2, EP=8, ETP=1</summary>
+    <p>Run in an approved, compatible environment containing the pinned Bridge checkout, its
+      dependencies and a converted pretrained checkpoint. This is a <strong>multimodal CORD-v2
+      wiring example retaining vision and MTP</strong>, not a text-only instruction-data recipe
+      or a claim that 100 steps is enough. Replace dataset/checkpoint/output paths for your run.
+      Launch this command once on each of two 8-GPU nodes; <code>torchrun</code> creates the
+      eight local workers. Do not also launch eight copies per node with <code>srun</code>.</p>
+    <pre><code>torchrun --nnodes=2 --nproc-per-node=8 \
+  --node-rank="${NODE_RANK:?set 0 or 1 for this node}" \
+  --master-addr="${MASTER_ADDR:?set the reachable rank-0 node address}" \
+  --master-port=29500 \
+  scripts/training/run_recipe.py \
+  --recipe qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config \
+  --mode sft --dataset cord-v2 --step_func qwen3_vl_step \
+  -tp 1 -pp 2 -cp 1 -ep 8 -etp 1 \
+  model.sequence_parallel=false \
+  --pretrained_checkpoint /checkpoints/Qwen3.5-35B-A3B \
+  --save_dir /checkpoints/qwen35-sft \
+  --seq_length 4096 --micro_batch_size 1 --global_batch_size 32 \
+  --max_steps 100 --warmup_iters 10 --save_interval 50</code></pre>
+    <p>Add <code>--dry-run</code> to inspect the resolved recipe first. This keeps the preset's
+      17/23 stage split, recomputation, dispatcher and loss implementation; it does not just set
+      parallel degrees. Here dense DP=8, so microbatch 1 and global batch 32 imply four accumulation
+      microbatches. TP ranks process shards of the same sample, not extra independent samples.</p>
+  </details>
+  <div class="table-wrap">
+    <table>
+      <caption>Other pinned recipe choices; use the matching provider, not only new parallel flags</caption>
+      <tr><th>Recipe suffix after <code>qwen35_vl_</code></th><th>8-GPU nodes</th><th>Runner parallel options</th><th>Sequence parallel</th></tr>
+      <tr><td><code>27b_sft_16gpu_h100_bf16_config</code></td><td>2</td><td><code>-tp 4 -pp 4 -cp 1</code>; omit EP/ETP options</td><td><code>false</code> in this preset</td></tr>
+      <tr><td><code>397b_a17b_sft_128gpu_h100_bf16_config</code></td><td>16</td><td><code>-tp 2 -pp 4 -cp 1 -ep 32 -etp 1</code></td><td><code>true</code></td></tr>
+    </table>
+  </div>
+  <p>
+    When experimenting with other meshes, do not retain incompatible preset stage counts or a
+    node-specific dispatcher setup. Megatron's combined TP+EP training path requires sequence
+    parallelism when both degrees exceed one. Expert-TP adds its own collectives; compare ETP=1
+    first for these narrow experts. Validate conversion/logit parity, a forward/backward step,
+    gradients and checkpoint resume before measuring speed.
+  </p>
+
+  <h2 id="collective-paths">13. Follow the Collectives — Then Count the Bytes</h2>
+  <p>
+    <strong>HBM bandwidth, network bandwidth and capacity are different budgets.</strong>
+    Parameter counts estimate storage; a forward/backward trace tells you which tensors are read,
+    written and communicated. Start with the
+    <a href="../systems/collectives.html#duality">collective/autograd conventions</a> and
+    <a href="../systems/tensor-parallelism.html#mlp">column/row-parallel pair</a>.
+    The traces below describe classic Megatron paths; Transformer Engine, fusion and overlap can
+    change scheduling or retain different buffers without changing the mathematical dependencies.
+  </p>
+
+  <h3>TP: one column-parallel → local compute → row-parallel pair</h3>
+  <p>
+    Let \(X\) contain \(T\) token rows of width \(d\) for one dense TP group. Column-parallel input
+    projections produce disjoint feature/head slices; the row-parallel output projection produces
+    partial sums. A mixer or dense FFN can use this pattern. <strong>A routed MoE FFN is not simply
+    another dense TP pair:</strong> count EP, expert-TP and shared-expert work separately.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Boundary</th><th>Without sequence parallelism</th><th>With sequence parallelism</th></tr>
+      <tr><td>Forward: before column projection</td><td>Replicated \(X\); no collective</td><td>AllGather sequence shards of \(X\)</td></tr>
+      <tr><td>Forward: after row projection</td><td>AllReduce partial \(Y\) sums</td><td>ReduceScatter partial \(Y\) sums into sequence shards</td></tr>
+      <tr><td>Backward: entering row projection</td><td>Replicated \(dY\); no collective</td><td>AllGather sequence shards of \(dY\)</td></tr>
+      <tr><td>Backward: column input gradient</td><td>AllReduce partial \(dX\)</td><td>ReduceScatter partial \(dX\)</td></tr>
+      <tr><td>Backward: column weight gradient \(dW\)</td><td>Local GEMM using saved \(X\)</td><td>May AllGather saved sequence-sharded \(X\) again before the local \(dW\) GEMM</td></tr>
+    </table>
+  </div>
+  <p>
+    The extra input gather is real in the
+    <a href="https://github.com/NVIDIA/Megatron-LM/blob/2441047036f3206d19fd0dd118be25e0ff21f223/megatron/core/tensor_parallel/layers.py">classic trainable linear backward</a>:
+    it saves the local input shard and gathers it again for weight-gradient computation.
+    A backend retaining the full input, freezing the weight, or deferring weight gradients changes
+    that schedule. Activation recomputation can add another forward's collectives as well.
+    Conversely, do not add an AllReduce to the backward of the row-parallel output reduction when
+    its incoming gradient is already a replicated logical gradient: Megatron's paired
+    identity/AllReduce mappings avoid counting that reduction twice.
+  </p>
+
+  <h3>EP: dispatch and combine both have a reverse path</h3>
+  <pre><code>Forward:
+  local tokens → router/top-k → permute/expand assignments
+    → EP AllToAll(dispatch) → owned-expert GEMMs
+    → EP AllToAll(combine) → unpermute + weighted sum → output
+
+Backward:
+  dOutput → reverse weighted sum / expand gradients
+    → reverse-combine AllToAll → expert dInput and dWeight GEMMs
+    → reverse-dispatch AllToAll → sum assignment dInputs → dTokens</code></pre>
+  <p>
+    This is <strong>four activation/activation-gradient AllToAll transfers</strong> per
+    forward+backward through the routed branch, not four total NCCL calls in every implementation.
+    Routing probabilities and counts can travel separately. In the
+    <a href="https://github.com/NVIDIA/Megatron-LM/blob/2441047036f3206d19fd0dd118be25e0ff21f223/megatron/core/transformer/moe/token_dispatcher.py">baseline all-to-all dispatcher</a>,
+    ETP&gt;1 additionally gathers dispatched tokens over expert-TP before expert compute and
+    reduce-scatters partial expert outputs before the EP combine; backward reverses those operations.
+    Do not count a second generic TP reduction if the dispatcher already owns it.
+    Flex/HybridEP/DeepEP paths may deduplicate token copies per destination, fuse reductions, or
+    use lower-precision transfers. Inspect the selected dispatcher rather than applying the
+    baseline byte formula to every optimized kernel.
+  </p>
+  <p>
+    Two other paths sit outside this layer trace.
+    <strong>PP</strong> sends boundary activations forward and boundary gradients backward with
+    point-to-point operations, not an AllReduce over pipeline stages.
+    <strong>DP</strong> synchronizes parameter gradients across replicas: ordinary Megatron
+    distributed-optimizer training reduce-scatters gradients, updates local optimizer shards,
+    then gathers updated parameter shards. Dense weights use dense-DP groups; routed experts use
+    expert-DP groups. At expert-DP=1 there is no replica synchronization for those experts.
+    Full parameter sharding instead introduces module-level weight gathers around compute;
+    count the configured strategy, accumulation schedule and recomputation, not a generic
+    once-per-step gather.
+  </p>
+
+  <h3>Network arithmetic: logical tensor size is not bytes sent</h3>
+  <p>
+    Write \(b\) for bytes per communicated element and \(S=Tdb\) for the full logical activation
+    tensor of a TP group. With \(p\) ranks, the ring-model <strong>bytes sent per rank</strong> are
+    \(2(p-1)S/p\) for AllReduce and \((p-1)S/p\) for AllGather or ReduceScatter.
+    Received bytes are the same in a balanced exchange. Do not add TX+RX and then divide by
+    a one-direction bandwidth; do not multiply per-rank traffic by all ranks and divide by one
+    GPU's link bandwidth either.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <caption>Payload model, excluding protocol overhead and small metadata</caption>
+      <tr><th>Forward + backward work</th><th>Per-rank sent bytes</th><th>Scope</th></tr>
+      <tr><td>One TP pair, no SP</td><td>\(4(p-1)S/p\)</td><td>Two AllReduces</td></tr>
+      <tr><td>One TP pair, SP main path</td><td>\(4(p-1)S/p\)</td><td>Two AllGathers + two ReduceScatters</td></tr>
+      <tr><td>SP input re-gather for \(dW\), if needed</td><td>\((p-1)S/p\) additional</td><td>One more AllGather</td></tr>
+      <tr><td>One routed FFN, baseline EP, TP=ETP=1</td><td>\(4(1-1/e)T_{\rm local}kdb\)</td><td>Four transfers; balanced routing across \(e=EP\) owners, no peer deduplication</td></tr>
+    </table>
+  </div>
+  <p>
+    In the EP formula, \(T_{\rm local}\) is the unique token count contributed by one dispatcher
+    rank, not the global batch's token count. For TP/ETP&gt;1, first derive token ownership after
+    redistribution and add its collectives; do not substitute \(T/TP\) blindly.
+    At EP=1 the remote payload is zero, but local permutation, router and GEMM costs remain.
+    For imbalanced routing, use the busiest sender/receiver rather than average traffic.
+  </p>
+  <div class="step">
+    <div class="step-label">Worked TP example — flagship mixer, 4096 tokens, TP=2</div>
+    <p>For BF16 activations, \(S=4096\cdot4096\cdot2=32\) MiB.
+      One TP pair sends 64 MiB per rank over forward+backward without SP, or on the main SP path.
+      The classic SP input re-gather adds 16 MiB, making <strong>80 MiB</strong>.
+      At an <em>assumed</em> effective one-direction payload bandwidth of 100 GB/s, those terms
+      take \(64\cdot2^{20}/10^{11}=0.671\) ms and
+      \(80\cdot2^{20}/10^{11}=0.839\) ms respectively, before latency and contention.</p>
+  </div>
+  <div class="step">
+    <div class="step-label">Worked EP example — 35B-A3B, 4096 local tokens, EP=8</div>
+    <p>Use TP=ETP=1, top-k=8, \(d=2048\), BF16 activations and balanced, expanded token assignments.
+      One dispatch has \(4096\cdot8\cdot2048\cdot2=128\) MiB of logical payload per rank;
+      \(7/8\) is remote, so each of the four transfers sends <strong>112 MiB</strong>.
+      Forward+backward therefore sends 448 MiB and receives another 448 MiB per rank.
+      At an assumed effective 50 GB/s in each direction, the bandwidth-only service-time sum is
+      \(448\cdot2^{20}/(50\cdot10^9)=\boxed{9.40\ {\rm ms}}\), not 18.8 ms.</p>
+    <p>This is an all-to-all baseline calculation, not a measurement of the tuned HybridEP recipe.
+      Use payload bandwidth measured for the actual group and message sizes. NIC sharing,
+      fabric oversubscription, skew and additional metadata can raise time; peer deduplication
+      or communication/compute overlap can reduce the exposed time.</p>
+  </div>
+  <p>
+    For a ring, latency contributes roughly \(2(p-1)\alpha\) to an AllReduce and
+    \((p-1)\alpha\) to each AllGather/ReduceScatter; other algorithms have different latency terms.
+    If timing a kernel takes \(\Delta t\), effective payload bandwidth is
+    \(B_{\rm eff}=V_{\rm sent}/\Delta t\) under these definitions. Use decimal GB/s
+    (\(10^9\) bytes/s), not GiB/s, consistently. A 400-Gbit/s NIC is at most 50 GB/s per direction
+    before overhead and sharing; an advertised aggregate/bidirectional NVLink number is not
+    automatically the per-rank one-direction bandwidth for this collective.
+  </p>
+
+  <h3>HBM arithmetic: a resident expert still has to stream its matrices</h3>
+  <p>
+    For one GEMM \(Y=XW^\top\), with \(X\in\mathbb{R}^{n\times a}\) and
+    \(W\in\mathbb{R}^{o\times a}\), count \(F=2nao\) FLOPs.
+    A simple forward streaming model reads \(X,W\) once and writes \(Y\) once:
+    \(V_{\rm HBM}=b(na+oa+no)\).
+    This is an idealized tensor-traffic model, not a guaranteed hardware-counter value: cache
+    reuse/fusion can eliminate HBM accesses, and tiling, padding or extra buffers can add them.
+    Arithmetic intensity is \(I=F/V_{\rm HBM}\), and a roofline estimate is
+    \[
+      t_{\rm GEMM}\gtrsim
+      \max\left(\frac{F}{F_{\rm effective}},\frac{V_{\rm HBM}}{B_{\rm HBM}}\right).
+    \]
+    Use measured/effective compute and HBM rates for the relevant dtype and shapes; this
+    \(B_{\rm HBM}\) is <em>not</em> the network bandwidth in the preceding examples.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <caption>35B expert's fused gate/up projection: \(a=2048,\ o=1024\), BF16; forward only</caption>
+      <tr><th>Tokens assigned to one expert \(n\)</th><th>FLOPs</th><th>Ideal tensor traffic</th><th>Intensity</th></tr>
+      <tr><td>16</td><td>67,108,864</td><td>4.09375 MiB</td><td>15.63 FLOP/byte</td></tr>
+      <tr><td>1024</td><td>4,294,967,296</td><td>10 MiB</td><td>409.60 FLOP/byte</td></tr>
+    </table>
+  </div>
+  <p>
+    The EP example above gives \(n\approx EP\cdot T_{\rm local}\cdot k/E
+    =8\cdot4096\cdot8/256=1024\) assignments per expert under balanced routing.
+    That is why “all MoE GEMMs are memory-bound” is too broad: routing and batching determine
+    the actual matrix sizes. At illustrative rates of 3 TB/s HBM and 1 PFLOP/s BF16 compute,
+    the ridge point is about 333 FLOP/byte. The 16-token GEMM is bandwidth-limited in this model;
+    the 1024-token GEMM is compute-limited (3.50 μs of ideal HBM service versus 4.29 μs of compute).
+    These are model terms, not measured kernel latencies.
+  </p>
+  <p>
+    Backward adds \(dX=dY\,W\) and \(dW=dY^\top X\), each about the forward GEMM's FLOP count.
+    If all three tensors stream afresh on each GEMM and gradients use the same dtype, this
+    unfused model totals roughly \(3F\) FLOPs and \(3V_{\rm HBM}\) tensor traffic across
+    forward+backward. FP32 gradient accumulation changes bytes: accumulating a parameter gradient
+    can read and write an existing FP32 buffer. The optimizer later reads/writes weights, master
+    weights and moments too. Count those kernels separately; <strong>16 bytes of resident model
+    state is not 16 bytes of HBM traffic per training step.</strong>
+  </p>
+  <div class="compare">
+    <div class="compare-label">Turn the calculation into a profile</div>
+    Measure GEMM/permute HBM bytes, collective durations and overlap after warmup. Compute
+    \(B_{\rm HBM,eff}=(\text{DRAM read bytes}+\text{DRAM write bytes})/t\) for a kernel and
+    \(B_{\rm net,eff}=V_{\rm sent}/t\) for a collective with the chosen normalization.
+    Sum serialized operations; use the critical path for overlapped work, rather than summing
+    every kernel duration or taking one maximum over the entire step. Compare TP/EP meshes at
+    fixed global supervised-token batch, sequence length, checkpointing and loss policy.
+    Reducing communication on paper is not a win if expert GEMMs become too small or the pipeline
+    spends more time idle.
+  </div>
+
+  <h2 id="sft-checklist">14. An Efficient SFT Run Is More Than a Sharding Flag</h2>
   <h3>Choose full SFT or adapters before choosing the mesh</h3>
   <p>
     For a modest instruction dataset or limited hardware, start with a smaller model or
@@ -1450,7 +1800,7 @@ optimizer = torch.optim.AdamW(model.parameters(), lr=5e-6)</code></pre>
     PCIe/host-memory traffic may erase the throughput advantage.
   </div>
 
-  <h2 id="summary">13. Summary</h2>
+  <h2 id="summary">15. Summary</h2>
   <div class="summary-grid">
     <div class="summary-card">
       <div class="summary-card-label">The recipe</div>
@@ -1538,6 +1888,13 @@ optimizer = torch.optim.AdamW(model.parameters(), lr=5e-6)</code></pre>
     <a href="https://docs.pytorch.org/tutorials/intermediate/FSDP_tutorial.html">PyTorch FSDP2 tutorial</a>,
     <a href="https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/c4067f501aebefe03f27813f8ac0e4fe835249dd/examples/models/qwen/qwen35_vl/README.md">NVIDIA Bridge Qwen3.5 guide, including MTP scope</a>,
     and the <a href="https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/c4067f501aebefe03f27813f8ac0e4fe835249dd/src/megatron/bridge/recipes/qwen_vl/h100/qwen35_vl.py">pinned H100 SFT recipes</a>.
+    EP/TP rank arithmetic follows the
+    <a href="https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/c4067f501aebefe03f27813f8ac0e4fe835249dd/scripts/common/benchmark_parallelism.py">Bridge topology helper</a>.
+    Classic collective traces use Megatron-Core revision
+    <a href="https://github.com/NVIDIA/Megatron-LM/tree/2441047036f3206d19fd0dd118be25e0ff21f223">2441047</a>;
+    this source snapshot explains the operations, not a claim that it is the tested Core dependency
+    of the pinned Bridge environment. The bandwidth examples are analytical models, not hardware
+    measurements.
     Parameter counts are derived; memory figures are explicitly scoped estimates; the sharding
     presets are upstream reference configurations, not throughput measurements made for this page.
   </p>
@@ -1654,6 +2011,12 @@ optimizer = torch.optim.AdamW(model.parameters(), lr=5e-6)</code></pre>
         i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
       });
       ctx.stroke();
+      if (s.marker) {
+        ctx.fillStyle = ctx.strokeStyle;
+        s.points.forEach(p => {
+          ctx.beginPath(); ctx.arc(X(p[0]), Y(p[1]), s.marker, 0, 2 * Math.PI); ctx.fill();
+        });
+      }
     });
     ctx.setLineDash([]);
     ctx.restore();
@@ -1737,10 +2100,100 @@ optimizer = torch.optim.AdamW(model.parameters(), lr=5e-6)</code></pre>
       + ' GiB. ' + status;
   }
 
+  const expertModels = {
+    '35': { label: '35B-A3B', experts: 256, width: 512, perExpert: 3145728 },
+    '397': { label: '397B-A17B', experts: 512, width: 1024, perExpert: 12582912 }
+  };
+  const expertControls = {
+    model: document.getElementById('ep-model'),
+    world: document.getElementById('ep-world'),
+    pp: document.getElementById('ep-pp'),
+    tp: document.getElementById('ep-tp'),
+    ep: document.getElementById('ep-degree'),
+    etp: document.getElementById('ep-etp')
+  };
+  const expertCanvas = document.getElementById('plot-expert-memory');
+  const expertReadout = document.getElementById('ep-readout');
+
+  function expertLayout(model, world, pp, tp, ep, etp) {
+    if (![world, pp, tp, ep, etp].every(n => Number.isInteger(n) && n > 0)) {
+      return { error: 'All parallel degrees and the world size must be positive integers.' };
+    }
+    if (world % (pp * tp) !== 0) return { error: 'Total GPUs must be divisible by PP × dense TP.' };
+    if (world % (pp * ep * etp) !== 0) return { error: 'Total GPUs must be divisible by PP × EP × ETP.' };
+    if (model.experts % ep !== 0) return { error: 'EP must divide the expert count.' };
+    if (model.width % etp !== 0) return { error: 'ETP must divide the expert intermediate width.' };
+    if (tp > 2) return { error: 'This explorer requires dense TP=1 or 2 for the two KV heads.' };
+    const denseDP = world / (pp * tp), expertDP = world / (pp * ep * etp);
+    const localParameters = model.experts * model.perExpert / (ep * etp);
+    const gib = Math.pow(2, 30);
+    return {
+      denseDP, expertDP, localParameters,
+      localExperts: model.experts / ep,
+      weights: 2 * localParameters / gib,
+      optimizerSharded: (4 + 12 / expertDP) * localParameters / gib,
+      fullySharded: 16 * localParameters / expertDP / gib
+    };
+  }
+
+  function renderExperts() {
+    const model = expertModels[expertControls.model.value];
+    const world = Number(expertControls.world.value), pp = Number(expertControls.pp.value);
+    const tp = Number(expertControls.tp.value), ep = Number(expertControls.ep.value);
+    const etp = Number(expertControls.etp.value);
+    const selected = expertLayout(model, world, pp, tp, ep, etp);
+    expertCanvas.hidden = Boolean(selected.error);
+    if (selected.error) {
+      expertReadout.textContent = 'Invalid layout: ' + selected.error + ' No memory estimate shown.';
+      return;
+    }
+    const maxEP = Math.min(model.experts, world / (pp * etp));
+    const weights = [], optimizerSharded = [], fullySharded = [], xTicks = [];
+    for (let degree = 1; degree <= maxEP; degree *= 2) {
+      const budget = expertLayout(model, world, pp, tp, degree, etp);
+      const x = Math.log2(degree);
+      weights.push([x, budget.weights]);
+      optimizerSharded.push([x, budget.optimizerSharded]);
+      fullySharded.push([x, budget.fullySharded]);
+      xTicks.push([x, String(degree)]);
+    }
+    const maximum = optimizerSharded[0][1];
+    const base = Math.pow(10, Math.floor(Math.log10(maximum / 4)));
+    const step = Math.ceil(maximum / 4 / base) * base;
+    const yMax = Math.ceil(maximum * 1.05 / step) * step;
+    const yTicks = [];
+    for (let i = 0; i * step <= yMax + 1e-9; i++) {
+      const y = i * step;
+      yTicks.push([y, String(Number(y.toFixed(2)))]);
+    }
+    drawPlot(expertCanvas, {
+      xMin: -0.2, xMax: Math.log2(maxEP) + 0.2, yMin: 0, yMax, xTicks, yTicks,
+      xLabel: 'EP degree (log scale; N, PP, ETP fixed)',
+      yLabel: 'expert GiB / layer / rank',
+      series: [
+        { points: weights, color: '--plot-violet', width: 2.5, marker: 2 },
+        { points: fullySharded, color: '--plot-teal', width: 2, dash: [5, 4], marker: 2 },
+        { points: optimizerSharded, color: '--plot-amber', width: 2.5, marker: 2 },
+        { points: [[Math.log2(ep), selected.optimizerSharded]], color: '--plot-amber', marker: 5 }
+      ]
+    });
+    const sequenceParallel = tp > 1 && ep > 1 ? ' Use sequence_parallel=true for TP+EP.' : '';
+    expertReadout.textContent = model.label + ': dense DP=' + selected.denseDP
+      + ', expert DP=' + selected.expertDP + '; ' + selected.localExperts
+      + ' expert IDs per rank, each split ' + etp + ' way(s). Routed parameters: '
+      + selected.localParameters.toLocaleString('en-US') + ' per layer. BF16 weights: '
+      + selected.weights.toFixed(4) + ' GiB; optimizer-only DP sharding: '
+      + selected.optimizerSharded.toFixed(4) + ' GiB; ideal full DP sharding: '
+      + selected.fullySharded.toFixed(4) + ' GiB.' + sequenceParallel
+      + ' Expert bank only; not a whole-model fit estimate.';
+  }
+
   Object.values(memoryControls).forEach(control => control.addEventListener('change', renderMemory));
+  Object.values(expertControls).forEach(control => control.addEventListener('change', renderExperts));
   function renderAll() {
     plots.forEach(([c, cfg]) => drawPlot(c, cfg));
     renderMemory();
+    renderExperts();
   }
   renderAll();
   let raf;
