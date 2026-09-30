@@ -968,6 +968,58 @@ separate async
     log-probs before tuning correction thresholds.
   </div>
 
+  <h3 id="throughput-case-studies">Throughput matching: four reported runs</h3>
+
+  <p><a href="https://newsletter.semianalysis.com/p/rl-systems-mind-the-gap-matching">SemiAnalysis's
+  <em>RL Systems: Mind the Gap</em></a> grounds the queue model in concrete runs. Measure
+  <em>accepted, useful</em> sample throughput: fast generation does not feed the trainer if
+  failures, stale samples, or uniform-reward groups are discarded. These are workload and
+  configuration snapshots, not permanent framework or sandbox-service limits.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Run</th><th>Reported observation</th><th>Lesson</th></tr>
+      <tr>
+        <td>Qwen3-235B, Prime RL; 64 trainer / 192 generator H200 GPUs</td>
+        <td>10.5% trainer MFU; 60% of dispatched rollouts discarded under oversampling</td>
+        <td>Long-response tails and difficult tasks reduce useful generation throughput despite a larger rollout fleet.</td>
+      </tr>
+      <tr>
+        <td>GLM-5, Prime RL; 128 trainer / 128 generator H200 GPUs, PD-disaggregated serving</td>
+        <td>55% of prompt groups all-pass; trainer waits 74% of wall time</td>
+        <td>Easy tasks create zero-advantage groups. This is a separate experiment from GLM-5's original slime training recipe.</td>
+      </tr>
+      <tr>
+        <td>Qwen3-235B, verl + Uni-Agent on GB300, Modal sandboxes</td>
+        <td>A 7,500-second rollout straggler; at 960 concurrent rollouts, account-limit overruns caused initialization failures and hour-long sandbox startup</td>
+        <td>Distinguish model/trajectory tails from environment admission and quota failures.</td>
+      </tr>
+      <tr>
+        <td>Qwen3-235B, slime + OpenHands, stateful Modal sandboxes</td>
+        <td>60% trainer wait; partial rollouts carry half-edited workspaces across updates</td>
+        <td>Persist sandbox identity and state, record resume failures, and budget re-prefill after KV eviction.</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>The last case adds a state-continuation obligation: later actions condition on a workspace
+  produced by earlier policy versions. That is part of the off-policy history, not a second
+  independent numerical lag to add to \(K\). The authors suspect a connection to poor resolve
+  rate, but do not isolate it experimentally. Preserve coherent environment state and per-segment
+  policy provenance rather than treating a resumed episode as fresh on-policy data.</p>
+
+  <h3 id="low-bias-hypothesis">Open question: a bias ceiling or a variance bottleneck?</h3>
+
+  <p><a href="https://luk-huang.github.io/personal-website/blog/is-frontier-asynchronous-rl-solved.html">Luke
+  Huang's frontier survey</a> proposes that lower-bias trajectory estimators may benefit more
+  from larger batches and better variance control than token-local approximations at long
+  horizons. Its high-lag language-model runs and simplified MDP simulations motivate the
+  hypothesis; they do not prove inevitable collapse for every async recipe. Keep
+  <a href="#is">exact trajectory IS, truncated weights, and GSPO's geometric score</a>
+  distinct. Useful experiments vary lag, horizon, batch size, and correction together, measuring
+  effective sample size, gradient health, and reward rather than assuming a larger batch fixes
+  bias or that sequence weighting always wins.</p>
+
   <!-- ── §9 References ──────────────────────── -->
   <h2 id="refs">9. Key References</h2>
 

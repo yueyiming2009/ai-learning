@@ -326,7 +326,7 @@
   <div class="reward-grid">
     <div class="reward-card good">
       <div class="reward-card-header">Code: test pass rate</div>
-      <p>r = (tests passing after edit) / (total tests). Verifiable, objective, no reward hacking — an agent can't fake passing tests without actually making them pass.</p>
+      <p>r = (tests passing after edit) / (total tests). Executable and inexpensive, but only as sound as the tests and their isolation: wrong-but-passing patches and grader tampering remain possible. See <a href="verifier-reward-design.html#hacking">reward integrity</a>.</p>
     </div>
     <div class="reward-card good">
       <div class="reward-card-header">QA / research: judge LLM</div>
@@ -342,7 +342,7 @@
     </div>
   </div>
 
-  <h3>Reward shaping — when and why</h3>
+  <h3 id="potential-based-shaping">Reward shaping — when and why</h3>
   <p>With sparse terminal rewards over long horizons (T = 50+ steps), the gradient signal is extremely weak: most trajectories get 0 reward and the model receives almost no information about which early actions were good. Reward shaping adds intermediate signals to guide learning. The obvious hazard is that an intermediate signal creates its own optimization target — the agent farms the bonus instead of finishing the task.</p>
 
   <h4>The policy invariance theorem</h4>
@@ -356,13 +356,20 @@
   \[
     \sum_{t \ge 0} \gamma^t \big( \gamma\Phi(s_{t+1}) - \Phi(s_t) \big) = -\Phi(s_0) + \lim_{T \to \infty} \gamma^T \Phi(s_T)
   \]
-  <p>Every interior term cancels. The shaped return differs from the true return by \(-\Phi(s_0)\), which depends only on where the episode started, not on what the agent did. No policy can accumulate shaping reward — which is precisely the loop-exploitation loophole closed. Equivalently, \(Q^*_{R'}(s,a) = Q^*_R(s,a) - \Phi(s)\): subtracting a function of state alone leaves every advantage, and therefore every \(\arg\max_a\), untouched.</p>
+  <p>Every interior term cancels. For a continuing discounted task with bounded \(\Phi\), the limit vanishes; for a finite episode, require zero terminal potential or account for the absorbing continuation. The shaped return then differs from the true return by \(-\Phi(s_0)\), which depends only on where the episode started, not on what the agent did. No policy can accumulate shaping reward — which is precisely the loop-exploitation loophole closed. For any policy, \(Q^\pi_{R'}(s,a) = Q^\pi_R(s,a) - \Phi(s)\): subtracting a function of state alone preserves action ordering and the optimal policy. This guarantee says nothing by itself about learning speed or numerical stability.</p>
 
   <p>Two consequences worth carrying around. The best possible potential is \(\Phi = V^*\), which reduces \(Q^*_{R'}\) to the advantage function and makes the shaped problem myopic — so the quality of a shaping scheme is just how close \(\Phi\) sits to the true value function. And Wiewiora (2003) showed that potential-based shaping with \(Q_0 = 0\) produces behavior identical to no shaping with \(Q_0 = \Phi\). Valid shaping injects a prior on values and nothing more.</p>
 
   <div class="warn">
     <strong>Two implementation traps.</strong> The \(\gamma\) in \(\gamma\Phi(s') - \Phi(s)\) is load-bearing; using \(\Phi(s') - \Phi(s)\) with \(\gamma &lt; 1\) breaks the telescoping and voids the guarantee. And terminal states must have \(\Phi = 0\) — a nonzero potential at episode end is an unbalanced real reward, not a shaping term. This is the most common way a correct-looking implementation silently stops being policy-invariant.
   </div>
+
+  <p><strong>Reading path:</strong>
+    <a href="https://www.youtube.com/watch?v=hj5GWf69h10&amp;t=2508s">MIT Computational Sensorimotor Learning, Lecture 8 (41:48–46:00)</a> →
+    <a href="https://algorithmsbook.com/files/dm.pdf"><em>Algorithms for Decision Making</em>, §17.5, printed p. 343</a> →
+    <a href="https://ai.stanford.edu/~ang/papers/shaping-icml99.pdf">Ng, Harada &amp; Russell (1999)</a>.
+    Choose potentials from legitimate task state; hidden-history bonuses are not automatically
+    Markov state potentials. Positive scaling of the original reward can also preserve its optimum.</p>
 
   <h4>Why valid shaping does nothing in GRPO</h4>
   <p>Working the theorem through the algorithm actually used for agentic RL gives a sharp result. LLM episodes run at \(\gamma = 1\), so with \(\Phi = 0\) at termination the shaping contribution to every trajectory is exactly \(-\Phi(s_0)\). Group-relative advantages are computed over \(G\) rollouts from the <em>same</em> prompt, so \(s_0\) is shared across the group:</p>
