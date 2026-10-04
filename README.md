@@ -99,6 +99,11 @@ policy updates, a comparison with general/LLM RL, and a separate-project GenRank
 guide (ownership, batch/probability contracts, and packaging). **Agentic:** ReAct, the agent-architecture landscape (Deep Agents, graphs,
 delegation, handoffs, reflection, and search), agentic RL over long horizons, multi-turn tool-use
 training in verl, harness/trainer decoupling, and gated learning from real-world production experience.
+Start an experiment with [Practical Agentic RL Training](docs/rl/practical-agentic-rl.html):
+a source-checked MiMo code-task path through pinned inputs, environment/verifier controls,
+baseline measurement, trajectory audits, small updates, and held-out checkpoint evaluation.
+The guide is not yet execution-validated; the existing concept, VeRL-internals, harness-contract,
+and GRPO pages remain the deep references rather than being merged into the recipe.
 **Environments:** the training-environment stack — anatomy + ecosystem landscape,
 OpenEnv, verifiers &amp; the Environments Hub, verifier/reward design, sandboxing at scale,
 task generation &amp; curriculum. **Frameworks:** the framework landscape, verl (HybridFlow) architecture, resource-pool

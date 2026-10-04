@@ -592,8 +592,9 @@
     diversity: 1,568 prompts × 16 rollouts means as many as 25,088 agent trajectories need
     grading through test-case and rubric reward paths each step. The safest interpretation of
     “agentic in-group credit assignment” is that the sibling rollouts for a prompt are scored
-    jointly to produce relative learning signal. It does <em>not</em> yet establish turn-level
-    or action-level credit assignment; Xiaomi has not published that algorithm.</li>
+    jointly to produce relative learning signal. The announcement alone does <em>not</em>
+    establish turn-level or action-level credit assignment; those claims require
+    algorithm-specific evidence, separate from the released grader interfaces below.</li>
     <li><strong>Relative ranking where labels don't exist.</strong> RULER grading a GRPO group
     against itself — the group provides its own baseline, exactly as the GRPO advantage does
     numerically.</li>
@@ -601,6 +602,30 @@
     are machine-generated at 100k-scale, no single automatic check is trustworthy, so
     execution-based and execution-free verifiers vote.</li>
   </ul>
+
+  <h3 id="mimo-release">MiMo's released tasks: metadata is not the grader</h3>
+  <p>The October 4, 2026 inspection of
+  <a href="https://huggingface.co/datasets/XiaomiMiMo/MiMo-V2.6-RL-oss/tree/639865fd3374018d6cb29b9fb82dd531406fcf5f">MiMo-V2.6-RL-oss</a>
+  provides a concrete distinction: sampled code, general and webdev rows all carry
+  <code>reward_model.style = "rule"</code> and an empty <code>ground_truth</code>.
+  Those fields neither identify a deterministic grader nor prove missing supervision.
+  Trace the harness/environment's reward path instead.</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Task family</th><th>Actual reward mechanism</th><th>Interpretation</th></tr>
+      <tr><td>Code</td><td>Reset test-patch paths, apply hidden tests, execute the verifier command; exit 0 yields 1.</td><td>Check reset/apply/transport errors separately from a wrong solution. Tests arrive after rollout, but the inspected agent and grader share a pod/filesystem.</td></tr>
+      <tr><td>General</td><td>The enterprise recipe requires an LLM judge to score rubric assertions. The dataset also contains terminal tasks with executable checks.</td><td>The <a href="https://datasets-server.huggingface.co/statistics?dataset=XiaomiMiMo%2FMiMo-V2.6-RL-oss&amp;config=general&amp;split=train">inspected source counts</a> are 925 general-agent and 64 terminal-task records; the configuration name does not specify one homogeneous reward path.</td></tr>
+      <tr><td>Web development</td><td><code>design_group_v1</code> uses an external group-relative training grader; <code>webdev_eval_v1</code> renders in the pod and makes an absolute vision-based evaluation call.</td><td>A relative training reward has no standalone absolute interpretation. Freeze the evaluation grader and budget before comparing models.</td></tr>
+    </table>
+  </div>
+  <p>Sources: the pinned
+  <a href="https://github.com/XiaomiMiMo/mimoagent/blob/467f0a19016f0ac4d63b8d17a1f0da9ba07f232c/src/mimoagent/environments/datasets/opensource_code.py">code verifier</a>,
+  <a href="https://github.com/XiaomiMiMo/verl/blob/a2ad9f6160b03ff2d47e59832bfb6b289f37c917/scripts/general/general.env.example">general judge configuration</a>, and
+  <a href="https://github.com/XiaomiMiMo/verl/blob/a2ad9f6160b03ff2d47e59832bfb6b289f37c917/recipes/design/webdev/grade.py">webdev grading dispatch</a>.
+  For the worked row-to-rollout example and negative/positive verifier controls, see
+  <a href="practical-agentic-rl.html#tasks">Practical Agentic RL Training</a>.
+  This is source-inspected release behavior, not a reproduced training result or a complete account
+  of the technical report's groupwise grading algorithms.</p>
 
   <div class="result">
     <div class="result-label">The mental model</div>
@@ -623,7 +648,7 @@
       <tr><td><a href="https://epoch.ai/gradient-updates/state-of-rl-envs">Epoch AI, "An FAQ on RL Environments"</a></td><td>Reward hacking as top concern; 2–3% difficulty calibration; market numbers</td></tr>
       <tr><td><a href="https://verifiers.readthedocs.io">verifiers docs</a></td><td>The Rubric abstraction — see the <a href="verifiers-environments-hub.html">verifiers page</a></td></tr>
       <tr><td><a href="https://arxiv.org/abs/2608.17528">Agent Lightning v1.0 (2026)</a></td><td>Observed "fetch the answer key" hacks in SWE-smith training (git history, wget/curl, pip, urllib) and the environmental fix</td></tr>
-      <tr><td><a href="https://mimo.xiaomi.com/rl/#overview">MiMo-V2.6 live RL runs</a> · <a href="https://x.com/_LuoFuli/status/2100296686719610932">announcement</a></td><td>Test-case + rubric grading and in-group credit assignment presented as a scaling axis; implementation details pending</td></tr>
+      <tr><td><a href="https://mimo.xiaomi.com/rl/#overview">MiMo-V2.6 live RL runs</a> · <a href="https://x.com/_LuoFuli/status/2100296686719610932">announcement</a></td><td>Announcement and telemetry for test-case/rubric grading as a scaling axis; <a href="#mimo-release">released grader interfaces</a> provide narrower implementation evidence.</td></tr>
 </table>
   </div>
 

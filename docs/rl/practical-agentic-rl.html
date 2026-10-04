@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="A source-checked MiMo code-task recipe: prepare environments, establish a baseline, audit trajectories, run a small RL experiment, and evaluate held-out improvement.">
+  <title>Practical Agentic RL Training</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #ffffff; --surface: #f8f9fa; --border: #e8eaed;
+      --text: #1a1a2e; --muted: #6b7280; --accent: #0d9488;
+      --accent-light: #f0fdfa; --nav-bg: rgba(255,255,255,0.94);
+      --caution-bg: #fffbeb; --caution-fg: #92400e; --caution-border: #f59e0b;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115; --surface: #171b21; --border: #262b33;
+        --text: #e5e7eb; --muted: #9aa1ab; --accent: #2dd4bf;
+        --accent-light: #0c2420; --nav-bg: rgba(15,17,21,0.94);
+        --caution-bg: #241c0c; --caution-fg: #fbbf24; --caution-border: #b45309;
+      }
+    }
+    body { margin: 0; font: 16px/1.75 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); }
+    a { color: var(--accent); text-underline-offset: 3px; }
+    a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+    nav { position: sticky; top: 0; z-index: 100; display: flex; align-items: center; gap: 24px; height: 52px; padding: 0 24px; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
+    .nav-brand { display: inline-flex; align-items: center; gap: 7px; font-size: 0.9rem; font-weight: 600; white-space: nowrap; text-decoration: none; }
+    .nav-links { display: flex; flex: 1; gap: 12px; overflow-x: auto; min-width: 0; }
+    .nav-links a { font-size: 0.82rem; white-space: nowrap; text-decoration: none; color: var(--muted); }
+    .hero { background: linear-gradient(135deg, #064e3b, #065f46 55%, #0d9488); color: white; padding: 52px 24px; text-align: center; }
+    .hero h1 { font-size: clamp(1.6rem, 4vw, 2.3rem); line-height: 1.3; margin: 12px 0; }
+    .hero p { max-width: 720px; margin: 0 auto; opacity: 0.94; }
+    .hero-pill { display: inline-block; border: 1px solid rgba(255,255,255,0.3); border-radius: 100px; padding: 3px 12px; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    .page-wrap { max-width: 920px; margin: 0 auto; padding: 32px 24px 72px; }
+    h2 { margin-top: 48px; padding-bottom: 8px; border-bottom: 1px solid var(--border); font-size: 1.45rem; scroll-margin-top: 72px; }
+    h3 { margin-top: 28px; font-size: 1.08rem; scroll-margin-top: 72px; }
+    p, li { overflow-wrap: anywhere; }
+    li { margin: 8px 0; }
+    code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.88em; }
+    :not(pre) > code { background: var(--surface); padding: 2px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+    pre { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; overflow-x: auto; line-height: 1.55; }
+    pre code { font-size: 0.82rem; }
+    .note, .gate, .caution { padding: 16px 20px; margin: 24px 0; border-left: 4px solid var(--accent); border-radius: 0 8px 8px 0; background: var(--accent-light); }
+    .caution { border-color: var(--caution-border); background: var(--caution-bg); color: var(--caution-fg); }
+    .note p, .gate p, .caution p { margin: 6px 0; }
+    .table-wrap { overflow-x: auto; margin: 20px 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { text-align: left; vertical-align: top; padding: 11px 13px; border: 1px solid var(--border); }
+    th { background: var(--surface); }
+    .muted { color: var(--muted); font-size: 0.9rem; }
+    .flow { padding: 18px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+    details { margin: 20px 0; }
+    summary { cursor: pointer; font-weight: 600; }
+    @media (max-width: 600px) {
+      nav { padding: 0 12px; gap: 16px; }
+      .nav-brand { font-size: 0.78rem; }
+      .page-wrap { padding: 24px 16px 56px; }
+      th, td { padding: 9px; }
+    }
+  </style>
+</head>
+<body>
+<nav aria-label="Page navigation">
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes">
+    <svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+    Practical Agentic RL
+  </a>
+  <div class="nav-links">
+    <a href="#scope">Scope</a><a href="#pin">Prerequisites</a><a href="#tasks">Data</a>
+    <a href="#harness">Harness</a><a href="#baseline">Baseline</a><a href="#trajectory">Trajectory</a>
+    <a href="#train">Training</a><a href="#evaluate">Evaluation</a><a href="#failures">Failures</a><a href="#refs">Sources</a>
+  </div>
+</nav>
+<header class="hero">
+  <span class="hero-pill">Agentic RL &middot; Practical Guide</span>
+  <h1>Practical Agentic RL Training</h1>
+  <p>One code-task experiment, from a dataset row to a defensible learning result:
+  prepare the environment, establish a baseline, audit the trajectory, train small, and evaluate held out.</p>
+</header>
+<main class="page-wrap">
+  <div class="caution">
+    <strong>Evidence status &mdash; October 4, 2026: source-checked, not execution-validated.</strong>
+    <p>The MiMo release, pinned launcher, runner, and verifier were inspected. No task container,
+    GPU training job, checkpoint restore, or learning gain has been reproduced for this guide.
+    Commands below are a proposed diagnostic configuration, not a tested quickstart or minimum-hardware claim.
+    Run third-party code and images only after review and approval in an isolated training environment.</p>
+  </div>
+
+  <h2 id="scope">1. Define the experiment, not just the training command</h2>
+  <p>The example is the <strong>code configuration of MiMo-V2.6-RL-oss</strong>: 2,698 task records,
+  each describing a repository problem, an execution image, and a test-based verifier.
+  It is not a corpus of successful demonstrations. The policy must produce fresh trajectories.
+  The other four configurations use different environments or graders; they are not interchangeable
+  inputs to this recipe.</p>
+
+  <div class="flow">
+    <strong>Task row</strong> &rarr; dataset adapter &rarr; Uni-Agent session/gateway &rarr;
+    mimoagent harness &rarr; task pod &rarr; test verdict &rarr;
+    captured tokens + masks + logprobs + reward &rarr; VeRL policy update
+  </div>
+  <p><strong>Proposed first experiment:</strong> an approved local snapshot of the release's linked
+  <a href="https://huggingface.co/XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B">9B distilled model</a>,
+  32 training tasks, 64 development tasks, and 64 locked final-test tasks. Use two explicit harness
+  profiles, fixed task-to-harness assignment, four training attempts per prompt, and a 20-update diagnostic run.
+  These sizes are teaching choices, not Xiaomi's recipe or a promise of statistical power.</p>
+  <p>Success is <em>better held-out task completion at the same harness and inference budget</em>,
+  with infrastructure reliability reported separately. A working launch, one nonzero reward,
+  or overfitting 32 tasks is useful evidence, but none is that result.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Need a deeper explanation?</th><th>Canonical page</th></tr>
+      <tr><td>Agent-as-MDP, long-horizon rewards and credit assignment</td><td><a href="agentic-rl.html">Agentic RL</a></td></tr>
+      <tr><td>AgentLoop internals, tools, token fidelity and masking</td><td><a href="verl-agentic-training.html">Agentic RL Training in verl</a></td></tr>
+      <tr><td>Harness ownership, capture contracts and sample stitching</td><td><a href="harnessed-agentic-rl.html">Harnessed Agentic RL</a></td></tr>
+      <tr><td>Group advantages, update tensors and loss reductions</td><td><a href="grpo-training-walkthrough.html">GRPO Training Walkthrough</a></td></tr>
+      <tr><td>Verifier integrity, sandbox lifecycle and diagnostics</td><td><a href="verifier-reward-design.html">Reward Design</a> &middot; <a href="env-scaling-sandboxing.html">Sandboxing</a> &middot; <a href="async-rl-monitoring.html">Monitoring</a></td></tr>
+    </table>
+  </div>
+
+  <h2 id="pin">2. Pin the whole execution system</h2>
+  <p>A dataset revision alone does not identify an agentic-RL experiment. Keep the following in a
+  run manifest, along with the model/tokenizer snapshot, training-image digest, package lock,
+  CUDA/driver versions, GPU model and memory, split files, harness profiles, and actual resolved configuration.</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Inspected source</th><th>Pinned revision</th></tr>
+      <tr><td><a href="https://huggingface.co/datasets/XiaomiMiMo/MiMo-V2.6-RL-oss/tree/639865fd3374018d6cb29b9fb82dd531406fcf5f">Dataset and image mapping</a></td><td><code>639865fd3374018d6cb29b9fb82dd531406fcf5f</code></td></tr>
+      <tr><td><a href="https://github.com/XiaomiMiMo/verl/tree/a2ad9f6160b03ff2d47e59832bfb6b289f37c917">MiMo VeRL fork</a></td><td><code>a2ad9f6160b03ff2d47e59832bfb6b289f37c917</code></td></tr>
+      <tr><td><a href="https://github.com/XiaomiMiMo/mimoagent/tree/467f0a19016f0ac4d63b8d17a1f0da9ba07f232c">mimoagent submodule</a></td><td><code>467f0a19016f0ac4d63b8d17a1f0da9ba07f232c</code></td></tr>
+      <tr><td><a href="https://github.com/XiaomiMiMo/uni-agent/tree/c63e0b01c375ebede95e01fe92bc367df24e5bf3">uni-agent submodule</a></td><td><code>c63e0b01c375ebede95e01fe92bc367df24e5bf3</code></td></tr>
+    </table>
+  </div>
+  <p>Use a reviewed Linux training runtime compatible with this fork's Megatron/mbridge, SGLang,
+  Ray, and TransferQueue paths. A generic current <code>pip install verl</code> is not a substitute.
+  The launcher expects an existing Ray cluster and Kubernetes access for disposable task pods.
+  Source, model, data, profile paths, and required credentials must be available to the workers,
+  not merely to the driver. Check validation-file visibility too: the launcher's cluster precheck
+  explicitly enumerates training files.</p>
+  <div class="caution">
+    <strong>Defaults are not a small experiment.</strong>
+    <p><code>scripts/code/train.sh</code> defaults to 8 nodes &times; 8 GPUs,
+    <code>N=16</code>, 64 prompts per batch, a 262,144-token limit, and a 2,048-session ceiling.
+    The base YAML and example comments contain different values. Read
+    <code>resolved_config.yaml</code>, not whichever file you saw first.
+    The one-node/eight-GPU profile below is an unmeasured topology proposal; memory fit depends on
+    the checkpoint, accelerator, context budget, and runtime.</p>
+  </div>
+  <div class="gate"><strong>Gate:</strong> approved artifacts, declared resource limits, an accessible
+  Ray/Kubernetes environment, and a complete identity manifest. Missing runtime compatibility or
+  image approval blocks execution; do not work around it by disabling prechecks.</div>
+
+  <h2 id="tasks">3. Turn task records into executable inputs</h2>
+  <p>A sampled assignment asks the agent to make an action's secrets parameter optional while
+  preserving token export. Its row contains the user prompt and a JSON string under
+  <code>extra_info.instance_json</code>. The <a href="https://github.com/XiaomiMiMo/verl/blob/a2ad9f6160b03ff2d47e59832bfb6b289f37c917/recipes/code/dataset.py">dataset adapter</a>
+  decodes that string at rollout time into <code>tools_kwargs.instance</code>.
+  Preserve the JSON-string representation in Parquet rather than inventing a new nested schema.</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Instance fields</th><th>What to check</th></tr>
+      <tr><td><code>dataset_type</code>, <code>instance_id</code></td><td>Type is <code>opensource-code</code>; identity is stable and unique.</td></tr>
+      <tr><td><code>docker_image</code>, <code>cwd</code></td><td>Approved, pullable image digest; absolute repository path inside that image.</td></tr>
+      <tr><td><code>problem_statement</code></td><td>Matches the intended task in <code>prompt</code>; no hidden verifier material is sent to the model.</td></tr>
+      <tr><td><code>test_patch</code>, <code>test_command</code>, <code>verifier_timeout_sec</code></td><td>Tests and runner are supplied at grading time; command/path/toolchain agree; timeout is positive.</td></tr>
+    </table>
+  </div>
+  <p><strong>Resolve image names before launching.</strong> Rows can contain bare names such as
+  <code>format-code-task-001457:latest</code>, while the environment contract expects a fully qualified image.
+  Use the release's <code>image-mapping.jsonl</code> to find the public tag, then a reviewed registry
+  process to resolve or mirror it to an immutable digest. Do not assume the runner loads the mapping for you.</p>
+  <p><strong>Split before looking at outcomes.</strong> Curate <code>split_ids.json</code> with
+  <code>train</code>, <code>dev</code>, and <code>test</code> arrays. Group related repository/issue
+  variants using provenance, not just random row indices. If that provenance is unavailable,
+  describe the split as task-ID-held-out, not repository-held-out. The release lists only training
+  splits; it does not supply an independent evaluation protocol. Keep final-test material out of
+  policy-accessible mounts and all task-selection or tuning decisions.</p>
+
+  <details>
+    <summary>Offline preparation example: preserve rows, resolve images, enforce disjoint selections</summary>
+    <p>Run in a reviewed data-preparation environment with PyArrow already available, in a directory
+    containing the pinned <code>code.parquet</code>, <code>image-mapping.jsonl</code>, your curated
+    <code>split_ids.json</code>, and <code>approved_image_digests.json</code>. The last file maps
+    public image tags to approved fully qualified <code>registry/path@sha256:...</code> references.
+    This transforms data only; it does not execute task code or pull images.</p>
+    <pre><code class="language-python">import json
+import re
+from pathlib import Path
+
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+table = pq.read_table("code.parquet")
+rows = table.to_pylist()
+by_id = {row["extra_info"]["instance_id"]: row for row in rows}
+if len(by_id) != len(rows):
+    raise ValueError("Duplicate instance IDs in source data")
+
+mapping_rows = [
+    json.loads(line)
+    for line in Path("image-mapping.jsonl").read_text().splitlines()
+    if line.strip()
+]
+mapping = {r["dataset_image"]: r["dockerhub_image"] for r in mapping_rows}
+if len(mapping) != len(mapping_rows):
+    raise ValueError("Duplicate dataset image mappings")
+approved = json.loads(Path("approved_image_digests.json").read_text())
+splits = json.loads(Path("split_ids.json").read_text())
+sizes = {"train": 32, "dev": 64, "test": 64}
+if set(splits) != set(sizes):
+    raise ValueError("Expected exactly train, dev, test selections")
+if any(not isinstance(splits[k], list) or len(splits[k]) != n
+       for k, n in sizes.items()):
+    raise ValueError("Selection sizes do not match the declared experiment")
+all_ids = [uid for name in sizes for uid in splits[name]]
+if len(set(all_ids)) != len(all_ids) or not set(all_ids).issubset(by_id):
+    raise ValueError("Selections overlap, contain duplicates, or name missing tasks")
+
+required = {
+    "dataset_type", "instance_id", "docker_image", "cwd",
+    "problem_statement", "test_patch", "test_command", "verifier_timeout_sec",
+}
+prepared = {}
+for name in sizes:
+    selected = []
+    for uid in splits[name]:
+        row = by_id[uid]
+        extra = dict(row["extra_info"])
+        inst = json.loads(extra["instance_json"])
+        if not required.issubset(inst) or any(not inst[k] for k in required):
+            raise ValueError(f"{uid}: incomplete instance")
+        if (inst["dataset_type"] != "opensource-code"
+                or extra["dataset_type"] != "opensource-code"
+                or inst["instance_id"] != uid
+                or not inst["cwd"].startswith("/")
+                or float(inst["verifier_timeout_sec"]) &lt;= 0):
+            raise ValueError(f"{uid}: invalid task contract")
+        public_image = mapping[inst["docker_image"]]
+        digest_image = approved[public_image]
+        if not re.fullmatch(r"[^@\s]+/[^@\s]+@sha256:[0-9a-f]{64}", digest_image):
+            raise ValueError(f"{uid}: expected an approved immutable image")
+        inst["docker_image"] = digest_image
+        extra["instance_json"] = json.dumps(inst, ensure_ascii=False)
+        selected.append({**row, "extra_info": extra})
+    prepared[name] = pa.Table.from_pylist(selected, schema=table.schema)
+prepared["smoke"] = prepared["train"].slice(0, 1)
+if any(Path(f"{name}.parquet").exists() for name in prepared):
+    raise FileExistsError("Refusing to overwrite prepared experiment data")
+for name, output in prepared.items():
+    pq.write_table(output, f"{name}.parquet")
+</code></pre>
+    <p>The identity checks do not prove semantic decontamination or image safety. Record hashes of
+    inputs and outputs, retain the image-rewrite map, and audit the split provenance separately.
+    Preserve evaluation row order: the fixed harness assignment below uses dataset indices.</p>
+  </details>
+
+  <h3>Verify the verifier before optimizing against it</h3>
+  <p>The <a href="https://github.com/XiaomiMiMo/mimoagent/blob/467f0a19016f0ac4d63b8d17a1f0da9ba07f232c/src/mimoagent/environments/datasets/opensource_code.py">code environment</a>
+  captures the base commit, resets the paths touched by the test patch, applies that patch, and runs
+  the test command. A zero exit code yields reward 1; otherwise reward 0. Reset/apply failures carry
+  an error category and must not be mistaken for an incorrect solution.</p>
+  <p>The tests arrive after the rollout, but agent and grader share a pod/filesystem.
+  This is not an independently isolated verifier. Check image history and residue, credentials,
+  network policy, test-runner integrity, and cleanup; the cheap history assertion is not a complete
+  image audit. Keep the row's verifier payload inaccessible to the policy. See
+  <a href="verifier-reward-design.html#misalignment">reward-integrity boundaries</a>.</p>
+  <div class="gate"><strong>Gate:</strong> for a disposable training task, preserve evidence that the
+  untouched/broken state fails and an independently reviewed correct change passes through the
+  same grading path. The release does not supply that positive-control solution in these rows.
+  Also verify that an image/setup or test-patch failure is classified separately from policy failure.</div>
+
+  <h2 id="harness">4. Freeze a supported harness and resource configuration</h2>
+  <div class="caution">
+    <strong>Pinned-source inconsistency: one harness is rejected.</strong>
+    <p>Comments say a one-entry spec implements a single-harness run, but
+    <code>_mixed_harness_specs()</code> rejects fewer than two entries. Use two genuine profiles
+    here, <code>mini-mimocode</code> and <code>mini-bash</code>; do not disguise one profile under
+    duplicate labels. A real single-harness experiment needs a separately reviewed upstream fix.</p>
+  </div>
+  <p>Copy those two pinned profiles into a shared experiment directory and create
+  <code>two-arm.yaml</code> beside them:</p>
+  <pre><code class="language-yaml">harnesses:
+  - label: mini-mimocode
+    config: ./mini-mimocode.yaml
+  - label: mini-bash
+    config: ./mini-bash.yaml
+</code></pre>
+  <p>For both copied profiles, set <code>agent.step_limit: 30</code> and add
+  <code>max_tokens: 8192</code>, <code>timeout: 300</code>, and <code>max_retries: 0</code>
+  under <code>model.model_kwargs</code>, keeping the existing temperature and other settings.
+  These are proposed bounded-experiment limits, not the release's defaults.
+  Customize and review the Kubernetes placement/resource settings.
+  <strong>The wrapper only rewrites token/time limits for its default four-arm spec;</strong>
+  a custom spec must carry its own limits.</p>
+  <p>Set <code>MIXED_HARNESS_MODE=prompt</code> with seed 0. The pinned runner chooses
+  <code>(seed + dataset_index) % number_of_harnesses</code>, so each task keeps one harness
+  within an unchanged data order. This is not a comparison of both harnesses on every task.
+  Log actual <code>selected_harness</code>; aggregate and stratify results accordingly.</p>
+  <p>In the reviewed runtime, from the pinned VeRL repository root, set the following after replacing
+  the shared paths. Both submodules must already be present at their pinned revisions.
+  All commands in subsequent sections assume these exports in the same shell.</p>
+  <pre><code class="language-bash">set -euo pipefail
+export LAB_ROOT=/shared/agentic-lab
+export MODEL_PATH=/shared/models/mimo-distill-9b-pinned
+export TRAIN_DATA="$LAB_ROOT/data/train.parquet"
+export VAL_DATA="$LAB_ROOT/data/dev.parquet"
+export KUBECONFIG=/shared/credentials/task-cluster.yaml
+export MIMOAGENT_HARNESS_SPEC="$LAB_ROOT/harness/two-arm.yaml"
+export MIXED_HARNESS_MODE=prompt MIXED_HARNESS_SEED=0
+
+export TRAIN_NNODES=1 TRAIN_NGPUS_PER_NODE=8 ROLLOUT_NNODES=0
+export ACTOR_TP=8 ACTOR_PP=1 ACTOR_CP=1 ACTOR_EP=1 ROLLOUT_TP=2
+export N=4 TRAIN_BATCH_SIZE=4 PPO_MINI_BATCH_SIZE=4
+export MAXLEN=32768 PROMPT_LENGTH=8192 RESPONSE_LENGTH=24576
+export PPO_MAX_TOKEN_LEN_PER_GPU=32768
+export AGENT_NUM_WORKERS=2 GATEWAY_COUNT=1 MAX_CONCURRENT_SESSIONS=8
+export ROLLOUT_MAX_RUNNING_REQUESTS=8 TRAJECTORY_TIMEOUT=1800
+export FILTER_GROUPS_ENABLE=False
+export VAL_N=1 VAL_DO_SAMPLE=False VAL_BATCH_SIZE=8
+export TOTAL_STEPS=20 TOTAL_EPOCHS=100 SAVE_FREQ=5 TEST_FREQ=-1
+export EXP_NAME=code-two-arm-diagnostic
+</code></pre>
+  <p><code>ROLLOUT_NNODES=0</code> means colocated rollout, not zero rollout GPUs.
+  This retains the pinned <code>colocate_async</code> trainer and its two-step stale-sample
+  threshold; the resolved-config validator rejects switching this recipe to synchronous mode.
+  The four-prompt batch represents 16 requested attempts, not 16 simultaneously live pods.
+  Disabled group filtering makes saturated groups visible during diagnosis rather than repeatedly
+  searching a tiny pool for mixed outcomes. It does not make their zero advantages informative.</p>
+  <pre><code class="language-bash">PREFLIGHT_ONLY=1 RUN_DIR="$LAB_ROOT/runs/preflight" \
+  bash scripts/code/train.sh
+</code></pre>
+  <div class="gate"><strong>Gate:</strong> inspect <code>resolved_config.yaml</code>,
+  <code>provenance.json</code>, and <code>command.json</code>. Confirm the topology, budgets,
+  paths, harnesses, and output destinations. <code>PREFLIGHT_ONLY</code> runs cluster/import/config
+  checks and writes artifacts; it is not an offline dry run, a task execution, or proof of memory fit.
+  Do not set <code>SKIP_CLUSTER_CHECK=1</code> to conceal a failed prerequisite.</div>
+
+  <h2 id="baseline">5. Execute one episode, then measure the baseline</h2>
+  <p>Use validation-only mode for the smoke task. It still initializes substantial trainer/runtime
+  infrastructure; it is not a laptop inference shortcut. Use a fresh output directory for each run.</p>
+  <pre><code class="language-bash">VAL_DATA="$LAB_ROOT/data/smoke.parquet" VAL_BATCH_SIZE=1 \
+  MAX_CONCURRENT_SESSIONS=1 RUN_DIR="$LAB_ROOT/runs/smoke" \
+  bash scripts/code/train.sh \
+  trainer.val_before_train=True trainer.val_only=True
+</code></pre>
+  <p><strong>Both flags matter.</strong> In this revision, the <code>val_only</code> return is
+  inside the <code>val_before_train</code> branch, while the launcher defaults the latter to false.
+  Passing only <code>trainer.val_only=True</code> is not a safe no-training instruction.</p>
+  <p>Trace one task through pod creation, gateway calls, filesystem changes, agent termination,
+  verifier execution, reward delivery, and cleanup. Keep the test output and completion/error
+  classification. A completed agent process is not proof of task success; a timed-out process
+  is not automatically an infrastructure failure.</p>
+  <pre><code class="language-bash">RUN_DIR="$LAB_ROOT/runs/base-dev" \
+  bash scripts/code/train.sh \
+  trainer.val_before_train=True trainer.val_only=True
+
+VAL_DATA="$LAB_ROOT/data/train.parquet" VAL_N=4 VAL_DO_SAMPLE=True \
+  RUN_DIR="$LAB_ROOT/runs/base-train-diagnostic" \
+  bash scripts/code/train.sh \
+  trainer.val_before_train=True trainer.val_only=True
+</code></pre>
+  <p>The first command establishes the fixed greedy, one-attempt development baseline.
+  The second measures reward variation on training tasks using four sampled attempts.
+  It is a diagnostic, not the same metric as the greedy baseline. Record all-pass, all-fail,
+  mixed-outcome, invalid, and truncated groups. If no valid group varies, inspect task difficulty,
+  the checker, token budgets, and sampling before launching optimization.</p>
+  <div class="gate"><strong>Gate:</strong> one complete episode plus negative/positive verifier
+  controls, then baseline records keyed by task ID, harness, attempt and model revision.
+  For this small preflight cohort, resolve or explicitly exclude with a recorded reason every
+  unexplained infrastructure/verifier failure before interpreting learning curves.</div>
+
+  <h2 id="trajectory">6. Audit what the trainer will actually learn from</h2>
+  <p>The <a href="https://github.com/XiaomiMiMo/verl/blob/a2ad9f6160b03ff2d47e59832bfb6b289f37c917/recipes/code/mimoagent_runner.py">runner</a>
+  calls <code>environment.calculate_reward()</code> and posts the result to the session's reward
+  endpoint. The separate <code>recipes/code/reward.py</code> callback is a fallback that reads a supplied
+  reward and otherwise defaults to zero; it does <strong>not</strong> execute the tests.
+  A plausible scalar alone therefore proves very little.</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Audit</th><th>Required evidence</th></tr>
+      <tr><td>Episode identity</td><td>Task, session, harness, image digest, policy version and verifier result join unambiguously.</td></tr>
+      <tr><td>Token identity</td><td>Captured token IDs are the sampled IDs, not a newly tokenized text transcript; retain the tokenizer/chat-template identity.</td></tr>
+      <tr><td>Loss mask and probabilities</td><td>Every trained assistant token has the correct behavior logprob; prompt/tool observations are not policy targets. Audit schema-aligned lengths and non-finite values.</td></tr>
+      <tr><td>Branch selection</td><td>The recipe selects <code>trajectory_selection=longest</code>. Inspect which chain survives, especially with subagents; do not assume every captured call is trained on.</td></tr>
+      <tr><td>Reward attachment</td><td>Trace the actual verifier verdict through the reward POST to the sampled training payload, including error metadata and terminal/truncation state.</td></tr>
+      <tr><td>Async reuse</td><td>Record generation/update versions and stale-sample decisions; server-mode <code>async</code> alone does not explain training staleness.</td></tr>
+    </table>
+  </div>
+  <p>Keep human-readable messages under the runner's agent logs, but audit raw payloads at the
+  gateway/TransferQueue-to-batch boundary. If the configured dumps do not expose these fields,
+  capture an explicit debug batch before proceeding; rendered conversations cannot substitute for them.
+  The <a href="harnessed-agentic-rl.html#contract">payload contract</a>,
+  <a href="harnessed-agentic-rl.html#stitch">stitching guide</a>, and
+  <a href="verl-agentic-training.html#tito">token/mask walkthrough</a> own the deeper explanations.</p>
+  <div class="gate"><strong>Gate:</strong> annotate at least one multi-turn sample and one mixed-reward
+  prompt group through reward attachment, advantage construction, and the first update.
+  Valid text plus nonzero reward is not enough if the trained token sequence or mask is wrong.</div>
+
+  <h2 id="train">7. Run a bounded learning experiment</h2>
+  <p>First run one update on the 32-task diagnostic pool, then start the independent 20-update
+  experiment from the same base model. Keep these runs separate so a smoke checkpoint does not
+  silently change the starting policy.</p>
+  <pre><code class="language-bash">TOTAL_STEPS=1 SAVE_FREQ=1 RUN_DIR="$LAB_ROOT/runs/one-update" \
+  bash scripts/code/train.sh
+
+RUN_DIR="$LAB_ROOT/runs/fit" TEST_FREQ=5 \
+  bash scripts/code/train.sh
+</code></pre>
+  <p>Confirm an optimizer update, changed policy parameters, durable checkpoint files, and subsequent
+  rollouts using the updated weights. Track accepted versus attempted groups, raw verifier success,
+  error categories, truncation, token lengths, advantages, gradient norms, entropy, stale-sample drops,
+  and valid completed episodes per wall-clock hour. Use the
+  <a href="async-rl-monitoring.html#quickref">monitoring reference</a> rather than inventing new
+  universal thresholds.</p>
+  <p>The inspected configuration uses <code>adv_estimator=grpo</code>,
+  <code>norm_adv_by_std_in_grpo=False</code>, <code>loss_agg_mode=prompt-mean</code>,
+  and no enabled KL-loss or reward-KL term. This is not automatically the textbook
+  z-scored GRPO example. A nonzero <code>kl_loss_coef</code> does nothing if the corresponding
+  loss is disabled. Keep these choices in the manifest and do not change several at once.
+  See <a href="grpo-training-walkthrough.html#drgrpo">loss aggregation</a> for the distinctions.</p>
+  <p><strong>Overfit before scaling.</strong> Improvement on the training pool is a debugging gate,
+  not generalization. Twenty updates need not suffice. If valid, variable rewards fail to produce
+  improvement, follow the reward-to-gradient path before spending more compute.
+  If the tiny pool saturates, larger batches cannot recover missing reward variation.</p>
+  <div class="gate"><strong>Gate:</strong> preserved baseline, traceable updates/checkpoints, and
+  training-pool learning under unchanged task/harness/budget conditions. Expand the task pool and
+  reconsider dynamic filtering only after that gate; benchmark environment reliability before
+  increasing pod concurrency or GPU scale.</div>
+
+  <h2 id="evaluate">8. Compare checkpoints without changing the experiment</h2>
+  <p>Select a checkpoint using development results, not the final-test pool. The following uses
+  the trainer's native checkpoint restore, avoiding an unverified Megatron-to-Hugging-Face export
+  for the chosen model. Keep the original <code>MODEL_PATH</code>, training split/order, runtime,
+  and topology; this is a full trusted-checkpoint restore, not merely loading arbitrary weight files.</p>
+  <pre><code class="language-bash">export CANDIDATE_CKPT="$LAB_ROOT/runs/fit/checkpoints/global_step_20"
+test -d "$CANDIDATE_CKPT/actor"
+
+RUN_DIR="$LAB_ROOT/runs/candidate-dev" \
+  bash scripts/code/train.sh \
+  trainer.resume_mode=resume_path \
+  trainer.resume_from_path="$CANDIDATE_CKPT" \
+  trainer.val_before_train=True trainer.val_only=True
+</code></pre>
+  <p>Replace <code>global_step_20</code> with a checkpoint that actually exists and was selected by
+  the declared development rule. The pinned trainer loads checkpoint state before validation,
+  and the colocated trainer synchronizes weights after loading.
+  Confirm the logged restored step and policy identity; do not mistake evaluation of the base model
+  for evaluation of the candidate. Checkpoints can restore dataloader and TransferQueue state,
+  so use a fresh run directory and only trusted artifacts.</p>
+  <p>Once the candidate and protocol are frozen, evaluate the base and candidate on the locked
+  <code>test.parquet</code> using the same commands as their development evaluations with only
+  <code>VAL_DATA</code> and the output directories changed. Do not train on or tune against these
+  final results. Keep the same task order, harness assignment, model-facing prompts/tools, image
+  digests, verifier, token/turn/time limits, and decoding settings.</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Report</th><th>Definition / interpretation</th></tr>
+      <tr><td>Task performance</td><td>Successes / valid graded attempts, plus successes / all scheduled attempts. Label greedy one-attempt success as such; do not silently substitute best-of-N.</td></tr>
+      <tr><td>Reliability</td><td>Infrastructure/verifier-invalid attempts / all scheduled attempts, with categories and a fixed retry policy. Do not inflate accuracy by silently dropping failures.</td></tr>
+      <tr><td>Paired change</td><td>For the same tasks, count fail&rarr;pass and pass&rarr;fail, stratified by actual harness. Report uncertainty; 64 tasks are a small study.</td></tr>
+      <tr><td>Cost and behavior</td><td>Tokens, tool calls, elapsed time, truncation and resource use under the same budgets. Higher reward obtained solely by extra inference compute is a different result.</td></tr>
+      <tr><td>Provenance</td><td>Base/candidate identity, selected step, protocol hashes, split provenance, runtime/hardware, and raw per-attempt records.</td></tr>
+    </table>
+  </div>
+  <p>For stochastic repeats, summarize uncertainty at the task level, not by pretending all attempts
+  on one task are independent tasks. Include per-harness results: fixed assignment controls the
+  base/candidate comparison but does not estimate a head-to-head harness effect.</p>
+  <div class="gate"><strong>Gate:</strong> only claim a learning gain when held-out performance
+  improves under the frozen protocol, with reliability, cost and uncertainty visible.
+  Otherwise report the narrower result: environment works, one update works, or training tasks overfit.</div>
+
+  <h2 id="failures">9. Diagnose the first broken boundary</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symptom</th><th>First check / action</th></tr>
+      <tr><td>ImagePullBackOff or setup errors</td><td>Bare image name, digest mapping, registry credentials, shared paths and pod quota. Not evidence of weak coding ability.</td></tr>
+      <tr><td>Every reward is zero</td><td>Separate genuine failed tests from patch/reset errors and missing reward delivery; the fallback callback can return zero without running a verifier.</td></tr>
+      <tr><td>One-arm spec fails before rollout</td><td>The pinned runner requires at least two entries. Use the documented two-arm path or a reviewed fix, not a fake duplicate arm.</td></tr>
+      <tr><td>Validation unexpectedly begins training</td><td>Inspect both <code>val_before_train</code> and <code>val_only</code> in the resolved config.</td></tr>
+      <tr><td>Sampling runs but no useful updates</td><td>All-pass/all-fail groups, dynamic-filter acceptance, dropped stale work and reward variance. More GPUs do not create a missing signal.</td></tr>
+      <tr><td>Reward rises but held-out results do not</td><td>Task memorization, changed harness/budget, grader exploitation, training/eval leakage, or checkpoint identity. Do not call training reward a benchmark gain.</td></tr>
+      <tr><td>OOM, timeouts or long-tail stalls</td><td>Model/context/KV fit, active sessions, tool output size, verifier latency and Kubernetes limits. Reduce one concurrency/budget control at a time and re-baseline after behavioral changes.</td></tr>
+    </table>
+  </div>
+  <p>A complete experiment bundle contains the pinned inputs and resolved configuration, split/image
+  manifests, baseline records, annotated trajectory and verifier controls, update/checkpoint evidence,
+  and a paired held-out report. Review/redact logs and provenance before sharing: they can contain
+  commands, local paths, credentials, or unrelated checkout files. The companion pages remain the
+  references; this guide owns the sequence and its evidence gates.</p>
+
+  <h2 id="refs">Sources and evidence boundary</h2>
+  <ul>
+    <li><a href="https://huggingface.co/datasets/XiaomiMiMo/MiMo-V2.6-RL-oss/blob/639865fd3374018d6cb29b9fb82dd531406fcf5f/README.md">Dataset card</a> and <a href="https://huggingface.co/datasets/XiaomiMiMo/MiMo-V2.6-RL-oss/blob/639865fd3374018d6cb29b9fb82dd531406fcf5f/image-mapping.jsonl">image mapping</a>: released task configurations and external image references.</li>
+    <li><a href="https://github.com/XiaomiMiMo/verl/blob/a2ad9f6160b03ff2d47e59832bfb6b289f37c917/README.md">MiMo recipe README</a>: five reproduction arms, linked model, and distinct mimoagent/uni-agent responsibilities.</li>
+    <li><a href="https://github.com/XiaomiMiMo/verl/blob/a2ad9f6160b03ff2d47e59832bfb6b289f37c917/scripts/code/train.sh">Wrapper</a>, <a href="https://github.com/XiaomiMiMo/verl/blob/a2ad9f6160b03ff2d47e59832bfb6b289f37c917/recipes/code/run_train.sh">launcher</a>, and <a href="https://github.com/XiaomiMiMo/verl/blob/a2ad9f6160b03ff2d47e59832bfb6b289f37c917/recipes/code/config/train.yaml">base YAML</a>: layered defaults, output artifacts, and the proposed overrides.</li>
+    <li><a href="https://github.com/XiaomiMiMo/verl/blob/a2ad9f6160b03ff2d47e59832bfb6b289f37c917/recipes/code/validate_resolved_config.py">Resolved-config validator</a>: enforced colocated-async mode and configuration checks.</li>
+    <li><a href="https://github.com/XiaomiMiMo/verl/blob/a2ad9f6160b03ff2d47e59832bfb6b289f37c917/config/agent/code/mini-mimocode.yaml">mimocode profile</a>, <a href="https://github.com/XiaomiMiMo/verl/blob/a2ad9f6160b03ff2d47e59832bfb6b289f37c917/config/agent/code/mini-bash.yaml">bash profile</a>, and <a href="https://github.com/XiaomiMiMo/verl/blob/a2ad9f6160b03ff2d47e59832bfb6b289f37c917/recipes/code/mimoagent_runner.py">session runner</a>: actual profile selection, task lifecycle and reward delivery.</li>
+    <li><a href="https://github.com/XiaomiMiMo/verl/blob/a2ad9f6160b03ff2d47e59832bfb6b289f37c917/recipes/code/reward.py">Fallback reward hook</a> and <a href="https://github.com/XiaomiMiMo/mimoagent/blob/467f0a19016f0ac4d63b8d17a1f0da9ba07f232c/src/mimoagent/environments/datasets/opensource_code.py">code verifier</a>: metadata fallback versus actual execution-based grading.</li>
+    <li><a href="https://github.com/XiaomiMiMo/verl/blob/a2ad9f6160b03ff2d47e59832bfb6b289f37c917/verl/trainer/ppo/v1/trainer_base.py">V1 trainer</a> and <a href="https://github.com/XiaomiMiMo/verl/blob/a2ad9f6160b03ff2d47e59832bfb6b289f37c917/verl/trainer/ppo/v1/trainer_colocate_async.py">colocated-async lifecycle</a>: restore, validation-only control flow, and weight synchronization.</li>
+  </ul>
+  <p class="muted">These sources establish interfaces and configuration behavior, not a reproduced
+  model-quality result. This public task bundle is not evidence that the complete frontier-training
+  corpus or every production-system component has been released.</p>
+</main>
+</body>
+</html>
