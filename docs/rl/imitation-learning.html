@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Imitation Learning — Behavior Cloning, Expressive Policies, and DAgger</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #ffffff; --surface: #f8f9fa; --border: #e8eaed; --text: #1a1a2e;
+      --muted: #6b7280; --accent: #0d9488; --accent-light: #f0fdfa;
+      --nav-bg: rgba(255,255,255,0.92); --ink: #374151; --teal-border: #99f6e4;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115; --surface: #171b21; --border: #262b33; --text: #e5e7eb;
+        --muted: #9aa1ab; --accent: #2dd4bf; --accent-light: #10201e;
+        --nav-bg: rgba(15,17,21,0.9); --ink: #cbd5e1; --teal-border: #134e4a;
+      }
+    }
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; line-height: 1.75; font-size: 16px; }
+    nav { position: sticky; top: 0; z-index: 100; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 52px; }
+    .nav-brand { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 0.9rem; color: var(--accent); text-decoration: none; white-space: nowrap; }
+    .nav-links { display: flex; gap: 4px; overflow-x: auto; flex: 1; min-width: 0; }
+    .nav-links a { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; white-space: nowrap; }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .hero { background: linear-gradient(135deg, #134e4a 0%, #0d9488 60%, #14b8a6 100%); color: white; padding: 56px 24px 48px; text-align: center; }
+    .hero h1 { font-size: clamp(1.5rem, 4vw, 2.2rem); font-weight: 600; margin: 0 0 12px; letter-spacing: -0.02em; }
+    .hero p { margin: 0 auto; opacity: 0.85; font-size: 0.97rem; max-width: 680px; }
+    .hero-pill { display: inline-block; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 100px; font-size: 0.78rem; padding: 3px 12px; margin-bottom: 16px; letter-spacing: 0.04em; text-transform: uppercase; }
+    .page-wrap { max-width: 820px; margin: 0 auto; padding: 48px 24px 80px; }
+    h2 { font-size: 1.15rem; font-weight: 600; margin: 2.8em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); scroll-margin-top: 70px; }
+    h3 { font-size: 0.97rem; color: var(--ink); margin: 1.6em 0 0.4em; }
+    p { margin: 0.6em 0; }
+    a { color: var(--accent); }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.5em; }
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+    th, td { border: 1px solid var(--border); padding: 9px 14px; text-align: left; vertical-align: top; }
+    th { background: var(--surface); font-weight: 600; }
+    .callout { background: var(--accent-light); border: 1px solid var(--teal-border); border-radius: 8px; padding: 14px 18px; margin: 1.2em 0; }
+    .callout-label { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.06em; }
+    .equation { overflow-x: auto; padding: 8px 0; }
+    footer { border-top: 1px solid var(--border); padding: 28px 24px; text-align: center; font-size: 0.82rem; color: var(--muted); }
+    @media (max-width: 600px) {
+      nav { padding: 0 12px; gap: 12px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+  </style>
+</head>
+<body>
+<nav aria-label="Page navigation">
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes">
+    <svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+    Imitation Learning
+  </a>
+  <div class="nav-links">
+    <a href="../index.html#rl-rl-theory">↑ RL · Theory</a>
+    <a href="#bc">Behavior Cloning</a>
+    <a href="#expressivity">Expressive Policies</a>
+    <a href="#shift">Covariate Shift</a>
+    <a href="#dagger">DAgger</a>
+    <a href="#hg-dagger">Human Gating</a>
+    <a href="#distillation">LLM Connection</a>
+    <a href="#sources">Sources</a>
+  </div>
+</nav>
+<header class="hero">
+  <span class="hero-pill">RL Theory · Learning from Demonstrations</span>
+  <h1>Imitation Learning</h1>
+  <p>Two different problems: represent the expert's valid actions, then learn what to do in states the learner actually reaches.</p>
+</header>
+<main class="page-wrap">
+  <p>Based on Chelsea Finn's <a href="https://www.youtube.com/watch?v=WxRDyObrm_M">CS224R Lecture 2</a>
+  and <a href="https://cs224r.stanford.edu/spring_2025/slides/02_cs224r_imitation_2025.pdf">official slides</a>
+  (April 4, 2025). Start with the <a href="mdp.html">MDP vocabulary</a>: a policy chooses actions,
+  and those actions influence its future observations. Here the training target comes from an
+  expert, rather than an explicitly specified reward.</p>
+
+  <h2 id="bc">1. Behavior cloning: supervised learning of actions</h2>
+  <p>Collect expert demonstrations, form state–action pairs, and fit a policy by maximum
+  likelihood. Write \(s\) for the policy input; with partial observability, this may need to be
+  an observation history rather than a single observation.</p>
+  <div class="equation">
+    \[
+      \mathcal{L}_{\mathrm{BC}}(\theta)
+      = -\mathbb{E}_{(s,a)\sim\mathcal{D}_E}\log\pi_\theta(a\mid s).
+    \]
+  </div>
+  <p>For discrete actions this is cross-entropy. For a Gaussian policy with fixed variance,
+  minimizing negative log-likelihood is equivalent to squared-error regression of its mean.
+  This offline baseline is simple and does not require learner rollouts during training.
+  Low held-out action loss, however, does not by itself establish good closed-loop behavior.</p>
+
+  <h2 id="expressivity">2. Network capacity is not distribution expressivity</h2>
+  <p>Suppose equally valid demonstrations go left or right around an obstacle: actions
+  \(a=-1\) and \(a=+1\). The squared-error optimum is their conditional mean, \(a=0\), which
+  in this example heads toward the obstacle. Enlarging the mean-predicting network does not
+  turn its output into a bimodal distribution.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Policy family</th><th scope="col">What it represents</th><th scope="col">Trade-off</th></tr></thead>
+      <tbody>
+        <tr><td>Single Gaussian</td><td>One conditional mode with a mean and covariance.</td><td>Cannot represent separated modes; widening variance also puts mass between them.</td></tr>
+        <tr><td>Gaussian mixture</td><td>Multiple modes through component means, covariances, and weights.</td><td>Choose and fit a finite number of components.</td></tr>
+        <tr><td>Discretized autoregressive actions</td><td>Conditional dependencies between action dimensions or tokens.</td><td>Quantization choices and sequential decoding cost.</td></tr>
+        <tr><td>Diffusion policy</td><td>Multimodal continuous actions through iterative conditional denoising.</td><td>Multiple denoising steps; the action horizon and execution schedule matter.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>The lecture's robotics examples illustrate why diverse demonstrators can require a richer
+  distribution family. <a href="https://arxiv.org/abs/2303.04137">Diffusion Policy</a> is a
+  concrete action-sequence approach, not evidence that diffusion is universally better than
+  autoregression or that a robotics result transfers to LLMs.</p>
+
+  <h2 id="shift">3. Why small errors compound</h2>
+  <p>Let \(d_\pi\) denote the state distribution induced by running policy \(\pi\), averaged
+  over the task horizon. Demonstrations sample \(d_{\pi_E}\); deployment samples
+  \(d_{\pi_\theta}\). A slightly wrong action can move the learner to a state absent from
+  the demonstrations, where its next prediction is worse, causing further deviations.</p>
+  <div class="callout">
+    <div class="callout-label">Two independent failure modes</div>
+    <p>Expressive policies address <strong>which actions can be represented at a given input</strong>.
+    Corrective data addresses <strong>which inputs receive expert supervision</strong>.
+    A diffusion policy can still suffer covariate shift; DAgger cannot make an inadequate
+    action distribution expressive.</p>
+  </div>
+  <p>This is a closed-loop distribution problem, not just memorization or ordinary random
+  train/test splitting. Errors may be recoverable in some environments and catastrophic
+  in others; no universal failure rate follows from a per-step prediction error alone.</p>
+
+  <h2 id="dagger">4. DAgger: label the states the learner visits</h2>
+  <p><a href="https://proceedings.mlr.press/v15/ross11a.html">Dataset Aggregation (DAgger)</a>
+  iteratively changes the supervised dataset rather than replacing expert labels with rewards:</p>
+  <ol>
+    <li><strong>Initialize:</strong> train a learner on an initial expert demonstration dataset.</li>
+    <li><strong>Collect:</strong> roll out the current learner. The original algorithm can mix
+    expert and learner control, reducing expert mixing over iterations.</li>
+    <li><strong>Label and aggregate:</strong> query the expert's action at visited states and
+    append those labeled pairs to the accumulated dataset. The target is the expert's
+    action, not the learner's possibly mistaken action.</li>
+    <li><strong>Retrain and repeat:</strong> fit on the aggregate, collect again with the
+    updated policy, and evaluate candidate policies on held-out rollouts.</li>
+  </ol>
+  <p>Unlike collecting more expert-only demonstrations, this acquires labels where the
+  learner needs recovery behavior. But expert queries and online execution can be expensive
+  or unsafe. The paper's no-regret reduction has assumptions; finite data, imperfect experts,
+  and limited policy classes do not yield an unconditional success guarantee.</p>
+  <p><strong>Online is not synonymous with exactly on-policy:</strong> DAgger collects fresh
+  learner-influenced trajectories but trains on an aggregate of historical state distributions,
+  possibly including expert-mixed rollouts.</p>
+
+  <h2 id="hg-dagger">5. Human-gated DAgger: who controls the system?</h2>
+  <p>Asking a human to label actions while the learner controls the system is awkward:
+  the human's commands may not produce the expected response.
+  <a href="https://arxiv.org/abs/1810.02890">HG-DAgger</a> instead lets the human decide when
+  to take control and records corrective actions during those interventions. The original
+  work also studies an uncertainty-based risk metric; human gating itself is not a proof of safety.</p>
+  <p>This improves the correction interface, but depends on timely detection, takeover,
+  and recovery. Intervention data is selectively collected and is not the same as labeling
+  every learner-visited state. Track who controlled each segment and do not treat uncorrected
+  learner actions as expert-approved labels.</p>
+
+  <h2 id="distillation">6. The bridge to LLM distillation</h2>
+  <p>For an autoregressive LLM, a generated prefix is a policy input. Teacher-trace SFT trains
+  on teacher prefixes; student-rollout distillation asks the teacher for supervision on
+  prefixes the student produces. This shares DAgger's coverage motivation, but token-distribution
+  KL supervision is not the same algorithm as aggregating expert action labels.</p>
+  <p>Keep <strong>data collection</strong> (fixed demonstrations, learner rollouts, or a mixture)
+  separate from <strong>the learning signal</strong> (expert actions/distributions or rewards).
+  Imitation can be interactive; RL can use offline data. Reward optimization and imitation
+  can also be combined in one objective.</p>
+  <p>Learner-state supervision reduces the expert/learner coverage gap, not every possible
+  distribution mismatch. Policy updates, stale samples, new prompts, tools, or environments
+  can change the deployment distribution. Continue with the
+  <a href="distillation.html#taxonomy">distillation taxonomy</a>,
+  <a href="distillation.html#on-policy">student-state KL example</a>, and
+  <a href="cascade-rl.html#mopd">cross-stage distillation</a>.</p>
+
+  <h2 id="sources">Sources and reading path</h2>
+  <ul>
+    <li><a href="https://www.youtube.com/watch?v=WxRDyObrm_M">Finn: CS224R Lecture 2 — Imitation Learning</a>
+    · <a href="https://cs224r.stanford.edu/spring_2025/slides/02_cs224r_imitation_2025.pdf">slides</a>:
+    policy families (8–15), covariate shift and interventions (18–21), and the summary (25).</li>
+    <li><a href="https://proceedings.mlr.press/v15/ross11a.html">Ross, Gordon &amp; Bagnell (2011): A Reduction of Imitation Learning and Structured Prediction to No-Regret Online Learning</a>
+    — the DAgger algorithm and its conditional guarantees.</li>
+    <li><a href="https://arxiv.org/abs/1810.02890">Kelly et al.: HG-DAgger</a>
+    — human control, labeling quality, and uncertainty-based risk estimation.</li>
+    <li><a href="https://arxiv.org/abs/2303.04137">Chi et al.: Diffusion Policy</a>
+    — a concrete expressive policy for visuomotor control.</li>
+  </ul>
+</main>
+<footer>Personal ML notes · <a href="https://github.com/yueyiming2009/ai-learning">source on GitHub</a></footer>
+</body>
+</html>

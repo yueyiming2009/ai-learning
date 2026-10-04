@@ -398,19 +398,22 @@
     </div>
   </div>
 
-  <h2 id="mopd">5. Why On-Policy Distillation Outperforms Offline</h2>
-  <p>The distinction between offline and on-policy distillation is the same as the distinction between behaviour cloning and RL — it is a distribution shift problem.</p>
+  <h2 id="mopd">5. Why Student-State Supervision Can Help</h2>
+  <p>Offline versus on-policy describes <em>where training states come from</em>, not imitation versus RL. Both distillation recipes learn from a teacher; reward optimization is a separate learning signal that can be combined with either. <a href="imitation-learning.html#dagger">DAgger</a> illustrates online imitation without requiring a reward function.</p>
 
-  <p><strong>Offline distillation</strong> (standard knowledge distillation): teacher generates rollouts → student fine-tunes on them. The student learns to match the teacher's distribution. But at inference time, the student is generating from its own distribution, which may differ from the teacher's after even a few token steps — small deviations compound into completely different sequences. This is exactly the compounding error problem from imitation learning.</p>
+  <p><strong>Offline distillation</strong> (SFT on teacher traces): teacher generates rollouts → student fine-tunes on them. The student learns to match the teacher's distribution. But at inference time, the student is generating from its own distribution, which may differ from the teacher's after even a few token steps — small deviations can compound into completely different sequences. This is the compounding error problem from imitation learning.</p>
 
-  <p><strong>On-policy distillation</strong>: student generates rollouts → teacher is evaluated at those states → student learns to match the teacher on its own distribution. Because the teacher is consulted on states the student actually visits, there is no distribution mismatch. The student learns to behave like the teacher <em>from the states the student actually reaches</em> — which is the distribution it will encounter at inference time.</p>
+  <p><strong>On-policy distillation</strong>: student generates rollouts → teacher is evaluated at those states → student learns to match the teacher there. This addresses the teacher/learner state-coverage gap. It does not guarantee a match to future deployment: policy updates, stale rollouts, decoding settings, and new prompts or environments can change the visited states.</p>
 
   <div class="result">
-    <div class="result-label">On-policy distillation loss (per student token)</div>
+    <div class="result-label">Expected forward-KL over student prefixes</div>
     \[
-      \mathcal{L}_{\text{OPD}}(t) = \mathrm{KL}\!\big(\pi_\text{teacher}(\cdot \mid s_t)\;\|\;\pi_\theta(\cdot \mid s_t)\big), \quad s_t \sim \pi_\theta
+      \mathcal{L}_{\text{OPD}}(\theta)
+      = \mathbb{E}_{s\sim d_{\pi_k}}\!\left[
+        \mathrm{KL}\!\big(\pi_\text{teacher}(\cdot \mid s)\;\|\;\pi_\theta(\cdot \mid s)\big)
+      \right]
     \]
-    <p style="font-size:0.85rem;color:var(--muted);margin:6px 0 0;">The state \(s_t\) is sampled from the <em>student's own rollout</em>. The teacher provides the target distribution; the student is trained to match it at that state. Crucially, if the student never visits a state, it receives no gradient for it — preventing the offline problem where irrelevant teacher states dominate training.</p>
+    <p style="font-size:0.85rem;color:var(--muted);margin:6px 0 0;">Example forward-KL supervision on prefixes from collection checkpoint \(\pi_k\). The sampled states are fixed inputs for the update, not a promise that the updated policy has the same state distribution. Unvisited states have no direct loss term; shared parameters still permit generalization or interference. See the <a href="distillation.html#on-policy">distillation guide</a> for the collection/update distinction.</p>
   </div>
 
   <p>MOPD extends this to the multi-teacher case by routing each token to the most relevant specialist teacher. A token in a math derivation gets guidance from the math teacher; a tool-call token gets guidance from the agent teacher. The routing can be learned or rule-based (domain classification on the prompt).</p>
@@ -498,7 +501,7 @@
     </div>
     <div class="summary-card">
       <div class="summary-card-label">On-policy advantage</div>
-      <p>Teacher is consulted on student-generated states, not pre-cached teacher states. Eliminates distribution mismatch.</p>
+      <p>Teacher supervision covers student-generated states. Reduces the expert/learner coverage gap, without guaranteeing future deployment coverage.</p>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">MOPD</div>
