@@ -147,9 +147,11 @@
     <a href="#notation">Notation</a>
     <a href="#pg">PG Theorem</a>
     <a href="#reinforce">REINFORCE</a>
+    <a href="#discount">Discounting</a>
     <a href="#advantage">Advantage</a>
     <a href="#baseline">Baseline</a>
     <a href="#gae">GAE</a>
+    <a href="#off-policy">Rollout Reuse</a>
     <a href="#summary">Summary</a>
   </div>
 </nav>
@@ -169,6 +171,13 @@
       <p>Covers the same ground as Lecture 7 (policy gradient methods — score function, baselines, actor-critic, natural policy gradients).</p>
     </div>
   </div>
+  <div class="resource">
+    <span class="resource-icon">🎓</span>
+    <div>
+      <a href="https://www.youtube.com/watch?v=KCAOXd4IO9o">Chelsea Finn — CS224R Lecture 3: Policy Gradients (April 9, 2025)</a>
+      <p><a href="https://cs224r.stanford.edu/spring_2025/slides/03_cs224r_policy_gradients_2025.pdf">Official slides</a>: reward-weighted likelihood, causality and baselines, then exact trajectory importance sampling versus practical action-only reuse and KL constraints.</p>
+    </div>
+  </div>
 
   <h2 id="notation">Notation</h2>
   <div class="table-wrap">
@@ -176,7 +185,7 @@
       <tr><th>Symbol</th><th>Description</th></tr>
       <tr><td>\(\pi_\theta(a\mid s)\)</td><td>Policy: probability of action \(a\) in state \(s\), parameters \(\theta\)</td></tr>
       <tr><td>\(\tau = (s_0,a_0,r_0,\ldots,s_T)\)</td><td>A trajectory (one episode)</td></tr>
-      <tr><td>\(R(\tau)\)</td><td>Total return of trajectory \(\tau\)</td></tr>
+      <tr><td>\(R(\tau)\)</td><td>Undiscounted episode return \(\sum_{t=0}^{T-1}r_t\); \(R_\gamma(\tau)\) adds absolute weights \(\gamma^t\)</td></tr>
       <tr><td>\(G_t = \sum_{t' \ge t}\gamma^{t'-t} r_{t'}\)</td><td>Discounted return from step \(t\)</td></tr>
       <tr><td>\(V^\pi(s)\)</td><td>State-value function: expected \(G_t\) from \(s\) under \(\pi\)</td></tr>
       <tr><td>\(A^\pi(s,a)\)</td><td>Advantage: \(Q^\pi(s,a) - V^\pi(s)\)</td></tr>
@@ -190,9 +199,12 @@
   <div class="note">
     This page builds on <a href="value-functions.html" style="color:var(--note-fg);">Value Functions</a> (\(V\), \(Q\), and the advantage decomposition) and <a href="mc-rollouts.html" style="color:var(--note-fg);">Monte Carlo Rollouts</a> (sampling a trajectory and why averaging its returns is unbiased — REINFORCE is the same idea applied to a gradient). Section 3 draws on the bias–variance trade-off developed in <a href="td-learning.html" style="color:var(--note-fg);">TD Learning</a>.
   </div>
+  <div class="note">
+    <strong>Convention:</strong> Sections 1–2 use finite episodes ending at a true terminal state and \(\gamma=1\), except the explicitly discounted formulas and code. Include time in \(s_t\) when a finite-horizon value depends on it. Rewards, initial-state distribution, and environment dynamics are independent of \(\theta\); the policy is differentiable with parameter-independent support. General discounting requires the <a href="#discount">time weights below</a>, not just a change to reward-to-go.
+  </div>
 
   <h2 id="pg">1. The Policy Gradient Theorem</h2>
-  <p>Value-based methods (Q-learning, DQN) learn a value function and act greedily on it. <strong>Policy gradient methods</strong> skip the value function: parameterise the policy \(\pi_\theta(a\mid s)\) directly, define a scalar objective \(J(\theta)\) = expected return, and do gradient ascent on \(\theta\). The policy gradient theorem is the statement of what \(\nabla_\theta J\) actually is, in a form you can estimate from rollouts.</p>
+  <p>Value-based methods (Q-learning, DQN) learn a value function and act greedily on it. <strong>Policy gradient methods</strong> parameterise the policy \(\pi_\theta(a\mid s)\) directly, define a scalar objective \(J(\theta)\) = expected return, and do gradient ascent on \(\theta\). A critic is optional for REINFORCE and useful in actor–critic methods. The policy gradient theorem gives \(\nabla_\theta J\) in a form you can estimate from rollouts.</p>
 
   <h3>Where \(\theta\) sits in the objective</h3>
   <p>Write the objective as an expectation over trajectories \(\tau = (s_0, a_0, s_1, a_1, \dots)\) sampled by running the policy:</p>
@@ -250,19 +262,35 @@
     \]
   </div>
 
-  <p>Read as a recipe: <em>for each trajectory, push up the log-probability of every action taken, scaled by how good the trajectory turned out.</em> A high-return trajectory makes its actions more likely; a low or negative return makes them less likely. The scalar multiplying \(\nabla\log\pi\) is the only place reward enters, and every improvement in the rest of this page (reward-to-go, baselines, advantage, GAE) is a different choice of that scalar — the theorem guarantees the gradient stays unbiased as long as the choice does not depend on the action in a way that biases it.</p>
+  <p>Read each sample's contribution as a signed push on its action log-probabilities. A <strong>positive raw return</strong> reinforces the sampled actions, even if that return is below average; a negative return suppresses them, and zero contributes nothing. Baseline subtraction can turn below-average outcomes into negative weights. Reward-to-go and valid action-independent baselines preserve the expected gradient; arbitrary reweighting does not, and bootstrapped GAE can introduce bias with an imperfect critic.</p>
 
   <div class="note">
-    Two things that routinely confuse people. <strong>(1)</strong> \(\log\pi_\theta(a_t\mid s_t)\,R\) is not a loss. It is a <em>surrogate</em> whose gradient happens to equal \(\nabla_\theta J\); its value says nothing about how well the policy is doing, so do not plot it as a training curve. <strong>(2)</strong> Every action in a trajectory is multiplied by the <em>same</em> \(R(\tau)\), including actions that had nothing to do with the reward. That is the source of the variance problem Sections 2–3 address.
+    Two things that routinely confuse people. <strong>(1)</strong> The negative reward-weighted log-likelihood is an optimizer <em>surrogate loss</em>, not the expected-return objective itself. On fresh on-policy samples its gradient estimates \(-\nabla_\theta J\); its scalar value is not a performance metric. Evaluate returns separately. <strong>(2)</strong> Raw REINFORCE multiplies every action by the same \(R(\tau)\), including actions unrelated to a particular reward. Sections 2–3 address that variance.
   </div>
 
   <div class="note">
     Each \(\log\pi_\theta(a_t\mid s_t)\) is one <code>log_softmax</code> gather over the policy's output logits — \(z_{a_t} - \operatorname{logsumexp}(\mathbf{z})\). See <a href="../foundations/log-probs.html" style="color:var(--accent);">computing log-probabilities from logits</a> for the derivation.
   </div>
 
+  <h3 id="weighted-likelihood">From imitation to a weighted-likelihood surrogate</h3>
+  <p><a href="imitation-learning.html#bc">Behavior cloning</a> increases the likelihood of expert actions. Policy gradients instead weight the learner's own sampled actions by returns or advantages. Holding sampled inputs and weights fixed during differentiation, minimize</p>
+  \[
+    \mathcal{L}_{\mathrm{PG}}(\theta)
+      = -\frac{1}{N}\sum_{i=1}^{N}\sum_t
+        \operatorname{sg}[w_{i,t}]\,\log\pi_\theta(a_{i,t}\mid s_{i,t}),
+    \qquad w_{i,t}=\gamma^t\big(G_{i,t}-b(s_{i,t})\big).
+  \]
+  <p>Here \(\operatorname{sg}\) means stop-gradient. This is weighted cross-entropy for categorical actions, or weighted squared-error regression of the mean for a fixed isotropic-variance Gaussian. Weights may be negative, so it is a signed gradient surrogate, not ordinary maximum likelihood with nonnegative example weights. Average episode sums across a batch; replacing them with a mean within each episode changes length weighting.</p>
+
+  <h3 id="implementation">Minimal REINFORCE update</h3>
+  <p>This CPU categorical-policy example retains the legacy Gym-style interface: <code>reset() → obs</code> and <code>step(action) → (obs, reward, done, info)</code>. Assume at least one step, true termination rather than time-limit truncation, and no policy update during collection. It uses no baseline or return normalization. The default matches the lecture's undiscounted objective; other discounts use the explicit \(\gamma^t\) weights derived <a href="#discount">below</a>.</p>
+
 <pre><code>import torch
 
-def reinforce(policy, env, optimizer, gamma=0.99):
+def reinforce(policy, env, optimizer, gamma=1.0):
+    if not 0.0 &lt;= gamma &lt;= 1.0:
+        raise ValueError("gamma must be between 0 and 1")
+
     log_probs, rewards = [], []
     obs, done = env.reset(), False
     while not done:
@@ -272,24 +300,22 @@ def reinforce(policy, env, optimizer, gamma=0.99):
         obs, r, done, _ = env.step(action.item())
         rewards.append(r)
 
-    # reward-to-go: G_t = r_t + γ r_{t+1} + γ² r_{t+2} + ...
     G, returns = 0.0, []
     for r in reversed(rewards):
         G = r + gamma * G
-        returns.insert(0, G)
-    returns = torch.tensor(returns, dtype=torch.float32)
-    returns = (returns - returns.mean()) / (returns.std() + 1e-8)  # baseline
+        returns.append(G)
+    log_probs = torch.stack(log_probs)
+    returns = log_probs.new_tensor(returns[::-1])
+    time_weights = log_probs.new_tensor([gamma ** t for t in range(len(rewards))])
 
-    # ∇J(θ) ≈ Σ_t G_t · ∇ log π_θ(a_t | s_t)
-    # returns is a plain tensor (no grad); .detach() would be needed if returns
-    # came from a learned critic V_ψ(s_t) to stop gradients flowing into it
-    loss = -(torch.stack(log_probs) * returns).sum()
+    # Rewards are fixed data; detach weights if built from a learned critic.
+    loss = -(time_weights * returns * log_probs).sum()
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
 </code></pre>
 
-  <p>Each action's <em>score function</em> \(\nabla\log\pi_\theta(a_t\mid s_t)\) points in the direction that makes \(a_t\) more likely; weighting it by the return reinforces actions from good trajectories and suppresses those from bad ones. This is the <strong>REINFORCE</strong> algorithm (Williams, 1992), and every ingredient in it is Monte Carlo: the trajectory is a <a href="mc-rollouts.html#rollout" style="color:var(--accent);">rollout</a>, the returns are rollout returns, and the whole sum is a single-sample estimate of \(\nabla_\theta J\). It is unbiased for the same reason <a href="mc-rollouts.html#unbiased" style="color:var(--accent);">MC value estimation</a> is — the expectation of one sample is the mean.</p>
+  <p>The loss gradient is a single-episode Monte Carlo estimate of \(-\nabla_\theta J_\gamma\), under the assumptions above. Its expectation is correct, not necessarily its direction on any one episode. With \(\gamma=1\), terminal-only reward \(R\) correctly weights every action by \(R\); a one-step episode also gives a finite update without estimating any standard deviation.</p>
 
   <h3 id="reinforce">Worked example — why raw REINFORCE is noisy</h3>
   <p>A single state with two actions, \(A\) and \(B\), and a softmax policy with logits \(\theta = (\theta_A, \theta_B)\); currently \(\pi(A) = 0.6\), \(\pi(B) = 0.4\). For a softmax the score is \(\nabla_\theta \log \pi(a) = e_a - \pi\), with \(e_a\) the one-hot vector for \(a\):</p>
@@ -319,14 +345,28 @@ def reinforce(policy, env, optimizer, gamma=0.99):
   <p>REINFORCE is correct but high-variance — every action is credited with the full trajectory return, including outcomes it had nothing to do with. Three reductions bring it to the form used in practice:</p>
 
   <h3>Reward-to-go (causality)</h3>
-  <p>Action \(a_t\) cannot affect rewards collected <em>before</em> it, so replace \(R(\tau)\) with the return-to-go \(G_t = \sum_{t'\ge t}\gamma^{t'-t} r_{t'}\). The dropped early rewards are zero in expectation:</p>
+  <p>For the undiscounted objective, action \(a_t\) cannot affect rewards collected <em>before</em> it, so replace \(R(\tau)\) with the return-to-go \(G_t = \sum_{t'\ge t} r_{t'}\). The dropped early rewards contribute zero to the expected gradient:</p>
   \[
     \mathbb{E}\!\left[\nabla\log\pi_\theta(a_t\mid s_t)\, r_{t'}\right] = 0 \quad \text{for } t' < t
   \]
-  <p>because the policy at step \(t\) has no influence on what happened before it. This alone can halve the variance on long episodes.</p>
+  <p>Condition on the history before \(a_t\): the earlier reward is fixed and the action's score has zero conditional mean. Removing these terms is a standard variance-reduction device, but the size of the benefit is problem-dependent.</p>
+
+  <h3 id="discount">Discounted objectives need absolute time weights</h3>
+  <p>When the objective discounts rewards from the start of each episode, define</p>
+  \[
+    J_\gamma(\theta)=\mathbb{E}\!\left[\sum_{t=0}^{T-1}\gamma^t r_t\right],
+    \qquad G_t=\sum_{k=t}^{T-1}\gamma^{k-t}r_k.
+  \]
+  <p>Causality removes past rewards, but the remaining absolute discount factors are \(\sum_{k\ge t}\gamma^k r_k=\gamma^tG_t\). Thus</p>
+  \[
+    \nabla_\theta J_\gamma
+      =\mathbb{E}\!\left[\sum_{t=0}^{T-1}
+        \gamma^t\big(G_t-b(s_t)\big)\nabla_\theta\log\pi_\theta(a_t\mid s_t)\right].
+  \]
+  <p>The state-only baseline remains valid with these weights. Equivalently, a state/time sampling measure can absorb \(\gamma^t\), with its corresponding normalization; uniformly averaging timesteps does not do that automatically. The code supports this start-state objective. All other unweighted policy-gradient sums in Sections 1–2 assume \(\gamma=1\); using discounted returns with unweighted timesteps is a different practical surrogate, not this exact gradient.</p>
 
   <h3 id="baseline">Baseline subtraction</h3>
-  <p>Any function \(b(s_t)\) that depends only on the <em>state</em> (not the action) can be subtracted from \(G_t\) without introducing bias:</p>
+  <p>A fixed function \(b(s_t)\), independent of the current sampled action conditional on the state, can be subtracted from \(G_t\) without introducing bias. Treat its output as a constant during the policy update:</p>
   \[
     \hat g_b = \sum_{t} \big(G_t - b(s_t)\big)\, \nabla_\theta \log \pi_\theta(a_t \mid s_t),
     \qquad \mathbb{E}[\hat g_b] = \nabla_\theta J(\theta).
@@ -376,12 +416,23 @@ def reinforce(policy, env, optimizer, gamma=0.99):
       &= \nabla_\theta J(\theta) .
     \end{aligned}
     \]
-    <p>The only requirement was that \(b\) not depend on the action. A baseline that peeks at \(a_t\) cannot be pulled out of the inner expectation, Step 1 no longer applies, and the gradient becomes biased.</p>
+    <p>The requirement is statistical independence from the sampled action conditional on the state, not merely omitting an action argument from a function. A baseline fitted using that very sample may be coupled to its action and return. Detaching it stops an unwanted gradient path but does not remove that statistical coupling.</p>
+  </div>
+
+  <h3 id="empirical-baselines">Estimated baselines and normalization are not automatically unbiased</h3>
+  <p>For \(N\) independent one-step samples from the same state, let \(z_i=\nabla\log\pi(a_i\mid s)\) and \(\bar R=N^{-1}\sum_jR_j\). Since the current return is included in its own baseline,</p>
+  \[
+    \mathbb{E}\!\left[\frac{1}{N}\sum_i(R_i-\bar R)z_i\right]
+      =\left(1-\frac{1}{N}\right)\mathbb{E}[Rz].
+  \]
+  <p>Cross-sample terms vanish by independence; the self-term subtracts \(1/N\) of the expected gradient. For \(N&gt;1\), a leave-one-out mean excludes that self-term. This argument does not treat correlated timesteps of one episode as independent samples, nor does it establish unbiasedness after division by a random sample standard deviation.</p>
+  <div class="note">
+    The earlier per-episode normalization recipe is deliberately absent from the code. At \(\gamma=1\), a terminal-only reward makes every \(G_t=R\), so centering returns within that episode deletes its entire update. For one step, <a href="https://docs.pytorch.org/docs/2.14/generated/torch.std.html">PyTorch's default sample std</a> has zero degrees of freedom; adding epsilon afterward does not repair the undefined value. Population std avoids that numerical issue but not self-centering or statistical bias. Use raw returns, an independently fitted baseline, or a justified estimator; label optional normalization as a heuristic.
   </div>
 
   <div class="step">
     <div class="step-label">Step 3 — which baseline minimises variance</div>
-    <p>Any state-only \(b\) is unbiased, so choose the one that makes the estimator least noisy. Work at a single state and write \(\psi = \nabla_\theta \log \pi(a)\), a random vector because \(a\) is random, and \(G\) the random return. The estimate is \((G - b)\,\psi\), and its total variance (summed over coordinates) is</p>
+    <p>Any fixed state-only \(b\) preserves the expected gradient, so choose the one that makes the estimator least noisy. Work at a single state and write \(\psi = \nabla_\theta \log \pi(a)\), a random vector because \(a\) is random, and \(G\) the random return. The estimate is \((G - b)\,\psi\), and its total variance (summed over coordinates) is</p>
     \[
       \operatorname{Var}\big[(G - b)\,\psi\big]
       = \mathbb{E}\big[(G-b)^2\, \|\psi\|^2\big] \;-\; \big\|\mathbb{E}\big[(G-b)\,\psi\big]\big\|^2 .
@@ -416,12 +467,13 @@ def reinforce(policy, env, optimizer, gamma=0.99):
     <div class="result-label">Effect of the baseline on this example</div>
     <p style="margin:0;">Same expected gradient \((0.192, -0.192)\); variance down from \(0.0649\) to \(0.0061\) — a factor of about \(10\), the equivalent of running ten times as many rollouts.</p>
   </div>
-  <p>This table is the whole argument for critics and for group sampling. The catch is that \(V^\pi(s_t)\) is unknown and must be estimated — by a learned network (PPO's critic, §3) or by more rollouts (GRPO's group mean, which is an <a href="mc-rollouts.html#llm" style="color:var(--accent);">MC estimate of \(V^\pi(s_0)\)</a>). Even a crude baseline helps: any \(b\) between \(0.2\) and \(1.0\) flips the sign of the \(B\)-sample's push.</p>
+  <p>This example motivates critics and group sampling. \(V^\pi(s_t)\) must be estimated by a learned network or additional rollouts; a group mean estimates expected return, but its use inside the same samples' policy gradients has the <a href="#empirical-baselines">self-inclusion caveat above</a>. Even a crude baseline between \(0.2\) and \(1.0\) flips the sign of the \(B\)-sample's push.</p>
 
   <h3>Advantage</h3>
-  <p>With the state-value function \(V(s_t) = \mathbb{E}[G_t\mid s_t]\) as the baseline, the weighted quantity becomes the <strong>advantage</strong>:</p>
+  <p>With the exact state-value function \(V^\pi(s_t)=\mathbb{E}[G_t\mid s_t]\) as the baseline, a sampled return gives an <strong>advantage estimate</strong>, not generally the exact advantage:</p>
   \[
-    A_t = G_t - V(s_t) = Q(s_t, a_t) - V(s_t)
+    \hat A_t=G_t-V^\pi(s_t), \qquad
+    \mathbb{E}[\hat A_t\mid s_t,a_t]=Q^\pi(s_t,a_t)-V^\pi(s_t)=A^\pi(s_t,a_t).
   \]
   <p>The advantage strips out "this state was generically good/bad" and isolates the signal that is actually about the action: how much better did this specific action perform compared to the average from \(s_t\)? Applying all three reductions:</p>
 
@@ -435,7 +487,8 @@ def reinforce(policy, env, optimizer, gamma=0.99):
   <p>Push up the log-probability of actions that outperformed expectations (\(\hat A_t > 0\)); suppress those that underperformed. The remaining question is how to <em>estimate</em> \(\hat A_t\) in practice — that is GAE.</p>
 
   <h2 id="gae">3. Advantage Estimation — GAE</h2>
-  <p>We need \(\hat A_t\) but \(V(s_t)\) is unknown and must be approximated by a learned critic \(V_\psi\). The central tension is the <strong>bias–variance trade-off</strong>: using the full return-to-go \(G_t - V_\psi(s_t)\) is unbiased but accumulates variance over a long episode; bootstrapping from \(V_\psi\) after one step is low-variance but biased by the imperfect critic. <a href="td-learning.html#tdlambda" style="color:var(--accent);">TD Learning §6</a> develops this spectrum in full — one-step TD, \(n\)-step returns, and how each \(n\)-step advantage telescopes into a sum of TD errors.</p>
+  <p>We need \(\hat A_t\) but \(V^\pi(s_t)\) is unknown and is approximated by \(V_\psi\). Subtracting an independently fixed state-only critic from a full Monte Carlo return preserves the expected policy gradient even when the critic is imperfect. Bootstrapping future returns from that imperfect critic can introduce bias, trading it for lower variance. The residual is not an unbiased estimate of the true advantage unless the baseline is correct. <a href="td-learning.html#tdlambda" style="color:var(--accent);">TD Learning §6</a> develops the return-estimation spectrum.</p>
+  <p>This section allows general \(\gamma\) and uses relative-discounted \(G_t\). To use its advantages for the start-state objective \(J_\gamma\), retain the <a href="#discount">outer \(\gamma^t\) policy-gradient weights</a> or an equivalent sampling measure. Discounting inside the TD recursion alone does not supply them.</p>
 
   <p>Define the one-step TD error:</p>
   \[
@@ -451,7 +504,7 @@ def reinforce(policy, env, optimizer, gamma=0.99):
   </div>
 
   <div class="note">
-    \(\lambda = 0\) keeps only the \(l=0\) term, recovering one-step TD \(\hat A_t = \delta_t\) (low variance, higher bias). \(\lambda = 1\) sums all TD errors, which telescopes to the Monte-Carlo return \(G_t - V_\psi(s_t)\) (unbiased, high variance). \(\gamma\) is the reward discount (part of the problem definition); \(\lambda\) is the variance-reduction knob. RLHF typically uses \(\lambda \approx 0.95,\ \gamma \approx 1\).
+    \(\lambda=0\) recovers one-step TD, \(\hat A_t=\delta_t\). At \(\lambda=1\), a complete episode with zero terminal value telescopes to \(G_t-V_\psi(s_t)\), preserving the policy-gradient expectation under the baseline and weighting conditions above. A time-limit cutoff instead needs an appropriate bootstrap. \(\gamma\) defines reward discounting; \(\lambda\) controls the bootstrapping trade-off. RLHF commonly uses \(\lambda\approx0.95,\ \gamma\approx1\).
   </div>
 
   <h3>Computing it efficiently</h3>
@@ -529,19 +582,35 @@ def reinforce(policy, env, optimizer, gamma=0.99):
 
   <p>GAE requires a critic \(V_\psi\) trained alongside the policy \(\pi_\theta\) — the <strong>actor–critic</strong> structure that <a href="ppo.html" style="color:var(--accent);">PPO</a> builds on. In LLM RL this is expensive — a second model as large as the policy. GRPO sidesteps it by replacing the learned critic with a group-sampling baseline; see the <a href="grpo.html" style="color:var(--accent);">GRPO page</a>.</p>
 
-  <h2 id="summary">4. Summary</h2>
+  <h2 id="off-policy">4. From Fresh Rollouts to Reusing a Batch</h2>
+  <p>The vanilla estimator samples from the policy being differentiated. After an update, the old batch is no longer fresh on-policy data. <a href="https://cs224r.stanford.edu/spring_2025/slides/03_cs224r_policy_gradients_2025.pdf">Lecture slides 20–25</a> separate exact change of measure from a practical local surrogate.</p>
+  <h3>Exact trajectory importance sampling</h3>
+  <p>For behavior policy \(\mu\) and target \(\pi_\theta\), with the same initial distribution and environment dynamics,</p>
+  \[
+    W_\theta(\tau)=\frac{P_{\pi_\theta}(\tau)}{P_\mu(\tau)}
+      =\prod_t\frac{\pi_\theta(a_t\mid s_t)}{\mu(a_t\mid s_t)}, \qquad
+    \nabla J_\gamma(\theta)
+      =\mathbb{E}_{\tau\sim\mu}\!\left[
+        W_\theta(\tau)\,R_\gamma(\tau)\sum_t\nabla\log\pi_\theta(a_t\mid s_t)\right].
+  \]
+  <p>Behavior must cover every trajectory with positive target probability, and the expectation must exist. Under those conditions this is exact even for distant policies; distance and horizon can make its finite-sample variance enormous. Mathematical validity and practical estimator quality are different questions.</p>
+  <h3>Action-only ratios define a local surrogate</h3>
+  <p>An action ratio corrects actions at a fixed state, not the probability of visiting that state. A state–action density ratio also contains \(d_{\pi_\theta}(s)/d_\mu(s)\), usually approximated as 1 in practical reuse. Old-policy returns or advantages additionally describe old-policy continuations. Replacing the trajectory product by one action ratio per term therefore does not generally recover the new policy's gradient.</p>
+  <p><a href="ppo.html#ratio">PPO's surrogate</a> keeps old-policy state samples and frozen advantages. Its gradient agrees locally at the collection policy when the advantage estimates and state/time weights match the intended objective; away from it, it is a surrogate, not exact trajectory IS. A KL-constrained update limits distribution change on the measured states. <a href="ppo.html#clip">PPO clipping</a> instead removes some incentives for large changes and supplies no hard KL or ratio bound. See <a href="async-rl.html#is">exact sequence products versus token-local correction</a> for the systems extension.</p>
+
+  <h2 id="summary">5. Summary</h2>
   <div class="summary-grid">
     <div class="summary-card">
-      <div class="summary-card-label">PG theorem</div>
+      <div class="summary-card-label">PG theorem (undiscounted)</div>
       <p>\(\mathbb{E}[\sum_t R(\tau)\,\nabla\log\pi_\theta(a_t\mid s_t)]\)</p>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">Reward-to-go</div>
-      <p>Replace \(R(\tau)\) with \(G_t\); past rewards have zero gradient in expectation</p>
+      <p>For \(J_\gamma\), weight each score by \(\gamma^tG_t\); past rewards cancel in expectation</p>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">Advantage</div>
-      <p>\(A_t = G_t - V(s_t)\); isolates action quality from state quality</p>
+      <p>\(\hat A_t=G_t-V^\pi(s_t)\); its conditional mean is \(A^\pi(s_t,a_t)\)</p>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">GAE</div>
@@ -549,7 +618,7 @@ def reinforce(policy, env, optimizer, gamma=0.99):
     </div>
     <div class="summary-card">
       <div class="summary-card-label">Policy update</div>
-      <p>\(\mathbb{E}[\sum_t\hat A_t\,\nabla\log\pi_\theta(a_t\mid s_t)]\)</p>
+      <p>\(\mathbb{E}[\sum_t\gamma^t\hat A_t\,\nabla\log\pi_\theta(a_t\mid s_t)]\) for \(J_\gamma\), with a valid estimator</p>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">Critic loss</div>
@@ -562,7 +631,7 @@ def reinforce(policy, env, optimizer, gamma=0.99):
     <a class="next-card" href="ppo.html">
       <div class="next-card-label">Next</div>
       <div class="next-card-title">PPO</div>
-      <p>The clipped surrogate that makes following this gradient stable: an importance ratio to reuse rollouts, a trust-region clip, the actor–critic value head, and the K-epoch update loop.</p>
+      <p>Local rollout reuse, a clipped objective rather than a hard trust region, the actor–critic value head, and the K-epoch update loop.</p>
     </a>
     <a class="next-card" href="rlhf.html">
       <div class="next-card-label">Application</div>

@@ -179,7 +179,7 @@
 <div class="hero">
   <span class="hero-pill">RL Theory</span>
   <h1>PPO — Proximal Policy Optimization</h1>
-  <p>The clipped surrogate that turns one policy-gradient step into many safe ones: reusing each batch of rollouts, an actor–critic value head for the advantage, and a trust region that keeps an update from collapsing the policy.</p>
+  <p>Reuse a batch through a local policy-gradient surrogate, estimate advantages with a critic, and clip incentives for large updates — without mistaking clipping for a hard trust-region guarantee.</p>
 </div>
 
 <div class="page-wrap">
@@ -212,33 +212,34 @@
     Unsure about a symbol — \(\mathbb{E}\), \(\sim\), \(\mid\), \(\nabla\)? See the <a href="../foundations/math-notation.html" style="color:var(--note-fg);">math notation reference</a>.
   </div>
   <div class="note">
-    This page picks up exactly where <a href="policy-gradient.html" style="color:var(--note-fg);">Policy Gradient</a> stops: that page derives the advantage form \(\nabla_\theta J = \mathbb{E}[\sum_t \hat A_t\,\nabla_\theta\log\pi_\theta(a_t\mid s_t)]\) and the GAE estimator for \(\hat A_t\); PPO is what makes following that gradient <em>stable and sample-efficient</em>. The clip in §3 is the <a href="../foundations/importance-sampling.html" style="color:var(--note-fg);">importance ratio</a> bounded by a fixed band. PPO stays domain-agnostic here — <a href="rlhf.html" style="color:var(--note-fg);">RLHF</a> is the page that maps it onto language models.
+    This page builds on the <a href="policy-gradient.html#off-policy" style="color:var(--note-fg);">policy-gradient reuse bridge</a> and GAE. Unweighted gradient sums assume \(\gamma=1\); the start-state discounted objective requires <a href="policy-gradient.html#discount">matching time weights or a sampling measure that incorporates them</a>. Here \(\mathbb{E}_t\) denotes the chosen batch weighting of a practical surrogate, not automatically the exact start-state objective. The clip in §3 bounds one branch of that surrogate, not the actual policy ratio. <a href="rlhf.html" style="color:var(--note-fg);">RLHF</a> maps this algorithm onto language models.
   </div>
 
   <h2 id="trust">1. The Problem: One Step, One Batch</h2>
   <p>The policy gradient \(\nabla_\theta J = \mathbb{E}[\sum_t \hat A_t\,\nabla_\theta\log\pi_\theta(a_t\mid s_t)]\) is <em>on-policy</em>: the expectation is taken under the very policy being differentiated. Two painful consequences follow.</p>
   <ul>
-    <li><strong>Each batch is single-use.</strong> The moment you take one gradient step, \(\theta\) changes, the data is now off-policy, and strictly you must throw the rollouts away and collect fresh ones. For LLM RL — where generating the rollouts is the most expensive part — using each batch exactly once is wasteful.</li>
+    <li><strong>Uncorrected reuse changes the estimator.</strong> After a gradient step, the old batch is off-policy. Vanilla REINFORCE recollects to preserve its on-policy expectation; reuse instead needs correction or an explicitly approximate surrogate. For LLM RL, discarding expensive rollouts after one step is costly.</li>
     <li><strong>One large step can be fatal.</strong> Nothing in the raw gradient bounds the size of the update. A single step that moves the policy too far can collapse it into a degenerate distribution from which it never recovers — and unlike supervised learning, the next batch is collected <em>by that broken policy</em>, so the damage compounds.</li>
   </ul>
-  <p>Both problems have the same cure: take a <em>small, controlled</em> step, and let the same batch fund several of them. The region within which the update is trusted to still resemble the true gradient is the <strong>trust region</strong>. <strong>TRPO</strong> enforced it with a hard KL constraint and second-order optimization; <strong>PPO</strong> achieves nearly the same effect with a first-order trick — a clip — that drops straight into an ordinary SGD loop.</p>
+  <p>The motivation is to take controlled steps while reusing data. <strong>TRPO</strong> formulates an average-KL-constrained update, approximately solved with second-order methods. <strong>PPO-Clip</strong> changes the first-order objective to discourage excessive movement; it does not impose that constraint. Step size, epoch count, and KL monitoring remain important.</p>
 
   <h2 id="ratio">2. Reusing Rollouts: the Importance Ratio</h2>
-  <p>To reuse a batch collected by \(\pi_{\theta_{\text{old}}}\) while optimizing \(\pi_\theta\), correct for the mismatch with an <a href="../foundations/importance-sampling.html" style="color:var(--accent);">importance ratio</a> — the reweighting that lets samples from one distribution estimate an expectation under another:</p>
+  <p>For a batch collected by \(\pi_{\theta_{\text{old}}}\), the <a href="../foundations/importance-sampling.html" style="color:var(--accent);">action importance ratio</a> reweights the conditional action distribution at each sampled state:</p>
   \[
     \rho_t(\theta) = \frac{\pi_\theta(a_t\mid s_t)}{\pi_{\theta_{\text{old}}}(a_t\mid s_t)}
   \]
   <div class="note">
     In practice this ratio is formed in log space — \(\rho_t = \exp\!\big(\log\pi_\theta(a_t\mid s_t) - \log\pi_{\theta_{\text{old}}}(a_t\mid s_t)\big)\) — where each log-prob is a <code>log_softmax</code> gather over the policy logits. See <a href="../foundations/log-probs.html" style="color:var(--accent);">computing log-probabilities from logits</a>.
   </div>
-  <p>The surrogate objective replaces the score function with this ratio against the (frozen) advantages \(\hat A_t\) of the collected batch:</p>
+  <p>The surrogate objective multiplies this ratio by the frozen old-policy advantages \(\hat A_t\):</p>
   \[
     \mathcal{L}^{\text{IS}}(\theta) = \mathbb{E}_t\big[\rho_t(\theta)\,\hat A_t\big]
   \]
-  <p>At \(\theta = \theta_{\text{old}}\) the ratio is \(1\) and the gradient of \(\mathcal{L}^{\text{IS}}\) equals the policy gradient — so it is a faithful local stand-in for the objective. But importance sampling is only trustworthy while the two policies are close: once \(\rho_t\) wanders far from \(1\), a single sample carries enormous weight, the variance explodes, and the surrogate stops tracking the true objective. That is precisely the boundary a trust region must police.</p>
+  <p>At \(\theta=\theta_{\text{old}}\), its expected gradient matches the policy gradient when advantages are exact or conditionally unbiased and state/time weighting matches the objective. GAE with an imperfect critic and practical weighting can add approximation error. Away from the collection policy, sampled states and continuation values still belong to the old policy: the action ratio does not correct either, so this is a <em>local surrogate</em>, not exact new-policy trajectory reweighting.</p>
+  <p><a href="policy-gradient.html#off-policy">Exact trajectory IS</a> uses a product of ratios and remains valid under support and integrability assumptions even when policies are far apart; high variance may make it unusable in practice. That variance issue is separate from omitting state-distribution correction and retaining old-policy advantages. See <a href="async-rl.html#is">sequence products versus token-local correction</a> for the same distinction in RL systems.</p>
 
   <h2 id="clip">3. The Clipped Surrogate Objective</h2>
-  <p>PPO's idea is blunt and effective: <em>remove the incentive to move the ratio outside a band \([1-\epsilon,\,1+\epsilon]\).</em> Take the minimum of the raw surrogate and a version with the ratio clipped to that band:</p>
+  <p>PPO removes a sample's incentive to move its ratio farther in the advantage-improving direction once it crosses a threshold. Take the minimum of the raw surrogate and a version with the ratio clipped to \([1-\epsilon,\,1+\epsilon]\):</p>
 
   <div class="result">
     <div class="result-label">PPO clipped surrogate</div>
@@ -252,7 +253,7 @@
 
   <p>The \(\min\) makes the objective a <em>pessimistic</em> (lower) bound on the unclipped surrogate. Read it by the sign of the advantage:</p>
   <ul>
-    <li><strong>\(\hat A_t > 0\) (a better-than-average action).</strong> We want to raise its probability, so \(\rho_t\) rises. The objective grows with \(\rho_t\) until \(\rho_t = 1+\epsilon\), then <em>flattens</em> — past the band, making the action even more likely yields no further gain, so the gradient is zero and the step has no reason to push harder.</li>
+    <li><strong>\(\hat A_t > 0\) (a better-than-average action).</strong> Raising its probability grows this sample's objective until \(\rho_t=1+\epsilon\), then the term flattens. Its own policy-loss gradient is zero beyond that point, but other samples, shared parameters, or auxiliary losses can still change its probability.</li>
     <li><strong>\(\hat A_t < 0\) (a worse-than-average action).</strong> We want to lower its probability, so \(\rho_t\) falls. Below \(\rho_t = 1-\epsilon\) the objective flattens — same brake on the downside. But note the asymmetry: if \(\rho_t\) instead <em>rises</em> for a bad action, the unclipped term keeps getting worse and the \(\min\) lets it, so an action that became too probable is always pulled back, even from outside the band.</li>
   </ul>
 
@@ -263,15 +264,18 @@
       <span class="legend-item"><span class="lg" style="--c:var(--plot-orange)"></span> \(\hat A_t < 0\) (bad action)</span>
     </div>
     <p class="figure-caption">
-      <strong>The clip flattens the objective exactly where a step would leave the trust region.</strong>
+      <strong>The plateaus bound a sample's objective incentive, not the optimizer's step.</strong>
       With \(\epsilon = 0.2\) the band is \([0.8, 1.2]\) (vertical gridlines). For \(\hat A_t > 0\) the objective
       plateaus once \(\rho_t > 1.2\) — zero gradient, no reward for over-shooting. For \(\hat A_t < 0\) it plateaus
       once \(\rho_t < 0.8\), but keeps falling for \(\rho_t > 1\): a bad action that grew more probable is never
-      let off the hook. The flat regions are where PPO simply stops pushing.
+      let off the hook by its own loss term. Other terms can still move the policy through a plateau.
     </p>
   </div>
 
-  <p>The clip is a cheap, first-order surrogate for TRPO's KL trust region: no second-order solve, just a <code>min</code> and a <code>clamp</code> that slot into any autodiff graph. A typical \(\epsilon\) is \(0.2\).</p>
+  <p>The <code>min</code> and <code>clamp</code> are simple to differentiate, and a typical \(\epsilon\) is \(0.2\). Neither bounds every realized ratio nor guarantees a maximum KL divergence or monotonic reward improvement. A finite optimizer step can overshoot a plateau, and shared parameters couple different samples.</p>
+  <div class="note">
+    <a href="https://spinningup.openai.com/en/latest/algorithms/ppo.html#key-equations">Spinning Up</a> explicitly warns that PPO-Clip can still move too far and adds early stopping based on measured mean KL. That is an additional empirical safeguard, not an exact projection into a trust region. Distinguish the clip parameter, the KL-monitoring threshold, and an explicit KL penalty or constraint.
+  </div>
 
   <h2 id="actor-critic">4. Actor–Critic: Where \(\hat A_t\) Comes From</h2>
   <p>PPO is an <strong>actor–critic</strong> method. The <em>actor</em> is the policy \(\pi_\theta\); the <em>critic</em> is a learned value function \(V_\psi(s)\) — usually a scalar head on the same network — whose job is to supply the baseline that turns noisy returns into low-variance advantages.</p>
@@ -399,15 +403,15 @@
   <a href="async-rl-monitoring.html#entropy">Monitoring &amp; Diagnosis for Async RL</a>.</p>
 
   <h2 id="loop">7. The PPO Update Loop</h2>
-  <p>One iteration of PPO collects a batch with the current policy, then squeezes several gradient steps out of it under the protection of the clip:</p>
+  <p>One iteration collects a batch, then takes several surrogate-gradient steps while monitoring policy change:</p>
   <ol>
     <li><strong>Collect</strong> — run \(\pi_{\theta_{\text{old}}}\) in the environment to gather a batch of trajectories (states, actions, rewards).</li>
     <li><strong>Estimate</strong> — forward the critic \(V_\psi\) over the batch and compute advantages \(\hat A_t\) by GAE, plus the value targets \(\hat R_t\). Freeze these.</li>
-    <li><strong>Optimize</strong> — take \(K\) epochs (e.g. \(3\text{–}4\)) of minibatch SGD on \(\mathcal{L}_{\text{PPO}}\). As \(\theta\) drifts from \(\theta_{\text{old}}\), \(\rho_t\) moves away from \(1\) — and the clip caps how far that drift can usefully go.</li>
+    <li><strong>Optimize</strong> — take up to \(K\) epochs (e.g. \(3\text{–}4\)) of minibatch SGD on \(\mathcal{L}_{\text{PPO}}\). Track ratio and KL diagnostics; implementations may stop policy updates early when a configured KL threshold is exceeded. Clipping alone does not cap the drift.</li>
     <li><strong>Refresh</strong> — set \(\theta_{\text{old}} \leftarrow \theta\) and repeat.</li>
   </ol>
   <div class="note">
-    The \(K\)-epoch reuse in step 3 is the whole payoff of the clip: it is what lets PPO amortize one expensive round of data collection over many cheap gradient steps without the policy running away. Drop \(K\) to \(1\) and the clip rarely binds; PPO degenerates back toward a plain advantage policy gradient.
+    Reuse amortizes expensive collection over several updates, but does not guarantee stability. At the initial collection parameters the ratios are 1, so clipping is inactive for the first policy gradient evaluation. One epoch can still contain many minibatch updates, allowing clipping to activate later in that same epoch.
   </div>
   <div class="note">
     This is the generic algorithm. To turn it into <a href="rlhf.html" style="color:var(--note-fg);">RLHF</a>, the environment <em>becomes the language model generating tokens</em>, the reward comes from a learned reward model plus a per-token KL penalty against a reference policy, and the "Collect" step is a dedicated inference engine. The optimizer in the middle stays exactly this.
