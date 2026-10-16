@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="MAI-Base-2 as a frontier pre-training case study: source scaling, dropless MoE, distributed Muon, activation-gradient clipping, and the limits of reported efficiency gains.">
+  <title>MAI-Base-2 — Frontier Pre-training Through Model–Systems Co-design</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #7c3aed;
+      --accent-light: #f5f3ff;
+      --warning-bg: #fffbeb;
+      --warning-border: #f59e0b;
+      --warning-fg: #78350f;
+      --info-bg: #eff6ff;
+      --info-border: #3b82f6;
+      --info-fg: #1e40af;
+      --nav-bg: rgba(255,255,255,0.92);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #a78bfa;
+        --accent-light: #1a1626;
+        --warning-bg: #251c0b;
+        --warning-border: #b45309;
+        --warning-fg: #fcd34d;
+        --info-bg: #101a2b;
+        --info-border: #1e40af;
+        --info-fg: #93c5fd;
+        --nav-bg: rgba(15,17,21,0.9);
+      }
+    }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      height: 52px;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .nav-links { display: flex; gap: 4px; overflow-x: auto; flex: 1; min-width: 0; }
+    .nav-links a {
+      color: var(--muted);
+      text-decoration: none;
+      white-space: nowrap;
+      font-size: 0.82rem;
+      padding: 4px 10px;
+      border-radius: 6px;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .hero {
+      background: linear-gradient(135deg, #5b21b6 0%, #7c3aed 50%, #8b5cf6 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 { font-size: clamp(1.5rem, 4vw, 2.2rem); margin: 0 0 12px; letter-spacing: -0.02em; }
+    .hero p { margin: 0 auto; max-width: 690px; opacity: 0.9; }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 100px;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      font-size: 0.78rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .page-wrap { max-width: 860px; margin: 0 auto; padding: 48px 24px 80px; }
+    h2 { font-size: 1.15rem; margin: 2.8em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); scroll-margin-top: 72px; }
+    h3 { font-size: 0.98rem; margin: 1.7em 0 0.45em; }
+    p { margin: 0.65em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.65em 0; }
+    li { margin-bottom: 0.42em; }
+    a { color: var(--accent); }
+    a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    code {
+      font-family: 'SF Mono', SFMono-Regular, ui-monospace, Menlo, monospace;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+      overflow-wrap: anywhere;
+    }
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+    th, td { border: 1px solid var(--border); padding: 10px 14px; text-align: left; vertical-align: top; }
+    th { background: var(--surface); font-weight: 600; }
+    caption { text-align: left; color: var(--muted); font-size: 0.85rem; padding-bottom: 8px; }
+    .note, .result { border-left: 3px solid; border-radius: 0 8px 8px 0; padding: 14px 18px; margin: 1.2em 0; }
+    .note { background: var(--warning-bg); border-color: var(--warning-border); color: var(--warning-fg); }
+    .result { background: var(--info-bg); border-color: var(--info-border); color: var(--info-fg); }
+    .note a, .result a { color: inherit; }
+    .compare-grid, .next-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 1.2em 0; }
+    .compare, .next-card { border: 1px solid var(--border); border-radius: 8px; padding: 16px 18px; }
+    .compare { background: var(--surface); }
+    .compare h3 { margin-top: 0; color: var(--accent); }
+    .next-card { text-decoration: none; color: inherit; }
+    .next-card strong { color: var(--accent); }
+    .next-card p { margin-bottom: 0; font-size: 0.9rem; }
+    .next-card:hover { border-color: var(--accent); }
+    .source-note { color: var(--muted); font-size: 0.85rem; }
+    footer { border-top: 1px solid var(--border); padding: 28px 24px; text-align: center; color: var(--muted); font-size: 0.82rem; }
+    @media (max-width: 600px) {
+      nav { padding: 0 16px; gap: 12px; }
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+      .compare-grid, .next-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<nav aria-label="Page navigation">
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>MAI-Base-2</a>
+  <div class="nav-links">
+    <a href="../index.html#transformer-model-architectures">↑ Model Architectures</a>
+    <a href="#snapshot">Known / undisclosed</a>
+    <a href="#scaling">Scaling experiments</a>
+    <a href="#codesign">MoE co-design</a>
+    <a href="#muon">Muon</a>
+    <a href="#clipping">Clipping &amp; data</a>
+    <a href="#evidence">Evidence</a>
+    <a href="#connections">Read next</a>
+    <a href="#sources">Sources</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <span class="hero-pill">Model case study · Transformer &amp; Pretraining</span>
+  <h1>MAI-Base-2</h1>
+  <p>Frontier pre-training through model–systems co-design: make small experiments representative,
+    make the better model fast enough to train, and use optimization signals to repair the data.</p>
+</header>
+
+<main class="page-wrap">
+  <p>
+    Microsoft's October 2026 account of <strong>MAI-Base-2</strong> is more revealing about how a
+    frontier model is developed than about its exact transformer block. Its central story is a
+    feedback loop: scaling experiments select a recipe; infrastructure removes the recipe's
+    bottlenecks; the resulting training signals expose data problems. The useful unit of comparison
+    is <strong>time to a given evaluation quality</strong>, not parameter count or kernel speed alone.
+  </p>
+  <div class="note">
+    <strong>Evidence boundary.</strong> This is a case study of Microsoft's
+    <a href="#source-microsoft">October 15, 2026 report</a>, checked October 16.
+    Measurements and model facts below are author-reported, not independently reproduced.
+    Post-training was still underway at publication; this is not a released inference recipe
+    or a complete architecture specification.
+  </div>
+
+  <h2 id="snapshot">1. The model — known versus undisclosed</h2>
+  <div class="table-wrap">
+    <table>
+      <caption>What the cited report establishes, and what it leaves open.</caption>
+      <thead><tr><th scope="col">Area</th><th scope="col">Disclosed</th><th scope="col">Not established by this report</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Scale</th><td>2.8T total parameters; 80B active per token. Larger and sparser than MAI-Base-1.</td><td>A complete production layer/configuration table.</td></tr>
+        <tr><th scope="row">MoE</th><td>MoE in every layer, replacing Base-1's alternating dense/MoE FFNs.</td><td>Exact expert count, top-k, expert width, and complete routing specification.</td></tr>
+        <tr><th scope="row">Vision</th><td>Native encoder-free vision pre-training, unlike Base-1.</td><td>Image tokenization, patch processing, multimodal attention layout, or a novel vision primitive.</td></tr>
+        <tr><th scope="row">Attention &amp; residuals</th><td>A depth-indexed scaling ladder with architectural scaling rules.</td><td>A new attention mechanism, positional scheme, residual design, or production context length.</td></tr>
+        <tr><th scope="row">Training data</th><td>50T training tokens; 4.5T unique VLM tokens, with repeated VLM data making up 18% of the training mixture.</td><td>A released corpus, exact source mixture, or independently audited provenance.</td></tr>
+        <tr><th scope="row">Run</th><td>16K GB200 GPUs over 38 days in August–September 2026.</td><td>A reproducible end-to-end launcher, full parallelism configuration, or serving benchmark.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    The architectural changes are real, but <strong>new to this model generation is not the same
+    as new to the field</strong>. In particular, “encoder-free” is a high-level disclosure, not
+    enough evidence to draw a detailed vision block diagram.
+  </p>
+
+  <h2 id="scaling">2. Make the small experiment resemble the large run</h2>
+  <h3>Source scaling: preserve repetition, not just tokens per parameter</h3>
+  <p>
+    The ladder holds training tokens per <em>active</em> parameter (TPP) constant as model size
+    increases. That alone misses a data constraint: the final run may repeat high-quality sources,
+    while a shorter experiment sees mostly fresh examples. A recipe can therefore look good in
+    the small run because it never encounters the final run's overfitting pressure.
+  </p>
+  <p>
+    Microsoft's <strong>source scaling</strong> shrinks each source's unique sample pool on lower
+    rungs so that its repetition count stays the same. At fixed TPP, this also preserves the
+    corresponding unique-data-to-active-parameter ratio.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <caption>The report's example for one source, not an assertion that the entire corpus runs for eight epochs.</caption>
+      <thead><tr><th scope="col">Experiment</th><th scope="col">Total training horizon</th><th scope="col">Unique pool for this source</th><th scope="col">Source repetitions</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Full run</th><td>50T tokens</td><td>100% of its selected pool</td><td>8</td></tr>
+        <tr><th scope="row">Smaller rung</th><td>5T tokens</td><td>10% of that pool</td><td>8</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    The lesson extends <a href="scaling-laws.html#data">data-constrained scaling</a>:
+    match the repetition regime before trusting a small-scale winner. Microsoft reports that
+    omitting this control favored under-regularized choices that overfit at larger scale.
+  </p>
+  <h3>Search in the coordinates that capture the coupling</h3>
+  <p>
+    Learning rate and decoupled weight decay interact through their product. Rather than waste
+    trials on a rectangular LR/WD grid, Microsoft searches <code>(log LR, log(LR × WD))</code>,
+    fits a quadratic response surface, and models its optimum across training horizons and TPP.
+    The reported fit has <code>LR × WD = 17.04 / steps</code>: the decay timescale is a fixed
+    fraction of training. The team also fits dropout and validates the predictions at an
+    intermediate scale before the final run.
+  </p>
+  <div class="result">
+    <strong>Transfer the experimental method, not the constants.</strong> These are fitted
+    properties of this recipe. The broader rule is the one in
+    <a href="scaling-laws.html#hyperparams">hyperparameter scaling</a>: refit and validate when
+    architecture, optimizer, or data exposure changes.
+  </div>
+
+  <h2 id="codesign">3. Infrastructure changes which architecture wins</h2>
+  <p>
+    In Microsoft's experiments, MoE in every layer already needed fewer FLOPs to reach a given
+    loss than alternating dense and MoE FFNs. But it was not the fastest choice with Base-1's
+    implementation. Dynamic routing caused fragmentation and reserved memory for rare load spikes;
+    finer experts added communication and launch overhead.
+  </p>
+  <div class="compare-grid">
+    <section class="compare">
+      <h3>Base-1: select for today's runtime</h3>
+      <p>All-layer MoE wins on quality per FLOP, but implementation overhead makes alternating
+        dense/MoE layers preferable in wall time.</p>
+    </section>
+    <section class="compare">
+      <h3>Base-2: remove the blocking costs</h3>
+      <p>Bound routing memory and reduce per-expert overhead. Reported MoE-layer MFU rises
+        from <strong>24% to 35%</strong>, enabling MoE in every layer.</p>
+    </section>
+  </div>
+  <h3>Dropless execution with a fixed memory budget</h3>
+  <p>
+    Dropping overflow tokens hurt quality in Microsoft's experiments; allocating for the worst
+    imbalance wasted memory. Instead, experts are grouped on each expert-parallel rank and use
+    fixed token capacities. Each group performs <strong>dispatch → compute → collect</strong>
+    rounds: overloaded experts borrow unused capacity within their group, then process any
+    remaining overflow in later rounds. Backward uses a similar schedule with fine-grained
+    recomputation.
+  </p>
+  <p>
+    The trade is explicit: more capacity consumes more memory; less capacity can require more
+    rounds and extra work. The reported configuration usually needs one round in steady state.
+    <strong>Bounded memory does not mean bounded latency under arbitrary imbalance.</strong>
+    This is an execution strategy, not evidence of a new router.
+  </p>
+  <p>
+    Grouped GEMMs and communication reduce per-expert overhead. GPU-resident token metadata
+    removes host synchronization; symmetric-memory NVLink exchange avoids staging copies;
+    balancing-loss reductions are batched across layers. Dispatch and collect are pipelined
+    with expert compute, with shared-expert work and recomputation helping hide the edges.
+    The <a href="../systems/moe-parallelism.html#ep">MoE parallelism guide</a> supplies the
+    general EP/communication model; this case explains why improving it changed the chosen model.
+  </p>
+
+  <h2 id="muon">4. Make the better optimizer cheap enough</h2>
+  <p>
+    Microsoft reports better stability and efficiency with
+    <a href="../foundations/optimizers.html#muon">Muon</a> than AdamW. Its systems obstacle is
+    structural: Newton–Schulz needs full momentum matrices, while ZeRO distributes their state
+    across data-parallel ranks. The implementation changes ownership temporarily:
+  </p>
+  <ol>
+    <li>Update each local FP32 momentum shard, then cast the communication payload to BF16.</li>
+    <li>Batch same-shaped parameters into an all-to-all that assigns full matrices to owners.</li>
+    <li>Orthogonalize locally with a symmetry-aware Newton–Schulz kernel.</li>
+    <li>Return updates through a second all-to-all, cast back to FP32, and apply them to the weights.</li>
+  </ol>
+  <p>
+    Prefetching overlaps communication and computation; cached resharding metadata avoids
+    repeated indexing for thousands of same-shaped parameters. Selected replicated weights,
+    including router weights, skip the first exchange and gather updates after Newton–Schulz.
+    That router path is a useful reminder that the Qwen assignments discussed in the
+    <a href="../foundations/optimizers.html#muon-which">optimizer guide</a> are
+    <strong>recipe-specific</strong>, not a universal ban on applying Muon to router weights.
+  </p>
+  <p>
+    The reported optimizer cost is <strong>165 ms, or 2.1% of an average iteration</strong>.
+    The separate 55 ms figure is an estimated communication-bound lower bound, not achieved
+    performance. Stragglers, dispatch, imbalance, and resharding copies explain the reported gap.
+    Compare the ownership strategy with
+    <a href="../foundations/optimizers.html#muon-systems">Canzona's matrix-aware partitioning</a>
+    rather than treating distributed orthogonalization as a new optimizer.
+  </p>
+
+  <h2 id="clipping">5. Turn a stability signal into a data-quality signal</h2>
+  <p>
+    <a href="../foundations/optimizers.html#clipping">Global parameter-gradient clipping</a>
+    rescales the whole batch gradient when its norm is too large. A few pathological examples
+    can therefore suppress contributions from otherwise ordinary examples. MAI-Base-2 instead
+    adds clipping of <strong>activation gradients at selected network locations</strong>, a more
+    targeted intervention during backpropagation. This is not clipping the forward activations.
+  </p>
+  <p>
+    Microsoft reports that its benefit grows with scale. The Base-1/Base-2 gradient-norm plot
+    changes both the optimizer and clipping, however, so that comparison alone does not isolate
+    either intervention. The report does not give enough detail here to prescribe clipping
+    thresholds, exact locations, or a drop-in implementation.
+  </p>
+  <div class="result">
+    <strong>The diagnostic loop:</strong> clipped example → inspect the source sequence →
+    trace preprocessing → fix the defect. A clipped token exposed a license header cut off
+    mid-sentence in the code-data pipeline. Clipping was both a guardrail and a way to locate
+    a data bug; it did not make repairing that bug unnecessary.
+  </div>
+  <p>
+    Data work was broader than this example: Microsoft reports roughly 36% more unique tokens
+    than Base-1, improved parsing/filtering/deduplication, embedding-based diversity sampling,
+    and native vision data. It describes the corpus as organic rather than distilled from other
+    models. These are first-party claims about the recipe, not an independent provenance audit.
+  </p>
+
+  <h2 id="evidence">6. What the efficiency numbers establish</h2>
+  <p>
+    Evaluations use held-out <strong>bits per byte (BPB)</strong>, a tokenizer-normalized measure
+    of text prediction loss, not task success. The report uses its own code and vendor-commissioned
+    STEM, math, and Q&amp;A material, and states that evaluations were decontaminated against its
+    training data. The private evaluation sets limit independent verification.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <caption>Different measurements answer different questions; their percentages and multipliers are not interchangeable.</caption>
+      <thead><tr><th scope="col">Reported quantity</th><th scope="col">Interpretation</th><th scope="col">Do not infer</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">4.2–12.3× FLOPs efficiency versus DeepSeek-V4-Pro-Base</th><td>Four separate BPB-versus-FLOPs fits estimate the MAI recipe's compute to match the reference model's loss. The final Base-2 point is included, so matching is within the fitted range.</td><td>A measured wall-clock speedup, equal-compute head-to-head run, or downstream capability multiplier. Base-2 itself used more training FLOPs than the reference.</td></tr>
+        <tr><th scope="row">21% average whole-run MFU</th><td>Normalized to 2.5 PFLOPS per GB200 GPU in BF16; counted model FLOPs exclude rematerialization and optimizer work.</td><td>The 35% MoE-layer MFU, or comparability with a different precision/peak convention.</td></tr>
+        <tr><th scope="row">89% goodput</th><td>The report's definition: fraction of time during which training progressed.</td><td>89% hardware utilization. Do not multiply it into MFU without resolving whether that MFU's timing already includes interruptions.</td></tr>
+        <tr><th scope="row">Lower BPB than the tested open-weight models</th><td>A result on these held-out evaluations and checkpoints available before October 2026.</td><td>Universal superiority. Kimi K3, Qwen3.8, and MiMo comparisons use post-trained checkpoints, which the authors explicitly caveat.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    <strong>Reading the evidence:</strong> the quality-per-FLOP estimates motivate modeling
+    choices; quality-matched wall time decides whether those choices pay off on the current
+    stack. MFU diagnoses execution efficiency, while goodput describes progress time.
+    None of these substitutes for a controlled downstream evaluation or reproducible recipe.
+    See <a href="../systems/mfu.html#hfu">MFU versus HFU</a> for the FLOP-counting distinction.
+  </p>
+
+  <h2 id="connections">7. Keep the case together; follow the mechanics outward</h2>
+  <p>
+    The reusable lesson is not “use this exact architecture.” It is to preserve the final run's
+    statistical conditions in small experiments, measure quality and elapsed time together,
+    and use runtime signals to improve both implementation and data. The following pages
+    remain the detailed references rather than duplicating their derivations here.
+  </p>
+  <div class="next-grid">
+    <a class="next-card" href="scaling-laws.html"><strong>Scaling laws</strong><p>Compute allocation, repeated-data limits, fitting errors, and recipe-specific hyperparameters.</p></a>
+    <a class="next-card" href="../systems/moe-parallelism.html"><strong>MoE parallelism</strong><p>Expert ownership, dispatch/combine, imbalance, and communication costs.</p></a>
+    <a class="next-card" href="../foundations/optimizers.html"><strong>Optimizers</strong><p>Muon, matrix ownership, clipping, and the working update math.</p></a>
+    <a class="next-card" href="../systems/mfu.html"><strong>Utilization accounting</strong><p>Model versus hardware FLOPs and the costs hidden behind one headline percentage.</p></a>
+  </div>
+
+  <h2 id="sources">Sources &amp; scope</h2>
+  <p id="source-microsoft">
+    <strong>Primary source:</strong> Microsoft AI,
+    <a href="https://microsoft.ai/news/frontier-pre-training-at-microsoft-ai/">Frontier Pre-training at Microsoft AI</a>,
+    October 15, 2026. Relevant sections: “Robust scaling ladders,” “Scaling laws for
+    hyperparameters,” “Codesigning our infrastructure and MAI-Base-2,” “Scaling Muon,”
+    “Activation gradient clipping,” and “Scaling Data.”
+  </p>
+  <p class="source-note">
+    This page summarizes the article's disclosed mechanisms and distinguishes them from
+    interpretation. It does not reproduce the experiments, audit the training/evaluation data,
+    or fill undisclosed architecture fields from analogy with other models.
+  </p>
+</main>
+<footer>Personal ML notes · MAI-Base-2 · Model–systems co-design</footer>
+</body>
+</html>
