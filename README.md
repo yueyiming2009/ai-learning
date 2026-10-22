@@ -69,6 +69,10 @@ undisclosed architecture). [MAI-Base-2](docs/transformer/mai-base-2.html) adds a
 case: repetition-preserving source scaling, fixed-memory dropless MoE enabling experts in every
 layer, distributed Muon, and activation-gradient clipping as a data diagnostic, with explicit
 limits on architecture disclosure and efficiency claims.
+[Jev](docs/transformer/jev.html) studies a different output contract: typed probabilistic
+decisions rather than generated text, with a hypothetical shared-state/readout graph,
+calibration and confidence distinctions, and an interactive cost-aware decision policy.
+Vendor disclosures, black-box observations, and unconfirmed internals stay separate.
 
 ### 04 · Systems & Scaling — [docs/systems/](docs/systems/), [triton/](triton/)
 The engineering substrate that trains it across many devices, built bottom-up — MFU, the PyTorch

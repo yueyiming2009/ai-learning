@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Jev as a decision-model case study: typed probabilities, a hypothetical shared-state computation graph, calibration, serving tradeoffs, and the limits of black-box architectural evidence.">
+  <title>Jev — From Language Generation to Probabilistic Decisions</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #7c3aed;
+      --accent-light: #f5f3ff;
+      --warning-bg: #fffbeb;
+      --warning-border: #f59e0b;
+      --warning-fg: #78350f;
+      --nav-bg: rgba(255,255,255,0.92);
+      --fig-bg: #fafafa;
+      --plot-grid: #e5e7eb;
+      --plot-axis: #9ca3af;
+      --plot-tick: #6b7280;
+      --plot-gray: #6b7280;
+      --plot-violet: #6d28d9;
+      --plot-teal: #0d9488;
+      --plot-amber: #b45309;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #a78bfa;
+        --accent-light: #1a1626;
+        --warning-bg: #251c0b;
+        --warning-border: #b45309;
+        --warning-fg: #fcd34d;
+        --nav-bg: rgba(15,17,21,0.9);
+        --fig-bg: #171b21;
+        --plot-grid: #303641;
+        --plot-axis: #9aa1ab;
+        --plot-tick: #b5bcc7;
+        --plot-gray: #b5bcc7;
+        --plot-violet: #a78bfa;
+        --plot-teal: #2dd4bf;
+        --plot-amber: #fbbf24;
+      }
+    }
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; line-height: 1.75; font-size: 16px; }
+    nav { position: sticky; top: 0; z-index: 100; height: 52px; padding: 0 24px; display: flex; align-items: center; gap: 24px; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
+    .nav-brand { display: inline-flex; align-items: center; gap: 7px; color: var(--accent); text-decoration: none; font-size: 0.9rem; font-weight: 600; white-space: nowrap; }
+    .nav-links { display: flex; gap: 4px; overflow-x: auto; flex: 1; min-width: 0; }
+    .nav-links a { color: var(--muted); text-decoration: none; white-space: nowrap; font-size: 0.82rem; padding: 4px 10px; border-radius: 6px; }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .hero { background: linear-gradient(135deg, #5b21b6 0%, #7c3aed 50%, #8b5cf6 100%); color: white; padding: 56px 24px 48px; text-align: center; }
+    .hero h1 { font-size: clamp(1.8rem, 4vw, 2.5rem); margin: 0 0 12px; }
+    .hero p { margin: 0 auto; max-width: 690px; opacity: 0.95; }
+    .hero-pill { display: inline-block; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 100px; padding: 3px 12px; margin-bottom: 16px; font-size: 0.78rem; letter-spacing: 0.04em; text-transform: uppercase; }
+    .page-wrap { max-width: 960px; margin: 0 auto; padding: 40px 24px 80px; }
+    h2 { font-size: 1.2rem; margin: 2.8em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); scroll-margin-top: 72px; }
+    h3 { font-size: 1rem; margin: 1.7em 0 0.45em; scroll-margin-top: 72px; }
+    p { margin: 0.65em 0; }
+    ol, ul { padding-left: 1.5em; }
+    li { margin-bottom: 0.4em; }
+    a { color: var(--accent); }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    code { font-family: 'SF Mono', SFMono-Regular, ui-monospace, Menlo, monospace; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-size: 0.88em; overflow-wrap: anywhere; }
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+    th, td { border: 1px solid var(--border); padding: 10px 12px; text-align: left; vertical-align: top; }
+    th { background: var(--surface); font-weight: 600; }
+    caption { text-align: left; color: var(--muted); font-size: 0.85rem; padding-bottom: 8px; }
+    .note, .result { border-left: 3px solid; border-radius: 0 8px 8px 0; padding: 14px 18px; margin: 1.2em 0; }
+    .note { background: var(--warning-bg); border-color: var(--warning-border); color: var(--warning-fg); }
+    .note a { color: inherit; }
+    .result { background: var(--accent-light); border-color: var(--accent); }
+    .compare-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .compare { border: 1px solid var(--border); border-radius: 8px; padding: 16px; min-width: 0; background: var(--surface); }
+    .compare h3 { margin-top: 0; color: var(--accent); }
+    .flow-box { border: 1px solid var(--border); background: var(--bg); border-radius: 6px; padding: 12px; text-align: center; font-size: 0.87rem; }
+    .flow-box.shared { border-color: var(--accent); background: var(--accent-light); }
+    .arrow { text-align: center; color: var(--muted); margin: 6px 0; }
+    .branches { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+    .branches .flow-box { padding: 10px 5px; }
+    .source-note { color: var(--muted); font-size: 0.85rem; }
+    .equation { overflow-x: auto; }
+    .figure {
+      background: var(--fig-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 16px 14px;
+      margin: 1.6em 0;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .figure canvas { width: 100%; height: 300px; display: block; }
+    .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; justify-content: center; margin-top: 12px; font-size: 0.82rem; color: var(--text); }
+    .legend-item { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, var(--plot-gray) 0 5px, transparent 5px 9px); }
+    .figure-caption { font-size: 0.85rem; color: var(--muted); line-height: 1.6; margin: 14px 4px 2px; }
+    fieldset { border: 0; padding: 0; margin: 0 0 16px; }
+    legend { font-weight: 600; padding: 0 0 8px; }
+    .controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; font-size: 0.85rem; }
+    label { display: block; }
+    input[type="range"] { width: 100%; accent-color: var(--accent); }
+    output { font-variant-numeric: tabular-nums; }
+    #decision-result { display: block; margin: 12px 0; }
+    .axis-description { font-size: 0.82rem; color: var(--muted); text-align: center; }
+    footer { border-top: 1px solid var(--border); padding: 28px 24px; text-align: center; color: var(--muted); font-size: 0.82rem; }
+    @media (max-width: 600px) {
+      nav { padding: 0 16px; gap: 12px; }
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 28px 16px 60px; }
+      .compare-grid, .controls { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<nav aria-label="Page navigation">
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Jev</a>
+  <div class="nav-links">
+    <a href="../index.html#transformer-model-architectures">↑ Model Architectures</a>
+    <a href="#problem">Why decisions?</a>
+    <a href="#contract">Contract</a>
+    <a href="#graph">Computation</a>
+    <a href="#readout">Readout</a>
+    <a href="#calibration">Calibration</a>
+    <a href="#serving">Efficiency</a>
+    <a href="#evidence">Evidence &amp; use</a>
+    <a href="#sources">Sources</a>
+  </div>
+</nav>
+<header class="hero">
+  <span class="hero-pill">Model case study · Transformer &amp; Pretraining</span>
+  <h1>Jev</h1>
+  <p>From language generation to probabilistic decisions: change what the model returns,
+    then reconsider the computation, training objective, and policy around it.</p>
+</header>
+<main class="page-wrap">
+  <p>A model inside a workflow often needs to select a queue, judge urgency, or score a candidate,
+    not write a paragraph. TypeSafe's Jev makes that restricted interface the product:
+    caller-defined questions in, typed decisions and probabilities out. The interesting change
+    is the alignment between the <strong>output contract and the computational job</strong>,
+    not the invention of classification.</p>
+  <div class="note">
+    <strong>Evidence boundary · checked October 22, 2026.</strong> TypeSafe publicly describes
+    parallel probability outputs without text generation. Archer Hume's September 17 investigation
+    of <code>jev-1.13.0</code> reports black-box behavior and proposes an architecture.
+    These are different kinds of evidence. The graph below is a plausible implementation,
+    <strong>not a recovered model specification</strong>. No API experiments or benchmarks were
+    reproduced for this page. <a href="#sources">Sources and version scope →</a>
+  </div>
+
+  <h2 id="problem">1. Why generate text for a bounded decision?</h2>
+  <p>Consider a ticket: <em>“My renewal was charged twice. The account portal works, but I need
+    a refund by tomorrow.”</em> Code needs a routing decision and an escalation decision.
+    A fluent explanation may help a person, but it is not required to choose either branch.</p>
+  <div class="table-wrap">
+    <table>
+      <caption>Four ways to implement the same bounded decision.</caption>
+      <thead><tr><th scope="col">Approach</th><th scope="col">What the model produces</th><th scope="col">What it does not establish</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Task-specific classifier</th><td>Logits/probabilities for a trained label set; often no decoding.</td><td>Transfer to new caller-defined tasks or calibrated probabilities.</td></tr>
+        <tr><th scope="row">LLM generating JSON</th><td>Tokens spelling labels and possibly a confidence number.</td><td>The probability of generating “80%” is not an 80% probability that the answer is correct.</td></tr>
+        <tr><th scope="row">Schema-constrained decoding</th><td>Tokens restricted to valid syntax/values by a decoding constraint.</td><td>It still generates a sequence; valid JSON does not make the selected answer true.</td></tr>
+        <tr><th scope="row">Task-conditioned numerical readout</th><td>A distribution over options whose meanings are supplied with the question.</td><td>A direct number is not automatically calibrated. Jev describes this output behavior, but its exact head is undisclosed.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>The task-conditioned distinction matters. “Billing / access / other” today and “approve /
+    review / decline” tomorrow can be supplied as descriptions rather than separate fixed-label
+    deployments. This is a general design possibility, not evidence that all such tasks work equally
+    well. Existing classifiers and language-model scoring methods already cover parts of this space.</p>
+
+  <h2 id="contract">2. Start with the observable contract</h2>
+  <p>The <a href="https://docs.typesafe.ai/api/system-one.md">System One API</a> accepts a
+    <code>model</code>, shared <code>state</code>, and named <code>questions</code>. Answers
+    use the question names and include the responding model and usage accounting.
+    The launch-era text primitives give a useful minimal picture:</p>
+  <div class="table-wrap">
+    <table>
+      <caption>Schematic ticket outputs, invented for teaching—not Jev measurements or a complete wire response.</caption>
+      <thead><tr><th scope="col">Question</th><th scope="col">Primitive</th><th scope="col">Example output</th><th scope="col">Code owns</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Which queue?</th><td><code>choice</code>: named, described options</td><td>Billing 0.80; access 0.15; other 0.05</td><td>Routing and fallback rules</td></tr>
+        <tr><th scope="row">Needs urgent attention?</th><td><code>noul</code>: probability of “yes”</td><td>0.35</td><td>Escalation cost and threshold</td></tr>
+        <tr><th scope="row">How urgent?</th><td><code>score</code>: ordered levels</td><td>Levels 0/1/2: 0.20/0.30/0.50; expected score 1.30</td><td>Interpretation of the rubric and its numeric spacing</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Do not average a queue identifier. A Choice is categorical; a Score's numeric expectation
+    depends on the chosen ordered-level encoding. Neither a schema nor a high confidence value
+    supplies permission to perform a refund.</p>
+  <div class="result"><strong>Four separate checks:</strong> Is the value allowed?
+    Is the answer correct? Are its probabilities reliable across comparable cases?
+    Is the resulting action permitted and useful? Type safety answers only the first.</div>
+  <p class="source-note">Scope: the current API also documents preview image/box functionality.
+    This page studies the text decision model, not the entire evolving API. The launch's 255-choice
+    limit is a dated product constraint, not proof of a 256-slot neural head.</p>
+
+  <h2 id="graph">3. A plausible graph: shared evidence, private questions</h2>
+  <p>One possible implementation encodes the ticket once, then processes each question against
+    that shared representation. A causal transformer's prefill can compute known token positions
+    together within a layer: the mask restricts information flow, not whether those positions can
+    be scheduled in parallel. Layers still depend on previous layers. Autoregressive decoding
+    adds a different dependency: the next input token is not known until the previous output is chosen.</p>
+  <figure class="figure" aria-labelledby="graph-caption">
+    <div class="compare-grid">
+      <section class="compare" aria-label="Text-generation computation">
+        <h3>Autoregressive JSON path</h3>
+        <div class="flow-box">Ticket + questions + output schema</div>
+        <div class="arrow" aria-hidden="true">↓ prefill</div>
+        <div class="flow-box">Predict token → choose token → feed back<br>Repeat until the answer is complete</div>
+        <div class="arrow" aria-hidden="true">↓</div>
+        <div class="flow-box">Parse and validate JSON<br>Then apply routing/escalation policy</div>
+        <p class="source-note">A schema can constrain the loop. Speculation can accelerate it.
+          Neither is the same operation as replacing it with a numerical readout.</p>
+      </section>
+      <section class="compare" aria-label="Hypothetical decision-model computation">
+        <h3>Shared-state readout hypothesis</h3>
+        <div class="flow-box shared">Ticket state encoded once<br>Shared per-layer representations / KV</div>
+        <div class="arrow" aria-hidden="true">↓ each branch reads the same state</div>
+        <div class="branches">
+          <div class="flow-box">Queue<br>Options interact<br>→ distribution</div>
+          <div class="flow-box">Escalate<br>Yes/no question<br>→ probability</div>
+          <div class="flow-box">Urgency<br>Ordered levels<br>→ distribution</div>
+        </div>
+        <div class="arrow" aria-hidden="true">↓ no sibling-question reads</div>
+        <div class="flow-box">Ordinary code serializes numbers<br>Then applies routing/escalation policy</div>
+      </section>
+    </div>
+    <figcaption id="graph-caption" class="figure-caption"><strong>Structural illustration, not a timing diagram.</strong>
+      Parallel numerical outputs are vendor-described. Shared KV and the exact branch mask are
+      implementation hypotheses. Separate calls with cached prefixes or another isolation mechanism
+      could produce similar observable behavior.</figcaption>
+  </figure>
+  <p>Hume moved a secret between a sibling question and the shared state: the probed question
+    used it in the latter condition but not the former. This supports <strong>behavioral
+    isolation</strong> on that experiment, not a uniquely identified attention mask.
+    Queue and urgency can still be statistically related because both depend on the ticket.
+    If escalation genuinely needs the selected queue, code must run a second stage or ask a
+    joint question; batching does not erase that dependency.</p>
+  <p>See <a href="../inference/kv-cache.html#prefix">KV sharing</a> for the general mechanism and
+    <a href="../rl/agent-architectures.html#alternatives">code-owned workflows</a> for who controls
+    transitions. <a href="https://arxiv.org/abs/2402.05099">Hydragen</a> demonstrates efficient
+    shared-prefix attention, but is not evidence that Jev uses that implementation.</p>
+
+  <h2 id="readout">4. Read probabilities; do not spell them</h2>
+  <p>A generic \(K\)-way readout maps a hidden representation \(h\) to logits and probabilities:</p>
+  <div class="equation">\[
+    z = Wh+b,\qquad p_i=\frac{\exp(z_i)}{\sum_{j=1}^{K}\exp(z_j)}.
+  \]</div>
+  <p>For a binary decision, one logit and a sigmoid suffice. This is ordinary classification
+    mathematics; see <a href="../foundations/cross-entropy.html#forward">softmax and cross-entropy</a>.
+    It does not tell us whether Jev has a dedicated head, selected vocabulary rows, or another
+    equivalent output projection.</p>
+  <div class="table-wrap">
+    <table>
+      <caption>Two candidate readouts; neither is confirmed for Jev.</caption>
+      <thead><tr><th scope="col">Candidate</th><th scope="col">How new options acquire meaning</th><th scope="col">Open detail</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Slot head</th><td>A list-conditioned decision representation scores option positions; code maps slots back to caller keys.</td><td>Slot count, masking, positional effects, and any tied vocabulary rows.</td></tr>
+        <tr><th scope="row">Pointer-style scorer</th><td>A decision representation scores option representations built from their descriptions.</td><td>How representations interact and which tokens/positions are read.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <h3>Why the irrelevant-option experiment is informative</h3>
+  <p>If options \(a\) and \(b\) retain fixed logits and a fixed softmax temperature, adding
+    an option changes the denominator but not their odds:</p>
+  <div class="equation">\[
+    \frac{p(a)}{p(b)}=\exp(z_a-z_b)\qquad\text{(temperature absorbed into the logits).}
+  \]</div>
+  <p>Hume reports that adding an irrelevant choice changed those odds in a randomized follow-up.
+    That challenges <em>unchanged independent scores plus unchanged normalization temperature</em>.
+    It does not distinguish list-conditioned representations from a set-dependent temperature or
+    other processing. The fixed-size description-change intervention was inconclusive.</p>
+  <p>Options such as “other” and “none of the above” benefit from joint interpretation.
+    But option-order sensitivity can also move an answer across a production threshold.
+    Permute options and perturb the choice set during evaluation; do not assume input reordering
+    is harmless or that an order effect reveals a specific backbone.</p>
+
+  <h2 id="calibration">5. Three meanings of “confidence”—and one policy</h2>
+  <p><strong>Verbalized confidence</strong> is text generated by a model.
+    <strong>Predictive probability</strong> is a distribution over the defined outcomes.
+    <strong>API confidence</strong> can be a statistic computed from that distribution.
+    These objects are not interchangeable.</p>
+  <p>TypeSafe's <a href="https://docs.typesafe.ai/confidence#choice">Choice documentation</a>
+    and the <a href="#source-adapter">pinned public adapter</a> define, for \(K&gt;1\):</p>
+  <div class="equation">\[
+    c=\frac{p_{\max}-1/K}{1-1/K}.
+  \]</div>
+  <p>For the three-queue example, \(p_{\max}=0.80\) gives \(c=0.70\), not another estimate
+    that the choice has a 70% chance of being correct. It is a rescaling of the peak above the
+    uniform baseline. The adapter normalizes its input and returns 1 for a single option.
+    Score confidence uses distance from the modal level instead; Noul returns the yes probability
+    without a separate confidence field. A concentrated distribution can still be wrong.</p>
+  <h3>What training for calibrated decisions could mean</h3>
+  <p>TypeSafe calls its post-training approach <strong>RLCD</strong>, or Reinforcement Learning
+    for Calibrated Decisions. The public description gives an objective, not a reproducible
+    algorithm: the exact loss, data construction, optimizer, and updated parameters are undisclosed.
+    In particular, we cannot infer PPO or any other RL update from the name.</p>
+  <p>Two general outcome-based objectives are log loss \(L=-\log p_y\) and multiclass Brier loss
+    \(L=\sum_i(p_i-\mathbf{1}[i=y])^2\). They are strictly proper scoring rules:
+    expected loss is minimized by the true conditional distribution. For log loss, the reason is
+    \(\mathbb{E}_{y\sim q}[-\log p_y]=H(q)+D_{\mathrm{KL}}(q\Vert p)\).
+    <strong>These are explanatory alternatives, not claims about Jev's training recipe.</strong></p>
+  <p>Properness is an ideal expected-risk property, not a deployment guarantee. Finite data,
+    limited capacity, optimization, and distribution shift all matter.
+    <a href="https://arxiv.org/abs/1706.04599">Post-hoc calibration</a> can complement training.
+    Evaluate held-out outcomes, reliability by probability range and subgroup, log/Brier loss,
+    and the resulting workflow utility. Agreement of average confidence and accuracy alone can
+    hide offsetting errors; calibration is a population property, not a verdict on one prediction.</p>
+  <h3 id="policy">Turn a probability into a cost-aware decision</h3>
+  <p>Let \(p\) be the predicted probability that the ticket truly needs urgent attention.
+    In a simplified two-action policy, unnecessary escalation costs \(C_{\mathrm{FP}}\),
+    a missed urgent ticket costs \(C_{\mathrm{FN}}\), and correct decisions cost zero.
+    The expected losses are:</p>
+  <div class="equation">\[
+    R(\text{escalate})=(1-p)C_{\mathrm{FP}},\qquad
+    R(\text{do not escalate})=pC_{\mathrm{FN}},\qquad
+    p^*=\frac{C_{\mathrm{FP}}}{C_{\mathrm{FP}}+C_{\mathrm{FN}}}.
+  \]</div>
+  <p>Escalate above \(p^*\); below it, do not escalate; at equality, the two actions tie.
+    With costs 2 and 8, the threshold is 0.20, so the schematic \(p=0.35\) favors escalation.
+    Real systems may add review capacity, action costs even when correct, or a third
+    “gather evidence” action. Those require a richer loss model.</p>
+  <div class="figure">
+    <fieldset>
+      <legend>Decision policy explorer — hypothetical probabilities and costs</legend>
+      <div class="controls">
+        <label for="urgent-probability">Probability of urgency: <output id="probability-value" for="urgent-probability">0.35</output>
+          <input id="urgent-probability" type="range" min="0" max="100" step="1" value="35">
+        </label>
+        <label for="false-positive-cost">Unnecessary escalation cost: <output id="fp-value" for="false-positive-cost">2</output>
+          <input id="false-positive-cost" type="range" min="1" max="20" step="1" value="2">
+        </label>
+        <label for="false-negative-cost">Missed urgent ticket cost: <output id="fn-value" for="false-negative-cost">8</output>
+          <input id="false-negative-cost" type="range" min="1" max="20" step="1" value="8">
+        </label>
+      </div>
+    </fieldset>
+    <output id="decision-result" class="result" for="urgent-probability false-positive-cost false-negative-cost" aria-live="polite" aria-atomic="true">Escalate: expected cost 1.30 versus 2.80. Threshold: 0.200.</output>
+    <canvas id="plot-decision" role="img" aria-label="Expected loss of escalation and non-escalation as urgency probability changes" aria-describedby="decision-caption">The escalation cost falls with probability; the missed-urgency cost rises. Their intersection is the policy threshold.</canvas>
+    <div class="axis-description">Horizontal: probability of urgency · Vertical: expected cost in chosen units</div>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span>Escalate</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-teal)"></span>Do not escalate</span>
+      <span class="legend-item"><span class="lg dash"></span>Threshold</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-amber)"></span>Selected probability</span>
+    </div>
+    <p id="decision-caption" class="figure-caption"><strong>The action boundary is a policy choice, not a model constant.</strong>
+      Raising the cost of missed urgency lowers the threshold. This arithmetic assumes probabilities
+      useful for this decision population; the chart neither proves calibration nor authorizes an action.
+      It uses \(p\), not TypeSafe's derived Choice confidence.</p>
+    <noscript><p>The controls require JavaScript. The displayed example and equations remain readable without it.</p></noscript>
+  </div>
+
+  <h2 id="serving">6. Where the efficiency could come from</h2>
+  <p><strong>Avoid output decoding.</strong> A numerical readout can remove the repeated model
+    invocations used to spell a response. Application code can serialize many numbers after the
+    model finishes. That makes “response tokens divided by elapsed time” a misleading decode-speed
+    estimate when the reported token count describes the serialized response.</p>
+  <p><strong>Reuse input computation.</strong> With \(Q\) questions and \(S\) shared state tokens,
+    naïvely independent, uncached requests process the state tokens \(Q\) times; a shared-prefix
+    design can encode them once. This is a statement about repeated state processing,
+    <em>not a claim that total attention FLOPs fall from \(QS\) to \(S\)</em>.
+    Branches still process their suffixes and attend to the shared state. A fair comparison
+    should include cached/batched LLM baselines, not only uncached sequential calls.</p>
+  <p><strong>Batch independent work.</strong> Questions can be packed or scheduled together
+    without a dependency on sibling answers. Per-branch work, memory reads, batching efficiency,
+    and queueing remain. A shared-prefix attention kernel may improve those costs; reuse alone
+    does not make them disappear.</p>
+  <div class="note"><strong>Do not infer hardware from one latency curve.</strong>
+    Hume proposes a sparse MoE backbone as a plausible efficiency explanation. The model identity,
+    parameter counts, expert routing, hardware, and precision are not established.
+    Prefill-only execution removes autoregressive decode costs, but does not eliminate weight memory,
+    expert dispatch, communication, or all possible bandwidth bottlenecks.</div>
+  <p>TypeSafe's launch reports 70–500 ms responses and a particular workflow comparison at
+    193.6× speed and 444.6× cost improvement, describing the latter gains as likely high-end.
+    Its workflows compare against averaged frontier-model reference probabilities—not independent
+    ground-truth labels—and its LLM adapter adds probability-output overhead.
+    Hume's timing probes use upstream service-time headers with uncontrolled shared-service load.
+    Neither source supplies a universal model-only latency or throughput multiplier.</p>
+  <p>For a useful serving comparison, hold the decision workload and quality/utility target fixed;
+    report state length, question count, options per question, concurrency, caching, reasoning
+    settings, error/retry rates, end-to-end latency quantiles, throughput, and cost.
+    See <a href="../inference/inference-compute-model.html">prefill versus decode</a> and
+    <a href="../inference/online-inference.html">SLO-driven serving</a>.</p>
+
+  <h2 id="evidence">7. What is known—and how to decide whether to use it</h2>
+  <div class="table-wrap">
+    <table>
+      <caption>Keep disclosure, observed behavior, and architectural inference in separate columns.</caption>
+      <thead><tr><th scope="col">Claim</th><th scope="col">Evidence level</th><th scope="col">Limit</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Typed probabilities without generated text</th><td>Vendor-described output path and documented API.</td><td>Does not disclose the complete internal computation or establish semantic correctness.</td></tr>
+        <tr><th scope="row">Choice confidence is derived</th><td>Official documentation and pinned public adapter implementation.</td><td>A distribution statistic, not independent evidence of correctness.</td></tr>
+        <tr><th scope="row">Questions behave as isolated branches</th><td>Hume's reported visibility intervention.</td><td>Does not identify an attention mask, a KV layout, or statistical independence.</td></tr>
+        <tr><th scope="row">Option order and choice set affect probabilities</th><td>Hume's reported interventions and repeated choice-set experiment.</td><td>Does not uniquely choose a slot head, pointer scorer, causal backbone, or temperature mechanism.</td></tr>
+        <tr><th scope="row">Calibration on a tested sample</th><td>Hume reports ten-bin ECE 0.0313 on 1,200 MMLU items.</td><td>990 items occupy the highest-confidence bin; rounded responses, binning, sample choice, and sparse bins limit interpretation. Not independently recomputed here.</td></tr>
+        <tr><th scope="row">RLCD, sparse experts, and shared KV</th><td>RLCD is a vendor-named training approach; specific losses, MoE, and shared-KV internals are hypotheses.</td><td>No released recipe or exact backbone specification in the cited sources.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <h3>Good fit: bounded questions inside code-owned workflows</h3>
+  <p>Consider this interface when the useful outputs can be defined in advance, a probability
+    distribution improves routing or prioritization, and latency matters. The inference rule can
+    be fuzzy even when the available actions are enumerable. Keep permissions, side effects,
+    audit logs, and fallback paths in code. Include an explicit “other/insufficient evidence”
+    outcome where appropriate; a closed choice set can otherwise force an unsuitable answer.</p>
+  <h3>Not a drop-in replacement for general generation</h3>
+  <p>Code synthesis, arbitrary text extraction, explanations, and open-ended tool arguments need
+    a different output capability. Staged decisions can support larger candidate sets, but add
+    latency and candidate-selection failure modes. A hybrid can use decision calls for gates and
+    a generative model for open-ended work; more calls are justified only by measured workflow value.</p>
+  <h3>A bounded evaluation before automation</h3>
+  <ol>
+    <li><strong>Define outcomes and policy first.</strong> Specify labels, an abstention/review path,
+      costs, and the held-out deployment population. Evaluate the full workflow, not just argmax accuracy.</li>
+    <li><strong>Test the interface.</strong> Permute options, add irrelevant alternatives, vary
+      descriptions, and move evidence between state and sibling questions. Measure action changes,
+      not only probability deltas; repeat identical requests to estimate ordinary service variation.</li>
+    <li><strong>Check probabilities against outcomes.</strong> Use log/Brier loss, reliability
+      diagrams with counts and uncertainty, subgroup/shift slices, and risk versus automation coverage.
+      Teacher-model agreement is a different target from outcome calibration.</li>
+    <li><strong>Compare complete systems.</strong> Match quality and policy, include cached/batched
+      and appropriately constrained baselines, and account for retries, staged calls, and human review.
+      A schema guarantee does not close an action-safety gate.</li>
+  </ol>
+  <p>The durable lesson is to match the model interface to the job. A transformer can support
+    useful decisions without spelling every answer, but a trustworthy decision service still
+    needs evidence about probability quality and the policy that consumes it.</p>
+
+  <h2 id="sources">Sources &amp; scope</h2>
+  <ul>
+    <li><strong>Product claims:</strong> Diogo Almeida / TypeSafe,
+      <a href="https://typesafe.ai/blog/introducing-system-one-models-and-jev">Introducing System One Models &amp; Jev</a>
+      (article displays September 15, 2026). Source of the no-text/parallel-output claims and vendor comparisons.</li>
+    <li><strong>Primary contract and training description:</strong>
+      <a href="https://docs.typesafe.ai/api/system-one.md">System One API</a>,
+      <a href="https://docs.typesafe.ai/confidence">Confidence</a>, and
+      <a href="https://docs.typesafe.ai/introduction/machine-learning-primer">AI primer</a>,
+      accessed October 22, 2026. Live docs may describe functionality newer than the probe campaign.</li>
+    <li id="source-adapter"><strong>Source-checked confidence implementation:</strong>
+      <a href="https://github.com/typesafe-ai/system-one-adapter-python/blob/fb52b1030b7fc1f4f1cf39910afa5da54f9835e3/src/system_one_adapter/_utils/confidence_metrics.py">public adapter at revision fb52b103</a>.
+      Confirms the adapter's formulas, not the proprietary model's training or hidden architecture.</li>
+    <li><strong>Secondary analysis:</strong> Archer Hume,
+      <a href="https://archerhume.com/posts/jevs-architecture-unmasked/">Jev's Architecture Unmasked</a>
+      (September 17, 2026; <code>jev-1.13.0</code>). Experimental findings here are attributed
+      to the article; the linked raw records were not audited and no probe scripts were executed.</li>
+    <li><strong>General mechanisms, not Jev implementation evidence:</strong>
+      <a href="https://arxiv.org/abs/2402.05099">Hydragen: High-Throughput LLM Inference with Shared Prefixes</a>
+      and <a href="https://arxiv.org/abs/1706.04599">On Calibration of Modern Neural Networks</a>.</li>
+  </ul>
+  <p class="source-note">This page is an original teaching synthesis, not an implementation guide
+    for the proprietary model. The ticket outputs and policy explorer are hypothetical.
+    No internal use cases, proprietary source, or private deployment evidence are used.</p>
+</main>
+<footer>Model case study · <a href="../index.html#transformer-model-architectures">Model Architectures</a> · <a href="../index.html">All notes</a></footer>
+<script>
+(() => {
+  const probabilityInput = document.getElementById('urgent-probability');
+  const fpInput = document.getElementById('false-positive-cost');
+  const fnInput = document.getElementById('false-negative-cost');
+  const canvas = document.getElementById('plot-decision');
+  const result = document.getElementById('decision-result');
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+  function decisionCosts(p, fp, fn) {
+    return { escalate: (1 - p) * fp, wait: p * fn, threshold: fp / (fp + fn) };
+  }
+
+  function drawPlot(canvas, cfg) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+    const mL = 44, mR = 14, mT = 14, mB = 30;
+    const pw = cssW - mL - mR, ph = cssH - mT - mB;
+    const { xMin, xMax, yMin, yMax } = cfg;
+    const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
+    const Y = y => mT + (yMax - y) / (yMax - yMin) * ph;
+
+    ctx.font = '11px Inter, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(t => {
+      const px = X(t);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.fillText(String(t), px, mT + ph + 6);
+    });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(t => {
+      const py = Y(t);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+      ctx.fillText(String(t), mL - 8, py);
+    });
+    ctx.strokeStyle = cssVar('--plot-axis');
+    ctx.lineWidth = 1.25;
+    ctx.beginPath();
+    ctx.moveTo(mL, mT); ctx.lineTo(mL, mT + ph); ctx.lineTo(mL + pw, mT + ph);
+    ctx.stroke();
+
+    ctx.save();
+    ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    ctx.lineJoin = 'round';
+    cfg.series.forEach(s => {
+      ctx.beginPath();
+      ctx.lineWidth = s.width || 2;
+      ctx.strokeStyle = cssVar(s.color);
+      ctx.setLineDash(s.dash || []);
+      const N = 260;
+      for (let i = 0; i <= N; i++) {
+        const x = xMin + (xMax - xMin) * i / N;
+        const px = X(x), py = Y(s.fn(x));
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    });
+    cfg.markers.forEach(marker => {
+      ctx.beginPath();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = cssVar(marker.color);
+      ctx.setLineDash(marker.dash || []);
+      ctx.moveTo(X(marker.x), mT);
+      ctx.lineTo(X(marker.x), mT + ph);
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  function render() {
+    const p = probabilityInput.valueAsNumber / 100;
+    const fp = fpInput.valueAsNumber, fn = fnInput.valueAsNumber;
+    const costs = decisionCosts(p, fp, fn);
+    document.getElementById('probability-value').textContent = p.toFixed(2);
+    document.getElementById('fp-value').textContent = String(fp);
+    document.getElementById('fn-value').textContent = String(fn);
+    const tied = Math.abs(costs.escalate - costs.wait) < 1e-10;
+    const decision = tied ? 'Equal expected cost; policy must break the tie'
+      : costs.escalate < costs.wait ? 'Escalate' : 'Do not escalate';
+    result.textContent = `${decision}. Escalate cost: ${costs.escalate.toFixed(2)}; `
+      + `do-not-escalate cost: ${costs.wait.toFixed(2)}. Threshold: ${costs.threshold.toFixed(3)}.`;
+    const maxCost = Math.max(fp, fn);
+    drawPlot(canvas, {
+      xMin: 0, xMax: 1, yMin: 0, yMax: maxCost,
+      xTicks: [0, 0.25, 0.5, 0.75, 1],
+      yTicks: [0, maxCost / 2, maxCost],
+      series: [
+        { fn: x => decisionCosts(x, fp, fn).escalate, color: '--plot-violet', width: 2.5 },
+        { fn: x => decisionCosts(x, fp, fn).wait, color: '--plot-teal', width: 2.5 }
+      ],
+      markers: [
+        { x: costs.threshold, color: '--plot-gray', dash: [5, 4] },
+        { x: p, color: '--plot-amber' }
+      ]
+    });
+  }
+
+  [probabilityInput, fpInput, fnInput].forEach(input => input.addEventListener('input', render));
+  render();
+  let raf;
+  window.addEventListener('resize', () => {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(render);
+  });
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
+})();
+</script>
+</body>
+</html>
