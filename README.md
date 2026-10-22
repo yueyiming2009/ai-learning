@@ -113,7 +113,9 @@ The guide is not yet execution-validated; the existing concept, VeRL-internals, 
 and GRPO pages remain the deep references rather than being merged into the recipe.
 **Environments:** the training-environment stack — anatomy + ecosystem landscape,
 OpenEnv, verifiers &amp; the Environments Hub, verifier/reward design, sandboxing at scale,
-task generation &amp; curriculum. **Frameworks:** the framework landscape, verl (HybridFlow) architecture, resource-pool
+task generation &amp; curriculum. **Frameworks:** the framework landscape (self-operated runtimes
+versus Tinker's managed LoRA training API, separating algorithm ownership from runtime control),
+verl (HybridFlow) architecture, resource-pool
 placement, TRL, the slime–Miles walkthrough. **At scale:** PPO/GRPO training walkthroughs, async
 RL and its monitoring, reward pipelining.
 

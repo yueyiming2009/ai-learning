@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light dark">
-  <title>RL Frameworks Landscape — verl, TRL, OpenRLHF, NeMo-Aligner, slime</title>
+  <title>RL Frameworks Landscape — Self-Hosted Frameworks &amp; Managed Training</title>
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
   <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
   <link rel="apple-touch-icon" href="../apple-touch-icon.png">
@@ -271,7 +271,7 @@
     <a href="../index.html">← All notes</a>
     <a href="../index.html#rl-rl-frameworks" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;" title="Back to Reinforcement Learning › RL Frameworks">↑ RL Frameworks</a>
     <a href="#axes">Design axes</a>
-    <a href="#profiles">The frameworks</a>
+    <a href="#profiles">Frameworks &amp; services</a>
     <a href="#table">Comparison</a>
     <a href="#choose">How to choose</a>
   </div>
@@ -280,9 +280,9 @@
 <div class="hero">
   <span class="hero-pill">RL Frameworks · Landscape</span>
   <h1>RL Frameworks Landscape</h1>
-  <p>The map of the open LLM-RL stack — the handful of design axes that actually separate the
-  frameworks, short profiles of verl, TRL, OpenRLHF, NeMo-Aligner, and slime, and a decision guide
-  for picking one.</p>
+  <p>The map of LLM-RL execution — self-hosted frameworks such as verl, TRL, OpenRLHF, NeMo,
+  and slime, the managed Tinker training API, and the control boundaries that determine which
+  approach fits your experiment.</p>
 </div>
 
 <div class="page-wrap">
@@ -299,16 +299,18 @@
   <!-- ── §1 Design axes ─────────────────────────── -->
   <h2 id="axes">1. The Axes That Actually Separate Them</h2>
 
-  <p>Every online-RL framework solves the same loop — generate, score, compute advantage, update,
-  sync weights. They differ on a small number of architectural choices. Learn these axes and any new
-  framework slots in immediately:</p>
+  <p>Every online-RL system must connect the same loop — generate, score, compute advantage,
+  update, and make updated weights available to sampling. A framework and a managed service
+  expose different parts of that loop. Start with who operates it, then compare the architecture:</p>
 
   <div class="table-wrap">
     <table>
       <tr><th>Axis</th><th>The question</th><th>The options</th></tr>
-      <tr><td><strong>Controller model</strong></td><td>Who orchestrates the dataflow between stages?</td><td>SPMD Trainer · <a href="verl-architecture.html#hybrid">hybrid single/multi-controller</a> · server-centric</td></tr>
-      <tr><td><strong>Training backend</strong></td><td>How are weights/optimizer sharded?</td><td>DeepSpeed ZeRO · FSDP · Megatron (TP/PP/EP/CP)</td></tr>
-      <tr><td><strong>Rollout engine</strong></td><td>What generates the responses?</td><td>HF <code>generate</code> · vLLM · SGLang</td></tr>
+      <tr><td><strong>Operating boundary</strong></td><td>Who runs the GPU fleet and distributed execution?</td><td>Self-operated framework/runtime · provider-managed training API</td></tr>
+      <tr><td><strong>Controller model</strong></td><td>Who orchestrates the dataflow between stages?</td><td>SPMD Trainer · <a href="verl-architecture.html#hybrid">hybrid single/multi-controller</a> · server-centric · client loop over remote primitives</td></tr>
+      <tr><td><strong>Training backend</strong></td><td>How are weights/optimizer sharded, and is that choice exposed?</td><td>DeepSpeed ZeRO · FSDP · Megatron (TP/PP/EP/CP) · service-managed backend</td></tr>
+      <tr><td><strong>Trainable parameters</strong></td><td>Which weights may the experiment update?</td><td>Full fine-tuning · LoRA/adapters · model/service-specific restrictions</td></tr>
+      <tr><td><strong>Rollout engine</strong></td><td>What generates the responses?</td><td>HF <code>generate</code> · vLLM · SGLang · service sampling API</td></tr>
       <tr><td><strong>Generation placement</strong></td><td>Do training and rollout share GPUs?</td><td><a href="resource-pool-placement.html">Colocated · disaggregated sync · disaggregated async</a></td></tr>
       <tr><td><strong>Sync vs async</strong></td><td>Are rollouts on-policy?</td><td>On-policy (sync) · <a href="async-rl.html">off-policy + IS correction</a></td></tr>
       <tr><td><strong>Agent-graph coupling</strong></td><td>Who owns the multi-turn agent loop?</td><td>Trainer-owned token loop · chat API + token capture · <a href="harnessed-agentic-rl.html">black-box harness behind a proxy</a></td></tr>
@@ -317,14 +319,18 @@
     </table>
   </div>
 
-  <p>The deepest split is the <strong>controller model</strong>, because it drives everything else.
+  <p><strong>Operation and algorithm ownership are separate axes.</strong> A managed service can
+  run the distributed computation while the researcher still owns rewards, advantage estimation,
+  update scheduling, and evaluation. That does not imply access to backend kernels, arbitrary
+  model internals, or placement controls.</p>
+  <p>Within the self-operated stack, the <strong>controller model</strong> is a central split.
   An SPMD <code>Trainer</code> keeps all roles in one process (simple, bounded scale); a hybrid
   controller separates roles into pools the driver orchestrates (complex, scales to 4-D parallel +
   disaggregated rollout). The full reasoning is on the
   <a href="verl-architecture.html#problem">verl page</a>.</p>
 
   <!-- ── §2 Profiles ────────────────────────────── -->
-  <h2 id="profiles">2. The Frameworks</h2>
+  <h2 id="profiles">2. Frameworks and Managed Training</h2>
 
   <div class="fw">
     <h3>verl</h3>
@@ -372,6 +378,28 @@
     PPO step on a 30B MoE through it.</p>
   </div>
 
+  <div class="fw" id="tinker">
+    <h3>Tinker</h3>
+    <div class="who">Thinking Machines Lab · managed training API · documentation checked October 22, 2026</div>
+    <p>The researcher runs a CPU-side Python loop for data, environments, rewards, advantages,
+    and evaluation; the service handles distributed model computation. The exposed primitives
+    include <code>forward_backward</code> for gradient accumulation, <code>optim_step</code>
+    for updates, <code>sample</code>, and state-saving/loading operations. This is a
+    <strong>managed execution option, not another self-hosted parallelism engine</strong>.</p>
+    <p>The documented service supports <strong>LoRA fine-tuning, not full fine-tuning</strong>,
+    across supported dense, MoE, and vision-language models. Its algorithm menu is broader than
+    one fixed trainer recipe, but experiments remain bounded by the exposed operations, supported
+    models, and trainable parameters. The overview permits downloading trained weights for use
+    elsewhere; export does not expose the provider's backend implementation or prove compatibility
+    with a particular serving stack.</p>
+    <p><strong>Choose it for:</strong> algorithm and reward iteration without operating distributed
+    GPUs, when the service's model and LoRA scope fit. <strong>Do not assume:</strong> full-parameter
+    updates, custom kernels, or caller-controlled GPU placement. An async API future means a
+    nonblocking request, not necessarily asynchronous/off-policy RL; that depends on the client
+    loop and which policy versions produced the data.
+    <a href="harnessed-agentic-rl.html#tinker-datum">Token alignment and loss-specific contracts →</a></p>
+  </div>
+
   <div class="note">
     The field moves fast — <strong>AReaL</strong> (Ant, fully-async RL), <strong>ROLL</strong>
     (Alibaba), and others share these same axes. You do not need to track every name; place any new
@@ -384,7 +412,7 @@
   <div class="table-wrap">
     <table>
       <tr>
-        <th>Framework</th>
+        <th>Framework / service</th>
         <th>Controller</th>
         <th>Train backend</th>
         <th>Rollout</th>
@@ -437,6 +465,15 @@
         <td>PPO/GRPO (MoE-focused)</td>
         <td>Async MoE RL, SGLang shops</td>
       </tr>
+      <tr>
+        <td><strong>Tinker</strong> (managed)</td>
+        <td>Client-owned loop over remote primitives</td>
+        <td>Service-managed; LoRA, not full fine-tuning</td>
+        <td>Token sampling API</td>
+        <td>Client scheduling / policy versions; not implied by futures</td>
+        <td>LoRA SFT + RL losses; <a href="harnessed-agentic-rl.html#tinker-losses">loss-specific contracts</a></td>
+        <td>Algorithm iteration without operating the GPU runtime</td>
+      </tr>
     </table>
   </div>
 
@@ -446,6 +483,7 @@
   <div class="table-wrap">
     <table>
       <tr><th>Your situation</th><th>Start with</th></tr>
+      <tr><td>Want to own the algorithm but not operate distributed GPUs; supported models and LoRA are sufficient</td><td><a href="#tinker"><strong>Tinker</strong></a> (managed API)</td></tr>
       <tr><td>Prototyping an algorithm or reward on 1–8 GPUs; you live in HuggingFace</td><td><strong>TRL</strong></td></tr>
       <tr><td>Need a preference method (DPO/KTO/ORPO) more than online RL</td><td><strong>TRL</strong></td></tr>
       <tr><td>Mid-scale online RLHF, want Ray + vLLM without Megatron complexity</td><td><strong>OpenRLHF</strong></td></tr>
@@ -458,7 +496,9 @@
 
   <div class="result">
     <div class="result-label">The short version</div>
-    <p style="margin:0;">Sort by <strong>scale and controller model</strong>. One Trainer on a few
+    <p style="margin:0;">First choose the <strong>operating boundary and trainable-parameter scope</strong>:
+    a client-owned algorithm over managed LoRA computation → <strong>Tinker</strong>.
+    For self-operated execution, sort by <strong>scale and controller model</strong>. One Trainer on a few
     GPUs → <strong>TRL</strong>. Ray + vLLM at mid-scale without Megatron → <strong>OpenRLHF</strong>.
     Hybrid controller, every backend, async at production scale → <strong>verl</strong>. NVIDIA
     Megatron stack at the frontier → <strong>NeMo</strong>. SGLang-native async → <strong>slime</strong>.
@@ -475,6 +515,7 @@
       <tr><td><a href="https://github.com/OpenRLHF/OpenRLHF">OpenRLHF</a></td><td>Ray + DeepSpeed + vLLM RLHF</td></tr>
       <tr><td><a href="https://github.com/NVIDIA/NeMo-RL">NeMo-RL</a> · <a href="https://github.com/NVIDIA/NeMo-Aligner">NeMo-Aligner</a></td><td>NVIDIA Megatron-Core alignment</td></tr>
       <tr><td><a href="https://github.com/THUDM/slime">slime</a></td><td>SGLang-native RL — see <a href="slime-miles-walkthrough.html">walkthrough</a></td></tr>
+      <tr><td><a href="https://tinker-docs.thinkingmachines.ai/tinker/">Tinker overview</a> · <a href="https://tinker-docs.thinkingmachines.ai/tinker/losses/">Loss functions</a></td><td>Official managed-service scope and loss API, checked October 22, 2026; no training run or backend implementation audit performed.</td></tr>
     </table>
   </div>
 

@@ -542,7 +542,10 @@
   logprob=0.0</code>. Tinker belongs here too, even though its loop runs on the client: its
   <code>Env.step(action: list[int])</code> is token-typed by construction, and the
   <code>Datum</code> it sends to <code>forward_backward</code> carries
-  <code>target_tokens</code>, <code>logprobs</code>, and <code>advantages</code> (zero = masked).
+  <code>target_tokens</code>, <code>logprobs</code>, and <code>advantages</code> for its
+  common policy losses. Zero advantage masks the advantage-weighted term; newer losses can
+  need additional masks or provenance and have ungated penalty terms
+  (<a href="#tinker-datum">loss-specific contract below</a>).
   This generation gets tokenization exactly right and harness parity exactly wrong — it is
   <a href="verl-agentic-training.html#custom">verl §10's first row</a>.</p>
 
@@ -1032,7 +1035,9 @@
   verl's <code>AgentLoopOutput</code>, SkyRL's <code>GeneratorOutput</code>, slime's
   <code>Sample</code>, AReaL's batch dict, Polar's <code>Trace</code>, PRIME-RL's
   <code>TrainingSample</code>, Agent Lightning's <code>model_request</code> event and Tinker's
-  <code>Datum</code> are one-to-one up to naming.</p>
+  <code>Datum</code> share this core information, but encode it differently. Some losses require
+  additional masks or sampling provenance; the record below is a conceptual minimum, not a
+  universal wire schema.</p>
 
   <p style="font-size:0.88em;color:var(--muted)">Type notation: \(\mathbb{Z}\) the integers (token ids), \(\mathbb{R}\) the reals
   (log-probs), \(\{0,1\}\) bits; the superscript is a sequence <em>length</em> — \(L_p\) prompt
@@ -1058,13 +1063,13 @@
         <td><code>loss_mask</code></td>
         <td>\(\{0,1\}^{L_r}\) (or over \(L_p{+}L_r\))</td>
         <td>Stitcher: 1 on model-sampled spans, 0 on tool outputs, template glue, boundary tokens, and anything that arrived by re-tokenization.</td>
-        <td>Multiplies the per-token loss. Tinker encodes it as <code>advantages=0</code> rather than a separate mask — same effect.</td>
+        <td>Multiplies the per-token loss. For Tinker's advantage-weighted policy terms, <code>advantages=0</code> suppresses that contribution. It is not a universal mask for sequence-ratio statistics or additional penalty terms; see <a href="#tinker-losses">the loss-specific contracts</a>.</td>
       </tr>
       <tr>
         <td><code>rollout_logprobs</code></td>
         <td>\(\mathbb{R}^{L_r}\)</td>
         <td>Engine, at sampling time, under the <em>actual</em> sampling distribution (verl: <code>logprobs_mode=processed_logprobs</code> so temperature/top-p are reflected). <code>0.0</code> where mask is 0.</td>
-        <td>Becomes \(\log\mu(a_t\mid s_t)\), the behavior policy, in every off-policy correction (§7). Tinker's RL losses <em>refuse</em> a <code>Datum</code> without it.</td>
+        <td>Becomes \(\log\mu(a_t\mid s_t)\), the behavior policy, in every off-policy correction (§7). Tinker's documented built-in RL losses require sampling <code>logprobs</code>; some also require masks or provenance beyond these tensors.</td>
       </tr>
       <tr>
         <td><code>reward</code></td>
@@ -1106,13 +1111,74 @@ tokens, response_length, loss_mask, rollout_log_probs, rollout_routed_experts,
 weight_versions, status, reward
 #  append_response_tokens(trainable=True) asserts rollout log-probs are present
 
-# Tinker — Datum
+# Tinker — typical importance_sampling / ppo / cispo Datum
 model_input (ints), loss_fn_inputs = {target_tokens, logprobs, advantages}
-#  advantages == 0 is the mask; RL losses reject `weights`
+#  zero advantage suppresses the policy term; these built-ins reject `weights`
+#  other losses have additional contracts (below)
 
 # Agent Lightning v1.0 — model_request event, one per LLM call
 prompt token IDs, response token IDs, response log probabilities
 #  keyed by /proxy/rollout/{rollout_id}/attempt/{attempt_id}/…</code></pre>
+
+  <h3 id="tinker-datum">Tinker: align targets first, then choose the loss contract</h3>
+  <p><strong>Official API/loss documentation checked October 22, 2026.</strong>
+  For a nonempty rendered prompt \(P\) and nonempty sampled completion \(C\), form \(S=P\Vert C\).
+  The model reads <code>S[:-1]</code> and predicts <code>S[1:]</code>. Thus the first completion
+  target is at position <code>len(P) - 1</code>, not <code>len(P)</code>.
+  Sampling logprobs and advantages must describe the <em>target</em> at each position.</p>
+  <div class="table-wrap">
+    <table>
+      <caption>A two-token prompt and two-token completion: zero-based positions after shifting.</caption>
+      <tr><th>Position</th><th>Model input</th><th>Target</th><th>Sampling logprob</th><th>Advantage-weighted policy term</th></tr>
+      <tr><td>0</td><td><code>p0</code></td><td><code>p1</code></td><td>0 placeholder</td><td>0 (prompt target)</td></tr>
+      <tr><td>1</td><td><code>p1</code></td><td><code>c0</code></td><td>Captured logprob of <code>c0</code></td><td><code>A0</code> — first completion target</td></tr>
+      <tr><td>2</td><td><code>c0</code></td><td><code>c1</code></td><td>Captured logprob of <code>c1</code></td><td><code>A1</code></td></tr>
+    </table>
+  </div>
+  <pre id="tinker-alignment"><code># Single-completion example for importance_sampling / ppo / cispo.
+assert prompt_tokens and sampled_tokens
+assert len(sampled_tokens) == len(sampling_logprobs) == len(sampled_advantages)
+full_tokens = prompt_tokens + sampled_tokens
+n_prefix = len(prompt_tokens) - 1
+model_input_tokens = full_tokens[:-1]
+loss_fn_inputs = {
+    "target_tokens": full_tokens[1:],
+    "logprobs": [0.0] * n_prefix + sampling_logprobs,
+    "advantages": [0.0] * n_prefix + sampled_advantages,
+}</code></pre>
+  <p>All three tensors have <code>len(full_tokens) - 1</code> entries. For multi-turn data,
+  build the mask from the target token's origin, not from a single completion boundary:
+  tool results and observations are context, not sampled actions. A zero logprob in an excluded
+  position is padding, not a claim that the sampler assigned probability 1 to that token.</p>
+
+  <h3 id="tinker-losses">The loss name changes the required payload</h3>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Built-in loss</th><th>Documented contract</th><th>Boundary to preserve</th></tr>
+      <tr><td><code>cross_entropy</code></td><td><code>target_tokens</code> and per-target <code>weights</code></td><td>SFT weighting is not the RL <code>advantages</code> schema.</td></tr>
+      <tr><td><code>importance_sampling</code>, <code>ppo</code>, <code>cispo</code></td><td><code>target_tokens</code>, sampling <code>logprobs</code>, <code>advantages</code></td><td>The documented built-ins reject extra keys such as <code>weights</code>; zero advantage removes the advantage-weighted policy contribution.</td></tr>
+      <tr><td><code>dro</code></td><td>The same three input tensors, with a different client-side soft-advantage formulation</td><td>The published objective includes a quadratic divergence penalty not multiplied by advantage. Do not infer whole-objective masking from zero advantage alone.</td></tr>
+      <tr><td><code>gspo</code> (GSPO-token)</td><td>The three RL tensors plus <code>sequence_ratio_mask</code>, marking at least one token</td><td>The mask selects tokens for the sequence log-ratio mean; it is distinct from zeroing a token's advantage. Each token uses the sequence ratio's value with its own logprob gradient.</td></tr>
+      <tr><td><code>stable_reinforce</code> (alpha)</td><td>The three RL tensors plus both input and target provenance span lists; sampling with <code>record_stability_info=True</code></td><td>Provenance identifies session-local sampled sequences. Its sampler–learner KL term can affect sampled tokens even at zero advantage; this is not a reference-model KL.</td></tr>
+    </table>
+  </div>
+  <p>For GSPO, exclude prompt/tool targets from the ratio mask even when their advantages are
+  already zero. The mask cannot be empty. The docs warn that SDK 0.33.1 and earlier require this
+  mask as a NumPy array or torch tensor rather than a Python list.</p>
+  <p>For StableReinforce, <code>Datum.with_provenance</code> attaches separate span lists that tile
+  the input and target fields. Target-side sampled spans must cover whole sampled sequences
+  (<code>offset=0</code>); input-side spans may cover partial sequences. Every nonzero-advantage
+  token must belong to a sequence sampled with stability recording enabled. A portable
+  token/logprob/advantage triple alone is therefore insufficient. Its documented
+  <code>kl_coeff</code> defaults to 0.01; setting it to 0 disables the sampler–learner KL term.</p>
+  <div class="note">
+    The overview's “zero advantage = masked” shorthand is safe for the advantage-weighted term,
+    not every objective or statistic. Check the chosen loss's ratio mask, provenance requirements,
+    and penalty scope. In particular, the published DRO formula alone does not establish how the
+    server excludes padded positions from its penalty; confirm that behavior before transferring
+    the simple policy-loss example unchanged. These are documentation-derived contracts, not
+    results from executing the API.
+  </div>
 
   <!-- ── §5 ─────────────────────────────────────── -->
   <h2 id="stitch">5. Stitching Calls into Samples</h2>
@@ -1423,6 +1489,9 @@ tail    = prompt_ids[n][len(prev):]               # if extends: the new tool/tem
   <p>Filter by interface generation or by the design choices from §5–§7. Rows are frameworks;
   versions are the latest release at time of writing. "Loop owner" is the answer to §1; "merge"
   and "advantage" are §5–§6; "correction" is §7.</p>
+  <p style="font-size:0.86rem;color:var(--muted)">Tinker's API/loss fields were refreshed from
+  official documentation on October 22, 2026. Its cookbook merge and scheduling details remain
+  the August snapshot below; adding a loss name or an async API method does not revalidate them.</p>
 
   <div class="chips" id="m-chips">
     <span class="chip on" data-f="all">all</span>
@@ -1561,13 +1630,13 @@ tail    = prompt_ids[n][len(prev):]               # if extends: the new tool/tem
       </tr>
 
       <tr data-tags="g1 fork bypass">
-        <td><strong>Tinker</strong> + cookbook<br><span class="gen-badge g1">G1</span></td>
+        <td><strong>Tinker</strong> + cookbook<br><span class="gen-badge g1">G1</span><br>API/loss docs: Oct 22</td>
         <td>user process: <code>Env.initial_observation() / step(action: list[int])</code>, <code>do_group_rollout</code></td>
         <td>pure token API: <code>sample → SampledSequence(tokens, logprobs)</code>; <code>forward_backward(Datum)</code>; client-side Renderer</td>
         <td><code>trajectory_to_data</code> merges on prefix; <code>has_extension_property</code> false for think-stripping renderers</td>
         <td>rollout (group)</td>
-        <td><code>importance_sampling</code> (unbounded), <code>ppo</code>, <code>cispo</code>, <code>dro</code>; <code>logprobs</code> required</td>
-        <td><code>AsyncConfig(max_steps_off_policy)</code> drops stale; no in-flight weight changes; server-managed weights</td>
+        <td><code>importance_sampling</code>, <code>ppo</code>, <code>cispo</code>, <code>dro</code>, <code>gspo</code>, alpha <code>stable_reinforce</code>; <a href="#tinker-losses">logprobs + loss-specific mask/provenance</a></td>
+        <td>August cookbook snapshot: <code>AsyncConfig(max_steps_off_policy)</code> drops stale; no in-flight weight changes; server-managed weights. Scheduling not rechecked by the API/loss refresh.</td>
       </tr>
 
       <tr data-tags="g2">
@@ -1646,7 +1715,15 @@ tail    = prompt_ids[n][len(prev):]               # if extends: the new tool/tem
     <li>slime: <a href="https://github.com/THUDM/slime">repo</a>, <code>docs/en/agent.md</code> and the <code>TrajectoryManager</code>; Miles: <a href="https://www.lmsys.org/blog/2026-05-13-no-token-left-behind/">"No Token Left Behind: TITO"</a> (May 2026), <a href="https://www.lmsys.org/blog/2026-08-18-miles-v0-1/">v0.1</a>, and the <a href="https://github.com/zhaochenyang20/Awesome-ML-SYS-Tutorial/blob/main/rlhf/slime/mismatch/blog-en.md">mismatch blog</a>.</li>
     <li>AReaL: <a href="https://arxiv.org/abs/2607.01120">AReaL 2.0</a> (Jul 2026, microservice architecture, step-level trajectory protocol), <a href="https://arxiv.org/abs/2505.24298">AReaL</a> (decoupled PPO, May 2025).</li>
     <li>ROLL: <a href="https://github.com/alibaba/ROLL">repo</a>, <a href="https://arxiv.org/abs/2510.11345">ROLL Flash</a>. OpenRLHF: <a href="https://github.com/OpenRLHF/OpenRLHF">repo</a>.</li>
-    <li>Tinker: <a href="https://tinker-docs.thinkingmachines.ai/tinker/losses/">Losses</a> (the <code>Datum</code> contract), <a href="https://github.com/thinking-machines-lab/tinker-cookbook">tinker-cookbook</a> <code>rl/types.py</code>.</li>
+    <li>Tinker: <a href="https://tinker-docs.thinkingmachines.ai/tinker/">Overview</a>,
+    <a href="https://tinker-docs.thinkingmachines.ai/tinker/datum/">Datum and provenance</a>,
+    <a href="https://tinker-docs.thinkingmachines.ai/tinker/losses/">Losses</a>,
+    <a href="https://tinker-docs.thinkingmachines.ai/tinker/losses/dro/">DRO</a>,
+    <a href="https://tinker-docs.thinkingmachines.ai/tinker/losses/gspo/">GSPO-token</a>, and
+    <a href="https://tinker-docs.thinkingmachines.ai/tinker/losses/stable-reinforce/">StableReinforce (alpha)</a>
+    — official API/loss documentation checked October 22, 2026.
+    <a href="https://github.com/thinking-machines-lab/tinker-cookbook">tinker-cookbook</a>
+    <code>rl/types.py</code> and the matrix's cookbook behavior remain the earlier snapshot.</li>
     <li>rLLM <a href="https://github.com/rllm-org/rllm">repo</a>; AWS <a href="https://github.com/awslabs/agentcore-rl-toolkit">agentcore-rl-toolkit</a>; OpenPipe <a href="https://github.com/OpenPipe/ART">ART</a>.</li>
     <li>OpenForgeRL: <a href="https://arxiv.org/abs/2607.21557">"Train Harness-native Agents in Any Environment"</a> (arXiv 2607.21557, Jul 2026) — the §1 cross-harness transfer study; per-call reconstruction at rollout completion + discard-on-error (§5); per-rollout Kubernetes containers (<a href="env-scaling-sandboxing.html">sandboxing page</a>).</li>
     <li>Xiaomi MiMo: Fuli Luo's <a href="https://x.com/_LuoFuli/status/2100296686719610932">MiMo-V2.6 RL announcement</a> and the <a href="https://mimo.xiaomi.com/rl/#overview">live training dashboard</a> (Sep 2026) — multiple harnesses mixed in one fully asynchronous run, with per-harness rollout composition exposed publicly; algorithmic details remain pending.</li>
