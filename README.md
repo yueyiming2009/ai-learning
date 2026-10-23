@@ -117,9 +117,10 @@ task generation &amp; curriculum. **Frameworks:** the framework landscape (self-
 versus Tinker's managed LoRA training API, separating algorithm ownership from runtime control),
 verl (HybridFlow) architecture, resource-pool
 placement, TRL, the slime–Miles walkthrough. **Training:** start with
-[RL Training Basics & Metrics](docs/rl/rl-training-metrics.html) — the rollout-to-update loop,
-worked PPO/GRPO signals, and a source-pinned glossary for losses, returns, masks, partition
-token loads, and throughput. Continue to PPO/GRPO training walkthroughs, then async RL and
+[RL Training Basics & Metrics](docs/rl/rl-training-metrics.html) — one prompt and three answers
+through a GRPO update, introducing dashboard fields as they arise. Equations, PPO/critic
+details, and the source-pinned metric glossary are expandable references.
+Continue to PPO/GRPO training walkthroughs, then async RL and
 its monitoring, and reward pipelining.
 
 ### 06 · Inference — [docs/inference/](docs/inference/)

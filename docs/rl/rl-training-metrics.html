@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light dark">
-  <meta name="description" content="Connect the RL training loop to actor loss, policy gradients, advantages, returns, rollout lengths, global_seqlen, and throughput, with source-pinned verl metric definitions.">
+  <meta name="description" content="Learn RL metrics through one GRPO example: sample three answers, score them, compare rewards, and update the actor. Expand the glossary or PPO details only when needed.">
   <title>RL Training Basics &amp; Metrics</title>
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
   <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
@@ -45,7 +45,7 @@
     .hero h1 { font-size: clamp(1.5rem, 4vw, 2.2rem); font-weight: 600; margin: 0 0 12px; letter-spacing: -0.02em; }
     .hero p { margin: 0 auto; opacity: 0.9; font-size: 0.97rem; max-width: 680px; }
     .hero-pill { display: inline-block; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 100px; font-size: 0.78rem; padding: 3px 12px; margin-bottom: 16px; letter-spacing: 0.04em; text-transform: uppercase; }
-    .page-wrap { max-width: 980px; margin: 0 auto; padding: 48px 24px 80px; }
+    .page-wrap { max-width: 900px; margin: 0 auto; padding: 48px 24px 80px; }
     h2 { font-size: 1.2rem; font-weight: 600; margin: 2.8em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); }
     h3 { font-size: 1rem; color: var(--ink); margin: 1.6em 0 0.4em; }
     [id] { scroll-margin-top: 72px; }
@@ -61,16 +61,18 @@
     .callout { background: var(--accent-light); border: 1px solid var(--teal-border); border-radius: 8px; padding: 14px 18px; margin: 1.2em 0; }
     .callout-label { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.06em; }
     .equation { overflow-x: auto; padding: 8px 0; }
-    .flow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 0; list-style: none; }
-    .flow li { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin: 0; }
-    .flow strong { display: block; color: var(--accent); }
+    .prompt { background: var(--surface); border-left: 4px solid var(--accent); padding: 16px 20px; margin: 1em 0; font-size: 1.05rem; }
+    details { border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; margin: 1em 0; }
+    summary { cursor: pointer; font-weight: 600; color: var(--accent); }
+    summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; }
+    details[open] > summary { margin-bottom: 18px; }
+    .math-detail { background: var(--surface); }
     .source-note { font-size: 0.87rem; color: var(--muted); }
     footer { border-top: 1px solid var(--border); padding: 28px 24px; text-align: center; font-size: 0.82rem; color: var(--muted); }
     @media (max-width: 600px) {
       nav { padding: 0 12px; gap: 12px; }
       .nav-brand { font-size: 0.8rem; }
       .page-wrap { padding: 32px 16px 60px; }
-      .flow { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -81,152 +83,207 @@
     RL Basics &amp; Metrics
   </a>
   <div class="nav-links">
-    <a href="#loop">Training loop</a>
-    <a href="#example">Worked example</a>
-    <a href="#policy">Actor metrics</a>
-    <a href="#signal">Rewards &amp; critic</a>
-    <a href="#lengths">Lengths &amp; masks</a>
-    <a href="#global-seqlen">global_seqlen</a>
-    <a href="#throughput">Rollout &amp; speed</a>
-    <a href="#reading">Reading path</a>
+    <a href="#grpo">GRPO example</a>
+    <a href="#update">Actor update</a>
+    <a href="#dashboard">Read the dashboard</a>
+    <a href="#reference">Metric lookup</a>
+    <a href="#ppo">PPO later</a>
     <a href="#sources">Sources</a>
   </div>
 </nav>
 <header class="hero">
-  <span class="hero-pill">RL Training &middot; Concepts to Dashboard</span>
+  <span class="hero-pill">Start with GRPO &middot; One Worked Example</span>
   <h1>RL Training Basics &amp; Metrics</h1>
-  <p>What the actor is optimizing, what advantages and returns mean, and how to read loss, rollout, length, and throughput fields without mistaking them for model quality.</p>
+  <p>One prompt. Three answers. Follow how their rewards become a model update, then recognize those same quantities on a dashboard.</p>
 </header>
 <main class="page-wrap">
-  <p>Start here when a dashboard shows <code>actor/loss</code>, <code>actor/pg_loss</code>,
-  <code>critic/advantages</code>, <code>critic/returns</code>, or <code>global_seqlen</code>.
-  The concepts apply broadly; the exact keys below describe a <strong>pinned verl implementation</strong>,
-  not a universal logging standard. For asynchronous failure diagnosis, continue to
-  <a href="async-rl-monitoring.html">Monitoring &amp; Diagnosis for Async RL</a>.</p>
-  <p class="source-note">Source-checked 2026-10-23 against public verl commit
-  <a href="https://github.com/volcengine/verl/commit/3c6d9b43b67c74ec343d77874cd8fa6e841523da"><code>3c6d9b43b67c</code></a>:
-  <code>RayPPOTrainer</code>, the engine-worker PPO/value losses, and the vanilla policy-loss mode.
-  Optional losses, other estimators/backends, and custom loggers can change what is emitted.
-  Source inspection, not a training-run benchmark.</p>
+  <p>Start with <strong>GRPO</strong>: let a model try the same question several times,
+  compare the answers, and make the better answers more likely. There is no separate
+  critic to learn first. Read the example straight through; the equations, PPO comparison,
+  and full metric dictionary are expandable.</p>
+  <p id="loop"><strong>The whole loop:</strong> sample answers &rarr; score them &rarr;
+  compare within the group &rarr; update the model &rarr; sample again.</p>
 
-  <h2 id="loop">1. The training loop: data becomes a signed learning signal</h2>
-  <p>In token-level LLM RL, a <strong>state</strong> is the prompt and available history,
-  an <strong>action</strong> is a generated token, and a <strong>policy</strong> assigns probabilities
-  to possible next tokens. A <strong>rollout</strong> is the sampled response or, for an agent,
-  a trajectory interleaving model actions and environment observations. A reward scores an outcome;
-  it is not itself a differentiable loss through the sampled text.</p>
-  <ol class="flow" aria-label="Six stages of an RL training iteration">
-    <li id="rollout"><strong>1. Prompt and rollout</strong>Sample tasks and generate one or more responses per prompt. Retain action tokens, masks, and behavior-policy log-probabilities.</li>
-    <li><strong>2. Score and reward</strong>A verifier or reward model scores the response. Shaping, such as a reference-policy KL penalty, may alter the rewards used for training.</li>
-    <li><strong>3. Baselines</strong>PPO evaluates a critic. GRPO instead compares multiple responses to the same prompt. Neither baseline is the actor's loss.</li>
-    <li><strong>4. Returns and advantages</strong>Construct value targets and signed action weights: which sampled decisions should become more or less likely?</li>
-    <li><strong>5. Loss and update</strong>Recompute probabilities with the trainable actor, form a masked surrogate loss, backpropagate, and update parameters. PPO also fits its critic.</li>
-    <li><strong>6. Repeat and evaluate</strong>Publish updated rollout weights and collect more data. Measure held-out task quality separately from optimization and throughput metrics.</li>
-  </ol>
+  <section id="example" aria-labelledby="grpo">
+  <h2 id="grpo">1. Ask the same question three times</h2>
+  <blockquote class="prompt">What is 2 + 2? Answer with one digit.</blockquote>
+  <p>The model samples <strong>3</strong>, <strong>5</strong>, and <strong>4</strong>.
+  These are three <strong>rollouts</strong>: attempts generated by the model, not three
+  supplied training labels. Together they form one <strong>group</strong> because they answer
+  the same prompt.</p>
+  <p id="rollout">The model we train is called the <strong>actor</strong>. Its
+  <strong>policy</strong> is the probability distribution it uses to choose an answer.
+  For this toy example, let it choose only among these three digits, with one token
+  per answer. We train only from the correctness rewards.</p>
+
+  <h2 id="compare">2. Score the answers, then compare them</h2>
+  <p>A checker gives reward <strong>1 for correct</strong> and <strong>0 for incorrect</strong>.
+  The group's average reward is <strong>(0 + 0 + 1) / 3 = 1/3</strong>.</p>
+  <p>The <strong>advantage</strong> starts with one question: <em>How much better or worse
+  was this answer than the group's average?</em> Subtract that average from each reward:</p>
   <div class="table-wrap">
     <table>
-      <thead><tr><th scope="col">Role</th><th scope="col">Question it answers</th><th scope="col">When it changes</th></tr></thead>
+      <thead><tr><th scope="col">Answer</th><th scope="col">Reward</th><th scope="col">Reward minus group average</th><th scope="col">Learning direction</th></tr></thead>
       <tbody>
-        <tr><th scope="row">Actor \(\pi_\theta\)</th><td>Which action should I take? Its log-probability \(\log\pi_\theta(a\mid s)\) supplies the gradient.</td><td>At actor optimizer updates.</td></tr>
-        <tr><th scope="row">Rollout / behavior policy \(\mu\)</th><td>Which policy actually sampled this action?</td><td>When rollout workers receive weights; async workers may lag behind.</td></tr>
-        <tr><th scope="row">Old / proximal snapshot</th><td>What is the fixed denominator of this PPO update's probability ratio?</td><td>At the chosen snapshot boundary, not every minibatch update. It may differ from \(\mu\).</td></tr>
-        <tr><th scope="row">Reference policy \(\pi_{\rm ref}\)</th><td>How far have we moved from an anchor, often the initial fine-tuned model?</td><td>Usually frozen for the run; not the same as the old-policy snapshot.</td></tr>
-        <tr><th scope="row">Critic \(V_\psi(s)\)</th><td>How much future reward do I expect from this state?</td><td>At critic updates in PPO/GAE. Standard GRPO has no learned critic.</td></tr>
+        <tr><th scope="row">3</th><td>0</td><td>0 - 1/3 = <strong>-1/3</strong></td><td>Make this answer less likely.</td></tr>
+        <tr><th scope="row">5</th><td>0</td><td>0 - 1/3 = <strong>-1/3</strong></td><td>Make this answer less likely.</td></tr>
+        <tr><th scope="row">4</th><td>1</td><td>1 - 1/3 = <strong>+2/3</strong></td><td>Make this answer more likely.</td></tr>
       </tbody>
     </table>
   </div>
-  <p>A reward model judges an outcome; a critic predicts future return from a state. They are
-  different roles even if both output scalars. See <a href="value-functions.html">Value Functions</a>,
-  <a href="policy-gradient.html">Policy Gradient</a>, and <a href="behavior-policy.html">Behavior vs Target Policy</a>
-  for the underlying definitions.</p>
+  <p>Standard GRPO also divides these differences by the group's reward spread.
+  That rescales the weights without changing their signs. In this example the resulting
+  advantages are approximately <strong>[-0.577, -0.577, +1.155]</strong>.
+  The important idea is still just <strong>negative: discourage; positive: encourage</strong>.</p>
+  <details class="math-detail">
+    <summary>Optional: where do -0.577 and +1.155 come from?</summary>
+    <p>The pinned verl estimator uses the sample standard deviation. For rewards
+    \([0,0,1]\), it is \(\sqrt{1/3}\approx0.57735\). With a small numerical
+    stabilizer \(\varepsilon=10^{-6}\):</p>
+    <div class="equation">
+      \[
+        A_i=\frac{R_i-\bar R}{s_R+\varepsilon},
+        \qquad A\approx[-0.577349,-0.577349,1.154699].
+      \]
+    </div>
+    <p>Disabling standard-deviation normalization leaves the centered weights
+    \([-1/3,-1/3,2/3]\). It does not change which answers are encouraged.
+    <a href="#source-estimators">Estimator source</a>.</p>
+  </details>
 
-  <h2 id="example">2. A tiny PPO example: reward, return, advantage, loss</h2>
-  <p>Take one response with two valid action tokens, no padding or KL penalty, and a true terminal
-  state after token 2. Let \(\gamma=\lambda=1\), rewards be \([0,1]\), and frozen critic estimates
-  be \([0.2,0.4]\), with terminal value zero. GAE works backward:</p>
-  <div class="equation">
-    \[
-      \delta_t=r_t+\gamma V_{t+1}-V_t,\qquad
-      A_t^{\rm raw}=\delta_t+\gamma\lambda A_{t+1}^{\rm raw},\qquad
-      \widehat R_t=A_t^{\rm raw}+V_t.
-    \]
-  </div>
+  <h2 id="update">3. Use those advantages to update the actor</h2>
+  <p>Training recomputes the probabilities of the sampled answers and builds a
+  <strong>policy-gradient loss</strong>, logged as <code>actor/pg_loss</code>.
+  Minimizing it pushes probability toward positive-advantage answers and away from
+  negative-advantage answers, subject to the update's safeguards.</p>
+  <p>Here is an illustrative probability change in that direction.
+  It is <strong>not</strong> the measured result of a particular optimizer or learning rate:</p>
   <div class="table-wrap">
     <table>
-      <thead><tr><th scope="col">Token</th><th scope="col">Reward \(r_t\)</th><th scope="col">Value \(V_t\)</th><th scope="col">TD error \(\delta_t\)</th><th scope="col">Raw advantage</th><th scope="col">Return target</th></tr></thead>
+      <thead><tr><th scope="col">Answer</th><th scope="col">Probability when sampled</th><th scope="col">Illustrative updated probability</th></tr></thead>
       <tbody>
-        <tr><th scope="row">1</th><td>0</td><td>0.2</td><td>0 + 0.4 - 0.2 = 0.2</td><td>0.2 + 0.6 = 0.8</td><td>0.8 + 0.2 = 1</td></tr>
-        <tr><th scope="row">2</th><td>1</td><td>0.4</td><td>1 + 0 - 0.4 = 0.6</td><td>0.6</td><td>0.6 + 0.4 = 1</td></tr>
+        <tr><th scope="row">3</th><td>40%</td><td>38%</td></tr>
+        <tr><th scope="row">5</th><td>40%</td><td>38%</td></tr>
+        <tr><th scope="row">4</th><td>20%</td><td>24%</td></tr>
       </tbody>
     </table>
   </div>
-  <p><strong>Return:</strong> the critic's target is 1 at both positions here. With other
-  \(\lambda\), discounts, or bootstrapping boundaries, a GAE return need not equal the
-  undiscounted episode score. <strong>Advantage:</strong> both actions had better outcomes than
-  the frozen critic predicted. The actor receives detached advantages, not a gradient through
-  the reward computation or critic.</p>
-  <p>The pinned GAE function builds returns <em>before</em> whitening advantages. With these
-  two tokens, the raw advantage mean is 0.7 and the sample standard deviation is
-  \(\sqrt{0.02}\). Whitening produces approximately \([+0.7071,-0.7071]\).
-  The critic still targets \([1,1]\); adding the whitened advantages to values would be wrong.
-  Whitening centers the actor's weights within this batch, so a negative normalized weight
-  does not necessarily mean a negative raw advantage or a failed response.
-  <a href="#source-estimators">Estimator source</a>.</p>
+  <p>The update changes the model's <em>next</em> attempts; it does not rewrite the three
+  answers already scored. This old batch still has one success out of three.
+  New samples remain random, so measure progress over many prompts and held-out attempts.</p>
+  <p><code>actor/loss</code> is the <strong>total</strong> objective used to train the actor.
+  Here it equals <code>actor/pg_loss</code>, because we disabled the extra terms.
+  In a fuller run, extra loss terms can encourage exploration or keep the model close
+  to a starting model; these can make the two losses differ.</p>
+  <details class="math-detail" id="loss-arithmetic">
+    <summary>Optional: compute pg_loss for this exact example</summary>
+    <p>For this arithmetic, omit end-of-sequence tokens, entropy bonuses, and KL penalties.
+    Keep the rewards, advantages, and sampling probabilities fixed. Compare each current
+    probability with the probability that generated that answer:</p>
+    <div class="equation">
+      \[
+        q_i=\frac{p_{\rm current}(a_i)}{p_{\rm old}(a_i)},
+        \qquad q_{\rm before}=[1,1,1],\quad
+        q_{\rm after}=[0.95,0.95,1.20].
+      \]
+    </div>
+    <p>GRPO can use a PPO-style clipped policy loss <em>without</em> a PPO critic.
+    With clipping bounds 0.8 and 1.2, these ratios are inside or exactly on the bounds,
+    so the ordinary clipped surrogate has the same value as:</p>
+    <div class="equation">
+      \[
+        L_{\rm PG}=-\frac13\sum_{i=1}^3 q_i A_i.
+      \]
+    </div>
+    <p>Before the update the loss is approximately <strong>0</strong>. Evaluating the same
+    batch at the illustrative new probabilities gives approximately <strong>-0.0962</strong>.
+    The loss decreased because the helpful answer's positive term received more weight.
+    This is an optimizer objective, not a negative success rate.</p>
+    <p>Why not immediately make the correct answer certain? Clipping removes a sample's
+    incentive to keep pushing in the already-improved direction past the chosen ratio
+    bound. It is a guardrail on this objective, not a hard guarantee on the final probabilities.
+    See <a href="ppo.html#clip">the clipped surrogate</a> for the full formula.</p>
+    <h3 id="zero-loss">Why can a zero loss still produce an update?</h3>
+    <p>The positive and negative terms cancel in the <em>scalar value</em> at the start,
+    but they push on different answer probabilities. Evaluating all ratios at 1 does not
+    make their derivatives zero:</p>
+    <div class="equation">
+      \[
+        \nabla_\theta L_{\rm PG}\big|_{q=1}
+        =-\frac13\sum_i A_i\nabla_\theta\log p_\theta(a_i).
+      \]
+    </div>
+    <p>Zero mean advantage or near-zero PG loss alone therefore does not mean no learning.
+    This example uses one action token per response, so token-mean and response-mean
+    reductions coincide; longer responses need <a href="#aggregation">explicit weighting</a>.</p>
+  </details>
 
-  <h3 id="zero-loss">Why zero policy loss can still learn</h3>
-  <p>Ignoring optional corrections and dual clipping for this illustration, minimize the PPO surrogate</p>
-  <div class="equation">
-    \[
-      L_{\rm PG}=-\operatorname{mean}_{m_t=1}
-      \min\!\left(q_t\widehat A_t,\,
-      \operatorname{clip}(q_t,1-\epsilon,1+\epsilon)\widehat A_t\right),
-      \qquad q_t=\exp(\log\pi_\theta(a_t\mid s_t)-\log\pi_{\rm old}(a_t\mid s_t)).
-    \]
+  <h2 id="dashboard">4. Now read the dashboard for those same three answers</h2>
+  <p>These are the conceptual values for this batch <strong>before the actor update</strong>,
+  using the normalized advantages above and the pinned verl names. Real dashboards can
+  average several minibatch measurements into one point.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Field</th><th scope="col">Our example</th><th scope="col">What it tells you</th></tr></thead>
+      <tbody>
+        <tr><th scope="row"><code>critic/score/mean</code><br><code>critic/rewards/mean</code></th><td>1/3</td><td>One of three answers passed. Score equals reward because we applied no reward shaping.</td></tr>
+        <tr><th scope="row"><code>critic/advantages/mean</code></th><td>Approximately 0</td><td>The group-relative weights are centered. There is still a strong positive weight for 4.</td></tr>
+        <tr><th scope="row"><code>actor/pg_loss</code></th><td>Approximately 0</td><td>The initial signed loss terms cancel, but their gradients need not.</td></tr>
+        <tr><th scope="row"><code>actor/loss</code></th><td>Same as PG loss here</td><td>No extra entropy or KL term is enabled in this toy setup.</td></tr>
+      </tbody>
+    </table>
   </div>
-  <p>At the start of a fresh update, \(q_t=1\), so our token-mean loss is approximately zero.
-  But the ratios are <em>functions of the actor parameters</em>, not constants to remove before
-  differentiating:</p>
-  <div class="equation">
-    \[
-      \nabla_\theta L_{\rm PG}\big|_{q=1}
-      =-\tfrac12\left(0.7071\nabla_\theta\log\pi_\theta(a_1\mid s_1)
-      -0.7071\nabla_\theta\log\pi_\theta(a_2\mid s_2)\right).
-    \]
-  </div>
-  <p>The two score gradients generally differ, so they need not cancel. A near-zero
-  <code>pg_loss</code> and zero clip fraction are compatible with a real update.
-  Conversely, a nonzero loss does not prove useful learning. Check gradients, parameter
-  updates, and held-out outcomes.</p>
+  <p><strong>Why do the first fields say <code>critic/</code> if GRPO has no critic?</strong>
+  That is a logging namespace, not proof of a learned critic. In this verl GRPO path,
+  <code>critic/returns</code> even reuses the advantage tensor, so its mean is also near zero,
+  <em>not</em> the 1/3 average reward. PPO gives that field a different meaning;
+  leave the <a href="#ppo">PPO comparison</a> until you need it.</p>
 
-  <h3 id="grpo">What changes for GRPO?</h3>
-  <p>Sample a group of responses to the same prompt and compare their sequence rewards:
-  \(A_i=(R_i-\bar R_{\rm group})/(s_{\rm group}+\varepsilon)\), or just subtract the mean when
-  standard-deviation normalization is disabled. Broadcast each response's weight over its
-  valid action tokens. There is no value prediction or value-regression update.</p>
-  <p>For rewards \([0,0,1]\), sample-standard-deviation normalization gives approximately
-  \([-0.577,-0.577,1.155]\). The sequence-level mean is zero, but the signs are
-  <strong>two negative, one positive</strong>, not necessarily 50/50. Unequal response lengths
-  can also make the <em>token-weighted</em> logged mean nonzero. Equal rewards within a
-  multi-response group give zero centered reward signal, whether the group all succeeded or all failed.</p>
+  <h2 id="repeat">5. Collect another group and repeat</h2>
+  <p>Use the updated actor to generate fresh attempts, score them, and repeat.
+  If a whole group gets the same reward, subtracting its average gives all zeros:
+  GRPO gets no within-group reward contrast, whether the answers all passed or all failed.
+  That is different from our mixed group, whose weights merely <em>average</em> to zero.</p>
+  <p>Real runs use many prompts and longer responses. One response's advantage is usually
+  applied to its valid generated action tokens; prompt, padding, and tool-observation tokens
+  are not automatically action-loss tokens. Length and speed metrics describe the workload,
+  not whether the answers improved.</p>
   <div class="callout">
-    <div class="callout-label">The returns field is estimator-dependent</div>
-    <p>The pinned <code>compute_grpo_outcome_advantage</code> returns the same group-relative
-    tensor in both the <code>advantages</code> and <code>returns</code> slots.
-    Thus <code>critic/returns/*</code> in this GRPO path is <strong>not</strong> a critic target
-    or raw episode-return measurement. The <code>critic/</code> prefix is a logging namespace,
-    not evidence that a critic exists. Use <code>critic/score/*</code> and
-    <code>critic/rewards/*</code> for sequence outcomes.</p>
+    <div class="callout-label">The three ideas to keep</div>
+    <p><strong>Reward:</strong> how did this answer do?
+    <strong>Advantage:</strong> how did it compare with the other attempts?
+    <strong>Loss:</strong> how do we turn that comparison into a probability update?</p>
+    <p>GRPO obtains its baseline from the group, so this loop needs no learned critic.</p>
   </div>
+  </section>
 
-  <h2 id="policy">3. Actor and optimization metrics</h2>
-  <p>For the pinned PPO loss, with optional entropy and reference-KL terms enabled:</p>
+  <p id="reading"><strong>Next:</strong> use the lookups below only for a field you are
+  inspecting. For a deeper algorithm explanation, read <a href="grpo.html">GRPO</a>;
+  for implementation tensors, the <a href="grpo-training-walkthrough.html">GRPO walkthrough</a>;
+  for async failure diagnosis, <a href="async-rl-monitoring.html">Async RL Monitoring</a>.</p>
+
+  <h2 id="reference">Reference: open only what you need</h2>
+  <p>The exact logger names follow a <a href="#sources">pinned public verl version</a>.
+  These details are a lookup, not prerequisites for understanding the example.</p>
+
+  <details id="policy">
+  <summary>Actor metrics: loss, entropy, KL, clipping, gradient norm, LR</summary>
+  <h3>Which policy is which?</h3>
+  <p>The <strong>actor</strong> is being optimized; the <strong>behavior policy</strong>
+  sampled the rollout; the <strong>old/proximal snapshot</strong> is the frozen denominator
+  in the update ratio. Our synchronous example starts with all three equal.
+  An async run can separate them. The <strong>reference policy</strong> is a different
+  role: an anchor for a KL penalty, often frozen for the whole run.
+  See <a href="behavior-policy.html">Behavior vs Target Policy</a>.</p>
+  <h3>Total actor loss versus PG loss</h3>
+  <p>For the pinned policy-loss path, with optional entropy and reference-KL terms enabled:</p>
   <div class="equation">
     \[
       L_{\rm actor}=L_{\rm PG}-c_H H+\beta L_{\rm KL}.
     \]
   </div>
   <p>Each term uses the configured loss reduction. Entropy and KL coefficients multiply
-  their logged unweighted terms; disabled terms are absent. In this separate-actor/critic path,
+  their logged unweighted terms; disabled terms are absent. In the separate-actor/critic PPO path,
   <strong>critic value loss is not part of actor loss</strong>. Distillation or other auxiliary
   objectives require inspecting their own composition.
   <a href="#source-loss">Loss source</a> &middot; <a href="#source-worker">Worker aggregation</a>.</p>
@@ -251,8 +308,10 @@
   Vanilla clip/KL diagnostics start as local masked means and are then mean-aggregated;
   with unequal token counts this need not equal a single global token-weighted mean.
   Do not reconstruct an exact global fraction from an unspecified dashboard average.</p>
+  </details>
 
-  <h2 id="signal">4. Scores, rewards, advantages, returns, and critic fit</h2>
+  <details id="signal">
+  <summary>critic/* fields: scores, rewards, advantages, returns, and value fit</summary>
   <p>Below, <code>/*</code> means the emitted <code>/mean</code>, <code>/max</code>, and
   <code>/min</code> fields. The pinned <code>compute_data_metrics</code> does
   <strong>not</strong> emit <code>critic/advantages/std</code>; add explicit instrumentation
@@ -275,8 +334,10 @@
   Therefore a stable mean score can hide rising aborts. Check <code>response/aborted_ratio</code>
   and whether missing outcomes are included in your separate evaluation denominator.
   Empty valid-token sets produce NaN diagnostics, not evidence of zero loss or successful training.</p>
+  </details>
 
-  <h2 id="lengths">5. Lengths, masks, and the denominator of a loss</h2>
+  <details id="lengths">
+  <summary>Lengths and masks: which tokens count, and how losses are averaged</summary>
   <p>In a simple text response, <code>attention_mask</code> selects non-padding prompt and response
   tokens. <code>response_mask</code> selects positions that contribute action loss and signal
   statistics. In multi-turn agent data, tool observations may be attended to but excluded from
@@ -309,8 +370,10 @@
   <p>These describe the intended global objectives, not unscaled per-rank intermediates.
   Changing masks or reduction changes weighting and often gradient scale. Do not compare
   absolute loss magnitudes across such changes as if they were the same experiment.</p>
+  </details>
 
-  <h2 id="global-seqlen">6. global_seqlen is a load-balancing metric family</h2>
+  <details id="global-seqlen">
+  <summary>global_seqlen: token load per data-parallel partition, not response length</summary>
   <p>In the pinned trainer, <code>global_seqlen</code> is a <em>prefix</em>, not one scalar.
   When batch balancing is enabled, the trainer sums each row's full
   <code>attention_mask</code>, then partitions sequences across data-parallel (DP) workers.
@@ -339,8 +402,10 @@
   also uses a workload model and token equality does not guarantee equal runtime
   (attention lengths, MoE routing, and hardware matter). TP/PP ranks do not each represent
   another independent DP data partition.</p>
+  </details>
 
-  <h2 id="throughput">7. Rollout batches, step counters, and speed</h2>
+  <details id="throughput">
+  <summary>Rollout and speed: batches, step counters, timing, and throughput</summary>
   <p><strong>Batch units first:</strong> \(B\) prompts with \(n\) responses per prompt normally
   yield \(B n\) sequences before filtering or retries. A rollout batch is collected data;
   a training minibatch is a subset used for an optimizer update; a microbatch is a memory-sized
@@ -362,31 +427,62 @@
   <p class="source-note"><a href="#source-timing">Timing and throughput source</a>. For example,
   80 total batch tokens in 2 seconds on 2 counted GPUs gives 20 tokens/s/GPU, even if only
   40 of those tokens were generated responses. No model-quality claim follows from this number.</p>
+  </details>
 
-  <h2 id="reading">8. Read a dashboard in this order</h2>
-  <ol>
-    <li><strong>Outcome and data validity:</strong> held-out task success, raw score, abort rate,
-    termination reasons, and reward-component integrity. Check that the evaluation denominator includes failures.</li>
-    <li><strong>Learning signal:</strong> reward diversity within prompt groups, advantages and masks,
-    and PPO value fit when a critic exists. Mean-zero normalized advantages alone say little.</li>
-    <li><strong>Update behavior:</strong> total loss versus its components, gradient norm, LR, entropy,
-    and which two policies each KL/ratio compares. Loss need not decrease monotonically as the data and targets change.</li>
-    <li><strong>Cost and scheduling:</strong> lengths, partition load, batch units, timers, and throughput
-    denominators. Establish these basics before attributing a change to async policy lag.</li>
-  </ol>
-  <p>There are no implementation-independent healthy loss or length thresholds. Record the
-  algorithm, source revision, reward scale, normalization, masks, loss reduction, batch/step
-  units, and sampling settings alongside the dashboard.</p>
-  <p><strong>Go deeper:</strong>
-  <a href="policy-gradient.html#gae">advantage/GAE derivation</a> &middot;
-  <a href="ppo.html">PPO objective</a> &middot;
-  <a href="grpo.html">GRPO and variants</a> &middot;
-  <a href="ppo-training-walkthrough.html#phases">PPO tensor-by-tensor walkthrough</a> &middot;
-  <a href="grpo-training-walkthrough.html#phases">GRPO walkthrough</a> &middot;
-  <a href="async-rl.html">async policy separation</a> &middot;
-  <a href="async-rl-monitoring.html">async monitoring and diagnosis</a>.</p>
+  <details id="ppo">
+  <summary>PPO later: what changes when a learned critic supplies the baseline?</summary>
+  <p>GRPO asks, <em>was this response better than the other attempts at the same prompt?</em>
+  PPO instead uses a learned <strong>critic</strong> to estimate future reward from a state.
+  Its advantages compare reward-based outcomes with those predictions. A reward model
+  judges an outcome; the critic predicts future return. They are different roles.</p>
+  <h3 id="ppo-example">A two-token PPO example</h3>
+  <p>Take one response with two valid action tokens, no padding or KL penalty, and a true terminal
+  state after token 2. Let \(\gamma=\lambda=1\), rewards be \([0,1]\), and frozen critic estimates
+  be \([0.2,0.4]\), with terminal value zero. GAE works backward:</p>
+  <div class="equation">
+    \[
+      \delta_t=r_t+\gamma V_{t+1}-V_t,\qquad
+      A_t^{\rm raw}=\delta_t+\gamma\lambda A_{t+1}^{\rm raw},\qquad
+      \widehat R_t=A_t^{\rm raw}+V_t.
+    \]
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Token</th><th scope="col">Reward \(r_t\)</th><th scope="col">Value \(V_t\)</th><th scope="col">TD error \(\delta_t\)</th><th scope="col">Raw advantage</th><th scope="col">Return target</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">1</th><td>0</td><td>0.2</td><td>0 + 0.4 - 0.2 = 0.2</td><td>0.2 + 0.6 = 0.8</td><td>0.8 + 0.2 = 1</td></tr>
+        <tr><th scope="row">2</th><td>1</td><td>0.4</td><td>1 + 0 - 0.4 = 0.6</td><td>0.6</td><td>0.6 + 0.4 = 1</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p><strong>Return:</strong> the critic's target is 1 at both positions here. With other
+  \(\lambda\), discounts, or bootstrapping boundaries, a GAE return need not equal the
+  undiscounted episode score. <strong>Advantage:</strong> both actions had better outcomes than
+  the frozen critic predicted. The actor receives detached advantages, not a gradient through
+  the reward computation or critic.</p>
+  <p>The pinned GAE function builds returns <em>before</em> whitening advantages. The raw
+  advantage mean is 0.7 and the sample standard deviation is \(\sqrt{0.02}\).
+  Whitening produces approximately \([+0.7071,-0.7071]\). The critic still targets
+  \([1,1]\); adding whitened advantages to values would be wrong. A negative normalized
+  weight therefore need not mean a negative raw advantage or a failed response.</p>
+  <p>This adds a <strong>critic-fitting step</strong> absent from standard GRPO.
+  <code>critic/values</code>, <code>critic/vf_loss</code>, and
+  <code>critic/vf_explained_var</code> now become relevant, while <code>critic/returns</code>
+  holds value targets instead of the GRPO advantage alias.</p>
+  <p>Continue with <a href="value-functions.html">Value Functions</a>,
+  <a href="policy-gradient.html#gae">the GAE derivation</a>,
+  <a href="ppo.html">PPO</a>, or the
+  <a href="ppo-training-walkthrough.html#phases">PPO training walkthrough</a>.
+  <a href="#source-estimators">Estimator source</a>.</p>
+  </details>
 
-  <h2 id="sources">9. Source ledger: definitions, not guessed dashboard aliases</h2>
+  <details id="sources">
+  <summary>Sources and implementation scope</summary>
+  <p class="source-note">Source-checked 2026-10-23 against public verl commit
+  <a href="https://github.com/volcengine/verl/commit/3c6d9b43b67c74ec343d77874cd8fa6e841523da"><code>3c6d9b43b67c</code></a>:
+  <code>RayPPOTrainer</code>, GRPO/GAE estimators, engine-worker losses, and the vanilla policy-loss mode.
+  Optional losses, other estimators/backends, and custom loggers can change what is emitted.
+  This guide uses source inspection and illustrative arithmetic, not a training-run benchmark.</p>
   <p>All implementation links below are fixed to the same public verl commit. The glossary
   summarizes those producers; a deployed fork or newer version must be checked separately.</p>
   <ul>
@@ -419,7 +515,24 @@
     <a href="https://github.com/volcengine/verl/blob/3c6d9b43b67c74ec343d77874cd8fa6e841523da/verl/trainer/ppo/ray_trainer.py#L1543-L1553">full-batch token counts</a>,
     and <a href="https://github.com/volcengine/verl/blob/3c6d9b43b67c74ec343d77874cd8fa6e841523da/verl/trainer/ppo/ray_trainer.py#L1764-L1786">step counter and GPU denominator</a>.</li>
   </ul>
+  </details>
 </main>
 <footer><a href="../index.html#rl-training-walkthroughs">RL training walkthroughs</a> &middot; <a href="async-rl-monitoring.html">Next: async monitoring</a></footer>
+<script>
+  function revealHashTarget() {
+    const target = document.getElementById(window.location.hash.slice(1));
+    if (!target) return;
+    for (let node = target; node; node = node.parentElement) {
+      if (node.tagName === 'DETAILS') node.open = true;
+    }
+    requestAnimationFrame(() => target.scrollIntoView({ block: 'start' }));
+  }
+  window.addEventListener('hashchange', revealHashTarget);
+  document.addEventListener('click', event => {
+    const link = event.target.closest('a[href^="#"]');
+    if (link && link.hash === window.location.hash) revealHashTarget();
+  });
+  revealHashTarget();
+</script>
 </body>
 </html>
