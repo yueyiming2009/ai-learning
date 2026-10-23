@@ -181,6 +181,7 @@
     <a href="#what-is-distillation">What Is It?</a>
     <a href="#taxonomy">Off vs On-Policy</a>
     <a href="#off-policy">Off-Policy</a>
+    <a href="#data-fidelity">Data Fidelity</a>
     <a href="#on-policy">On-Policy</a>
     <a href="#tradeoffs">Trade-offs</a>
     <a href="#why-r1">Why R1 Chose Off-Policy</a>
@@ -261,12 +262,12 @@
     <div class="pipe-stage">
       <div class="pipe-num">Step 3</div>
       <div class="pipe-title">Fine-tune</div>
-      <div class="pipe-desc">Standard SFT on the filtered dataset. Loss is cross-entropy on teacher tokens. Student never generates during training.</div>
+      <div class="pipe-desc">Standard SFT on teacher-generated content represented in the student's token space. Compatible tokenizers may permit direct reuse of captured IDs. The student does not sample rollouts during this update.</div>
       <span class="pipe-badge badge-off">Student trains</span>
     </div>
   </div>
 
-  <p>The loss is simply the standard language modeling objective over teacher-generated tokens:</p>
+  <p>The loss is the standard conditional language modeling objective over teacher-generated targets, with both context \(s\) and target sequence \(a\) represented in the student's token space:</p>
 
   <div class="result">
     <div class="result-label">Off-policy distillation loss</div>
@@ -276,7 +277,75 @@
     <p style="font-size:0.85rem;color:var(--muted);margin:6px 0 0;">The dataset \(\mathcal{D}_\text{teacher}\) is collected once from the teacher and fixed. The student sees no gradient from its own rollouts.</p>
   </div>
 
+  <h3 id="data-fidelity">Data fidelity: teacher tokens versus student supervision</h3>
+
+  <div class="callout">
+    <div class="callout-label">Preserve meaning; construct supervision for the student</div>
+    <p><strong>Cross-tokenizer hard-target SFT does not require teacher-token identity.</strong> It requires faithful interaction semantics, correctly regenerated student-token supervision, and a training protocol aligned with the student's serving protocol. Exact sampled-token identity matters when the objective refers to those sampled actions; it is not a universal requirement of teacher–student training.</p>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <caption>The objective determines which representation must remain faithful.</caption>
+      <tr><th scope="col">Training case</th><th scope="col">Required contract</th></tr>
+      <tr><td>Same-tokenizer hard-target SFT</td><td>Compatible vocabulary mappings allow token reuse, even across model sizes. Preserve captured prompt/response IDs for exact-call replay; intentional re-rendering defines a different, potentially valid dataset.</td></tr>
+      <tr><td>Cross-tokenizer hard-target SFT</td><td>Render the selected content into the student's format and vocabulary. Token boundaries may differ, so a one-to-one teacher-token mapping may not exist. Regenerate masks; do not copy teacher-indexed masks onto student tokens.</td></tr>
+      <tr><td>Token-distribution distillation</td><td>Teacher and student probabilities must refer to aligned events and conditioning contexts. Naive vocabulary-wise KL is invalid across incompatible tokenizations; use an explicit alignment or a different objective.</td></tr>
+      <tr><td>Student-generated on-policy training</td><td>Preserve the student's actual sampled tokens and contexts. A different teacher tokenizer does not remove that requirement; teacher scoring still needs a compatible event/context alignment.</td></tr>
+    </table>
+  </div>
+
+  <p><strong>Capture and projection are separate.</strong> Keep raw per-call evidence immutable when available, and version the conversion into training examples. Teacher sampling logprobs are not required for ordinary hard-target cross-entropy. Likewise, a token's <em>origin</em> is not its <em>supervision weight</em>: a generated token may be excluded because it belongs to another agent, an unselected turn, or reasoning intentionally omitted by the recipe.</p>
+
+  <p><strong>Roles alone are insufficient.</strong> The conversion must preserve, or explicitly transform:</p>
+  <ul>
+    <li><strong>Decision-time context:</strong> tool definitions, observations, ordering, branch identity, and context-compaction boundaries. Retaining an answer while silently changing the information it conditions on changes the learning problem.</li>
+    <li><strong>Action semantics:</strong> distinguish assistant tool calls from tool results and other agents' outputs. Translating a teacher's tool-call syntax into the student's native syntax is valid if the intended action survives; silently repairing an output is a data transformation, not exact replay.</li>
+    <li><strong>Supervision boundaries:</strong> select assistant turns and reasoning spans deliberately; regenerate labels after student rendering, with correct next-token alignment. Loss masking removes direct prediction-loss terms, not access to context or every gradient path through it.</li>
+    <li><strong>The serving protocol:</strong> use compatible chat templates, assistant prefills, tool serialization, and termination conventions. Include intended generated end-of-turn targets, distinguish truncation from natural stopping, and mask padding by position rather than accidentally masking real EOS tokens when their IDs coincide.</li>
+  </ul>
+
+  <div class="step" id="agent-sft-example">
+    <div class="step-label">Worked example: two assistant decisions</div>
+    <p>The prompt \(P\) contains system instructions, an inventory-tool schema, and a user's stock question. The teacher emits tool call \(A\); the environment returns observation \(O\); the teacher then emits answer \(B\). Convert this interaction into the student's format before assigning token labels.</p>
+    <div class="table-wrap">
+      <table>
+        <caption>For this assistant-only recipe, 1 selects the generated target span and 0 leaves it as context.</caption>
+        <tr><th scope="col">Segment</th><th scope="col">One full trajectory</th><th scope="col">Call 1 row</th><th scope="col">Call 2 row</th></tr>
+        <tr><td>\(P\): instructions, tool schema, user request</td><td>0</td><td>0</td><td>0</td></tr>
+        <tr><td>\(A\): assistant inventory call and arguments</td><td>1</td><td>1</td><td>0</td></tr>
+        <tr><td>\(O\): tool returns stock quantity</td><td>0</td><td>Not present</td><td>0</td></tr>
+        <tr><td>\(B\): assistant answers the user</td><td>1</td><td>Not present</td><td>1</td></tr>
+      </table>
+    </div>
+    <p>Injected assistant headers or prefills remain context; selected generated closing delimiters and end-of-turn tokens belong to their target span. Role labels by themselves do not locate these boundaries.</p>
+    <p><strong>Two valid layouts:</strong> all-assistant loss on one full trajectory, or last-assistant loss on each per-call row. Applying all-assistant loss to <em>both</em> growing-prefix rows supervises \(A\) twice and \(B\) once. More generally, early turns are repeated in every later row.</p>
+    <p>The two intended layouts have the same token-loss terms only when contexts, target weights, and normalization match. Per-call rows are the safer reference when history is rewritten; merge only when every supervised target retains its intended causal context. Packing must preserve attention boundaries, and batch/gradient-accumulation reductions must preserve the chosen weighting.</p>
+  </div>
+
+  <p>After rendering, a full sequence \(S\) with per-token weights \(w\) yields explicit next-token inputs <code>S[:-1]</code>, targets <code>S[1:]</code>, and weights <code>w[1:]</code>. APIs that shift labels internally instead expect unshifted labels; do not shift twice. The first completion token is predicted from input position <code>len(prompt_tokens) - 1</code>. See the <a href="harnessed-agentic-rl.html#tinker-datum">worked alignment contract</a>.</p>
+
+  <div class="note">
+    <strong>Objective choice is not mask correctness.</strong>
+    <a href="https://arxiv.org/html/2401.13586v4">Does Prompt Loss Matter? (EMNLP 2024)</a> and
+    <a href="https://arxiv.org/html/2405.14394v2">Instruction Tuning With Loss Over Instructions (NeurIPS 2024)</a>
+    find benefits from prompt loss in some settings, especially short-output or limited-data regimes.
+    That supports deliberate weighting experiments, not accidental supervision of tool observations.
+    The retokenization-instability evidence cited below concerns RL; it does not establish that
+    raw-token SFT universally outperforms faithful student-format reconstruction.
+  </div>
+
+  <p><strong>Sources and implementation examples:</strong></p>
+  <ul>
+    <li><a href="https://arxiv.org/html/2310.12823v2">AgentTuning, §2.2.3</a> — GPT-generated interaction trajectories converted to a common dialogue format for Llama 2, with loss on model outputs.</li>
+    <li><a href="https://huggingface.co/docs/trl/chat_templates">TRL training templates</a> and <a href="https://huggingface.co/docs/trl/v1.16.0/en/sft_trainer">SFTTrainer</a> — explicit assistant spans, reasoning-preservation fixes, and pre-tokenized labels; documentation checked October 22, 2026.</li>
+    <li><a href="https://tinker-docs.thinkingmachines.ai/tutorials/core-concepts/rendering/index.md">Tinker rendering</a> and <a href="https://tinker-docs.thinkingmachines.ai/tinker/datum/index.md">Datum</a> — selected assistant scopes, aligned token weights, and explicit next-token targets.</li>
+    <li><a href="https://vllm.ai/blog/2025-10-22-agent-lightning">Agent Lightning/vLLM retokenization drift</a> — why sampled-action RL needs original IDs rather than a text round trip. See the <a href="harnessed-agentic-rl.html#text">harness guide</a> for the RL-specific contract.</li>
+  </ul>
+
   <h3>The distribution shift problem</h3>
+
+  <p><strong>Protocol fidelity is not a behavior guarantee.</strong> Correct roles, rendering, and masks reduce accidental training–serving mismatch, but they do not prevent the student from taking different actions and visiting unfamiliar states.</p>
 
   <p>Off-policy distillation trains the student on teacher-generated prefixes, but at inference time the student generates its own. Small deviations can lead to prefixes absent from the training data, where further errors become more likely. The fixed dataset supplies no direct corrective labels at those unseen states, although the model may generalize to them. This is the <a href="imitation-learning.html#shift">compounding-error problem</a> from behavior cloning.</p>
 
@@ -338,6 +407,8 @@
     \]
     <p style="font-size:0.85rem;color:var(--muted);margin:6px 0 0;">An example forward-KL objective: \(d_{\pi_k}\) is the prefix distribution from the student checkpoint used for this collection round. Treat sampled prefixes as fixed inputs during the supervised update; refresh rollouts as the student changes. This is soft-label KD on student states, not an alternative to soft-label KD. Other distillation recipes use different divergences or estimators.</p>
   </div>
+
+  <p>This token-level KL assumes aligned teacher/student prediction events and compatible conditioning contexts. With different tokenizers, raw vocabulary indices are not interchangeable; see <a href="#data-fidelity">the data-fidelity contract</a>. On-policy collection still preserves the student's sampled sequence rather than reconstructing it from decoded text.</p>
 
   <div class="callout">
     <div class="callout-label">Coverage, not an exact-match guarantee</div>

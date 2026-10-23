@@ -973,15 +973,26 @@
   </div>
 
   <!-- ── §3 ─────────────────────────────────────── -->
-  <h2 id="text">3. Why Text Cannot Cross the Seam</h2>
+  <h2 id="text">3. Why Sampled-Action RL Needs More Than Text</h2>
 
   <p>The tempting version of decoupling is "the harness sends messages, the trainer re-renders
   them through the chat template and tokenizes." It is what most harnesses do by default and
-  SkyRL's docs rank it first as "simplest — works almost out of the box." It is also wrong in
-  four independent ways, each now documented with a primary source. The
+  SkyRL's docs rank it first as "simplest — works almost out of the box." For PPO/GRPO updates
+  using captured actions and behavior probabilities, unchecked reconstruction can corrupt the
+  objective through four distinct failure modes, each documented with a primary source. The
   <a href="verl-agentic-training.html#tito">verl page</a> made the BPE-seam argument
   \(T(a\Vert b) \neq T(a)\Vert T(b)\); Agent Lightning v1.0 and the Hugging Face TITO post
   (May 2026) decompose it further.</p>
+
+  <div class="note">
+    <strong>This is a sampled-action RL contract, not a prohibition on text-based SFT.</strong>
+    Offline hard-target distillation may intentionally render teacher-generated content into a
+    student's different tokenizer and serving format. It must preserve interaction semantics and
+    regenerate supervision boundaries, not reuse incompatible teacher-indexed masks. See
+    <a href="distillation.html#data-fidelity">teacher tokens versus student supervision</a>.
+    A chat API carrying exact token metadata can also satisfy the RL contract; the endpoint's
+    shape is not the invariant.
+  </div>
 
   <div class="table-wrap">
     <table>
@@ -1014,8 +1025,9 @@
   the trainer's \(a_t\) is not the engine's \(a_t\), the ratio is meaningless; if \(s_t\) has
   been rewritten, the policy is being updated on a context it never saw. And — the point SkyRL's
   docs make explicitly — you "cannot do rollout correction like TIS reliably, so you cannot do
-  fully async training with proper staleness correction." Text-level decoupling silently forbids
-  the async designs of <a href="async-rl.html">the async RL page</a>.</p>
+  fully async training with proper staleness correction." Without preserved token, context, and
+  probability alignment, re-rendered text alone is insufficient for the correction-based
+  designs of <a href="async-rl.html">the async RL page</a>.</p>
 
   <div class="note">
     <strong>The consensus statement.</strong> Prime Intellect's renderers post: "For RL, the
