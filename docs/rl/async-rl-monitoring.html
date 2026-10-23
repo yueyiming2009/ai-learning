@@ -302,6 +302,14 @@
 <div class="page-wrap">
 
   <div class="note">
+    <strong>New to the dashboard?</strong> Start with
+    <a href="rl-training-metrics.html">RL Training Basics &amp; Metrics</a> for the actor/critic
+    loop, loss components, advantages versus returns, rollout masks, and
+    <code>global_seqlen</code> partition loads. This page focuses on diagnosing async behavior,
+    not introducing those quantities.
+  </div>
+
+  <div class="note">
     This page is a companion to <a href="async-rl.html">Async RL — Policy Lag, IS Correction, and TIM</a>.
     The concepts below (IS ratios, TIM, TIS, entropy collapse) are derived there.
     Applies to any async RL system — verl, slime/Miles, or otherwise.
@@ -366,7 +374,9 @@
 
   <p><strong>Metric keys —</strong>
     verl: <code>actor/pg_clipfrac</code> (combined upper+lower) and
-    <code>actor/pg_clipfrac_lower</code> (lower clip tracked separately as a first-class metric) ·
+    <code>actor/pg_clipfrac_lower</code> (implementation-specific: the pinned vanilla loss reports
+    the negative-advantage <em>dual-clip</em> branch, not simply the lower ratio tail; see the
+    <a href="rl-training-metrics.html#policy">source-pinned glossary</a>) ·
     Miles: <code>train/pg_clipfrac</code> (combined only; upper vs lower split requires custom logging).
   </p>
 
@@ -699,21 +709,24 @@ Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
   loss, see <a href="ppo.html#entropy">PPO §6 — Policy Entropy</a>. The diagnostic
   interpretation during training is below.</p>
 
-  <p>The entropy of the policy at each token position, approximated from sampled log-probs:</p>
+  <p>Policy entropy can be computed from the action distribution, or estimated from
+  sampled log-probs when the actions are sampled from that same policy:</p>
   \[
     H[\pi] \approx -\frac{1}{|\mathcal{T}|}\sum_{t \in \mathcal{T}} \log\pi_\theta(a_t|s_t)
   \]
-  <p>(This is a Monte Carlo estimate using only the sampled action, not the full vocabulary
-  distribution. A more precise estimate uses the top-k logits.)</p>
+  <p>This Monte Carlo estimate uses only the sampled action, not the full vocabulary.
+  If the action instead came from a different behavior policy, its negative log-probability
+  under the current actor is not automatically an actor-entropy estimate. The
+  <a href="rl-training-metrics.html#policy">pinned verl entropy fields</a> use model-computed
+  distribution entropy; distinguish the old-policy pass from the actor-update loss term.</p>
 
   <ul>
     <li><strong>Gradually decreasing</strong> — expected during learning; the policy becomes
     more confident about good actions.</li>
-    <li><strong>Rapid collapse to near-zero</strong> — reward hacking: the policy found a
-    degenerate response pattern that scores well but has collapsed diversity (e.g., always
-    generating the same short answer).</li>
-    <li><strong>Increasing late in training</strong> — catastrophic forgetting or gradient
-    noise overwhelming the policy signal.</li>
+    <li><strong>Rapid collapse to near-zero</strong> — investigate loss of diversity,
+    degenerate responses, and reward hacking; the curve alone does not establish the cause.</li>
+    <li><strong>Increasing late in training</strong> — inspect outcome quality, task mix,
+    sampling settings, and updates before attributing it to forgetting or gradient noise.</li>
   </ul>
 
   <p>Entropy collapse is also what causes the <a href="#entropy-collapse">Pearson amplification
@@ -721,7 +734,8 @@ Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
   of TIM baseline and tis_clipfrac.</p>
 
   <p><strong>Metric keys —</strong>
-    verl: <code>actor/entropy</code> (logged directly by the actor worker each step) ·
+    verl: <code>actor/entropy</code> (old-policy recomputation pass) and
+    <code>actor/entropy_loss</code> (unweighted actor-update entropy term when computed) ·
     Miles: <code>rollout/entropy</code> (MC estimate from −log π of sampled tokens, averaged over the
     rollout batch; computed over response tokens using the loss mask);
     <code>train/entropy_loss</code> (the entropy bonus term \(H[\pi]\) as it enters the loss, only
@@ -731,58 +745,58 @@ Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
   <!-- ── §7 Advantage stats ─────────────────── -->
   <h2 id="advantages">7. Advantage Statistics — Signal Health</h2>
 
-  <p>Measured <em>before</em> whitening, so they reflect raw reward signal strength. The
-  diagnostic meaning differs between PPO (critic-estimated baseline) and GRPO (group-mean
-  baseline):</p>
+  <p>Distinguish the raw estimator output from the tensor actually logged.
+  In the <a href="rl-training-metrics.html#signal">source-pinned verl path</a>,
+  <code>critic/advantages/*</code> summarizes <em>post-whitening</em> PPO advantages or
+  broadcast GRPO group-relative weights over valid action tokens. Raw pre-whitening
+  statistics require separate instrumentation.</p>
 
   <ul>
     <li><strong>\(\mathrm{Var}(A_t)\) before whitening</strong> — the spread of raw advantages.
       <ul style="margin-top:0.4em;">
-        <li><strong>PPO:</strong> collapse toward zero means the critic has overfit and is
-        predicting near-perfect returns — the policy gradient signal is dead. Cross-check with
-        <code>vf_explained_var</code> → 1.0. Common early warning before reward hacking appears
-        in reward curves.</li>
-        <li><strong>GRPO:</strong> collapse toward zero means <em>reward collapse</em> — all
-        outputs in the group received the same score, so z-scored advantages are all near zero
-        and the batch provides no training signal. Root cause is usually prompt difficulty
-        mismatch (all too easy or too hard) or a miscalibrated reward function. Fix: check
-        within-group reward std and adjust prompt difficulty sampling.</li>
+        <li><strong>PPO:</strong> low variance means little variation in the raw action
+        weights, not automatically critic overfitting. Check their mean, reward scale,
+        masks, value targets, and held-out outcomes. Whitening can hide changes in raw scale.</li>
+        <li><strong>GRPO:</strong> identical rewards within a multi-response group give
+        zero centered reward signal, whether every response passed or every response failed.
+        Inspect raw within-group rewards and task outcomes before changing difficulty or
+        blaming the verifier. Entropy/KL terms can still produce an update.</li>
       </ul>
     </li>
     <li><strong>Fraction of tokens with \(A_t > 0\) vs \(A_t < 0\)</strong>
       <ul style="margin-top:0.4em;">
-        <li><strong>PPO:</strong> roughly 50% above and below the baseline in a healthy batch.
-        A strong imbalance signals a nearly one-sided reward (ceiling or floor, or miscalibrated
-        KL penalty).</li>
-        <li><strong>GRPO with std-norm (default):</strong> always exactly 50/50 by construction
-        — z-scoring forces the group mean to zero. This metric is uninformative in standard
-        GRPO; ignore it.</li>
-        <li><strong>GRPO / Dr.GRPO (std-norm off,
-        <code>norm_adv_by_std_in_grpo: false</code>):</strong> fraction positive reflects
-        actual reward difficulty — a majority negative means the policy is mostly wrong on the
-        current prompt distribution.</li>
+        <li><strong>PPO:</strong> there is no universal healthy 50/50 split. Centering
+        constrains the mean, not the count of positive and negative weights.</li>
+        <li><strong>GRPO, with or without std normalization:</strong> subtracting the
+        group mean centers the sequence weights; division by a positive standard deviation
+        does not change their signs. Rewards <code>[0, 0, 1]</code> produce two negative
+        weights and one positive. Unequal lengths further change token-weighted counts.
+        Sign fractions are not an absolute task-success rate.</li>
       </ul>
     </li>
-    <li><strong>Advantage mean before whitening</strong> — should be near zero (GAE is
-    critic-baselined in PPO; z-score mean is exactly zero in standard GRPO). A persistent
-    non-zero mean in PPO signals the critic is systematically off; in GRPO it only arises
-    with std-norm disabled.</li>
+    <li><strong>Mean and aggregation</strong> — PPO whitening makes the mean near zero
+    over the normalization mask, regardless of raw signal strength. GRPO centers each
+    multi-response group at sequence level both with and without std normalization;
+    broadcasting weights onto unequal-length responses can make the logged token mean
+    nonzero. Filtering or a different measurement mask can change it again.</li>
   </ul>
 
   <h3>PPO only: <code>vf_explained_var</code> — critic quality</h3>
-  <p>\(1 - \mathrm{Var}(R-V)/\mathrm{Var}(R)\): approaches 1.0 when the critic perfectly
-  predicts returns (policy gradient signal is dead); near 0 when the critic is uninformative.
-  <strong>This metric does not exist in GRPO runs</strong> — there is no critic to overfit.
-  verl key: <code>critic/vf_explained_var</code>; Miles: not logged.</p>
+  <p>\(1 - \mathrm{Var}(R-V)/(\mathrm{Var}(R)+\epsilon)\): near 1 means low residual
+  variance, near 0 little target variance explained, and negative values worse than the
+  constant-mean variance baseline. It misses constant prediction offsets and is unreliable
+  for near-constant targets. A high value alone does not establish overfitting or a dead
+  policy gradient. <strong>Standard GRPO has no learned critic</strong>, so this critic
+  diagnostic is absent. verl key: <code>critic/vf_explained_var</code>; Miles: not logged.</p>
 
   <h3>GRPO only: within-group reward std — dead-batch detection</h3>
   <p>The standard deviation of raw rewards within each group:
   \(\mathrm{std}(\{r_1,\ldots,r_G\})\) per prompt. Near zero means all completions scored
-  identically — the group provides no contrastive signal and the gradient update is noise.
-  Neither verl nor Miles logs this as a first-class metric; add a custom logger that reads
-  raw rewards before normalization. As a proxy, watch <code>critic/advantages/std</code>
-  (verl) or <code>rollout/advantages</code> (Miles) — when reward diversity collapses,
-  advantage std follows.</p>
+  identically — the centered reward objective provides no within-group contrast.
+  Log raw within-group spread and the fraction of zero-spread groups before normalization;
+  meaningful nonzero scales depend on the reward function. The pinned verl batch-metric
+  function does not emit <code>critic/advantages/std</code>. An advantage mean, including
+  Miles' <code>rollout/advantages</code>, cannot substitute for a variance measurement.</p>
 
   <p><strong>Metric keys —</strong>
     verl: <code>critic/advantages/mean</code>, <code>critic/advantages/max</code>,
@@ -981,23 +995,23 @@ Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
       <tr>
         <td>Policy entropy \(H[\pi]\)</td>
         <td>Gradual decrease</td>
-        <td>Rapid collapse = reward hacking; increase late = forgetting</td>
+        <td>Rapid changes require outcome, diversity, sampling, and update context; not a cause diagnosis by themselves</td>
         <td><code>actor/entropy</code></td>
         <td><code>rollout/entropy</code><br><code>train/entropy_loss</code></td>
       </tr>
       <tr>
         <td>\(\mathrm{Var}(A_t)\) (pre-whiten)</td>
         <td>Non-zero, stable</td>
-        <td>PPO → 0 = critic overfit (<code>vf_explained_var</code> → 1 is the direct signal); GRPO → 0 = reward collapse (dead batch)</td>
-        <td><code>critic/advantages/mean</code><br><small style="color:var(--muted);">PPO only: <code>critic/vf_explained_var</code></small></td>
-        <td><code>rollout/advantages</code></td>
+        <td>Low spread needs reward/mask/target context; normalized means cannot diagnose raw signal strength. High explained variance alone is not overfitting.</td>
+        <td>Custom pre-whitening log<br><small style="color:var(--muted);">PPO value-fit context: <code>critic/vf_explained_var</code></small></td>
+        <td>Custom pre-normalization log</td>
       </tr>
       <tr>
         <td>Within-group reward std <small style="color:var(--muted);">(GRPO only)</small></td>
-        <td>≥ 0.1</td>
-        <td>&lt; 0.01 = dead batch; no contrastive signal this step; check prompt difficulty</td>
-        <td style="color:var(--muted);font-size:0.88em;">Custom log; proxy: <code>critic/advantages/std</code></td>
-        <td style="color:var(--muted);font-size:0.88em;">Custom log; proxy: <code>rollout/advantages</code></td>
+        <td>Reward-scale dependent</td>
+        <td>Zero spread means no centered reward contrast in that group; distinguish all-pass from all-fail groups.</td>
+        <td style="color:var(--muted);font-size:0.88em;">Custom within-group reward log</td>
+        <td style="color:var(--muted);font-size:0.88em;">Custom within-group reward log</td>
       </tr>
       <tr>
         <td><code>grad_norm</code></td>

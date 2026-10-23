@@ -116,8 +116,11 @@ OpenEnv, verifiers &amp; the Environments Hub, verifier/reward design, sandboxin
 task generation &amp; curriculum. **Frameworks:** the framework landscape (self-operated runtimes
 versus Tinker's managed LoRA training API, separating algorithm ownership from runtime control),
 verl (HybridFlow) architecture, resource-pool
-placement, TRL, the slime–Miles walkthrough. **At scale:** PPO/GRPO training walkthroughs, async
-RL and its monitoring, reward pipelining.
+placement, TRL, the slime–Miles walkthrough. **Training:** start with
+[RL Training Basics & Metrics](docs/rl/rl-training-metrics.html) — the rollout-to-update loop,
+worked PPO/GRPO signals, and a source-pinned glossary for losses, returns, masks, partition
+token loads, and throughput. Continue to PPO/GRPO training walkthroughs, then async RL and
+its monitoring, and reward pipelining.
 
 ### 06 · Inference — [docs/inference/](docs/inference/)
 Serving a trained model fast — the prefill/decode compute model, KV cache, and batching;

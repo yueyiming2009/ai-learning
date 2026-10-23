@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Connect the RL training loop to actor loss, policy gradients, advantages, returns, rollout lengths, global_seqlen, and throughput, with source-pinned verl metric definitions.">
+  <title>RL Training Basics &amp; Metrics</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #ffffff; --surface: #f8f9fa; --border: #e8eaed; --text: #1a1a2e;
+      --muted: #6b7280; --accent: #0d9488; --accent-light: #f0fdfa;
+      --nav-bg: rgba(255,255,255,0.92); --ink: #374151; --teal-border: #99f6e4;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115; --surface: #171b21; --border: #262b33; --text: #e5e7eb;
+        --muted: #9aa1ab; --accent: #2dd4bf; --accent-light: #10201e;
+        --nav-bg: rgba(15,17,21,0.9); --ink: #cbd5e1; --teal-border: #134e4a;
+      }
+    }
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; line-height: 1.75; font-size: 16px; }
+    nav { position: sticky; top: 0; z-index: 100; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 52px; }
+    .nav-brand { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 0.9rem; color: var(--accent); text-decoration: none; white-space: nowrap; }
+    .nav-links { display: flex; gap: 4px; overflow-x: auto; flex: 1; min-width: 0; }
+    .nav-links a { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; white-space: nowrap; }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .hero { background: linear-gradient(135deg, #134e4a 0%, #0d9488 60%, #14b8a6 100%); color: white; padding: 56px 24px 48px; text-align: center; }
+    .hero h1 { font-size: clamp(1.5rem, 4vw, 2.2rem); font-weight: 600; margin: 0 0 12px; letter-spacing: -0.02em; }
+    .hero p { margin: 0 auto; opacity: 0.9; font-size: 0.97rem; max-width: 680px; }
+    .hero-pill { display: inline-block; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 100px; font-size: 0.78rem; padding: 3px 12px; margin-bottom: 16px; letter-spacing: 0.04em; text-transform: uppercase; }
+    .page-wrap { max-width: 980px; margin: 0 auto; padding: 48px 24px 80px; }
+    h2 { font-size: 1.2rem; font-weight: 600; margin: 2.8em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); }
+    h3 { font-size: 1rem; color: var(--ink); margin: 1.6em 0 0.4em; }
+    [id] { scroll-margin-top: 72px; }
+    p { margin: 0.6em 0; }
+    a { color: var(--accent); }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.5em; }
+    code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; font-size: 0.86em; overflow-wrap: anywhere; }
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+    th, td { border: 1px solid var(--border); padding: 10px 14px; text-align: left; vertical-align: top; }
+    th { background: var(--surface); font-weight: 600; }
+    .callout { background: var(--accent-light); border: 1px solid var(--teal-border); border-radius: 8px; padding: 14px 18px; margin: 1.2em 0; }
+    .callout-label { font-size: 0.78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.06em; }
+    .equation { overflow-x: auto; padding: 8px 0; }
+    .flow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 0; list-style: none; }
+    .flow li { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin: 0; }
+    .flow strong { display: block; color: var(--accent); }
+    .source-note { font-size: 0.87rem; color: var(--muted); }
+    footer { border-top: 1px solid var(--border); padding: 28px 24px; text-align: center; font-size: 0.82rem; color: var(--muted); }
+    @media (max-width: 600px) {
+      nav { padding: 0 12px; gap: 12px; }
+      .nav-brand { font-size: 0.8rem; }
+      .page-wrap { padding: 32px 16px 60px; }
+      .flow { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<nav aria-label="Page navigation">
+  <a class="nav-brand" href="../index.html" aria-label="Home - all notes">
+    <svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+    RL Basics &amp; Metrics
+  </a>
+  <div class="nav-links">
+    <a href="#loop">Training loop</a>
+    <a href="#example">Worked example</a>
+    <a href="#policy">Actor metrics</a>
+    <a href="#signal">Rewards &amp; critic</a>
+    <a href="#lengths">Lengths &amp; masks</a>
+    <a href="#global-seqlen">global_seqlen</a>
+    <a href="#throughput">Rollout &amp; speed</a>
+    <a href="#reading">Reading path</a>
+    <a href="#sources">Sources</a>
+  </div>
+</nav>
+<header class="hero">
+  <span class="hero-pill">RL Training &middot; Concepts to Dashboard</span>
+  <h1>RL Training Basics &amp; Metrics</h1>
+  <p>What the actor is optimizing, what advantages and returns mean, and how to read loss, rollout, length, and throughput fields without mistaking them for model quality.</p>
+</header>
+<main class="page-wrap">
+  <p>Start here when a dashboard shows <code>actor/loss</code>, <code>actor/pg_loss</code>,
+  <code>critic/advantages</code>, <code>critic/returns</code>, or <code>global_seqlen</code>.
+  The concepts apply broadly; the exact keys below describe a <strong>pinned verl implementation</strong>,
+  not a universal logging standard. For asynchronous failure diagnosis, continue to
+  <a href="async-rl-monitoring.html">Monitoring &amp; Diagnosis for Async RL</a>.</p>
+  <p class="source-note">Source-checked 2026-10-23 against public verl commit
+  <a href="https://github.com/volcengine/verl/commit/3c6d9b43b67c74ec343d77874cd8fa6e841523da"><code>3c6d9b43b67c</code></a>:
+  <code>RayPPOTrainer</code>, the engine-worker PPO/value losses, and the vanilla policy-loss mode.
+  Optional losses, other estimators/backends, and custom loggers can change what is emitted.
+  Source inspection, not a training-run benchmark.</p>
+
+  <h2 id="loop">1. The training loop: data becomes a signed learning signal</h2>
+  <p>In token-level LLM RL, a <strong>state</strong> is the prompt and available history,
+  an <strong>action</strong> is a generated token, and a <strong>policy</strong> assigns probabilities
+  to possible next tokens. A <strong>rollout</strong> is the sampled response or, for an agent,
+  a trajectory interleaving model actions and environment observations. A reward scores an outcome;
+  it is not itself a differentiable loss through the sampled text.</p>
+  <ol class="flow" aria-label="Six stages of an RL training iteration">
+    <li id="rollout"><strong>1. Prompt and rollout</strong>Sample tasks and generate one or more responses per prompt. Retain action tokens, masks, and behavior-policy log-probabilities.</li>
+    <li><strong>2. Score and reward</strong>A verifier or reward model scores the response. Shaping, such as a reference-policy KL penalty, may alter the rewards used for training.</li>
+    <li><strong>3. Baselines</strong>PPO evaluates a critic. GRPO instead compares multiple responses to the same prompt. Neither baseline is the actor's loss.</li>
+    <li><strong>4. Returns and advantages</strong>Construct value targets and signed action weights: which sampled decisions should become more or less likely?</li>
+    <li><strong>5. Loss and update</strong>Recompute probabilities with the trainable actor, form a masked surrogate loss, backpropagate, and update parameters. PPO also fits its critic.</li>
+    <li><strong>6. Repeat and evaluate</strong>Publish updated rollout weights and collect more data. Measure held-out task quality separately from optimization and throughput metrics.</li>
+  </ol>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Role</th><th scope="col">Question it answers</th><th scope="col">When it changes</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Actor \(\pi_\theta\)</th><td>Which action should I take? Its log-probability \(\log\pi_\theta(a\mid s)\) supplies the gradient.</td><td>At actor optimizer updates.</td></tr>
+        <tr><th scope="row">Rollout / behavior policy \(\mu\)</th><td>Which policy actually sampled this action?</td><td>When rollout workers receive weights; async workers may lag behind.</td></tr>
+        <tr><th scope="row">Old / proximal snapshot</th><td>What is the fixed denominator of this PPO update's probability ratio?</td><td>At the chosen snapshot boundary, not every minibatch update. It may differ from \(\mu\).</td></tr>
+        <tr><th scope="row">Reference policy \(\pi_{\rm ref}\)</th><td>How far have we moved from an anchor, often the initial fine-tuned model?</td><td>Usually frozen for the run; not the same as the old-policy snapshot.</td></tr>
+        <tr><th scope="row">Critic \(V_\psi(s)\)</th><td>How much future reward do I expect from this state?</td><td>At critic updates in PPO/GAE. Standard GRPO has no learned critic.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>A reward model judges an outcome; a critic predicts future return from a state. They are
+  different roles even if both output scalars. See <a href="value-functions.html">Value Functions</a>,
+  <a href="policy-gradient.html">Policy Gradient</a>, and <a href="behavior-policy.html">Behavior vs Target Policy</a>
+  for the underlying definitions.</p>
+
+  <h2 id="example">2. A tiny PPO example: reward, return, advantage, loss</h2>
+  <p>Take one response with two valid action tokens, no padding or KL penalty, and a true terminal
+  state after token 2. Let \(\gamma=\lambda=1\), rewards be \([0,1]\), and frozen critic estimates
+  be \([0.2,0.4]\), with terminal value zero. GAE works backward:</p>
+  <div class="equation">
+    \[
+      \delta_t=r_t+\gamma V_{t+1}-V_t,\qquad
+      A_t^{\rm raw}=\delta_t+\gamma\lambda A_{t+1}^{\rm raw},\qquad
+      \widehat R_t=A_t^{\rm raw}+V_t.
+    \]
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Token</th><th scope="col">Reward \(r_t\)</th><th scope="col">Value \(V_t\)</th><th scope="col">TD error \(\delta_t\)</th><th scope="col">Raw advantage</th><th scope="col">Return target</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">1</th><td>0</td><td>0.2</td><td>0 + 0.4 - 0.2 = 0.2</td><td>0.2 + 0.6 = 0.8</td><td>0.8 + 0.2 = 1</td></tr>
+        <tr><th scope="row">2</th><td>1</td><td>0.4</td><td>1 + 0 - 0.4 = 0.6</td><td>0.6</td><td>0.6 + 0.4 = 1</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p><strong>Return:</strong> the critic's target is 1 at both positions here. With other
+  \(\lambda\), discounts, or bootstrapping boundaries, a GAE return need not equal the
+  undiscounted episode score. <strong>Advantage:</strong> both actions had better outcomes than
+  the frozen critic predicted. The actor receives detached advantages, not a gradient through
+  the reward computation or critic.</p>
+  <p>The pinned GAE function builds returns <em>before</em> whitening advantages. With these
+  two tokens, the raw advantage mean is 0.7 and the sample standard deviation is
+  \(\sqrt{0.02}\). Whitening produces approximately \([+0.7071,-0.7071]\).
+  The critic still targets \([1,1]\); adding the whitened advantages to values would be wrong.
+  Whitening centers the actor's weights within this batch, so a negative normalized weight
+  does not necessarily mean a negative raw advantage or a failed response.
+  <a href="#source-estimators">Estimator source</a>.</p>
+
+  <h3 id="zero-loss">Why zero policy loss can still learn</h3>
+  <p>Ignoring optional corrections and dual clipping for this illustration, minimize the PPO surrogate</p>
+  <div class="equation">
+    \[
+      L_{\rm PG}=-\operatorname{mean}_{m_t=1}
+      \min\!\left(q_t\widehat A_t,\,
+      \operatorname{clip}(q_t,1-\epsilon,1+\epsilon)\widehat A_t\right),
+      \qquad q_t=\exp(\log\pi_\theta(a_t\mid s_t)-\log\pi_{\rm old}(a_t\mid s_t)).
+    \]
+  </div>
+  <p>At the start of a fresh update, \(q_t=1\), so our token-mean loss is approximately zero.
+  But the ratios are <em>functions of the actor parameters</em>, not constants to remove before
+  differentiating:</p>
+  <div class="equation">
+    \[
+      \nabla_\theta L_{\rm PG}\big|_{q=1}
+      =-\tfrac12\left(0.7071\nabla_\theta\log\pi_\theta(a_1\mid s_1)
+      -0.7071\nabla_\theta\log\pi_\theta(a_2\mid s_2)\right).
+    \]
+  </div>
+  <p>The two score gradients generally differ, so they need not cancel. A near-zero
+  <code>pg_loss</code> and zero clip fraction are compatible with a real update.
+  Conversely, a nonzero loss does not prove useful learning. Check gradients, parameter
+  updates, and held-out outcomes.</p>
+
+  <h3 id="grpo">What changes for GRPO?</h3>
+  <p>Sample a group of responses to the same prompt and compare their sequence rewards:
+  \(A_i=(R_i-\bar R_{\rm group})/(s_{\rm group}+\varepsilon)\), or just subtract the mean when
+  standard-deviation normalization is disabled. Broadcast each response's weight over its
+  valid action tokens. There is no value prediction or value-regression update.</p>
+  <p>For rewards \([0,0,1]\), sample-standard-deviation normalization gives approximately
+  \([-0.577,-0.577,1.155]\). The sequence-level mean is zero, but the signs are
+  <strong>two negative, one positive</strong>, not necessarily 50/50. Unequal response lengths
+  can also make the <em>token-weighted</em> logged mean nonzero. Equal rewards within a
+  multi-response group give zero centered reward signal, whether the group all succeeded or all failed.</p>
+  <div class="callout">
+    <div class="callout-label">The returns field is estimator-dependent</div>
+    <p>The pinned <code>compute_grpo_outcome_advantage</code> returns the same group-relative
+    tensor in both the <code>advantages</code> and <code>returns</code> slots.
+    Thus <code>critic/returns/*</code> in this GRPO path is <strong>not</strong> a critic target
+    or raw episode-return measurement. The <code>critic/</code> prefix is a logging namespace,
+    not evidence that a critic exists. Use <code>critic/score/*</code> and
+    <code>critic/rewards/*</code> for sequence outcomes.</p>
+  </div>
+
+  <h2 id="policy">3. Actor and optimization metrics</h2>
+  <p>For the pinned PPO loss, with optional entropy and reference-KL terms enabled:</p>
+  <div class="equation">
+    \[
+      L_{\rm actor}=L_{\rm PG}-c_H H+\beta L_{\rm KL}.
+    \]
+  </div>
+  <p>Each term uses the configured loss reduction. Entropy and KL coefficients multiply
+  their logged unweighted terms; disabled terms are absent. In this separate-actor/critic path,
+  <strong>critic value loss is not part of actor loss</strong>. Distillation or other auxiliary
+  objectives require inspecting their own composition.
+  <a href="#source-loss">Loss source</a> &middot; <a href="#source-worker">Worker aggregation</a>.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Metric</th><th scope="col">Definition and units</th><th scope="col">How to read it</th></tr></thead>
+      <tbody>
+        <tr id="actor-loss"><th scope="row"><code>actor/loss</code></th><td>The worker's total actor objective. Microbatch loss contributions are summed and data-parallel ranks averaged; minibatch results are subsequently reduced for logging.</td><td>May differ from PG loss due to entropy/KL or another configured objective. Its sign and magnitude are not a task-quality score.</td></tr>
+        <tr id="pg-loss"><th scope="row"><code>actor/pg_loss</code></th><td>The reduced policy-gradient surrogate, including selected clipping and any rollout-correction weights. Its scale depends on advantage scaling and token/sequence reduction.</td><td>Can be negative or near zero. Compare only like-for-like objectives, masks, and reductions; see the <a href="#zero-loss">zero-loss example</a>.</td></tr>
+        <tr><th scope="row"><code>actor/entropy</code><br><code>actor/entropy_loss</code></th><td>Policy entropy \(H=-\sum_a p_a\log p_a\). The trainer logs entropy from the old-policy pass; the loss path logs the unweighted entropy term at actor-update time. Token-mean entropy is in nats per action position; other reductions rescale it.</td><td>Despite the suffix, <code>entropy_loss</code> is the positive entropy quantity, subtracted with its coefficient. Different snapshots/reductions need not agree. Falling entropy can mean concentration, not automatically collapse.</td></tr>
+        <tr><th scope="row"><code>actor/ppo_kl</code></th><td>In vanilla mode, local masked mean of old minus current action log-probability, with the log-ratio numerically clamped before reduction. Nats per valid action token before worker aggregation.</td><td>A sampled update-drift estimate, not reference-policy KL. Finite samples can be negative; other loss modes reuse the key with different estimators.</td></tr>
+        <tr><th scope="row"><code>actor/kl_loss</code><br><code>actor/kl_coef</code></th><td>Optional unweighted reference-KL penalty estimator and its multiplier. Estimator and reduction are configurable.</td><td>Anchors the current policy to the reference. Do not confuse it with <code>ppo_kl</code> or count a reward-side penalty as the same loss-side term.</td></tr>
+        <tr><th scope="row"><code>actor/reward_kl_penalty</code><br><code>actor/reward_kl_penalty_coeff</code></th><td>Reward-side KL statistic and coefficient when that shaping path is enabled; the trainer averages per-sequence masked means.</td><td>Helps explain the gap between sequence score and shaped reward. Sampling snapshot and estimator differ from an explicit actor KL loss.</td></tr>
+        <tr><th scope="row"><code>actor/pg_clipfrac</code></th><td>Vanilla loss: local masked fraction where the clipped negative surrogate is strictly greater than the unclipped one. Dimensionless, 0 to 1.</td><td>Counts activation of the clipping branch, not every out-of-band ratio. Zero can be expected at the first fresh update; no universal healthy range.</td></tr>
+        <tr><th scope="row"><code>actor/pg_clipfrac_lower</code></th><td>In this vanilla implementation, the extra <em>dual-clip</em> branch fraction for negative advantages.</td><td><strong>Not simply the fraction with \(q&lt;1-\epsilon\).</strong> Read the selected loss function before using this as a lower-tail chart.</td></tr>
+        <tr><th scope="row"><code>actor/grad_norm</code></th><td>Gradient norm; the pinned FSDP engine reports the total norm <em>before</em> gradient clipping. Scale depends on loss normalization and trainable parameters.</td><td>Compare trends under a fixed setup. A value above the clipping threshold does not mean clipping failed. Nonfinite gradients are a correctness/stability alert.</td></tr>
+        <tr><th scope="row"><code>actor/lr</code></th><td>Scheduler-reported learning rate when emitted. It is logged after a scheduler step in the worker path.</td><td>Check logging time before assigning it to a particular update. It is not the parameter-update norm, especially with Adam or clipping.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="source-note">Loss terms use global-normalization-aware <code>Metric</code> aggregation.
+  Vanilla clip/KL diagnostics start as local masked means and are then mean-aggregated;
+  with unequal token counts this need not equal a single global token-weighted mean.
+  Do not reconstruct an exact global fraction from an unspecified dashboard average.</p>
+
+  <h2 id="signal">4. Scores, rewards, advantages, returns, and critic fit</h2>
+  <p>Below, <code>/*</code> means the emitted <code>/mean</code>, <code>/max</code>, and
+  <code>/min</code> fields. The pinned <code>compute_data_metrics</code> does
+  <strong>not</strong> emit <code>critic/advantages/std</code>; add explicit instrumentation
+  if variance is needed. <a href="#source-data">Batch-metric source</a>.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Metric</th><th scope="col">Computation / aggregation</th><th scope="col">Interpretation and caveats</th></tr></thead>
+      <tbody>
+        <tr><th scope="row"><code>critic/score/*</code></th><td>Sum <code>token_level_scores</code> within each sequence, then summarize non-aborted sequences. Units come from the scorer.</td><td>The score entering trainer shaping, not necessarily an unprocessed business metric. For a binary verifier it may represent success; learned scores have their own scale.</td></tr>
+        <tr><th scope="row"><code>critic/rewards/*</code></th><td>Sum <code>token_level_rewards</code> within each sequence, then summarize non-aborted sequences.</td><td>The actual reward signal after configured shaping. May equal score if no transformation is applied; a lower value can reflect a larger KL penalty rather than worse raw task performance.</td></tr>
+        <tr id="advantages"><th scope="row"><code>critic/advantages/*</code></th><td>Statistics over positions selected by <code>response_mask</code>, not over unique responses. PPO/GAE logs whitened advantages; GRPO logs broadcast group-relative weights.</td><td>Positive weights encourage sampled actions and negative weights discourage them in the surrogate. Near-zero mean can be by construction; inspect spread, group reward diversity, and masks rather than declaring no signal.</td></tr>
+        <tr id="returns"><th scope="row"><code>critic/returns/*</code></th><td>Statistics over masked token positions of the estimator's <code>returns</code> tensor. PPO/GAE: \(A^{\rm raw}+V_{\rm old}\), before whitening. Standard GRPO here: the advantage tensor again.</td><td>Not universally total episode reward. Interpret by estimator, and never reconstruct PPO targets from logged whitened advantages.</td></tr>
+        <tr><th scope="row"><code>critic/values/*</code></th><td>Masked statistics of the frozen value predictions used in advantage estimation; return units. Emitted only with a critic.</td><td>Compare to matching return targets, not unrelated score scales. A rising predicted value alone is not evidence that reward improved.</td></tr>
+        <tr><th scope="row"><code>critic/vf_loss</code><br><code>critic/vf_clipfrac</code></th><td>Half the reduced maximum of ordinary and clipped-prediction squared error; squared-return units under a mean reduction. Clip fraction counts where the clipped error branch is larger.</td><td>Measures fitting to current value targets, not policy quality. Target scale/distribution changes can move the loss without a regression in fit quality.</td></tr>
+        <tr><th scope="row"><code>critic/vf_explained_var</code></th><td>\(1-\operatorname{Var}(\widehat R-V)/(\operatorname{Var}(\widehat R)+10^{-5})\), over valid tokens. Dimensionless; critic only.</td><td>Near 1 means low residual variance, near 0 little variance explained, negative worse than the constant-mean variance baseline. Insensitive to a constant prediction offset; near-constant targets make it unreliable.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Aborted zero-length responses are excluded from score/reward summaries in this source.
+  Therefore a stable mean score can hide rising aborts. Check <code>response/aborted_ratio</code>
+  and whether missing outcomes are included in your separate evaluation denominator.
+  Empty valid-token sets produce NaN diagnostics, not evidence of zero loss or successful training.</p>
+
+  <h2 id="lengths">5. Lengths, masks, and the denominator of a loss</h2>
+  <p>In a simple text response, <code>attention_mask</code> selects non-padding prompt and response
+  tokens. <code>response_mask</code> selects positions that contribute action loss and signal
+  statistics. In multi-turn agent data, tool observations may be attended to but excluded from
+  action loss. <strong>Tokens processed, tokens generated, and tokens trained on need not be equal.</strong></p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Metric</th><th scope="col">Definition / units</th><th scope="col">What it does not prove</th></tr></thead>
+      <tbody>
+        <tr><th scope="row"><code>prompt_length/*</code><br><code>response_length/*</code></th><td>Mean/min/max tokens per sequence. Uses supplied length fields if present; otherwise sums the corresponding attention-mask regions.</td><td>Response length is not necessarily the number of policy-loss tokens in an agent trajectory. Longer output is not inherently better reasoning.</td></tr>
+        <tr><th scope="row"><code>response_length/clip_ratio</code><br><code>prompt_length/clip_ratio</code></th><td>Fraction whose measured length equals the corresponding tensor's maximum width.</td><td>A cap-hit proxy, not an explicit finish-reason classifier. Ending naturally exactly at the cap also counts. Inspect termination/truncation records.</td></tr>
+        <tr><th scope="row"><code>response/aborted_ratio</code></th><td>Fraction with measured response length zero.</td><td>Not every failure has zero length. Pair with outcome/error and termination evidence.</td></tr>
+        <tr><th scope="row"><code>response_length_non_aborted/*</code></th><td>Mean/min/max and <code>clip_ratio</code> restricted to nonzero-length responses.</td><td>Excludes aborts by design; use the all-response view alongside it.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <h3 id="aggregation">The same token losses can produce different scalar losses</h3>
+  <p>For token losses \(\ell_{it}\), mask \(m_{it}\), valid-token count \(T_i\) per sequence,
+  and \(N\) nonempty sequences, the principal <a href="#source-reduction">reduction modes</a> are:</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Mode</th><th scope="col">Logical global objective</th><th scope="col">Weighting consequence</th></tr></thead>
+      <tbody>
+        <tr><th scope="row"><code>token-mean</code></th><td>\(\sum_{i,t}m_{it}\ell_{it}/\sum_i T_i\)</td><td>Equal weight per valid token; a longer response contributes more tokens.</td></tr>
+        <tr><th scope="row"><code>seq-mean-token-mean</code></th><td>\(\frac1N\sum_i\frac1{T_i}\sum_t m_{it}\ell_{it}\)</td><td>Equal weight per response after its own token mean.</td></tr>
+        <tr><th scope="row"><code>seq-mean-token-sum</code></th><td>\(\frac1N\sum_{i,t}m_{it}\ell_{it}\)</td><td>Longer responses contribute more; overall scale grows with average length.</td></tr>
+        <tr><th scope="row"><code>seq-mean-token-sum-norm</code></th><td>The previous quantity divided by a normalization length \(C\).</td><td>Check whether \(C\) is a configured constant or defaults to tensor width; it is not each response's actual length.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>These describe the intended global objectives, not unscaled per-rank intermediates.
+  Changing masks or reduction changes weighting and often gradient scale. Do not compare
+  absolute loss magnitudes across such changes as if they were the same experiment.</p>
+
+  <h2 id="global-seqlen">6. global_seqlen is a load-balancing metric family</h2>
+  <p>In the pinned trainer, <code>global_seqlen</code> is a <em>prefix</em>, not one scalar.
+  When batch balancing is enabled, the trainer sums each row's full
+  <code>attention_mask</code>, then partitions sequences across data-parallel (DP) workers.
+  The logger summarizes <strong>sums of those lengths per partition</strong>.
+  It does not report the model context limit or the longest individual response.
+  <a href="#source-balance">Producer and logger</a>.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Key</th><th scope="col">Exact logged quantity</th></tr></thead>
+      <tbody>
+        <tr><th scope="row"><code>global_seqlen/min</code><br><code>global_seqlen/max</code></th><td>Minimum/maximum token totals of the original contiguous equal-row-count chunks, before the new assignment.</td></tr>
+        <tr><th scope="row"><code>global_seqlen/minmax_diff</code></th><td>Original maximum partition total minus original minimum, in tokens. This is the <em>before</em> gap.</td></tr>
+        <tr><th scope="row"><code>global_seqlen/balanced_min</code><br><code>global_seqlen/balanced_max</code></th><td>Minimum/maximum token totals after the computed partition assignment.</td></tr>
+        <tr><th scope="row"><code>global_seqlen/mean</code></th><td>Total non-padding tokens in the batch divided by the number of DP partitions; tokens per partition, not tokens per sequence.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p><strong>Example:</strong> full lengths \([10,10,30,30]\) on two DP partitions initially
+  give totals \([20,60]\). Reassign one short and one long sequence to each partition:
+  \([40,40]\). The logged min/max/difference are \(20/60/40\), balanced min/max are \(40/40\),
+  and mean is \(40\). The batch has \(80\) tokens; average <em>sequence</em> length is \(20\).</p>
+  <p>To assess the new assignment, compute
+  <code>balanced_max - balanced_min</code>, optionally divided by a positive
+  <code>global_seqlen/mean</code>. These are derived diagnostics, not additional built-in
+  fields in this logger. Smaller token imbalance can reduce stragglers, but the partitioner
+  also uses a workload model and token equality does not guarantee equal runtime
+  (attention lengths, MoE routing, and hardware matter). TP/PP ranks do not each represent
+  another independent DP data partition.</p>
+
+  <h2 id="throughput">7. Rollout batches, step counters, and speed</h2>
+  <p><strong>Batch units first:</strong> \(B\) prompts with \(n\) responses per prompt normally
+  yield \(B n\) sequences before filtering or retries. A rollout batch is collected data;
+  a training minibatch is a subset used for an optimizer update; a microbatch is a memory-sized
+  piece whose gradients can accumulate before that update. Multiple PPO epochs reuse the batch.
+  Configuration fields may count prompts before rollout expansion, so check their actual units.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Metric</th><th scope="col">Definition / units</th><th scope="col">Interpretation</th></tr></thead>
+      <tbody>
+        <tr><th scope="row"><code>training/global_step</code></th><td>Outer trainer iteration count in this path, not a count of every actor optimizer update.</td><td>One chart point can summarize multiple minibatches and epochs. Async rollout/version counters are separate clocks.</td></tr>
+        <tr><th scope="row"><code>timing_s/gen</code><br><code>timing_s/update_actor</code><br><code>timing_s/step</code></th><td>Seconds in the named measured scope: generation, actor training, or outer step.</td><td>Generation may include orchestration/waiting, not just GPU decode. Overlapping async timers cannot simply be added to obtain wall time.</td></tr>
+        <tr><th scope="row"><code>timing_per_token_ms/gen</code></th><td>Generation-scope seconds &times; 1000 / measured response-token count.</td><td>An aggregate amortized cost, not one request's inter-token latency.</td></tr>
+        <tr><th scope="row"><code>timing_per_token_ms/update_actor</code></th><td>Actor-update seconds &times; 1000 / prompt-plus-response token count in the outer batch.</td><td>The denominator does not multiply by the number of training epochs. More reuse can increase this value without a slower kernel.</td></tr>
+        <tr><th scope="row"><code>perf/total_num_tokens</code><br><code>perf/time_per_step</code></th><td>Sum of full attention-mask lengths, and measured outer-step seconds.</td><td>Counts prompt and response tokens once per batch row, not all repeated forward/backward passes or only generated tokens.</td></tr>
+        <tr><th scope="row"><code>perf/throughput</code></th><td>Total batch tokens / (step seconds &times; resource-pool GPU count): tokens/s/GPU in this trainer.</td><td>Not cluster output tokens/s or rollout-only decode throughput. Different GPU-pool accounting and overlapping schedules make cross-run comparisons unsafe without matching denominators.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="source-note"><a href="#source-timing">Timing and throughput source</a>. For example,
+  80 total batch tokens in 2 seconds on 2 counted GPUs gives 20 tokens/s/GPU, even if only
+  40 of those tokens were generated responses. No model-quality claim follows from this number.</p>
+
+  <h2 id="reading">8. Read a dashboard in this order</h2>
+  <ol>
+    <li><strong>Outcome and data validity:</strong> held-out task success, raw score, abort rate,
+    termination reasons, and reward-component integrity. Check that the evaluation denominator includes failures.</li>
+    <li><strong>Learning signal:</strong> reward diversity within prompt groups, advantages and masks,
+    and PPO value fit when a critic exists. Mean-zero normalized advantages alone say little.</li>
+    <li><strong>Update behavior:</strong> total loss versus its components, gradient norm, LR, entropy,
+    and which two policies each KL/ratio compares. Loss need not decrease monotonically as the data and targets change.</li>
+    <li><strong>Cost and scheduling:</strong> lengths, partition load, batch units, timers, and throughput
+    denominators. Establish these basics before attributing a change to async policy lag.</li>
+  </ol>
+  <p>There are no implementation-independent healthy loss or length thresholds. Record the
+  algorithm, source revision, reward scale, normalization, masks, loss reduction, batch/step
+  units, and sampling settings alongside the dashboard.</p>
+  <p><strong>Go deeper:</strong>
+  <a href="policy-gradient.html#gae">advantage/GAE derivation</a> &middot;
+  <a href="ppo.html">PPO objective</a> &middot;
+  <a href="grpo.html">GRPO and variants</a> &middot;
+  <a href="ppo-training-walkthrough.html#phases">PPO tensor-by-tensor walkthrough</a> &middot;
+  <a href="grpo-training-walkthrough.html#phases">GRPO walkthrough</a> &middot;
+  <a href="async-rl.html">async policy separation</a> &middot;
+  <a href="async-rl-monitoring.html">async monitoring and diagnosis</a>.</p>
+
+  <h2 id="sources">9. Source ledger: definitions, not guessed dashboard aliases</h2>
+  <p>All implementation links below are fixed to the same public verl commit. The glossary
+  summarizes those producers; a deployed fork or newer version must be checked separately.</p>
+  <ul>
+    <li id="source-estimators"><strong>GAE, GRPO, and whitening:</strong>
+    <a href="https://github.com/volcengine/verl/blob/3c6d9b43b67c74ec343d77874cd8fa6e841523da/verl/trainer/ppo/core_algos.py#L216-L332">advantage/return estimators</a>
+    and <a href="https://github.com/volcengine/verl/blob/3c6d9b43b67c74ec343d77874cd8fa6e841523da/verl/utils/torch_functional.py#L309-L346">masked variance and whitening</a>.</li>
+    <li id="source-loss"><strong>Actor and critic losses:</strong>
+    <a href="https://github.com/volcengine/verl/blob/3c6d9b43b67c74ec343d77874cd8fa6e841523da/verl/workers/utils/losses.py#L58-L245">PPO/value loss composition and emitted metrics</a>,
+    <a href="https://github.com/volcengine/verl/blob/3c6d9b43b67c74ec343d77874cd8fa6e841523da/verl/trainer/ppo/core_algos.py#L1285-L1376">vanilla surrogate and dual-clip definitions</a>,
+    and <a href="https://github.com/volcengine/verl/blob/3c6d9b43b67c74ec343d77874cd8fa6e841523da/verl/trainer/ppo/core_algos.py#L2125-L2190">value clipping</a>.</li>
+    <li id="source-reduction"><strong>Token versus sequence weighting:</strong>
+    <a href="https://github.com/volcengine/verl/blob/3c6d9b43b67c74ec343d77874cd8fa6e841523da/verl/trainer/ppo/core_algos.py#L1140-L1208"><code>agg_loss</code></a>.</li>
+    <li id="source-worker"><strong>Worker reductions, LR, and logger prefixes:</strong>
+    <a href="https://github.com/volcengine/verl/blob/3c6d9b43b67c74ec343d77874cd8fa6e841523da/verl/workers/engine_workers.py#L213-L248">total loss/gradient/LR output</a>,
+    <a href="https://github.com/volcengine/verl/blob/3c6d9b43b67c74ec343d77874cd8fa6e841523da/verl/workers/engine_workers.py#L354-L426">minibatch metric collection and scheduler reporting</a>,
+    <a href="https://github.com/volcengine/verl/blob/3c6d9b43b67c74ec343d77874cd8fa6e841523da/verl/workers/engine/fsdp/transformer_impl.py#L789-L838">FSDP pre-clipping gradient norm</a>,
+    <a href="https://github.com/volcengine/verl/blob/3c6d9b43b67c74ec343d77874cd8fa6e841523da/verl/trainer/ppo/ray_trainer.py#L1327-L1404">actor/critic output naming</a>,
+    and <a href="https://github.com/volcengine/verl/blob/3c6d9b43b67c74ec343d77874cd8fa6e841523da/verl/utils/metric/utils.py#L26-L169">metric reductions</a>.</li>
+    <li id="source-data"><strong>Scores, signals, lengths, aborts, explained variance:</strong>
+    <a href="https://github.com/volcengine/verl/blob/3c6d9b43b67c74ec343d77874cd8fa6e841523da/verl/trainer/ppo/metric_utils.py#L430-L606"><code>compute_data_metrics</code></a>.
+    <a href="https://github.com/volcengine/verl/blob/3c6d9b43b67c74ec343d77874cd8fa6e841523da/verl/trainer/ppo/ray_trainer.py#L77-L117">Reward-side KL shaping</a>
+    is distinct from the actor loss;
+    <a href="https://github.com/volcengine/verl/blob/3c6d9b43b67c74ec343d77874cd8fa6e841523da/verl/trainer/ppo/ray_trainer.py#L1570-L1604">old-policy entropy reporting</a>
+    is distinct from the update-time entropy term.</li>
+    <li id="source-balance"><strong>Partition token counts:</strong>
+    <a href="https://github.com/volcengine/verl/blob/3c6d9b43b67c74ec343d77874cd8fa6e841523da/verl/trainer/ppo/ray_trainer.py#L1182-L1250"><code>_balance_batch</code></a>
+    and <a href="https://github.com/volcengine/verl/blob/3c6d9b43b67c74ec343d77874cd8fa6e841523da/verl/utils/seqlen_balancing.py#L257-L303"><code>log_seqlen_unbalance</code></a>.</li>
+    <li id="source-timing"><strong>Timing, tokens, and throughput:</strong>
+    <a href="https://github.com/volcengine/verl/blob/3c6d9b43b67c74ec343d77874cd8fa6e841523da/verl/trainer/ppo/metric_utils.py#L609-L688">timing and throughput reductions</a>,
+    <a href="https://github.com/volcengine/verl/blob/3c6d9b43b67c74ec343d77874cd8fa6e841523da/verl/trainer/ppo/ray_trainer.py#L1543-L1553">full-batch token counts</a>,
+    and <a href="https://github.com/volcengine/verl/blob/3c6d9b43b67c74ec343d77874cd8fa6e841523da/verl/trainer/ppo/ray_trainer.py#L1764-L1786">step counter and GPU denominator</a>.</li>
+  </ul>
+</main>
+<footer><a href="../index.html#rl-training-walkthroughs">RL training walkthroughs</a> &middot; <a href="async-rl-monitoring.html">Next: async monitoring</a></footer>
+</body>
+</html>

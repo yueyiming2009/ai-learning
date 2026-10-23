@@ -604,15 +604,28 @@ def grpo_loss(logprobs, old_logprobs, ref_logprobs, rewards, eps=0.2, beta=0.04)
   </div>
 
   <h2 id="drgrpo">10. Dr.GRPO — Eliminating Length Bias</h2>
-  <p>Standard GRPO averages the clipped surrogate over tokens within each output (\(\tfrac{1}{|o_i|}\sum_t\)). This means a long correct answer contributes more total gradient than a short correct answer with the same reward — a <em>length bias</em> that can push the policy to prefer verbosity. Dr.GRPO (Demystifying Long Chain-of-Thought Reasoning, 2025) fixes this with two changes:</p>
+  <p>The original GRPO objective averages the clipped surrogate over tokens within each
+  output (\(\tfrac{1}{|o_i|}\sum_t\)), then averages outputs. Each output receives equal
+  weight as a token average, but each token's coefficient is inversely proportional to
+  its output length. Dr.GRPO (Demystifying Long Chain-of-Thought Reasoning, 2025) removes
+  that per-output length divisor and the reward-standard-deviation scaling:</p>
 
   <ol>
-    <li><strong>Constant loss divisor</strong> — divide by a fixed constant \(D\) rather than \(|o_i|\), so all outputs contribute equal gradient mass regardless of length. The absolute gradient scale depends on \(D\); common choices are the mean sequence length at training start or a round number (e.g., 1000).</li>
+    <li><strong>Constant loss divisor</strong> — divide each output's token sum by a fixed
+    \(D\) rather than its actual length. This makes the per-token normalization coefficient
+    independent of output length; it does <em>not</em> make total contribution equal across
+    outputs. Longer outputs contain more summed terms. The gradient scale depends on \(D\),
+    and the actual gradient also depends on advantages, ratios, and model derivatives.</li>
     <li><strong>Disable std normalization</strong> — drop the \(\operatorname{std}(r)\) denominator in the advantage formula, using \(\hat A_{i,t} = r_i - \operatorname{mean}(r)\) instead of the z-score. This makes the advantage magnitude proportional to reward gap rather than reward spread, allowing the trainer to tell a 0.1-gap batch from a 0.9-gap batch.</li>
   </ol>
 
   <div class="note">
-    With std-norm on, the fraction-positive metric is always exactly 50/50 by construction. Turning std-norm off makes it diagnostic again: fraction positive &lt; 50% means most prompts are beyond the policy's current capability.
+    Centering forces a zero sequence-level group mean, not a 50/50 sign split. Dividing
+    by a positive standard deviation does not change signs. Rewards <code>[0, 0, 1]</code>
+    produce two negative weights and one positive with or without std normalization;
+    their token-weighted mean can differ when lengths differ. See the
+    <a href="rl-training-metrics.html#grpo">worked GRPO example</a> and
+    <a href="rl-training-metrics.html#aggregation">source-pinned reduction glossary</a>.
   </div>
 
   <div class="table-wrap">
@@ -629,14 +642,14 @@ def grpo_loss(logprobs, old_logprobs, ref_logprobs, rewards, eps=0.2, beta=0.04)
         <td>Sum over tokens per output, then divide by constant \(D\)</td>
       </tr>
       <tr>
-        <td>Length bias</td>
-        <td>Present (longer outputs dominate)</td>
-        <td>Eliminated (each output has equal gradient mass)</td>
+        <td>Length weighting</td>
+        <td>Per-output token mean; each token has a \(1/|o_i|\) coefficient</td>
+        <td>Constant per-token divisor; longer outputs have more summed terms</td>
       </tr>
       <tr>
-        <td>verl config</td>
-        <td><code>norm_adv_by_std_in_grpo: true</code><br><code>loss_agg_mode: token-mean</code></td>
-        <td><code>norm_adv_by_std_in_grpo: false</code><br><code>loss_agg_mode: seq-mean-token-sum-norm</code></td>
+        <td>verl config for these reductions (not inferred defaults)</td>
+        <td><code>norm_adv_by_std_in_grpo: true</code><br><code>loss_agg_mode: seq-mean-token-mean</code></td>
+        <td><code>norm_adv_by_std_in_grpo: false</code><br><code>loss_agg_mode: seq-mean-token-sum-norm</code><br>Set a fixed <code>loss_scale_factor</code> for \(D\).</td>
       </tr>
       <tr>
         <td>Miles config</td>
