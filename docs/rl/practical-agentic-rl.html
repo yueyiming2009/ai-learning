@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light dark">
-  <meta name="description" content="A source-checked MiMo code-task recipe: prepare environments, establish a baseline, audit trajectories, run a small RL experiment, and evaluate held-out improvement.">
+  <meta name="description" content="A source-checked MiMo code-task recipe, with managed-training state and metric gates: establish a baseline, audit trajectories, train small, and evaluate held-out improvement.">
   <title>Practical Agentic RL Training</title>
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
   <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
@@ -78,7 +78,8 @@
   <div class="nav-links">
     <a href="#scope">Scope</a><a href="#pin">Prerequisites</a><a href="#tasks">Data</a>
     <a href="#harness">Harness</a><a href="#baseline">Baseline</a><a href="#trajectory">Trajectory</a>
-    <a href="#train">Training</a><a href="#evaluate">Evaluation</a><a href="#failures">Failures</a><a href="#refs">Sources</a>
+    <a href="#train">Training</a><a href="#managed-state">API state</a><a href="#evaluate">Evaluation</a>
+    <a href="#managed-metrics">Cloud metrics</a><a href="#failures">Failures</a><a href="#refs">Sources</a>
   </div>
 </nav>
 <header class="hero">
@@ -94,6 +95,10 @@
     GPU training job, checkpoint restore, or learning gain has been reproduced for this guide.
     Commands below are a proposed diagnostic configuration, not a tested quickstart or minimum-hardware claim.
     Run third-party code and images only after review and approval in an isolated training environment.</p>
+    <p><strong>October 28 addition:</strong> the managed-training comparisons below use official
+    documentation only. No provider session, grader callback, deployment, paid job or cross-provider
+    compatibility test was run. They supplement the MiMo recipe; they do not turn its commands,
+    task counts or hardware assumptions into a cloud quickstart.</p>
   </div>
 
   <h2 id="scope">1. Define the experiment, not just the training command</h2>
@@ -127,6 +132,24 @@
       <tr><td>Verifier integrity, sandbox lifecycle and diagnostics</td><td><a href="verifier-reward-design.html">Reward Design</a> &middot; <a href="env-scaling-sandboxing.html">Sandboxing</a> &middot; <a href="async-rl-monitoring.html">Monitoring</a></td></tr>
     </table>
   </div>
+
+  <h3 id="managed-path">Apply the same gates at the boundary you actually control</h3>
+  <p>The <a href="rl-frameworks-landscape.html#axes">framework landscape</a> owns capability
+  comparisons. Here the question is what evidence you must collect before spending more compute:</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Execution path</th><th>Your practical responsibility</th></tr>
+      <tr><td>Self-operated SkyRL</td><td>Pin runtime/configuration and generator endpoint, not just the API client. Its native trainer and Tinker-compatible path have different loss coverage; fully async currently requires <code>/chat/completions</code>. Audit captured tokens and in-flight KV/version behavior.</td></tr>
+      <tr><td>Tinker, Fireworks Training API, Foundry interactive</td><td>Own the driver, reward/advantage construction, data order and update schedule. Record completed operations and the exact sampler identity. Confirm model, trainable-parameter and loss contracts before translating a recipe between services.</td></tr>
+      <tr><td>Foundry managed RFT, Gemini RL tuning</td><td>Own datasets/splits, response format, grader tests and supported job settings. Use job/checkpoint/endpoint identities and available metrics; do not claim a token-level payload audit or a particular optimizer algorithm from a grader-configured interface.</td></tr>
+      <tr><td>SageMaker environment-RL job</td><td>Own and review the environment and trainer script. Verify current container/SDK availability and what the script saves to its artifacts. A cloud training job is not a managed LLM-RFT algorithm or a guarantee of resumable optimizer state.</td></tr>
+    </table>
+  </div>
+  <p>For hosted execution, add approved account/project, model access, tuning and serving region,
+  parameter mode, SDK/cookbook revision, grader version, resource/billing limits and cleanup policy
+  to the manifest. Foundry interactive is approval-gated preview without an SLA; Fireworks'
+  experimental async recipes are not the same availability claim as its serverless service.
+  Keep a separate baseline and a locked final-test split on every path.</p>
 
   <h2 id="pin">2. Pin the whole execution system</h2>
   <p>A dataset revision alone does not identify an agentic-RL experiment. Keep the following in a
@@ -437,6 +460,58 @@ RUN_DIR="$LAB_ROOT/runs/fit" TEST_FREQ=5 \
   reconsider dynamic filtering only after that gate; benchmark environment reliability before
   increasing pod concurrency or GPU scale.</div>
 
+  <h3 id="managed-state">Managed APIs: completion, sampling and recovery are different gates</h3>
+  <p>A returned request handle is not proof of a model update. The logical dependency is
+  <strong>completed backward &rarr; completed optimizer step &rarr; completed sampler publication
+  &rarr; rollout using that sampler</strong>. Several backwards may accumulate into one update.
+  Overlap is valid only where the recipe preserves those dependencies and records policy versions.</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Artifact or state</th><th>What it establishes</th><th>What it does not establish</th></tr>
+      <tr><td>Active training session</td><td>Live model/adapter and accumulated training state</td><td>Durable recovery after the session is lost</td></tr>
+      <tr><td>Sampler refresh / checkpoint</td><td>A selected weight version for generation; record its owning session where required</td><td>Optimizer state, cross-session usability, indefinite retention, or an application deployment</td></tr>
+      <tr><td>Completed training checkpoint</td><td>The documented saved model/adapter and optimizer state</td><td>Restored dataset cursor, reward configuration, pending work or evaluation schedule unless explicitly saved</td></tr>
+      <tr><td>Driver manifest/state</td><td>Data order/cursor, step IDs, scheduler state and experiment configuration</td><td>Saved remote model state merely because a checkpoint request was submitted</td></tr>
+      <tr><td>Serving deployment</td><td>An application-facing endpoint for a chosen model/checkpoint</td><td>A validated quality gain, training resumption, or automatic cleanup when training ends</td></tr>
+    </table>
+  </div>
+  <details>
+    <summary>Provider-specific lifecycle checks (October 28 documentation)</summary>
+    <ul>
+      <li><strong>Tinker:</strong> gradient accumulation and <code>optim_step</code> are separate.
+      Keep sampling-weight and training-state operations distinct. Budget custom-loss iteration
+      against its <a href="rl-frameworks-landscape.html#tinker-custom-loss">extra forward pass and
+      reported scheduling cost</a>, rather than assuming built-in-loss throughput.</li>
+      <li><strong>Fireworks:</strong> serverless sampling binds a client to a saved adapter snapshot,
+      with no deployment hotload; dedicated sampling refreshes a deployment. The async cookbook
+      publishes once per optimizer batch and waits for evaluation on the prior sampler version.
+      Serverless cross-run resume is limited. Close clients; dedicated deployments may also need
+      deletion or scale-down. Interrupting a recipe does not guarantee a final checkpoint.</li>
+      <li><strong>Foundry interactive:</strong> <code>save_weights_for_sampler</code> can refresh
+      in-memory sampling or persist sampler weights; neither is <code>save_weights</code>, which
+      saves adapter and optimizer state. <code>create_from_checkpoint</code> requires compatible
+      model/adapter settings and separate driver-state restoration. The synchronous convenience
+      methods wait; raw async submission returns a task to await, while cookbook futures use their
+      own completion interface. Do not mix those patterns.</li>
+      <li><strong>Managed RFT / Gemini:</strong> retain job, checkpoint and deployed-model identities.
+      Gemini base-model tuning automatically deploys the last checkpoint and maps US/EU tuning
+      regions to their multi-region serving endpoints. Select by development results rather than
+      by deployment time. For Foundry jobs, cancellation does not delete uploaded files or serving
+      deployments; pause/resume support is model/method-dependent.</li>
+    </ul>
+  </details>
+  <div class="caution">
+    <strong>A timeout is not remote cancellation.</strong>
+    <p>Resolve operation status before replaying a potentially state-changing request.
+    In Foundry interactive, <code>close()</code> stops the heartbeat and submits unload; it does not
+    confirm remote cleanup. Deleting a session can remove checkpoints and sampling resources.
+    Complete and record required saves before releasing compute; do not substitute deletion for unload.</p>
+  </div>
+  <div class="gate"><strong>Managed-state gate:</strong> demonstrate one completed update, sampling
+  from its published weights, and recovery from a completed training checkpoint plus driver state
+  on a supported path. If recovery is unavailable, state that limitation explicitly rather than
+  treating a sampler ID or a successful job submission as recovery evidence.</div>
+
   <h2 id="evaluate">8. Compare checkpoints without changing the experiment</h2>
   <p>Select a checkpoint using development results, not the final-test pool. The following uses
   the trainer's native checkpoint restore, avoiding an unverified Megatron-to-Hugging-Face export
@@ -479,6 +554,28 @@ RUN_DIR="$LAB_ROOT/runs/candidate-dev" \
   improves under the frozen protocol, with reliability, cost and uncertainty visible.
   Otherwise report the narrower result: environment works, one update works, or training tasks overfit.</div>
 
+  <h3 id="managed-metrics">Managed-job metrics: grader reward is not task accuracy</h3>
+  <p>The same held-out gate applies when the service owns training. Keep grader version,
+  response schema, reasoning/token budget and evaluation prompts fixed. Test graders on known
+  correct, incorrect and malformed outputs before launching; an improved composite reward can
+  hide a degraded component. A job labeled “Succeeded” establishes execution, not generalization.</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Provider / signal</th><th>Interpretation and required companion evidence</th></tr>
+      <tr><td>Foundry RFT: <code>train_reward_mean</code>, <code>valid_reward_mean</code></td><td>Where exposed under <code>data.scores</code>, these are grader rewards, not SFT token accuracy. Training batches differ; validation is more comparable but still measures the configured grader. Inspect held-out responses before selecting a checkpoint.</td></tr>
+      <tr><td>Foundry components, errors and reasoning use</td><td><code>data.scores.graders</code>, <code>data.errors.graders</code>, and reasoning-token means under <code>data.usage.samples</code> separate criterion scores, grader failures and inference work. Availability varies by model/grader. More reasoning tokens alone do not prove improvement.</td></tr>
+      <tr><td>Gemini: <code>/train_mean_reward</code>, <code>/eval_mean_reward</code></td><td>Current training batch versus the entire validation dataset. Per-reward prefixes expose component scores; inspect clipping ratios because individual rewards are clipped to <code>[-1, 1]</code>.</td></tr>
+      <tr><td>Gemini reliability and latency</td><td>Inspect per-scorer code-execution failures, RPC errors and invalid responses, with mean/P95 reward and sampling latency. Distinguish an invalid model answer receiving low reward from a failed scorer. Report excluded/invalid attempts rather than letting their disappearance inflate apparent quality.</td></tr>
+      <tr><td>Gemini generation and batch composition</td><td>Generation length includes thinking and non-thinking tokens; thinking length is a subset, not an extra cost to add twice. <code>/learnable_prompt_ratio</code> is documented as actual batch size divided by all samples including filtered samples. It is not success probability, and its name does not specify the filtering rule.</td></tr>
+      <tr><td>Fireworks experimental cookbook evaluation</td><td>The documented hook uses the training sampler/budgets, does not update the optimizer, and is fail-open. Missing/failed evaluation is not a zero-valued result or a passed release gate. It can overlap work but must finish before the sampler version is replaced.</td></tr>
+    </table>
+  </div>
+  <p>For Tinker, Foundry interactive and user-script SkyRL/SageMaker runs, the driver or trainer
+  defines much of the metric vocabulary. Preserve the same identities, denominators, invalid-attempt
+  categories and fixed-budget comparisons rather than borrowing another provider's metric names.
+  Keep final-test data out of checkpoint selection; inspect both valid-attempt and all-attempt
+  outcomes and record which diagnostics the chosen service does not expose.</p>
+
   <h2 id="failures">9. Diagnose the first broken boundary</h2>
   <div class="table-wrap">
     <table>
@@ -507,10 +604,17 @@ RUN_DIR="$LAB_ROOT/runs/candidate-dev" \
     <li><a href="https://github.com/XiaomiMiMo/verl/blob/a2ad9f6160b03ff2d47e59832bfb6b289f37c917/config/agent/code/mini-mimocode.yaml">mimocode profile</a>, <a href="https://github.com/XiaomiMiMo/verl/blob/a2ad9f6160b03ff2d47e59832bfb6b289f37c917/config/agent/code/mini-bash.yaml">bash profile</a>, and <a href="https://github.com/XiaomiMiMo/verl/blob/a2ad9f6160b03ff2d47e59832bfb6b289f37c917/recipes/code/mimoagent_runner.py">session runner</a>: actual profile selection, task lifecycle and reward delivery.</li>
     <li><a href="https://github.com/XiaomiMiMo/verl/blob/a2ad9f6160b03ff2d47e59832bfb6b289f37c917/recipes/code/reward.py">Fallback reward hook</a> and <a href="https://github.com/XiaomiMiMo/mimoagent/blob/467f0a19016f0ac4d63b8d17a1f0da9ba07f232c/src/mimoagent/environments/datasets/opensource_code.py">code verifier</a>: metadata fallback versus actual execution-based grading.</li>
     <li><a href="https://github.com/XiaomiMiMo/verl/blob/a2ad9f6160b03ff2d47e59832bfb6b289f37c917/verl/trainer/ppo/v1/trainer_base.py">V1 trainer</a> and <a href="https://github.com/XiaomiMiMo/verl/blob/a2ad9f6160b03ff2d47e59832bfb6b289f37c917/verl/trainer/ppo/v1/trainer_colocate_async.py">colocated-async lifecycle</a>: restore, validation-only control flow, and weight synchronization.</li>
+    <li><a href="https://tinker-docs.thinkingmachines.ai/tinker/">Tinker overview</a> and <a href="https://tinker-docs.thinkingmachines.ai/tinker/losses/custom/">custom losses</a>; <a href="https://docs.skyrl.ai/docs/tinker/limitations">SkyRL API limitations</a> and <a href="https://docs.skyrl.ai/docs/tutorials/fully_async">fully async training</a>: operation/loss scope and endpoint restrictions.</li>
+    <li><a href="https://docs.fireworks.ai/fine-tuning/training-api/introduction.md">Fireworks Training API</a>, <a href="https://docs.fireworks.ai/fine-tuning/training-api/serverless.md">serverless lifecycle</a>, and <a href="https://docs.fireworks.ai/fine-tuning/training-api/cookbook/rl.md">experimental RL cookbook</a>: sampler publication, evaluation, interruption and cleanup boundaries.</li>
+    <li><a href="https://learn.microsoft.com/en-us/azure/foundry/fine-tuning/interactive-post-training/concepts">Foundry interactive concepts</a> and <a href="https://learn.microsoft.com/en-us/azure/foundry/fine-tuning/interactive-post-training/sdk-cheatsheet">preview SDK cheatsheet</a>; <a href="https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reinforcement-fine-tuning">managed RFT guide</a>: distinct session/job contracts and conditional metric fields.</li>
+    <li><a href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/tuning/reinforcement-tuning/quick-start-console">Gemini console quickstart</a>, <a href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/tuning/reinforcement-tuning/reinforcement-tuning-job/job-status-metrics-monitoring">metrics</a>, and <a href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/tuning/reinforcement-tuning/reinforcement-tuning-job/reward-functions">reward functions</a>: checkpoint selection, clipping and failure diagnostics.</li>
+    <li><a href="https://docs.aws.amazon.com/sagemaker/latest/dg/sagemaker-rl-workflow.html">SageMaker environment-RL workflow</a>: hosted user-script jobs and artifacts, not a foundation-model RFT recipe.</li>
   </ul>
   <p class="muted">These sources establish interfaces and configuration behavior, not a reproduced
   model-quality result. This public task bundle is not evidence that the complete frontier-training
-  corpus or every production-system component has been released.</p>
+  corpus or every production-system component has been released. Provider documentation was checked
+  October 28, 2026; those additions establish neither current account eligibility nor executed
+  compatibility, recovery, cost or performance results.</p>
 </main>
 </body>
 </html>

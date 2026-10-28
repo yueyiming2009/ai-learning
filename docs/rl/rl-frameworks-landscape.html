@@ -281,8 +281,8 @@
   <span class="hero-pill">RL Frameworks · Landscape</span>
   <h1>RL Frameworks Landscape</h1>
   <p>The map of LLM-RL execution — self-hosted frameworks such as verl, TRL, OpenRLHF, NeMo,
-  and slime, the managed Tinker training API, and the control boundaries that determine which
-  approach fits your experiment.</p>
+  slime and SkyRL, training APIs from Tinker, Fireworks and Microsoft Foundry, and managed
+  reinforcement-tuning jobs. Compare who owns the loop, not just who supplies the GPUs.</p>
 </div>
 
 <div class="page-wrap">
@@ -306,13 +306,14 @@
   <div class="table-wrap">
     <table>
       <tr><th>Axis</th><th>The question</th><th>The options</th></tr>
-      <tr><td><strong>Operating boundary</strong></td><td>Who runs the GPU fleet and distributed execution?</td><td>Self-operated framework/runtime · provider-managed training API</td></tr>
+      <tr><td><strong>Operating boundary</strong></td><td>Who runs the GPU fleet and distributed execution?</td><td>Self-operated runtime · cloud-hosted user training job · remote training primitives · managed tuning job</td></tr>
+      <tr><td><strong>Algorithm ownership</strong></td><td>Who chooses rollouts, advantages, and optimizer steps?</td><td>Your trainer code · your client loop over primitives · provider workflow configured with data and graders</td></tr>
       <tr><td><strong>Controller model</strong></td><td>Who orchestrates the dataflow between stages?</td><td>SPMD Trainer · <a href="verl-architecture.html#hybrid">hybrid single/multi-controller</a> · server-centric · client loop over remote primitives</td></tr>
       <tr><td><strong>Training backend</strong></td><td>How are weights/optimizer sharded, and is that choice exposed?</td><td>DeepSpeed ZeRO · FSDP · Megatron (TP/PP/EP/CP) · service-managed backend</td></tr>
       <tr><td><strong>Trainable parameters</strong></td><td>Which weights may the experiment update?</td><td>Full fine-tuning · LoRA/adapters · model/service-specific restrictions</td></tr>
       <tr><td><strong>Rollout engine</strong></td><td>What generates the responses?</td><td>HF <code>generate</code> · vLLM · SGLang · service sampling API</td></tr>
       <tr><td><strong>Generation placement</strong></td><td>Do training and rollout share GPUs?</td><td><a href="resource-pool-placement.html">Colocated · disaggregated sync · disaggregated async</a></td></tr>
-      <tr><td><strong>Sync vs async</strong></td><td>Are rollouts on-policy?</td><td>On-policy (sync) · <a href="async-rl.html">off-policy + IS correction</a></td></tr>
+      <tr><td><strong>Overlap and freshness</strong></td><td>Which policy versions produced the training data?</td><td>Same-version data can overlap computation · stale or mixed-version data needs <a href="async-rl.html">off-policy treatment</a>; API futures alone say neither</td></tr>
       <tr><td><strong>Agent-graph coupling</strong></td><td>Who owns the multi-turn agent loop?</td><td>Trainer-owned token loop · chat API + token capture · <a href="harnessed-agentic-rl.html">black-box harness behind a proxy</a></td></tr>
       <tr><td><strong>Method breadth</strong></td><td>How many algorithms ship?</td><td>RL-focused · full preference + RL menu</td></tr>
       <tr><td><strong>Target scale</strong></td><td>Where is it happiest?</td><td>1 GPU → modest · multi-node large dense/MoE</td></tr>
@@ -322,7 +323,9 @@
   <p><strong>Operation and algorithm ownership are separate axes.</strong> A managed service can
   run the distributed computation while the researcher still owns rewards, advantage estimation,
   update scheduling, and evaluation. That does not imply access to backend kernels, arbitrary
-  model internals, or placement controls.</p>
+  model internals, or placement controls. Conversely, configuring a grader for a managed RFT job
+  does not expose the rollout loop or individual optimizer operations. Hosting your own trainer
+  script on cloud compute is a third boundary, not the same service as either of those.</p>
   <p>Within the self-operated stack, the <strong>controller model</strong> is a central split.
   An SPMD <code>Trainer</code> keeps all roles in one process (simple, bounded scale); a hybrid
   controller separates roles into pools the driver orchestrates (complex, scales to 4-D parallel +
@@ -331,6 +334,9 @@
 
   <!-- ── §2 Profiles ────────────────────────────── -->
   <h2 id="profiles">2. Frameworks and Managed Training</h2>
+  <p><strong>Provider additions checked October 28, 2026.</strong> The profiles below summarize
+  public documentation, not executed compatibility tests or training benchmarks. Model, region,
+  parameter-mode and preview restrictions are specific to each offering.</p>
 
   <div class="fw">
     <h3>verl</h3>
@@ -378,9 +384,24 @@
     PPO step on a 30B MoE through it.</p>
   </div>
 
+  <div class="fw" id="skyrl">
+    <h3>SkyRL</h3>
+    <div class="who">NovaSky / Berkeley / Anyscale · self-operated full-stack RL</div>
+    <p>The <a href="https://github.com/NovaSky-AI/SkyRL/tree/02c467d064945c5ca5a8dc94e735dc823b843a33">October 28 repository snapshot</a>
+    unifies the earlier <code>skyrl-train</code> and <code>skyrl-tx</code> work under
+    <code>skyrl</code>. <strong>SkyRL-Agent</strong> supplies the long-horizon agent layer;
+    <strong>SkyRL-Gym</strong> supplies environments. These are different layers, not competing trainers.</p>
+    <p>Its Tinker-compatible API exposes self-operated FSDP/Megatron training and vLLM sampling,
+    with LoRA and full-parameter training. This is not Thinking Machines Lab's hosted service:
+    the latter's LoRA restriction is not a property of the API name. Compatibility is bounded:
+    SkyRL currently wires <code>cross_entropy</code> and <code>importance_sampling</code> through
+    that API, not every native loss. See the <a href="harnessed-agentic-rl.html#provider-contracts">contract comparison</a>
+    and <a href="harnessed-agentic-rl.html#skyrl-async">fully async endpoint/cache restrictions</a>.</p>
+  </div>
+
   <div class="fw" id="tinker">
     <h3>Tinker</h3>
-    <div class="who">Thinking Machines Lab · managed training API · documentation checked October 22, 2026</div>
+    <div class="who">Thinking Machines Lab · managed training API · overview/custom-loss docs checked October 28, 2026</div>
     <p>The researcher runs a CPU-side Python loop for data, environments, rewards, advantages,
     and evaluation; the service handles distributed model computation. The exposed primitives
     include <code>forward_backward</code> for gradient accumulation, <code>optim_step</code>
@@ -398,6 +419,76 @@
     nonblocking request, not necessarily asynchronous/off-policy RL; that depends on the client
     loop and which policy versions produced the data.
     <a href="harnessed-agentic-rl.html#tinker-datum">Token alignment and loss-specific contracts →</a></p>
+    <p id="tinker-custom-loss"><strong>Custom loss is a logprob-gradient interface.</strong>
+    <code>forward_backward_custom</code> runs a remote forward pass, then computes a local scalar
+    loss and \(g=\partial L/\partial\ell\) for the returned target-token logprobs \(\ell\).
+    A second remote forward/backward evaluates the linear surrogate
+    \(\sum_i \ell_i\,\mathrm{stopgrad}(g_i)\), with the same parameter gradient at that forward point.
+    The callback can couple sequences; it is not uploaded to the server and does not expose arbitrary
+    activations. The <a href="https://tinker-docs.thinkingmachines.ai/tinker/losses/custom/">documentation</a>
+    reports about <strong>1.5× FLOPs and up to 3× wall time</strong> versus a built-in
+    <code>forward_backward</code>, from the extra forward and scheduling. These are documented
+    implementation costs, not a universal bound or a reproduced benchmark.</p>
+  </div>
+
+  <div class="fw" id="fireworks">
+    <h3>Fireworks Training API</h3>
+    <div class="who">Provider-operated computation · client-owned loop</div>
+    <p><strong>Serverless</strong> uses a shared pool, supports LoRA, and bills per token.
+    <strong>Dedicated</strong> provisions trainer and deployment resources, supports LoRA or
+    full-parameter training, and uses time-based billing. Both expose training primitives, but
+    their lifecycle is not interchangeable: serverless sampling binds to a saved adapter snapshot;
+    dedicated sampling refreshes a deployment. Serverless cross-run resume is limited.</p>
+    <p>The experimental <code>async_rl_loop</code> cookbook owns grouping, advantages and update
+    scheduling around your rollout function; the serverless adapter has a separate snapshot-publication
+    path. See <a href="harnessed-agentic-rl.html#fireworks-tito">agentic TITO</a> and
+    <a href="harnessed-agentic-rl.html#fireworks-async">scheduling</a>.
+    <strong>BYOT rollout inference</strong> is a separate option for your own trainer; external-bucket
+    hotload is private preview. The training overview routes RL to the Training API while the BYOT
+    guide still names turnkey “Managed RFT”; its availability is not resolved by these pages.</p>
+  </div>
+
+  <div class="fw" id="foundry">
+    <h3>Microsoft Foundry: interactive training versus managed RFT</h3>
+    <div class="who">Two different algorithm-ownership boundaries</div>
+    <p id="foundry-interactive"><strong>Interactive training</strong> exposes stateful sampling,
+    forward/backward, optimizer steps and checkpoints over open-weight models with serverless
+    LoRA updates. Your driver owns rewards, advantages, masks, batch construction and scheduling.
+    It is an <strong>approval-gated preview without an SLA, not recommended for production</strong>.
+    Loss names are primitives, not complete algorithms; the preview SDK and cookbook wrappers
+    have different interfaces and completion patterns.</p>
+    <p id="foundry-rft"><strong>Managed reinforcement fine-tuning</strong> instead takes datasets,
+    a grader, response format and supported job settings. Foundry owns the training workflow.
+    String, similarity, model, Python and composite graders provide reward control, not arbitrary
+    optimizer control. Model/region eligibility, grader hosting and parameter scope must be checked
+    for that workflow; do not inherit interactive training's LoRA scope or preview status.
+    See <a href="practical-agentic-rl.html#managed-state">state and completion gates</a> and
+    <a href="practical-agentic-rl.html#managed-metrics">managed-job reporting</a>.</p>
+  </div>
+
+  <div class="fw" id="gemini">
+    <h3>Gemini reinforcement learning fine-tuning</h3>
+    <div class="who">Google Cloud · service-owned adapter-tuning workflow</div>
+    <p>Supply prompts/references, reward configuration and job hyperparameters; the service samples
+    and updates the model. String/regex, Gemini autorater, sandboxed Python and Cloud Run scorers
+    can be combined. An external reward callback does <em>not</em> grant control over the harness
+    or individual optimizer operations. The overview documents adapters and a
+    <code>v1beta1</code> API, not a disclosed PPO/GRPO recipe or full-parameter contract.</p>
+    <p>Tuning and serving locations differ: <code>us-central1</code> maps to <code>us</code>
+    multi-region serving, and <code>europe-west4</code> to <code>eu</code>. A successful tuning job
+    from a base model deploys the last checkpoint; intermediate checkpoints can be evaluated
+    independently. Deployment is not evidence that the final checkpoint is best.
+    <a href="practical-agentic-rl.html#managed-metrics">Metric and selection caveats →</a></p>
+  </div>
+
+  <div class="note" id="sagemaker">
+    <strong>Scope boundary: SageMaker AI RL is job infrastructure, not another LLM-RFT trainer.</strong>
+    The linked AWS guide describes <code>RLEstimator</code> submitting your environment, presets
+    and trainer script to CPU/GPU jobs with container selection, artifacts and metrics.
+    Its distributed examples separate rollout and learner compute, including heterogeneous
+    instances; that proves neither async policy-update semantics nor large-model sharding support.
+    The page lists TensorFlow/MXNet and Coach/RLlib. Treat that as the source's inventory, not a
+    verified current SDK/container support matrix or a description of AWS foundation-model tuning.
   </div>
 
   <div class="note">
@@ -466,6 +557,15 @@
         <td>Async MoE RL, SGLang shops</td>
       </tr>
       <tr>
+        <td><a href="#skyrl"><strong>SkyRL</strong></a></td>
+        <td>Self-operated trainer/generator; optional client API</td>
+        <td>FSDP, Megatron; LoRA or full-parameter</td>
+        <td>vLLM; agent and Gym layers</td>
+        <td>Fully async: documented chat-endpoint restrictions</td>
+        <td>Native RL; narrower Tinker API loss support</td>
+        <td>Own the runtime, compose the agent layer</td>
+      </tr>
+      <tr>
         <td><strong>Tinker</strong> (managed)</td>
         <td>Client-owned loop over remote primitives</td>
         <td>Service-managed; LoRA, not full fine-tuning</td>
@@ -473,6 +573,42 @@
         <td>Client scheduling / policy versions; not implied by futures</td>
         <td>LoRA SFT + RL losses; <a href="harnessed-agentic-rl.html#tinker-losses">loss-specific contracts</a></td>
         <td>Algorithm iteration without operating the GPU runtime</td>
+      </tr>
+      <tr>
+        <td><a href="#fireworks"><strong>Fireworks</strong></a> Training API</td>
+        <td>Client loop / experimental cookbook</td>
+        <td>Provider-managed; serverless LoRA or dedicated full/LoRA</td>
+        <td>Snapshot sampler or dedicated deployment</td>
+        <td>Experimental overlap with version-admission controls</td>
+        <td>Built-in/custom losses; GRPO cookbook</td>
+        <td>Choose pooled iteration or dedicated lifecycle control</td>
+      </tr>
+      <tr>
+        <td><a href="#foundry-interactive"><strong>Foundry interactive</strong></a></td>
+        <td>Driver-owned primitive loop</td>
+        <td>Serverless LoRA; gated preview</td>
+        <td>Selected sampler checkpoint</td>
+        <td>Driver-defined; async API is not an RL scheduler</td>
+        <td>Loss primitives and cookbook custom objectives</td>
+        <td>Approved experiments needing per-update control</td>
+      </tr>
+      <tr>
+        <td><a href="#foundry-rft"><strong>Foundry managed RFT</strong></a></td>
+        <td>Service-owned workflow</td>
+        <td>Model/workflow-specific; not inferred from interactive API</td>
+        <td>Service-run generation</td>
+        <td>Not established by the job interface</td>
+        <td>Grader-configured reinforcement tuning</td>
+        <td>Own data and reward without owning the update loop</td>
+      </tr>
+      <tr>
+        <td><a href="#gemini"><strong>Gemini RL tuning</strong></a></td>
+        <td>Service-owned workflow</td>
+        <td>Adapters; supported Gemini models</td>
+        <td>Service-run generation</td>
+        <td>Not established by the job interface</td>
+        <td>Reward-configured tuning; algorithm not inferred</td>
+        <td>Gemini-specific reward and checkpoint iteration</td>
       </tr>
     </table>
   </div>
@@ -483,7 +619,11 @@
   <div class="table-wrap">
     <table>
       <tr><th>Your situation</th><th>Start with</th></tr>
-      <tr><td>Want to own the algorithm but not operate distributed GPUs; supported models and LoRA are sufficient</td><td><a href="#tinker"><strong>Tinker</strong></a> (managed API)</td></tr>
+      <tr><td>Own the algorithm without operating distributed GPUs; LoRA is sufficient</td><td>Compare <a href="#tinker">Tinker</a>, <a href="#fireworks">Fireworks serverless</a> and approved <a href="#foundry-interactive">Foundry interactive preview</a> by model, loss and lifecycle contracts</td></tr>
+      <tr><td>Need service-operated full-parameter computation</td><td><a href="#fireworks">Fireworks dedicated</a>; verify model and access eligibility</td></tr>
+      <tr><td>Own the runtime behind a Tinker-compatible API</td><td><a href="#skyrl">SkyRL</a>; API loss coverage is narrower than its native trainer</td></tr>
+      <tr><td>Want a tuning job configured with data and a grader, not an update loop</td><td><a href="#foundry-rft">Foundry managed RFT</a> or <a href="#gemini">Gemini RL tuning</a>, for supported models</td></tr>
+      <tr><td>Have a general environment-RL trainer script and need hosted job infrastructure</td><td><a href="#sagemaker">SageMaker AI RL workflow</a>; verify current toolkit/container compatibility first</td></tr>
       <tr><td>Prototyping an algorithm or reward on 1–8 GPUs; you live in HuggingFace</td><td><strong>TRL</strong></td></tr>
       <tr><td>Need a preference method (DPO/KTO/ORPO) more than online RL</td><td><strong>TRL</strong></td></tr>
       <tr><td>Mid-scale online RLHF, want Ray + vLLM without Megatron complexity</td><td><strong>OpenRLHF</strong></td></tr>
@@ -497,7 +637,10 @@
   <div class="result">
     <div class="result-label">The short version</div>
     <p style="margin:0;">First choose the <strong>operating boundary and trainable-parameter scope</strong>:
-    a client-owned algorithm over managed LoRA computation → <strong>Tinker</strong>.
+    client-owned primitive loops → <strong>Tinker, Fireworks or Foundry interactive</strong>;
+    service-owned grader-configured jobs → <strong>Foundry RFT or Gemini</strong>;
+    hosted user scripts → <strong>job infrastructure such as SageMaker</strong>.
+    A self-operated Tinker-compatible stack → <strong>SkyRL</strong>.
     For self-operated execution, sort by <strong>scale and controller model</strong>. One Trainer on a few
     GPUs → <strong>TRL</strong>. Ray + vLLM at mid-scale without Megatron → <strong>OpenRLHF</strong>.
     Hybrid controller, every backend, async at production scale → <strong>verl</strong>. NVIDIA
@@ -515,7 +658,12 @@
       <tr><td><a href="https://github.com/OpenRLHF/OpenRLHF">OpenRLHF</a></td><td>Ray + DeepSpeed + vLLM RLHF</td></tr>
       <tr><td><a href="https://github.com/NVIDIA/NeMo-RL">NeMo-RL</a> · <a href="https://github.com/NVIDIA/NeMo-Aligner">NeMo-Aligner</a></td><td>NVIDIA Megatron-Core alignment</td></tr>
       <tr><td><a href="https://github.com/THUDM/slime">slime</a></td><td>SGLang-native RL — see <a href="slime-miles-walkthrough.html">walkthrough</a></td></tr>
-      <tr><td><a href="https://tinker-docs.thinkingmachines.ai/tinker/">Tinker overview</a> · <a href="https://tinker-docs.thinkingmachines.ai/tinker/losses/">Loss functions</a></td><td>Official managed-service scope and loss API, checked October 22, 2026; no training run or backend implementation audit performed.</td></tr>
+      <tr><td><a href="https://tinker-docs.thinkingmachines.ai/tinker/">Tinker overview</a> · <a href="https://tinker-docs.thinkingmachines.ai/tinker/losses/custom/">Custom losses</a> · <a href="https://tinker-docs.thinkingmachines.ai/tinker/losses/">Built-in losses</a></td><td>Overview/custom-loss mechanism checked October 28; the detailed built-in contracts retain their October 22 source date.</td></tr>
+      <tr><td><a href="https://docs.skyrl.ai/docs/tinker/overview">SkyRL Tinker API</a> · <a href="https://docs.skyrl.ai/docs/tinker/limitations">Limitations</a> · <a href="https://docs.skyrl.ai/docs/tutorials/fully_async">Fully async</a></td><td>Self-operated API scope and generator restrictions; hosted docs are not pinned by the repository snapshot.</td></tr>
+      <tr><td><a href="https://docs.fireworks.ai/fine-tuning/training-api/introduction.md">Fireworks Training API</a> · <a href="https://docs.fireworks.ai/fine-tuning/training-api/serverless.md">Serverless</a> · <a href="https://docs.fireworks.ai/fine-tuning/rl-rollout-integration.md">BYOT</a></td><td>Operating modes and lifecycle; experimental recipes and private-preview external-bucket hotload are distinct from serverless service availability.</td></tr>
+      <tr><td><a href="https://learn.microsoft.com/en-us/azure/foundry/fine-tuning/interactive-post-training/overview">Foundry interactive training</a> · <a href="https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reinforcement-fine-tuning">Managed RFT</a></td><td>Caller-owned LoRA loop versus grader-configured job; do not transfer one offering's restrictions to the other.</td></tr>
+      <tr><td><a href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/tuning/reinforcement-tuning">Gemini RL tuning</a></td><td>Adapters, tuning/serving regions and automatic final-checkpoint deployment.</td></tr>
+      <tr><td><a href="https://docs.aws.amazon.com/sagemaker/latest/dg/reinforcement-learning.html">SageMaker AI RL</a> · <a href="https://docs.aws.amazon.com/sagemaker/latest/dg/sagemaker-rl-workflow.html">Workflow</a> · <a href="https://docs.aws.amazon.com/sagemaker/latest/dg/sagemaker-rl-distributed.html">Distributed training</a></td><td>General environment-RL job substrate; toolkit/container availability not validated.</td></tr>
     </table>
   </div>
 

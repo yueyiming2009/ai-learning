@@ -346,6 +346,7 @@
     <a href="#generations">Three generations</a>
     <a href="#text">Why not text</a>
     <a href="#contract">The contract</a>
+    <a href="#provider-contracts">API variants</a>
     <a href="#stitch">Stitching</a>
     <a href="#advantage">Advantage</a>
     <a href="#behavior">Behavior logprobs</a>
@@ -364,7 +365,7 @@
   <code>response_ids</code>, <code>loss_mask</code>, <code>rollout_logprobs</code>,
   <code>reward</code>), how proxies stitch calls into training samples, why the proxy's logprobs
   become the behavior policy, and where verl Uni-Agent, AReaL 2.0, slime, SkyRL, PRIME-RL,
-  Polar, Agent Lightning and Tinker each sit.</p>
+  Polar, Agent Lightning, Tinker, Fireworks and Foundry interactive training each sit.</p>
 </div>
 
 <div class="page-wrap">
@@ -1062,7 +1063,7 @@
       <tr>
         <td><code>prompt_ids</code></td>
         <td>\(\mathbb{Z}^{L_p}\)</td>
-        <td>Engine, <em>after</em> chat-template processing (vLLM's <code>prompt_token_ids</code>); never the trainer's tokenizer.</td>
+        <td>The actual engine input: capture after server-side rendering, or retain the exact client-rendered ids submitted to a token API. Never reconstruct a different prompt later with the trainer's tokenizer.</td>
         <td>Conditioning context; no loss. Also the thing checked for prefix continuity across calls (§5).</td>
       </tr>
       <tr>
@@ -1192,6 +1193,25 @@ loss_fn_inputs = {
     results from executing the API.
   </div>
 
+  <h3 id="provider-contracts">Similar APIs, different contracts</h3>
+  <p><strong>Documentation checked October 28, 2026.</strong> The token/target alignment above
+  transfers; SDK constructors, supported losses and state lifecycles do not transfer automatically.
+  Keep the endpoint, SDK version, selected loss and actual sampler provenance in the run manifest.</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Implementation</th><th>What crosses the boundary</th><th>Do not assume</th></tr>
+      <tr><td>Tinker hosted service</td><td>Loss-specific <code>Datum</code>; the built-in contracts above remain dated October 22.</td><td>A callback is not uploaded code or access to arbitrary activations. <a href="rl-frameworks-landscape.html#tinker-custom-loss">Custom loss</a> uses local logprob gradients and a remote surrogate backward, with documented extra computation.</td></tr>
+      <tr><td>SkyRL Tinker-compatible path</td><td>Currently wires <code>cross_entropy</code> and <code>importance_sampling</code>; native loss registry coverage is broader.</td><td>Native PPO/CISPO implementations do not prove API support. Prompt logprobs and the integration's KL penalty are not supported. Multi-tenant LoRA is Megatron + vLLM only, with a shared adapter signature; FSDP multi-tenancy and multi-tenant full-parameter tuning are not supported.</td></tr>
+      <tr><td>Fireworks cookbook adapter</td><td>One <code>RolloutRun</code> per trajectory, containing aligned <code>tokens</code>, <code>logprobs</code>, <code>loss_mask</code> segments with the same scalar reward.</td><td>Do not turn segments into independent prompt-group draws. The recipe owns grouping and advantages; its native sampler and publication contracts differ from the hosted Tinker service.</td></tr>
+      <tr><td>Foundry interactive preview</td><td>The documented <code>LossFnInputs</code> constructor requires explicit <code>weights</code> even in its RL example, alongside targets, rollout logprobs and advantages.</td><td>The example masks prompt targets with zero advantages; it is not Tinker's extra-key-rejecting RL payload. Cookbook <code>forward_backward_custom_async</code> is a wrapper, not a <code>FineTuningSession</code> method or an arbitrary callable accepted by <code>loss_fn</code>.</td></tr>
+    </table>
+  </div>
+  <p>Foundry's cheatsheet targets <code>azure-ai-finetuningsessions==1.0.0b1</code>.
+  Its synchronous convenience calls wait for completion; raw async calls and cookbook futures use
+  different completion patterns. Loss primitives do not choose a full RL algorithm for you.
+  For all implementations, preserve the first completion target at <code>len(prompt) - 1</code>,
+  sampled-action identity, and loss-specific mask/penalty semantics.</p>
+
   <!-- ── §5 ─────────────────────────────────────── -->
   <h2 id="stitch">5. Stitching Calls into Samples</h2>
 
@@ -1233,7 +1253,7 @@ tail    = prompt_ids[n][len(prev):]               # if extends: the new tool/tem
       <tr>
         <td><strong>Buffer-and-replace</strong></td>
         <td>The proxy keeps a buffer of what it sampled. When the harness sends a prompt whose text contains an earlier response, the proxy <em>overwrites</em> that span of <code>prompt_ids</code> with the buffered sampled ids before forwarding, so continuity is restored by force.</td>
-        <td>\(O(T)\); but the model is now conditioned on a prompt the harness never sent — "training it under the stitched prompt therefore introduces an off-policy discrepancy" (AL v1.0). Assumes linear history.</td>
+        <td>\(O(T)\) when continuity is valid; changes online prompt semantics. If done before sampling and captured faithfully, training can match that input. Replacing the context only after sampling instead creates an invalid context/action pairing. Assumes compatible linear history.</td>
         <td>AReaL <code>concat</code>, verl Continuous Token (v0.9), NeMo-RL <code>replace_prefix_tokens</code>, Miles TITO session server</td>
       </tr>
       <tr>
@@ -1250,6 +1270,24 @@ tail    = prompt_ids[n][len(prev):]               # if extends: the new tool/tem
       </tr>
     </table>
   </div>
+
+  <h3 id="fireworks-tito">Fireworks: online prompt construction versus offline materialization</h3>
+  <p>The <a href="https://docs.fireworks.ai/fine-tuning/training-api/cookbook/agentic-rl.md">agentic RL cookbook</a>
+  makes two independent choices explicit: whether to change the next inference prompt, and where
+  to capture/materialize the trajectory. Neither choice licenses inventing a prompt after its
+  response has already been sampled.</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Mode</th><th>Actual inference input</th><th>Continuity / reconstruction</th></tr>
+      <tr><td><code>full_history</code> (default)</td><td>The harness's ordinarily rendered full history; online behavior is unchanged.</td><td>Compare with exact captured tokens, attempt bounded realignment, then split if continuity cannot be established. Offline materialization is possible only with actual per-call prompt/action ids and logprobs, not a text transcript re-rendered later.</td></tr>
+      <tr><td><code>incremental</code> (opt-in)</td><td>Previous exact checkpoint plus a newly rendered suffix, constructed <em>before inference</em>; it may differ from full-history replay.</td><td>Requires model/template-specific suffix and junction verification. Split if the junction is not valid. An SFT/DPO renderer alone does not establish support, and real compaction or pruning cannot be made continuous without changing meaning.</td></tr>
+    </table>
+  </div>
+  <p>The reference Harbor integration places a TITO sidecar inside each Docker/E2B sandbox beside
+  OpenCode, Pi or Mini-SWE-Agent. Harbor owns the task environment/verifier; the adapter owns exact
+  trajectory capture; the RL recipe owns grouping and updates. A central stateful gateway is
+  another placement, not a requirement. An offline materializer can implement
+  <code>full_history</code> only; it cannot retroactively implement <code>incremental</code>.</p>
 
   <p>How often does the predicate break in practice? Often enough to design around: in AL v1.0's
   coding-agent run (mini-SWE-agent, Qwen3.5-9B) only <strong>36%</strong> of rollouts survive as a
@@ -1291,7 +1329,7 @@ tail    = prompt_ids[n][len(prev):]               # if extends: the new tool/tem
       <label>Stitcher
         <select id="s-strategy">
           <option value="percall">per-call</option>
-          <option value="replace">buffer-and-replace</option>
+          <option value="replace">post-hoc buffer replacement (unsafe)</option>
           <option value="fork" selected>best-effort merge, fork on break</option>
           <option value="text">text re-tokenisation (no token capture)</option>
         </select>
@@ -1309,10 +1347,11 @@ tail    = prompt_ids[n][len(prev):]               # if extends: the new tool/tem
       <span class="legend-item"><span class="lg" style="--c:var(--tok-frozen-bg)"></span> frozen prompt context, mask 0</span>
     </div>
     <p class="figure-caption">
-      <strong>The strategies differ only when the predicate breaks.</strong> On a clean history all
-      three token-faithful stitchers produce one \(O(T)\) sample. Under drift, per-call pays
-      \(O(T^2)\) for safety, buffer-and-replace keeps one sample by conditioning on a prompt the
-      harness never sent, and fork-on-break pays extra prompt tokens only from the break onward.
+      <strong>This simulator repacks already-recorded calls.</strong> On a clean history the
+      merging strategies produce one \(O(T)\) sample; per-call still pays \(O(T^2)\).
+      Under drift, post-hoc replacement pairs an existing action with a context it was not
+      sampled from, while fork-on-break pays extra prompt tokens only from the break onward.
+      This is not a simulation of online <code>incremental</code> generation under a changed prompt.
       Text re-tokenisation produces one tidy sample whose "sampled" tokens are partly fiction — the
       one outcome you cannot detect from the sample alone.
     </p>
@@ -1361,6 +1400,14 @@ tail    = prompt_ids[n][len(prev):]               # if extends: the new tool/tem
   \end{aligned}
   \]
 
+  <p><strong>Fireworks cookbook example (October 28 docs).</strong> All segments of one rollout
+  retain its reward, group membership and advantage; prompt-group advantages are then used by a
+  clipped GRPO loss against captured behavior logprobs. Backwards accumulate into one optimizer
+  update and gradients are normalized once by the batch's trainable-token count.
+  That is <em>token-mean</em>, not equal rollout weighting, even though advantages are
+  rollout-consistent. The reference recipe has no reference-model KL penalty.
+  Sharing an algorithm label or preserving rollout identity does not make loss reductions equal.</p>
+
   <p>AL v1.0's worked example makes the difference tangible: rollout A splits into two rows of 50
   and 100 tokens, B into three rows of 30, C stays one row of 40. Seq-mean hands B half the
   batch's weight (three of six rows) for an accident of forking; token-mean weights by tokens
@@ -1397,20 +1444,23 @@ tail    = prompt_ids[n][len(prev):]               # if extends: the new tool/tem
   gap as an <em>engine numerics</em> problem: vLLM and FSDP compute different
   \(\log\pi\) on the same weights because of kernel, batch-size and TP accumulation order, and the
   fix is truncated importance sampling with the engine's logprob in the denominator (Yao et al.,
-  "Your Efficient RL Framework Secretly Brings You Off-Policy RL Training"). Harnessed RL adds
-  two more reasons the sampled distribution is not the trained one:</p>
+  "Your Efficient RL Framework Secretly Brings You Off-Policy RL Training"). Harnessed RL also
+  requires separate context-fidelity and version checks:</p>
 
   <ol>
-    <li><strong>Stitching is itself off-policy.</strong> Buffer-and-replace conditions on a
-    rewritten prompt; forked samples are trained with a frozen prompt that may contain retokenised
-    history. Either way \(s_t^{\text{train}} \neq s_t^{\text{sample}}\) for some tokens.</li>
+    <li><strong>Do not change the conditioning context after sampling.</strong> Exact-prefix
+    merging and a fork that retains the actual next-call prompt preserve the trained action's
+    context. Online prefix preservation can also be faithful if the engine actually sampled from
+    that constructed input. A post-hoc replacement instead makes
+    \(s_t^{\text{train}} \neq s_t^{\text{sample}}\); attaching the old logprob does not repair it.</li>
     <li><strong>Staleness is per-call, not per-trajectory.</strong> A coding agent's 200 calls
     span tens of minutes; with in-flight weight updates, calls 1–80 came from \(\theta_{k}\) and
     81–200 from \(\theta_{k+1}\). The trajectory has no single \(\pi_{\text{old}}\).</li>
   </ol>
 
-  <p>Both are handled by the same move: stop pretending \(\pi_{\text{old}}\) is something the
-  trainer recomputes, and use the logprobs the engine returned when it sampled. Write the three
+  <p>First preserve the actual context/action pair. Then use captured behavior logprobs to
+  diagnose and correct probability mismatch on that pair; a token-local ratio does not recover
+  a different history distribution. Write the three
   policies explicitly — \(\mu\) the behavior policy (engine, at sampling time),
   \(\pi_{\text{prox}}\) the proximal policy (trainer's recompute at the start of the update,
   if any), and \(\pi_\theta\) the policy being updated:</p>
@@ -1490,20 +1540,48 @@ tail    = prompt_ids[n][len(prev):]               # if extends: the new tool/tem
     see). Know which of the two your harness does before adopting the rule.</li>
   </ul>
 
-  <p>Weight sync itself is unchanged by the harness — NCCL broadcast, CUDA-IPC, NIXL, or
+  <h3 id="skyrl-async">SkyRL: generator abstraction does not imply every endpoint works</h3>
+  <p><strong>October 28 documentation check.</strong> Fully async training supports FSDP and
+  Megatron, but currently requires generators using <code>/chat/completions</code>, not
+  <code>.generate()</code> or <code>/completions</code>. Engine-side pause/update/resume is the
+  mechanism; the generator interface alone is not sufficient compatibility evidence.</p>
+  <p><code>trainer.fully_async.clear_kv_cache_on_weight_sync</code> defaults to false, retaining
+  in-flight KV computed under older weights. Separately, <code>generator.use_cache_salt</code>
+  isolates prefix-cache blocks by policy version. Prefix-cache isolation does not prove that
+  an ongoing trajectory has fresh KV or one behavior-policy version.</p>
+
+  <h3 id="fireworks-async">Fireworks: row-atomic admission, one update, then publication</h3>
+  <p>The <strong>experimental</strong> <code>async_rl_loop</code> admits a dataset row only when
+  both staleness and concurrency budgets fit all its completions.
+  <code>max_concurrency_rollout_sample</code> counts trajectory calls, not individual inference
+  requests inside a multi-turn agent; the sampler has its own request-concurrency control.</p>
+  <p>Ready prompt groups can begin backward submission while remaining rollouts finish. All
+  backwards in the optimizer batch must succeed before its one optimizer step.
+  <code>max_head_offpolicy_versions=0</code> keeps batches on the current published version in
+  the documented recipe despite overlap; it does not eliminate numerical train/serve mismatch.
+  Dedicated sampling hotloads once per optimizer batch, after evaluation on the old sampler
+  version completes. A slow evaluation can therefore delay publication. The separate experimental
+  serverless adapter uses session-scoped snapshots rather than deployment hotload.
+  Pin the cookbook and SDK before depending on this scheduling contract.</p>
+
+  <p>For self-operated engines, weight transfer uses NCCL broadcast, CUDA-IPC, NIXL, or
   disk-delta (verl <code>delta_sharded</code>, slime <code>--update-weight-mode delta</code>,
-  Miles' RDMA p2p path that took Kimi-K2's 1T sync "from 53.3 s to 7.2 s") — because the proxy
-  is not a party to it. That is the one part of the loop the decoupling leaves alone.</p>
+  Miles' reported RDMA P2P speedup). Managed APIs instead expose a sampler-publication contract:
+  save/select a snapshot or refresh a deployment. Do not copy one provider's synchronization,
+  checkpoint or timeout semantics into another; see the
+  <a href="practical-agentic-rl.html#managed-state">state and completion gates</a>.</p>
 
   <!-- ── §9 ─────────────────────────────────────── -->
-  <h2 id="matrix">9. The Framework Matrix (August 2026)</h2>
+  <h2 id="matrix">9. The Framework Matrix (August snapshot, dated updates)</h2>
 
   <p>Filter by interface generation or by the design choices from §5–§7. Rows are frameworks;
   versions are the latest release at time of writing. "Loop owner" is the answer to §1; "merge"
   and "advantage" are §5–§6; "correction" is §7.</p>
   <p style="font-size:0.86rem;color:var(--muted)">Tinker's API/loss fields were refreshed from
-  official documentation on October 22, 2026. Its cookbook merge and scheduling details remain
-  the August snapshot below; adding a loss name or an async API method does not revalidate them.</p>
+  official documentation on October 22, 2026; its custom-loss interface is linked in the October 28
+  comparison above. Its cookbook merge/scheduling details remain the August snapshot.
+  SkyRL's endpoint/cache caveats and the new Fireworks/Foundry rows are October 28 documentation
+  checks, not execution validation or a refresh of every other cell.</p>
 
   <div class="chips" id="m-chips">
     <span class="chip on" data-f="all">all</span>
@@ -1532,13 +1610,13 @@ tail    = prompt_ids[n][len(prev):]               # if extends: the new tool/tem
       </tr>
 
       <tr data-tags="g1 g2 fork bypass fullasync">
-        <td><strong>SkyRL</strong> v0.3.0<br><span class="gen-badge g1">G1</span><span class="gen-badge g2">G2</span></td>
+        <td><strong>SkyRL</strong> v0.3.0 snapshot<br><span class="gen-badge g1">G1</span><span class="gen-badge g2">G2</span><br>Async caveats: Oct 28</td>
         <td><code>GeneratorInterface</code> inside trainer; <code>HarborGenerator</code>; SkyRL-Agent layer (OpenHands)</td>
         <td>vLLM only; OpenAI HTTP with session header, or token <code>generate</code>; three documented strategies (retokenise / TITO / step-wise)</td>
         <td>step-wise per-call + <code>merge_stepwise_output</code></td>
         <td>sample/step</td>
         <td><code>off_policy_correction.*</code>: token/seq TIS, geometric seq mask (recommended), IcePop; <code>rollout_is|dppo</code> skip old-logprob pass</td>
-        <td>fully async (<code>AsyncStalenessManager</code>) · <code>PauseMode keep</code> · vLLM native weight-update API</td>
+        <td>fully async: <code>/chat/completions</code> only; <a href="#skyrl-async">in-flight KV versus prefix-cache caveats</a>. Other interface/correction cells retain the August snapshot.</td>
       </tr>
 
       <tr data-tags="g1 g3 fork bypass fullasync anthropic">
@@ -1651,6 +1729,26 @@ tail    = prompt_ids[n][len(prev):]               # if extends: the new tool/tem
         <td>August cookbook snapshot: <code>AsyncConfig(max_steps_off_policy)</code> drops stale; no in-flight weight changes; server-managed weights. Scheduling not rechecked by the API/loss refresh.</td>
       </tr>
 
+      <tr data-tags="g1 g3 fork replace bypass fullasync">
+        <td><strong>Fireworks</strong> cookbook<br><span class="gen-badge g1">G1</span><span class="gen-badge g3">G3</span><br>Docs: Oct 28</td>
+        <td>User rollout function; Harbor task/harness adapter and per-sandbox TITO sidecar</td>
+        <td>Exact-token sampler; sidecar presents an OpenAI-compatible harness endpoint</td>
+        <td><a href="#fireworks-tito"><code>full_history</code> or opt-in <code>incremental</code></a>; split on uncertifiable continuity</td>
+        <td>rollout/group; batch token-mean loss</td>
+        <td>Clipped GRPO against rollout logprobs; no reference KL in the reference recipe</td>
+        <td><a href="#fireworks-async">Experimental row-atomic scheduler</a>; dedicated hotload versus separate serverless snapshot adapter</td>
+      </tr>
+
+      <tr data-tags="g1">
+        <td><strong>Foundry interactive</strong><br><span class="gen-badge g1">G1</span><br>Preview docs: Oct 28</td>
+        <td>User Python driver owns environment interaction, advantages and updates</td>
+        <td>Tokenized input; sampled tokens/logprobs from a selected sampler checkpoint</td>
+        <td>Driver/renderer responsibility; no universal stitcher inferred</td>
+        <td>Driver-defined</td>
+        <td>Loss primitives; <a href="#provider-contracts">preview-specific payload</a></td>
+        <td>Complete gradient/update/refresh dependencies; async SDK methods do not define policy lag</td>
+      </tr>
+
       <tr data-tags="g2">
         <td><strong>ART</strong> (OpenPipe)<br><span class="gen-badge g2">G2</span></td>
         <td>user <code>rollout(model, scenario) → art.Trajectory</code> via <code>model.openai_client()</code></td>
@@ -1679,6 +1777,12 @@ tail    = prompt_ids[n][len(prev):]               # if extends: the new tool/tem
   July 2026; env-side tokenisation into <code>ScoredDataGroup</code>), OpenForgeRL (proxy + K8s
   orchestrator on verl; OSWorld). OpenEnv and MCP operate at the structured-action level and
   delegate token fidelity to whichever trainer drives them.</p>
+  <p><strong>Different comparison level:</strong> Foundry managed RFT and Gemini RL tuning
+  expose grader-configured jobs, not these user-visible trajectory/optimizer contracts.
+  SageMaker's general environment-RL guide describes hosted user scripts, not the AWS
+  agentcore-rl-toolkit row above. See the
+  <a href="rl-frameworks-landscape.html#axes">operating-boundary comparison</a> rather than
+  inferring harness, merge or correction support from a provider name.</p>
 
   <!-- ── §10 ────────────────────────────────────── -->
   <h2 id="choose">10. How to Place — or Build — Anything New</h2>
@@ -1695,8 +1799,9 @@ tail    = prompt_ids[n][len(prev):]               # if extends: the new tool/tem
     design is text-level and §3 applies in full — including losing TIS.</li>
     <li><strong>What happens when the prefix predicate breaks?</strong> Per-call, buffer-and-replace,
     or fork-on-break (§5). The honest default for an arbitrary harness is fork-on-break: it never
-    rewrites what the harness saw and it degrades gracefully. Buffer-and-replace is the right
-    choice when you control the harness and know its history is linear.</li>
+    rewrites what the harness saw and it degrades gracefully. Online prefix preservation requires
+    a verified renderer/junction contract and deliberate acceptance of changed prompt behavior;
+    post-hoc context replacement is not a valid substitute.</li>
     <li><strong>Where is the advantage baseline?</strong> Rollout-level unless you have a reason
     (§6). If the framework only offers sample-level, expect task reweighting under heavy forking.</li>
     <li><strong>Which policy is \(\pi_{\text{old}}\)?</strong> If sampling-time logprobs are in
@@ -1723,7 +1828,9 @@ tail    = prompt_ids[n][len(prev):]               # if extends: the new tool/tem
     <li>Prime Intellect: <a href="https://www.primeintellect.ai/blog/renderers">renderers</a> (May 2026, "the inference server should be a simple token-only endpoint"), <a href="https://www.primeintellect.ai/blog/verifiers-v1">verifiers v1</a> (Jul 2026, taskset × harness × runtime, interception server), <a href="https://github.com/PrimeIntellect-ai/prime-rl">prime-rl</a>, <a href="https://arxiv.org/abs/2512.16144">INTELLECT-3</a>.</li>
     <li>NVIDIA: <a href="https://arxiv.org/abs/2605.24220">Polar</a> (May 2026) and the <a href="https://github.com/NVIDIA-NeMo/ProRL-Agent-Server">ProRL-Agent-Server</a>; <a href="https://arxiv.org/abs/2603.18815">ProRL Agent</a> ("token IDs as the canonical representation throughout"); B. Xu, <a href="https://billxbf.github.io/posts/agent-rl-infra/">"Rethinking RL Infra for Agents"</a> (May 2026). NeMo-RL <a href="https://github.com/NVIDIA-NeMo/RL">repo</a> and NeMo Gym on-policy-corrections docs.</li>
     <li>verl: <a href="https://verl.readthedocs.io/en/latest/advance/agent_loop.html">Agent Loop</a>, <a href="https://verl.readthedocs.io/en/latest/algo/rollout_corr.html">Rollout Correction</a>, <a href="https://verl.readthedocs.io/en/latest/advance/fully_async.html">Fully Async</a>, <a href="https://github.com/verl-project/uni-agent">Uni-Agent</a>; issue <a href="https://github.com/verl-project/verl/issues/2618">#2618</a> (serve-mode migration).</li>
-    <li>SkyRL: <a href="https://docs.skyrl.ai/docs/tutorials/agent-integration">Agent Integration</a> (the retokenise / TITO / step-wise taxonomy); <a href="https://arxiv.org/abs/2511.16108">SkyRL-Agent</a> (Nov 2025).</li>
+    <li>SkyRL: <a href="https://docs.skyrl.ai/docs/tutorials/agent-integration">Agent Integration</a> (the retokenise / TITO / step-wise taxonomy); <a href="https://arxiv.org/abs/2511.16108">SkyRL-Agent</a> (Nov 2025); <a href="https://docs.skyrl.ai/docs/tinker/limitations">Tinker API limitations</a> and <a href="https://docs.skyrl.ai/docs/tutorials/fully_async">fully async endpoint/KV behavior</a> (October 28 documentation check).</li>
+    <li>Fireworks: <a href="https://docs.fireworks.ai/fine-tuning/training-api/cookbook/agentic-rl.md">agentic RL / TITO</a>, <a href="https://docs.fireworks.ai/fine-tuning/training-api/cookbook/rl.md">experimental RL recipe</a>, and <a href="https://docs.fireworks.ai/fine-tuning/training-api/serverless.md">serverless lifecycle</a> (October 28 documentation check; no cookbook execution).</li>
+    <li>Microsoft Foundry: <a href="https://learn.microsoft.com/en-us/azure/foundry/fine-tuning/interactive-post-training/sdk-cheatsheet">interactive-training SDK cheatsheet</a> and <a href="https://learn.microsoft.com/en-us/azure/foundry/fine-tuning/interactive-post-training/concepts">concepts</a> (October 28; preview SDK 1.0.0b1, not a cloud-session test).</li>
     <li>slime: <a href="https://github.com/THUDM/slime">repo</a>, <code>docs/en/agent.md</code> and the <code>TrajectoryManager</code>; Miles: <a href="https://www.lmsys.org/blog/2026-05-13-no-token-left-behind/">"No Token Left Behind: TITO"</a> (May 2026), <a href="https://www.lmsys.org/blog/2026-08-18-miles-v0-1/">v0.1</a>, and the <a href="https://github.com/zhaochenyang20/Awesome-ML-SYS-Tutorial/blob/main/rlhf/slime/mismatch/blog-en.md">mismatch blog</a>.</li>
     <li>AReaL: <a href="https://arxiv.org/abs/2607.01120">AReaL 2.0</a> (Jul 2026, microservice architecture, step-level trajectory protocol), <a href="https://arxiv.org/abs/2505.24298">AReaL</a> (decoupled PPO, May 2025).</li>
     <li>ROLL: <a href="https://github.com/alibaba/ROLL">repo</a>, <a href="https://arxiv.org/abs/2510.11345">ROLL Flash</a>. OpenRLHF: <a href="https://github.com/OpenRLHF/OpenRLHF">repo</a>.</li>
