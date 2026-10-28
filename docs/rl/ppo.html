@@ -168,6 +168,7 @@
     <a href="#trust">Why clip</a>
     <a href="#ratio">Ratio</a>
     <a href="#clip">Clipped loss</a>
+    <a href="#loss-variants">Loss variants</a>
     <a href="#actor-critic">Actor–critic</a>
     <a href="#full">Full loss</a>
     <a href="#entropy">Entropy</a>
@@ -199,7 +200,7 @@
       <tr><td>\(\pi_\theta(a\mid s)\)</td><td>Current policy (the <em>actor</em>), parameters \(\theta\)</td></tr>
       <tr><td>\(\pi_{\theta_{\text{old}}}\)</td><td>Behavior policy that generated the current batch of rollouts — see <a href="behavior-policy.html" style="color:var(--accent);">Behavior vs Target Policy</a></td></tr>
       <tr><td>\(\rho_t(\theta)\)</td><td>Probability (importance) ratio \(\pi_\theta(a_t\mid s_t)/\pi_{\theta_{\text{old}}}(a_t\mid s_t)\)</td></tr>
-      <tr><td>\(\hat A_t\)</td><td>Advantage estimate at step \(t\) (from GAE)</td></tr>
+      <tr><td>\(\hat A_t\)</td><td>Advantage estimate at step \(t\) (typically from GAE)</td></tr>
       <tr><td>\(V_\psi(s)\)</td><td>Value function (the <em>critic</em>), parameters \(\psi\)</td></tr>
       <tr><td>\(\hat R_t\)</td><td>Value target, the TD(\(\lambda\)) return \(\hat A_t + V_\psi(s_t)\)</td></tr>
       <tr><td>\(\delta_t\)</td><td>One-step TD error \(r_t + \gamma V_\psi(s_{t+1}) - V_\psi(s_t)\)</td></tr>
@@ -277,9 +278,35 @@
     <a href="https://spinningup.openai.com/en/latest/algorithms/ppo.html#key-equations">Spinning Up</a> explicitly warns that PPO-Clip can still move too far and adds early stopping based on measured mean KL. That is an additional empirical safeguard, not an exact projection into a trust region. Distinguish the clip parameter, the KL-monitoring threshold, and an explicit KL penalty or constraint.
   </div>
 
+  <h3 id="loss-variants">PPO loss variants and related alternatives</h3>
+  <p>The expression above is <em>maximized</em>; its negative is the minimized policy loss
+  \(\ell_t^{\mathrm{clip}}=-\min(\rho_t\hat A_t,\operatorname{clip}(\rho_t)\hat A_t)\).
+  <strong>This update rule does not choose the advantages.</strong> It can use GAE in PPO
+  or <a href="grpo.html#objective">group-relative advantages in GRPO</a>.
+  Hold advantages and old-policy probabilities fixed when comparing these losses.</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Variant / alternative</th><th>What changes from PPO-Clip?</th><th>Effect on the update</th></tr>
+      <tr><td>Asymmetric / dual-clip PPO<br><code>vanilla</code> in verl</td><td>Separate lower/upper ratio bounds. Dual clipping additionally uses \(\min(\ell_t^{\mathrm{clip}},-c\hat A_t)\) for \(\hat A_t&lt;0\), \(c&gt;1\).</td><td>Asymmetry treats increases and decreases differently; dual clipping caps the negative-advantage loss when the ratio becomes very large.</td></tr>
+      <tr><td>CISPO<br><code>cispo</code></td><td>\(-\operatorname{sg}[\operatorname{clip}(\rho_t)]\hat A_t\log\pi_\theta(a_t\mid s_t)\), where sg is stop-gradient.</td><td>Cap the gradient's importance weight rather than flatten the PPO surrogate. A positive-advantage token beyond the upper bound can still receive a gradient.</td></tr>
+      <tr><td>SAPO<br><code>sapo</code></td><td>Replace hard clipping with \(-\hat A_t\,g_{\tau_t}(\rho_t)\), where \(g_\tau(\rho)=\frac{4}{\tau}\sigma(\tau(\rho-1))\), \(\sigma\) is sigmoid, and \(\tau_t&gt;0\) depends on the advantage's sign.</td><td>Smoothly attenuate updates instead of introducing a hard plateau. Temperature controls the gate's sharpness; current verl uses sequence-mean/token-mean reduction.</td></tr>
+      <tr><td>DPPO-Binary-TV / KL<br><code>dppo_tv</code>, <code>dppo_kl</code></td><td>Gate a detached, capped-IS-weighted log-likelihood loss using sampled-token probability changes (TV) or binary KL between old/new probabilities.</td><td>Stop selected updates according to probability-space divergence and advantage sign, not just a fixed ratio band. These names do not mean the separate scheduling method “Decoupled PPO.”</td></tr>
+      <tr><td>Clip-Cov<br><code>clip_cov</code></td><td>Start from the clipped surrogate, then zero selected token terms using advantage/log-probability covariance contributions.</td><td>Suppress a small subset of updates associated with entropy collapse rather than change every token's clip range.</td></tr>
+      <tr><td>KL-Cov<br><code>kl_cov</code></td><td>Start from \(-\rho_t\hat A_t\); add \(\lambda|\log\pi_\theta-\log\pi_{\mathrm{old}}|\) on selected high-covariance tokens.</td><td>Target a movement penalty instead of clipping the PPO surrogate. This old-policy penalty is distinct from reference-model KL.</td></tr>
+    </table>
+  </div>
+  <p>These are related objectives, <strong>not interchangeable names for the same loss</strong>.
+  The concrete forms and mode names above follow
+  <a href="https://github.com/verl-project/verl/blob/b65da71c1745b49e80adc218d02782a3df73d047/verl/trainer/ppo/core_algos.py">verl at <code>b65da71</code></a>;
+  the <a href="ppo-training-walkthrough.html">PPO walkthrough §8.3</a> shows its dual-clip implementation.
+  <a href="grpo.html#loss-variants">GRPO's variants</a> also change advantage normalization,
+  token/sequence weighting, or the ratio's granularity. KL/entropy regularization and
+  <a href="rl-training-metrics.html#aggregation">loss reduction</a> remain separate choices,
+  except where an implementation fixes them.</p>
+
   <h2 id="actor-critic">4. Actor–Critic: Where \(\hat A_t\) Comes From</h2>
-  <p>PPO is an <strong>actor–critic</strong> method. The <em>actor</em> is the policy \(\pi_\theta\); the <em>critic</em> is a learned value function \(V_\psi(s)\) — usually a scalar head on the same network — whose job is to supply the baseline that turns noisy returns into low-variance advantages.</p>
-  <p>The advantages plugged into \(\mathcal{L}^{\text{CLIP}}\) are computed by <a href="policy-gradient.html#gae" style="color:var(--accent);">GAE</a> from the critic's value estimates — a single backward pass over the TD errors \(\delta_t = r_t + \gamma V_\psi(s_{t+1}) - V_\psi(s_t)\):</p>
+  <p>A typical PPO implementation is <strong>actor–critic</strong>. The <em>actor</em> is the policy \(\pi_\theta\); the <em>critic</em> is a learned value function \(V_\psi(s)\) — usually a scalar head on the same network — whose job is to supply a baseline for lower-variance advantages. The clipped policy loss itself does not require a critic.</p>
+  <p>In this implementation, the advantages plugged into \(\mathcal{L}^{\text{CLIP}}\) are computed by <a href="policy-gradient.html#gae" style="color:var(--accent);">GAE</a> from the critic's value estimates — a single backward pass over the TD errors \(\delta_t = r_t + \gamma V_\psi(s_{t+1}) - V_\psi(s_t)\):</p>
   \[
     \hat A_t = \sum_{l\ge 0} (\gamma\lambda)^l\,\delta_{t+l}
       \qquad\Longleftrightarrow\qquad

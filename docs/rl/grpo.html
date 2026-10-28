@@ -358,6 +358,7 @@
     <a href="#group">Group sampling</a>
     <a href="#advantage">Advantage</a>
     <a href="#objective">Objective</a>
+    <a href="#loss-variants">Loss variants</a>
     <a href="#kl">KL estimator</a>
     <a href="#gradient">Gradient</a>
     <a href="#loop">Loop</a>
@@ -396,11 +397,14 @@
   </div>
 
   <h2 id="motivation">1. Why GRPO? Killing the critic</h2>
-  <p><a href="rlhf.html" style="color:var(--accent);">PPO</a> needs a learned <em>value function</em> \(V_\psi(s)\) — the critic — to compute advantages \(\hat A_t = \big(\text{return}\big) - V_\psi(s_t)\). For LLMs the critic is typically another model as large as the policy, which doubles memory and adds a second hard-to-train objective.</p>
+  <p>Typical <a href="rlhf.html" style="color:var(--accent);">PPO-based RLHF</a> uses a learned <em>value function</em> \(V_\psi(s)\) — the critic — to compute advantages \(\hat A_t = \big(\text{return}\big) - V_\psi(s_t)\). For LLMs the critic is typically another model as large as the policy, which roughly doubles actor-plus-critic model memory and adds a second hard-to-train objective. The clipped policy loss can also accept advantages computed without a critic.</p>
   <p>GRPO's insight: the only thing the critic provides is a <em>baseline</em> to subtract from the reward (to reduce gradient variance). For a fixed prompt you can estimate that baseline directly — just sample several answers and use their <strong>average reward</strong>. No value network required.</p>
 
   <div class="note">
-    Subtracting any baseline that doesn't depend on the action leaves the policy gradient unbiased but lowers its variance. PPO learns the baseline; GRPO estimates it on the fly from a group of samples — a Monte-Carlo baseline.
+    An action-independent baseline preserves the expected policy gradient and can reduce variance.
+    GRPO's group mean includes the response being scored, and its standard deviation is also
+    estimated from the group, so the usual unbiased-baseline argument does not apply unchanged.
+    See <a href="policy-gradient.html#empirical-baselines">estimated baselines and normalization</a>.
   </div>
 
   <h2 id="group">2. Group Sampling</h2>
@@ -449,7 +453,11 @@
   <p>This credits each token with the (normalized) reward of every step it helped produce.</p>
 
   <h2 id="objective">4. The GRPO Objective</h2>
-  <p>GRPO keeps PPO's clipped surrogate but plugs in the group-relative advantage and adds the KL penalty <em>directly to the loss</em> (rather than folding it into the reward, as PPO does). The <a href="../foundations/importance-sampling.html" style="color:var(--accent);">importance ratio</a> — reweighting the old policy's samples toward the new policy — is per-token:</p>
+  <p><strong>Original GRPO reuses PPO's clipped policy loss; the distinguishing change is its group-relative advantage.</strong>
+  Its recipe also specifies token/response averaging and a reference-KL penalty <em>directly in the loss</em>,
+  rather than the reward shaping common in PPO-based RLHF. Neither KL placement is mandatory for every
+  PPO/GRPO implementation. The <a href="../foundations/importance-sampling.html" style="color:var(--accent);">importance ratio</a>
+  in this surrogate is per-token:</p>
   \[
     \rho_{i,t}(\theta) = \frac{\pi_\theta(o_{i,t}\mid q, o_{i,&lt;t})}{\pi_{\theta_{\text{old}}}(o_{i,t}\mid q, o_{i,&lt;t})}
   \]
@@ -495,7 +503,28 @@ def grpo_loss(logprobs, old_logprobs, ref_logprobs, rewards, eps=0.2, beta=0.04)
     return -(pg - beta * kl).mean()   # minimize negative objective
 </code></pre>
 
-  <p>Reading it: average over the group \((\tfrac1G\sum_i)\), average over tokens \((\tfrac{1}{|o_i|}\sum_t)\), and at each token take the PPO clipped term \(\mathcal{C}_{i,t}\) minus a per-token KL penalty toward the reference. Maximizing \(\mathcal{J}_{\text{GRPO}}\) raises the probability of tokens in better-than-average answers while clipping bounds the step size and the KL term keeps the policy near \(\pi_{\text{ref}}\).</p>
+  <p>Reading it: average over the group \((\tfrac1G\sum_i)\), average over tokens \((\tfrac{1}{|o_i|}\sum_t)\), and at each token take the PPO clipped term \(\mathcal{C}_{i,t}\) minus a per-token KL penalty toward the reference. The code assumes equal-length, unpadded outputs; variable-length batches need masked per-output means. Minimize \(-\mathcal{J}_{\text{GRPO}}\): clipping removes some incentives for large probability changes and KL penalizes drift from \(\pi_{\text{ref}}\), but neither guarantees a hard bound on the optimizer's step.</p>
+
+  <h3 id="loss-variants">GRPO loss variants: keep the group, identify the changed term</h3>
+  <p>“GRPO” often names a <em>training recipe</em>, not a unique loss-function selector.
+  In verl, <code>algorithm.adv_estimator=grpo</code> supplies the group-relative advantages;
+  <code>actor_rollout_ref.actor.policy_loss.loss_mode=vanilla</code> selects its PPO-style
+  surrogate. Choosing another surrogate does not itself change how the group advantages are computed.</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Variant</th><th>What changes?</th><th>What stays / why it matters</th></tr>
+      <tr><td>Original GRPO</td><td>Group-standardized advantages, token-ratio clipping, per-response token means, and reference KL.</td><td>PPO-style policy update without a learned critic; the recipe is more than the clipped term alone.</td></tr>
+      <tr><td><a href="#drgrpo">Dr.GRPO</a></td><td>Remove reward-std scaling and replace each response's length divisor with a fixed constant.</td><td>Keep the clipped surrogate and group baseline; change prompt and token weighting, not the clipping formula.</td></tr>
+      <tr><td>DAPO</td><td>Asymmetric clipping and a batch-wide token mean, plus dynamic group sampling and overlong-response handling in the full recipe.</td><td>Still uses group-relative advantages. It is not just a new scalar loss; see the <a href="grpo-training-walkthrough.html#drgrpo">reduction comparison</a> and <a href="https://arxiv.org/abs/2503.14476">DAPO paper</a>.</td></tr>
+      <tr><td><a href="#gspo">GSPO / GSPO-token</a><br><code>gspo</code></td><td>Use a geometric sequence ratio for clipping. GSPO-token preserves that ratio's value while routing gradients per token.</td><td>Keep group-relative credit; change the update's granularity and gradient construction.</td></tr>
+      <tr><td>GMPO<br><code>geo_mean</code></td><td>In verl, clip token log-ratios in an advantage-aware way <em>before</em> geometric aggregation, then average sequence losses.</td><td>Not GSPO with a new name: clipping before aggregation gives a different objective from clipping the sequence ratio.</td></tr>
+      <tr><td>Group advantages + CISPO / SAPO / other policy losses</td><td>Replace the clipped surrogate with a <a href="ppo.html#loss-variants">different update objective</a>, or use <a href="policy-gradient.html#loss-variants">direct advantage-weighted log-likelihood</a>.</td><td>The same group advantages can feed different losses. Check masking, reduction, and regularization instead of assuming every combination is original GRPO.</td></tr>
+    </table>
+  </div>
+  <p>The mode names and GMPO description follow
+  <a href="https://github.com/verl-project/verl/blob/b65da71c1745b49e80adc218d02782a3df73d047/verl/trainer/ppo/core_algos.py">verl at <code>b65da71</code></a>.
+  <code>bypass_mode</code> is instead a <a href="verl-async-training.html#pisync">rollout-policy/correction dispatch choice</a>,
+  not another group-advantage formula.</p>
 
   <div class="note">
     Notice there is no entropy-bonus term: GRPO inherits PPO's clipped surrogate but typically leans on the reference KL — and, in verifiable-reward setups with a weak or zero KL, on nothing — to hold up entropy. That makes <em>entropy collapse</em> the characteristic GRPO failure mode (the policy converges onto one template that games the reward). See <a href="ppo.html#entropy" style="color:var(--note-fg);">PPO §6</a> for the entropy coefficient \(c_2\) and why it is often \(0\) here, and <a href="async-rl-monitoring.html#entropy" style="color:var(--note-fg);">async-RL monitoring</a> for the collapse diagnostics.
@@ -514,7 +543,7 @@ def grpo_loss(logprobs, old_logprobs, ref_logprobs, rewards, eps=0.2, beta=0.04)
     \]
   </div>
 
-  <p>Writing \(u = \pi_{\text{ref}}/\pi_\theta\), this is \(u - \log u - 1\), which is \(\ge 0\) for all \(u>0\) and zero only at \(u=1\) (where the policies agree). Its expectation over \(o\sim\pi_\theta\) equals the true \(\mathrm{KL}(\pi_\theta\,\|\,\pi_{\text{ref}})\), so it is an unbiased estimate that never goes negative — unlike the raw log-ratio.</p>
+  <p>Writing \(u = \pi_{\text{ref}}/\pi_\theta\), this is \(u - \log u - 1\), which is \(\ge 0\) for all \(u>0\) and zero only at \(u=1\) (where the policies agree). Its expectation over \(o\sim\pi_\theta\) equals the true \(\mathrm{KL}(\pi_\theta\,\|\,\pi_{\text{ref}})\), so it is an unbiased estimate that never goes negative — unlike the raw log-ratio. That expectation assumes current-policy samples; evaluating the same expression on reused old-policy tokens does not automatically retain the unbiasedness guarantee.</p>
 
   <div class="note">
     Two contrasts with PPO-style RLHF: the baseline comes from the group, not a critic; and the KL appears as an explicit loss term with this estimator, rather than as a per-token penalty mixed into the reward signal.
@@ -662,7 +691,11 @@ def grpo_loss(logprobs, old_logprobs, ref_logprobs, rewards, eps=0.2, beta=0.04)
   <h2 id="gspo">11. GSPO — Sequence-Level Importance Weighting</h2>
   <p>Dr.GRPO fixes <em>how the loss is aggregated</em>; GSPO (Group Sequence Policy Optimization, <a href="https://arxiv.org/abs/2507.18071" style="color:var(--accent);">Qwen, 2025</a>) fixes a deeper inconsistency in <em>where the importance ratio lives</em>. GRPO rewards a whole sequence (one scalar \(\hat A_i\) per output) but reweights it with <strong>per-token</strong> ratios \(\rho_{i,t}\) — the unit of the reward and the unit of the correction don't match.</p>
 
-  <p>Each per-token ratio is an independent random variable; multiplying the implied corrections across hundreds of tokens compounds variance, and per-token clipping is applied to quantities whose product is what actually matters. The damage is worst in <a href="../transformer/moe-routing.html" style="color:var(--accent);">MoE</a> models: a tiny weight update can flip a token's expert routing, making its ratio swing wildly even when the sequence as a whole barely moved. GRPO needs hacks like <em>Routing Replay</em> (force training to reuse the rollout's expert assignments) to stay stable.</p>
+  <p>Token ratios share an autoregressive context and are not generally independent.
+  Standard GRPO clips them separately; it does not multiply them into an exact trajectory
+  importance weight. Token-local updates can be sensitive to rollout/training mismatch,
+  including <a href="../transformer/moe-routing.html" style="color:var(--accent);">MoE routing</a>.
+  Routing Replay is one mitigation, not a universal requirement of GRPO.</p>
 
   <h3>The fix: ratio at the sequence level</h3>
   <p>GSPO defines a single <strong>sequence-level</strong> importance ratio — the geometric mean of the per-token ratios, i.e. length-normalized so sequences of any length land on the same scale:</p>
@@ -675,7 +708,7 @@ def grpo_loss(logprobs, old_logprobs, ref_logprobs, rewards, eps=0.2, beta=0.04)
     \]
   </div>
 
-  <p>The length normalization (the \(1/|o_i|\) exponent) is essential: it keeps \(s_i\) concentrated near 1 regardless of \(|o_i|\), so one clip range works for short and long outputs alike. The objective then mirrors GRPO's clipped surrogate, but the ratio, the clip, and the advantage all act on the <strong>whole sequence</strong>:</p>
+  <p>The length normalization (the \(1/|o_i|\) exponent) removes the raw product's multiplicative dependence on response length; it does not guarantee that \(s_i\) stays near 1. The objective then mirrors GRPO's clipped surrogate, but the ratio, the clip, and the advantage all act on the <strong>whole sequence</strong>:</p>
 
   <div class="result">
     <div class="result-label">GSPO objective</div>
@@ -689,7 +722,7 @@ def grpo_loss(logprobs, old_logprobs, ref_logprobs, rewards, eps=0.2, beta=0.04)
     \]
   </div>
 
-  <p>The advantage is the same group z-score as GRPO, but now a single scalar \(\hat A_i\) per output rather than broadcast over tokens. Because \(s_i\) sits so tightly around 1, the clip range \(\epsilon\) is far tighter than GRPO's \(\approx 0.2\) — the paper uses values on the order of \(10^{-3}\text{–}10^{-4}\). As written there is no explicit KL term; a reference-KL penalty can be appended exactly as in <a href="#kl" style="color:var(--accent);">§5</a> if desired.</p>
+  <p>The advantage is the same group z-score as GRPO, but now a single scalar \(\hat A_i\) per output rather than broadcast over tokens. The clip range must be tuned for this length-normalized score rather than copied from token-level PPO: the paper uses values on the order of \(10^{-3}\text{–}10^{-4}\), much tighter than GRPO's usual \(\approx 0.2\). As written there is no explicit KL term; a reference-KL penalty can be appended as in <a href="#kl" style="color:var(--accent);">§5</a> if desired.</p>
 
 <pre><code>import torch
 
@@ -717,7 +750,11 @@ def gspo_loss(logprobs, old_logprobs, rewards, lengths, eps=3e-4):
 </code></pre>
 
   <div class="note">
-    This is the <em>training</em> view of the same sequence-level importance correction the <a href="async-rl.html#is" style="color:var(--note-fg);">off-policy correction page</a> derives from the lag angle (\(w_{seq}\), the same geometric-mean weight): unbiased under policy lag and — crucially — immune to MoE expert-activation volatility, so GSPO trains MoE stably <em>without</em> Routing Replay.
+    The geometric sequence score is a <strong>surrogate, not an unbiased trajectory importance weight</strong>.
+    Exact trajectory IS uses the product of token ratios, without the length-normalizing root;
+    see <a href="async-rl.html#is" style="color:var(--note-fg);">sequence products versus GSPO</a>.
+    The GSPO paper reports stable MoE training without Routing Replay, not immunity to all
+    routing mismatch or policy lag.
   </div>
 
   <h3>GSPO-token: per-token advantages, sequence-level weight</h3>
@@ -726,7 +763,13 @@ def gspo_loss(logprobs, old_logprobs, rewards, lengths, eps=3e-4):
     s_{i,t}(\theta) = \mathrm{sg}\!\big[s_i(\theta)\big]\cdot
       \frac{\pi_\theta(o_{i,t}\mid q, o_{i,&lt;t})}{\mathrm{sg}\big[\pi_\theta(o_{i,t}\mid q, o_{i,&lt;t})\big]}
   \]
-  <p>Numerically \(s_{i,t}=s_i\) on the forward pass (the fraction is 1), so the loss value is unchanged — but the gradient now flows token-by-token, letting you weight each token by its own \(\hat A_{i,t}\). When every token shares the sequence advantage (\(\hat A_{i,t}=\hat A_i\)), GSPO-token reduces exactly to GSPO.</p>
+  <p>Numerically \(s_{i,t}=s_i\), but \(\nabla\log s_{i,t}=\nabla\log\pi_\theta(o_{i,t}\mid\cdot)\).
+  Apply the clipped surrogate to \(s_{i,t}\hat A_{i,t}\), then take a <strong>token mean within
+  each response and a response mean</strong>. With this reduction and constant per-response
+  advantages, GSPO-token matches GSPO's loss and gradient; per-token advantages or a different
+  reduction change that equivalence. This is the gradient construction used by verl's
+  <code>gspo</code> mode; its configured reduction still matters. The stop-gradient construction
+  is part of the variant, not an implementation detail to discard.</p>
 
   <h3>GRPO vs. GSPO</h3>
   <div class="table-wrap">
@@ -736,7 +779,7 @@ def gspo_loss(logprobs, old_logprobs, rewards, lengths, eps=3e-4):
       <tr><td>Clipping</td><td>Per-token, \(\epsilon\approx0.2\)</td><td>Per-sequence, \(\epsilon\sim10^{-3}\text{–}10^{-4}\)</td></tr>
       <tr><td>Advantage applied</td><td>Broadcast to every token</td><td>One scalar over the sequence</td></tr>
       <tr><td>Reward vs. ratio unit</td><td>Mismatched (seq reward, token ratio)</td><td>Matched (both at sequence)</td></tr>
-      <tr><td>MoE stability</td><td>Needs Routing Replay</td><td>Robust without it</td></tr>
+      <tr><td>MoE stability</td><td>Routing Replay can mitigate mismatch</td><td>Paper reports stable training without it; not a general guarantee</td></tr>
       <tr><td>Notable use</td><td>DeepSeekMath, DeepSeek-R1</td><td>Qwen3</td></tr>
     </table>
   </div>

@@ -147,6 +147,7 @@
     <a href="#notation">Notation</a>
     <a href="#pg">PG Theorem</a>
     <a href="#reinforce">REINFORCE</a>
+    <a href="#loss-variants">Loss variants</a>
     <a href="#discount">Discounting</a>
     <a href="#advantage">Advantage</a>
     <a href="#baseline">Baseline</a>
@@ -281,6 +282,29 @@
     \qquad w_{i,t}=\gamma^t\big(G_{i,t}-b(s_{i,t})\big).
   \]
   <p>Here \(\operatorname{sg}\) means stop-gradient. This is weighted cross-entropy for categorical actions, or weighted squared-error regression of the mean for a fixed isotropic-variance Gaussian. Weights may be negative, so it is a signed gradient surrogate, not ordinary maximum likelihood with nonnegative example weights. Average episode sums across a batch; replacing them with a mean within each episode changes length weighting.</p>
+
+  <h3 id="loss-variants">REINFORCE-style losses: what changes between variants?</h3>
+  <p>The core loss is <strong>negative log-probability times a fixed learning signal</strong>.
+  For \(\gamma=1\), write one action's term as \(-\operatorname{sg}[\hat A_t]\ell_t\), where
+  \(\ell_t=\log\pi_\theta(a_t\mid s_t)\). The variants below change the signal, correct its
+  sampling distribution, or add a penalty; they are not all new policy-gradient theorems.</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Variant</th><th>Loss / change</th><th>What it means</th></tr>
+      <tr><td>Raw REINFORCE</td><td>\(-R(\tau)\ell_t\)</td><td>The same episode return weights every action; even a below-average positive return reinforces its sampled actions.</td></tr>
+      <tr><td>Reward-to-go / baseline</td><td>\(-(G_t-b(s_t))\ell_t\)</td><td>Discard past rewards and optionally subtract an action-independent baseline. These address variance; see <a href="#baseline">baseline conditions</a> and <a href="#empirical-baselines">estimated-baseline caveats</a>.</td></tr>
+      <tr><td>GPG (<code>gpg</code> in verl)</td><td>\(-\hat A_t\ell_t\)</td><td>The direct advantage-weighted form. The loss accepts advantages; it does not prescribe how they were estimated or automatically correct stale data.</td></tr>
+      <tr><td>IS-weighted policy gradient</td><td>\(-\operatorname{sg}[w_t]\hat A_t\ell_t\)</td><td>Weight the gradient for a different sampling policy. Exact trajectory weights and practical token-local weights have different guarantees; see <a href="#off-policy">rollout reuse</a>. Truncation changes the estimator again.</td></tr>
+      <tr><td>Direct Reward Optimization (<code>dro</code>)</td><td>\(-\hat A_t\ell_t+\frac{\beta}{2}(\ell_t-\ell_{t,\mathrm{old}})^2\)</td><td>Add a quadratic penalty on movement from frozen old-policy log-probabilities, with \(\beta&gt;0\). Unlike a baseline change, this changes the objective.</td></tr>
+    </table>
+  </div>
+  <p>With \(\rho_t=\exp(\ell_t-\ell_{t,\mathrm{old}})\) and a fixed old-policy denominator,
+  the unclipped ratio loss \(-\hat A_t\rho_t\) and
+  \(-\operatorname{sg}[\rho_t]\hat A_t\ell_t\) have the <strong>same gradient, not the same
+  scalar value</strong>, when masks and reduction match. Plain GPG omits that ratio.
+  <a href="ppo.html#loss-variants">PPO and its alternatives</a> change how the ratio affects
+  the update. Implementation labels here follow
+  <a href="https://github.com/verl-project/verl/blob/b65da71c1745b49e80adc218d02782a3df73d047/verl/trainer/ppo/core_algos.py">verl at <code>b65da71</code></a>.</p>
 
   <h3 id="implementation">Minimal REINFORCE update</h3>
   <p>This CPU categorical-policy example retains the legacy Gym-style interface: <code>reset() → obs</code> and <code>step(action) → (obs, reward, done, info)</code>. Assume at least one step, true termination rather than time-limit truncation, and no policy update during collection. It uses no baseline or return normalization. The default matches the lecture's undiscounted objective; other discounts use the explicit \(\gamma^t\) weights derived <a href="#discount">below</a>.</p>
