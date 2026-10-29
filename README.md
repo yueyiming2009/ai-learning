@@ -99,7 +99,10 @@ From first-principles RL theory to LLM post-training and the systems that run it
 **Theory:** MDP → imitation learning (behavior cloning, expressive policies, DAgger/HG-DAgger) →
 value functions → Monte Carlo → TD → DQN → policy gradient → PPO → MCTS →
 AlphaZero → tree search for LLMs. Imitation separates expert supervision from reward optimization
-and connects learner-state coverage to LLM distillation. **Alignment:** RLHF, GRPO, DPO, DeepSeek-R1, cascade RL,
+and connects learner-state coverage to LLM distillation.
+[PPO/GRPO backward derivation](docs/rl/ppo-grpo-backward.html) follows the clipped loss through
+the ratio, KL term, log-probabilities, logits, and model weights, with worked examples.
+**Alignment:** RLHF, GRPO, DPO, DeepSeek-R1, cascade RL,
 distillation, and generative recommendation (retrieval vs ranking, slate rewards, and a dated
 research/production landscape), paired with a worked ranking-RL training loop, interactive
 policy updates, a comparison with general/LLM RL, and a separate-project GenRank–verl integration

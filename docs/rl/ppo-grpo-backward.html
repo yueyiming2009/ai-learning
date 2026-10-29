@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>PPO &amp; GRPO — Step-by-Step Backward Pass</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #fff; --surface: #f8f9fa; --border: #e8eaed; --text: #1a1a2e;
+      --muted: #6b7280; --accent: #0d9488; --accent-light: #f0fdfa;
+      --nav-bg: rgba(255,255,255,0.92); --ink: #374151;
+      --step-bg: #f9fafb; --step-border: #d1d5db;
+      --warning-bg: #eff6ff; --warning-border: #3b82f6; --note-fg: #1e40af;
+      --boxed-bg: #f0fdf4; --boxed-border: #16a34a; --result-fg: #15803d;
+      --fig-bg: #fff; --plot-grid: #eceef1; --plot-axis: #c7cbd1;
+      --plot-tick: #6b7280; --plot-gray: #9ca3af;
+      --plot-violet: #6d28d9; --plot-teal: #0d9488; --plot-orange: #d97706;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115; --surface: #171b21; --border: #262b33; --text: #e5e7eb;
+        --muted: #9aa1ab; --accent: #2dd4bf; --accent-light: #102320;
+        --nav-bg: rgba(15,17,21,0.9); --ink: #cbd5e1;
+        --step-bg: #14181e; --step-border: #333a44;
+        --warning-bg: #101a2b; --warning-border: #1e40af; --note-fg: #93c5fd;
+        --boxed-bg: #0e2016; --boxed-border: #15803d; --result-fg: #4ade80;
+        --fig-bg: #14181e; --plot-grid: #232830; --plot-axis: #3a4149;
+        --plot-tick: #9aa1ab; --plot-gray: #6b7280;
+        --plot-violet: #a78bfa; --plot-teal: #2dd4bf; --plot-orange: #fb923c;
+      }
+    }
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; line-height: 1.75; font-size: 16px; }
+    nav { position: sticky; top: 0; z-index: 100; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 52px; }
+    .nav-brand { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 0.9rem; color: var(--accent); text-decoration: none; white-space: nowrap; }
+    .nav-links { display: flex; gap: 4px; overflow-x: auto; flex: 1; }
+    .nav-links a { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; white-space: nowrap; }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .hero { background: linear-gradient(135deg, #064e3b 0%, #0d9488 65%, #14b8a6 100%); color: white; padding: 56px 24px 48px; text-align: center; }
+    .hero h1 { font-size: clamp(1.5rem, 4vw, 2.2rem); font-weight: 600; margin: 0 0 12px; letter-spacing: -0.02em; }
+    .hero p { margin: 0 auto; opacity: 0.9; font-size: 0.97rem; max-width: 660px; }
+    .hero-pill { display: inline-block; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 100px; font-size: 0.78rem; padding: 3px 12px; margin-bottom: 16px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .page-wrap { max-width: 900px; margin: 0 auto; padding: 36px 24px 80px; }
+    h2 { font-size: 1.15rem; margin: 2.8em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); scroll-margin-top: 70px; }
+    h3 { font-size: 0.98rem; margin: 1.6em 0 0.4em; color: var(--ink); }
+    p { margin: 0.6em 0; }
+    a { color: var(--accent); }
+    li { margin-bottom: 0.4em; }
+    code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-size: 0.88em; }
+    pre { background: var(--step-bg); border: 1px solid var(--step-border); border-radius: 8px; padding: 14px 18px; overflow-x: auto; font-size: 0.85rem; line-height: 1.55; }
+    pre code { background: none; border: none; padding: 0; }
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+    th, td { border: 1px solid var(--border); padding: 9px 12px; text-align: left; }
+    th { background: var(--surface); font-size: 0.82rem; color: var(--muted); }
+    .step { background: var(--step-bg); border: 1px solid var(--step-border); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 1.2em 0; }
+    .step-label, .result-label { font-size: 0.82rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; }
+    .note { background: var(--warning-bg); border-left: 3px solid var(--warning-border); border-radius: 0 8px 8px 0; padding: 12px 16px; margin: 1em 0; font-size: 0.92em; color: var(--note-fg); }
+    .note a { color: inherit; }
+    .result { background: var(--boxed-bg); border: 1.5px solid var(--boxed-border); border-radius: 8px; padding: 16px 20px; margin: 1.2em 0; text-align: center; }
+    .result-label { color: var(--result-fg); }
+    mjx-container[display="true"] { overflow-x: auto; overflow-y: hidden; padding: 5px 0; max-width: 100%; }
+    .figure { background: var(--fig-bg); border: 1px solid var(--border); border-radius: 10px; padding: 18px 16px 14px; margin: 1.6em 0; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+    .figure canvas { width: 100%; height: 300px; display: block; }
+    .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; justify-content: center; margin-top: 12px; font-size: 0.82rem; color: var(--text); }
+    .legend-item { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, var(--plot-gray) 0 5px, transparent 5px 9px); }
+    .figure-caption { font-size: 0.85rem; color: var(--muted); line-height: 1.65; margin: 12px 0 0; }
+    .controls { display: flex; flex-wrap: wrap; gap: 12px 24px; margin-bottom: 12px; font-size: 0.85rem; }
+    .controls label { display: flex; align-items: center; gap: 8px; }
+    .controls input { width: 105px; accent-color: var(--accent); }
+    .controls output { min-width: 2.5em; font-variant-numeric: tabular-nums; }
+    footer { border-top: 1px solid var(--border); padding: 24px; text-align: center; color: var(--muted); font-size: 0.8rem; }
+    @media (max-width: 560px) { nav { padding: 0 12px; gap: 12px; } .page-wrap { padding: 24px 16px 60px; } .step, .result { padding: 12px; } }
+  </style>
+</head>
+<body>
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes">
+    <svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+    PPO / GRPO Backward
+  </a>
+  <div class="nav-links">
+    <a href="#forward">Forward</a><a href="#clip">Clipping</a><a href="#kl">KL</a>
+    <a href="#logits">Logits</a><a href="#weights">Weights</a>
+    <a href="#example">Example</a><a href="#code">Code</a>
+  </div>
+</nav>
+<div class="hero">
+  <div class="hero-pill">RL · Loss derivation</div>
+  <h1>PPO &amp; GRPO — Step-by-Step Backward Pass</h1>
+  <p>Start at the scalar loss. Differentiate the clip, the ratio, and the KL term.
+    Carry the result through log-softmax to every vocabulary logit, then into the model weights.</p>
+</div>
+<main class="page-wrap">
+  <p>Companion to <a href="ppo.html">PPO</a> and <a href="grpo.html">GRPO</a>.
+    The <a href="policy-gradient.html#pg">policy gradient theorem</a> explains <em>why</em> a rollout can
+    supply a learning signal. Here we answer a different question: <strong>given a sampled batch
+    and its advantages, what exactly does <code>loss.backward()</code> calculate?</strong></p>
+
+  <h2 id="notation">1. Fix the batch before differentiating</h2>
+  <p>First consider one sampled token \(a\) in its fixed prompt/prefix \(s\).
+    Assume a categorical policy with finite logits, unit temperature, and the same action support
+    for the learner and the recorded old policy. All probabilities below refer to that same \(a,s\).</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Quantity</th><th>Meaning</th><th>Receives gradients in this actor update?</th></tr>
+      <tr><td>\(\mathbf z_\theta\in\mathbb R^V,\;\mathbf p=\operatorname{softmax}(\mathbf z)\)</td><td>Current logits and probabilities</td><td>Yes</td></tr>
+      <tr><td>\(\ell=\log p_a\)</td><td>Current sampled-token log-probability</td><td>Yes</td></tr>
+      <tr><td>\(\ell_{\rm old}=\log\pi_{\rm old}(a\mid s)\)</td><td>Stored rollout-policy log-probability</td><td>No</td></tr>
+      <tr><td>\(\ell_{\rm ref}=\log\pi_{\rm ref}(a\mid s)\)</td><td>Frozen reference log-probability</td><td>No</td></tr>
+      <tr><td>\(A,\;a,\;s\)</td><td>Advantage, sampled token ID, prefix token IDs</td><td>No</td></tr>
+      <tr><td>\(\epsilon,\;\beta,\;w\)</td><td>Clip width, KL coefficient, reduction weight</td><td>No; \(0&lt;\epsilon&lt;1,\;\beta,w\geq0\)</td></tr>
+    </table>
+  </div>
+  <p>PPO typically obtains \(A\) from GAE; GRPO obtains it from a group's rewards, for example
+    \(A_i=(R_i-\operatorname{mean}_j R_j)/(\operatorname{std}_j R_j+\delta)\).
+    <strong>Both are frozen numbers during the actor backward pass.</strong>
+    GRPO usually broadcasts \(A_i\) to all response tokens of answer \(i\).</p>
+  <div class="note">
+    Frozen <em>token IDs</em> do not mean frozen model activations. The learner recomputes a
+    differentiable forward pass on the recorded sequence. Gradients flow through its embeddings,
+    attention, and MLPs, but not through the discrete sampling operation or the reward computation.
+    Never recompute \(\ell_{\rm old}\) from the live actor inside this graph: differentiating
+    \(\exp(\ell-\ell)\) would give zero.
+  </div>
+
+  <h2 id="forward">2. Forward pass — write the loss we will minimize</h2>
+  <p>For one token, compute:</p>
+  \[
+    \ell = z_a-\log\sum_{j=1}^{V}e^{z_j},\qquad
+    \rho=e^{\ell-\ell_{\rm old}},\qquad
+    u=e^{\ell_{\rm ref}-\ell}.
+  \]
+  <p>\(\rho=\pi_\theta/\pi_{\rm old}\) controls the policy surrogate;
+    \(u=\pi_{\rm ref}/\pi_\theta\) belongs to the reference-KL estimator. They are
+    <strong>different ratios, in opposite directions</strong>.</p>
+  <div class="result">
+    <div class="result-label">Per-token loss — gradient descent, not objective ascent</div>
+    \[
+      L_{\rm token}
+        = \underbrace{-\min\!\left(A\rho,\;
+            A\,\operatorname{clip}(\rho,1-\epsilon,1+\epsilon)\right)}_{L_{\rm PG}}
+          + \underbrace{\beta\,(u-\log u-1)}_{L_{\rm KL}}.
+    \]
+  </div>
+  <p>Set \(\beta=0\) for the clipped actor loss alone. The explicit \(k_3\) KL term is the
+    GRPO-style choice considered here; not every PPO/GRPO implementation enables it.
+    A PPO setup that puts KL into rewards instead has already folded that information into the
+    detached advantages. Do not add a second KL loss unless that is intentional.</p>
+  <p>For a batch, \(L_{\rm actor}=\sum_{i,t}w_{i,t}L_{{\rm token},i,t}\).
+    We derive one token with \(w=1\) first, then restore masks and normalization in
+    <a href="#reduction">§9</a>. The backward graph is:</p>
+  <pre><code>L_token
+  ├─ L_PG → min / clip → rho = exp(ell - old_ell) ─┐
+  └─ L_KL → u - log(u) - 1 → u = exp(ref_ell - ell) ┤
+                                                   ↓
+                            ell = log_softmax(z)[a] → z → model weights</code></pre>
+
+  <h2 id="clip">3. Backward step 1 — differentiate the min and clip</h2>
+  <p>Let \(l=1-\epsilon\) and \(h=1+\epsilon\). Start by resolving the minimum
+    <em>before</em> taking derivatives. The sign of \(A\) determines which side flattens.</p>
+  <div class="step">
+    <div class="step-label">Positive advantage: upper plateau</div>
+    <p>If \(A&gt;0\), then for \(\rho&lt;l\), \(A\rho&lt;Al\), so the raw branch wins.
+      Inside the band both branches equal \(A\rho\).
+      For \(\rho&gt;h\), \(Ah&lt;A\rho\), so the clipped branch wins. Therefore:</p>
+    \[
+      L_{\rm PG}=
+      \begin{cases}-A\rho &amp; \rho&lt;h\\-Ah &amp; \rho&gt;h\end{cases},
+      \qquad
+      \frac{\partial L_{\rm PG}}{\partial\rho}=
+      \begin{cases}-A &amp; \rho&lt;h\\0 &amp; \rho&gt;h.\end{cases}
+    \]
+  </div>
+  <div class="step">
+    <div class="step-label">Negative advantage: lower plateau</div>
+    <p>If \(A&lt;0\), multiplication reverses the comparisons.
+      Below \(l\), \(Al&lt;A\rho\), so the clipped branch wins.
+      Inside the band the branches coincide. Above \(h\), \(A\rho&lt;Ah\), so the raw branch wins:</p>
+    \[
+      L_{\rm PG}=
+      \begin{cases}-Al &amp; \rho&lt;l\\-A\rho &amp; \rho&gt;l\end{cases},
+      \qquad
+      \frac{\partial L_{\rm PG}}{\partial\rho}=
+      \begin{cases}0 &amp; \rho&lt;l\\-A &amp; \rho&gt;l.\end{cases}
+    \]
+  </div>
+  <p>Define an <em>active-branch indicator</em> \(C\), away from the kink points:</p>
+  \[
+    C(A,\rho)=
+    \begin{cases}
+      1 &amp; A&gt;0\ \text{and}\ \rho&lt;1+\epsilon,\\
+      1 &amp; A&lt;0\ \text{and}\ \rho&gt;1-\epsilon,\\
+      0 &amp; \text{otherwise}.
+    \end{cases}
+    \qquad
+    \frac{\partial L_{\rm PG}}{\partial\rho}=-A\,C.
+  \]
+  <div class="note">
+    <strong>Outside the clip interval does not always mean zero gradient.</strong>
+    A good action whose probability fell too far, or a bad action whose probability rose too far,
+    still uses the raw branch. Only the advantage-improving side plateaus.
+    At \(A=0\) the policy-loss gradient is zero everywhere.
+    At the active plateau boundary the loss is not differentiable; autograd picks an
+    operation-specific subgradient. The formulas, plot, and numerical checks here use the open
+    regions, not a claimed unique derivative at a kink.
+  </div>
+
+  <h2 id="ratio">4. Backward step 2 — ratio to log-probability</h2>
+  <p>The exponential has a particularly simple derivative. Since \(\ell_{\rm old}\) is constant:</p>
+  \[
+    \frac{\partial\rho}{\partial\ell}
+      = e^{\ell-\ell_{\rm old}}=\rho.
+  \]
+  <p>Multiply the upstream derivative from §3 by this local derivative:</p>
+  <div class="result">
+    <div class="result-label">Policy-loss gradient arriving at the sampled log-probability</div>
+    \[
+      g_{\rm PG}\equiv\frac{\partial L_{\rm PG}}{\partial\ell}
+        =\frac{\partial L_{\rm PG}}{\partial\rho}
+          \frac{\partial\rho}{\partial\ell}
+        =-A\rho C.
+    \]
+  </div>
+  <p>This is <strong>not</strong> \(-A\,\operatorname{clip}(\rho)\).
+    In a plateau it is zero; in an active region it uses the <em>unclipped</em> ratio.
+    At \(\rho=1\), \(C=1\) for nonzero \(A\), giving \(-A\). Although the ratio's
+    <em>value</em> is 1 when the policies match, its derivative is not zero:
+    the numerator is live, the denominator is frozen.</p>
+
+  <h2 id="kl">5. Backward step 3 — the reference-KL branch</h2>
+  <p>Differentiate the sampled \(k_3\) term on the same frozen token:</p>
+  \[
+    \frac{\partial u}{\partial\ell}=-u,\qquad
+    \frac{\partial (u-\log u-1)}{\partial u}=1-\frac1u.
+  \]
+  <div class="step">
+    <div class="step-label">Chain rule, then sum the two branches</div>
+    \[
+      g_{\rm KL}
+        =\beta\left(1-\frac1u\right)(-u)
+        =\beta(1-u),
+        \qquad
+      g\equiv\frac{\partial L_{\rm token}}{\partial\ell}
+        =-A\rho C+\beta(1-u).
+    \]
+  </div>
+  <p>If \(p_a&gt;p_{{\rm ref},a}\), then \(u&lt;1\) and the KL contribution is positive:
+    gradient descent pulls the sampled log-probability down. If \(p_a&lt;p_{{\rm ref},a}\),
+    it is negative and pulls up. Even when \(C=0\), <strong>the KL gradient can remain nonzero</strong>.</p>
+  <div class="note">
+    <strong>Which KL gradient did we just compute?</strong> This is the exact derivative of the
+    finite-batch, sampled \(k_3\) <em>loss</em> with the sampling distribution held fixed.
+    The identity \(\mathbb E_{a\sim\pi_\theta}[k_3]=\mathrm{KL}(\pi_\theta\|\pi_{\rm ref})\)
+    does not make its detached-sample backward an unbiased gradient of that moving expectation:
+    differentiating the expectation also produces
+    \(\mathbb E_{\pi_\theta}[k_3\,\nabla_\theta\log\pi_\theta]\).
+    Reused old-policy samples introduce a further distribution mismatch.
+    This page derives the implemented surrogate, not an exact gradient of expected task reward
+    or of the full current-policy KL.
+  </div>
+
+  <div class="figure">
+    <div class="controls">
+      <label for="advantage">Advantage A <input id="advantage" type="range" min="-2" max="2" step="0.25" value="1"><output id="advantage-value" for="advantage">1.00</output></label>
+      <label for="epsilon">Clip ε <input id="epsilon" type="range" min="0.05" max="0.4" step="0.05" value="0.2"><output id="epsilon-value" for="epsilon">0.20</output></label>
+      <label for="beta">KL β <input id="beta" type="range" min="0" max="1" step="0.05" value="0.2"><output id="beta-value" for="beta">0.20</output></label>
+    </div>
+    <canvas id="plot-gradient" aria-label="Gradient of the token loss with respect to its log-probability versus policy ratio. The policy gradient plateaus on the advantage-improving side, but the KL gradient need not vanish.">The policy contribution is -A times the ratio in the active region and zero in the plateau. The total adds beta times (1 - 1/ratio) when reference and old policies agree.</canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span> Policy contribution</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-orange)"></span> KL contribution</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-teal)"></span> Total</span>
+      <span class="legend-item"><span class="lg dash"></span> Clip thresholds</span>
+    </div>
+    <p class="figure-caption">
+      <strong>Clipping switches off one branch, not the whole backward pass.</strong>
+      Horizontal: \(\rho\). Vertical: \(\partial L/\partial\ell\), not \(\partial L/\partial\rho\).
+      This plot fixes \(p_{{\rm ref},a}=p_{{\rm old},a}=0.5\), hence \(u=1/\rho\);
+      it uses \(w=1\). Change A's sign to move the plateau to the other side, or set β to zero
+      to isolate PPO's clipped actor loss. Gaps mark the undefined derivative at the kink.
+      Positive means descent pushes \(\ell\) down; negative means up when varying this token alone.
+    </p>
+  </div>
+
+  <h2 id="logits">6. Backward step 4 — log-probability to every vocabulary logit</h2>
+  <p>Now forget how \(g\) was produced. It is the upstream scalar arriving at
+    \(\ell=z_a-\log\sum_k e^{z_k}\). Differentiate with respect to <em>any</em> logit \(z_j\):</p>
+  \[
+    \frac{\partial\ell}{\partial z_j}
+      =\underbrace{\frac{\partial z_a}{\partial z_j}}_{\mathbf1[j=a]}
+       -\underbrace{\frac{e^{z_j}}{\sum_k e^{z_k}}}_{p_j}
+      =\mathbf1[j=a]-p_j.
+  \]
+  <div class="result">
+    <div class="result-label">Full per-token logit gradient</div>
+    \[
+      \boxed{\frac{\partial L_{\rm token}}{\partial z_j}
+       =\left[-A\rho C+\beta(1-u)\right]
+          \left(\mathbf1[j=a]-p_j\right)}
+    \]
+    \[
+      \nabla_{\mathbf z}L_{\rm token}=g\,(\mathbf e_a-\mathbf p).
+    \]
+  </div>
+  <p>The gather selects only \(a\), but the log-softmax denominator depends on <em>every</em>
+    logit. Unselected vocabulary entries therefore receive gradients too.
+    Their sum is zero: \(g(1-\sum_jp_j)=0\), consistent with softmax being unchanged
+    by adding the same constant to every logit.</p>
+  <p>Compare <a href="../foundations/cross-entropy.html#backward">cross entropy</a>,
+    \(L_{\rm CE}=-\ell\), whose upstream scalar is \(-1\) and whose gradient is
+    \(\mathbf p-\mathbf e_a\). At \(\rho=1,\beta=0\), PPO/GRPO gives
+    \(A(\mathbf p-\mathbf e_a)\): <strong>signed, advantage-weighted cross entropy</strong>
+    at the sampled token. This is equality of the gradients at that point, not equality
+    of the scalar PPO and cross-entropy losses.</p>
+
+  <h2 id="weights">7. Backward step 5 — logits to parameters</h2>
+  <p>Write the final projection with row-vector activations:
+    \(\mathbf z=\mathbf hW+\mathbf b\), where
+    \(\mathbf h\in\mathbb R^{1\times d}\), \(W\in\mathbb R^{d\times V}\).
+    Given \(d\mathbf z=g(\mathbf e_a-\mathbf p)\), the linear backward is:</p>
+  \[
+    dW=\mathbf h^\top d\mathbf z,\qquad
+    d\mathbf b=d\mathbf z,\qquad
+    d\mathbf h=d\mathbf z\,W^\top.
+  \]
+  <p>For \(N\) flattened batch/token positions:
+    \(dW=H^\top dZ\), \(d\mathbf b=\sum_{n=1}^{N}dZ_n\), \(dH=dZ\,W^\top\).
+    The loss reduction weights are already included in \(dZ\).
+    Omit the bias term if the language-model head has no bias.</p>
+  <p>The transformer then receives \(dH\) and applies the same local backward rules as in SFT:
+    <a href="../foundations/rmsnorm-gradient.html">RMSNorm</a>,
+    <a href="../foundations/swiglu.html#weights">SwiGLU</a>, attention, and residual paths.
+    Shared parameters accumulate contributions from every token and branch; tied embeddings
+    additionally receive their input-embedding contribution.
+    <a href="../foundations/backprop.html#vjp">Backpropagation / VJPs</a> derives this composition.</p>
+  <div class="result">
+    <div class="result-label">Parameter-space form of the same backward pass</div>
+    \[
+      \nabla_\theta L_{\rm actor}
+        =\sum_{i,t}w_{i,t}
+          \left[-A_{i,t}\rho_{i,t}C_{i,t}
+                 +\beta(1-u_{i,t})\right]
+          \nabla_\theta\log\pi_\theta(a_{i,t}\mid s_{i,t}).
+    \]
+  </div>
+  <p>Negate this for objective <em>ascent</em>. In the unclipped \(\rho=1\) case it becomes
+    the \([A+\beta(u-1)]\nabla_\theta\log\pi_\theta\) expression on
+    <a href="grpo.html#gradient">GRPO §6</a>.
+    Gradient clipping by norm and the <a href="../foundations/optimizers.html">optimizer update</a>
+    happen <em>after</em> this derivative; PPO ratio clipping is a different operation.</p>
+
+  <h2 id="example">8. Worked backward — three vocabulary entries</h2>
+  <p>Use \(\mathbf z=(\log0.5,\log0.3,\log0.2)\), so
+    \(\mathbf p=(0.5,0.3,0.2)\). The sampled token is the first entry,
+    \(\mathbf e_a-\mathbf p=(0.5,-0.3,-0.2)\).
+    Set \(A=2,\epsilon=0.2,\beta=0.1,p_{{\rm ref},a}=0.4,w=1\).</p>
+  <div class="step">
+    <div class="step-label">Case A — no clipping: old probability = 0.5</div>
+    \[
+      \rho=0.5/0.5=1,\quad C=1,\quad u=0.4/0.5=0.8.
+    \]
+    \[
+      L_{\rm PG}=-2,\quad
+      L_{\rm KL}=0.1(0.8-\log0.8-1)\approx0.002314.
+    \]
+    \[
+      \frac{\partial L_{\rm PG}}{\partial\rho}=-2,\quad
+      \frac{\partial\rho}{\partial\ell}=1,\quad
+      g_{\rm PG}=-2,\quad g_{\rm KL}=0.02,\quad g=-1.98.
+    \]
+    \[
+      d\mathbf z=-1.98(0.5,-0.3,-0.2)=(-0.99,\;0.594,\;0.396).
+    \]
+    <p>A direct SGD step on these logits with \(\eta=0.01\) adds
+      \((0.0099,-0.00594,-0.00396)\), increasing the sampled token's probability.</p>
+  </div>
+  <div class="step">
+    <div class="step-label">Case B — good action past its plateau: old probability = 0.4</div>
+    \[
+      \rho=1.25&gt;1.2,\quad C=0,\quad
+      L_{\rm PG}=-\min(2.5,2.4)=-2.4.
+    \]
+    \[
+      g_{\rm PG}=0,\quad g_{\rm KL}=0.02,\quad
+      d\mathbf z=0.02(0.5,-0.3,-0.2)=(0.01,-0.006,-0.004).
+    \]
+    <p>The policy branch stops rewarding further increase; the KL branch still pulls toward
+      the reference. If \(\beta=0\), this token contributes exactly zero actor gradient.</p>
+  </div>
+  <p>Check both advantage signs with \(\epsilon=0.2,\beta=0,w=1\):</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>\(A\)</th><th>\(\rho\)</th><th>Selected loss branch</th><th>\(\partial L/\partial\rho\)</th><th>\(\partial L/\partial\ell\)</th></tr>
+      <tr><td>+2</td><td>0.7</td><td>Raw — restore a good action</td><td>−2</td><td>−1.4</td></tr>
+      <tr><td>+2</td><td>1.0</td><td>Raw</td><td>−2</td><td>−2.0</td></tr>
+      <tr><td>+2</td><td>1.3</td><td>Upper plateau</td><td>0</td><td>0</td></tr>
+      <tr><td>−2</td><td>0.7</td><td>Lower plateau</td><td>0</td><td>0</td></tr>
+      <tr><td>−2</td><td>1.0</td><td>Raw</td><td>+2</td><td>+2.0</td></tr>
+      <tr><td>−2</td><td>1.3</td><td>Raw — suppress a bad action</td><td>+2</td><td>+2.6</td></tr>
+    </table>
+  </div>
+  <p>These are single-token contributions, not promises about a trained model's next probability.
+    Other tokens, shared weights, auxiliary losses, and optimizer state can change the final update.</p>
+
+  <h2 id="reduction">9. Masks and averaging — where PPO and GRPO differ</h2>
+  <p>The local derivative is the same for both algorithms once \(A\) is fixed.
+    Advantage construction and the loss's reduction weights determine which contributions
+    get emphasized. Let \(m_{i,t}\) be 1 for an included response token and 0 otherwise,
+    \(T_i=\sum_t m_{i,t}\), and assume every included answer has \(T_i&gt;0\).</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Reduction</th><th>Weight \(w_{i,t}\)</th><th>Consequence</th></tr>
+      <tr><td>Token mean over the batch</td><td>\(m_{i,t}/\sum_{j,s}m_{j,s}\)</td><td>Equal weight per included token</td></tr>
+      <tr><td>Original GRPO: answer mean, then prompt/group mean</td><td>\(m_{i,t}/(BGT_i)\), for \(B\) prompts, \(G\) answers each</td><td>Equal total weight per answer, hence larger per-token weights for short answers</td></tr>
+      <tr><td>Dr.GRPO-style constant divisor</td><td>\(m_{i,t}/(BG T_{\max})\), fixed \(T_{\max}\)</td><td>No inverse-realized-length weighting; total scale depends on token count</td></tr>
+    </table>
+  </div>
+  \[
+    \frac{\partial L_{\rm actor}}{\partial z_{i,t,j}}
+      =w_{i,t}\,g_{i,t}\left(\mathbf1[j=a_{i,t}]-p_{i,t,j}\right).
+  \]
+  <p>For finite per-token computations, \(m=0\) removes that token's direct loss contribution,
+    not all gradient paths through its representation: prompt tokens can still influence later
+    response predictions through attention. If all rewards in a GRPO group are identical,
+    its normalized advantages are zero, so its policy-loss contribution vanishes;
+    an explicit KL or entropy term need not vanish.</p>
+  <p>Handle empty-response batches explicitly rather than divide by zero.
+    Sanitize or exclude invalid padded computations <em>before</em> exponentiation:
+    multiplying an infinite loss by a zero mask does not make it finite.
+    Gradient accumulation and distributed reductions must preserve the intended denominator;
+    averaging unequal-size microbatch means is not a global token mean.
+    See <a href="grpo-training-walkthrough.html#drgrpo">GRPO loss aggregation in practice</a>.</p>
+
+  <h2 id="auxiliary">10. What about PPO's critic and entropy bonus?</h2>
+  <p>The derivation above is the actor's clipped surrogate plus optional sampled reference-KL.
+    For the illustrative full loss
+    \(L_{\rm total}=L_{\rm actor}+c_V L_V-c_H H\), additional branches contribute:</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Term</th><th>Local backward</th><th>Boundary</th></tr>
+      <tr><td>Unclipped value regression \(L_V=\frac12(V_\psi-R_{\rm target})^2\)</td><td>\(\partial(c_VL_V)/\partial V_\psi=c_V(V_\psi-R_{\rm target})\)</td><td>Target is detached; clipped value-loss variants have their own branches</td></tr>
+      <tr><td>Exact categorical entropy \(H=-\sum_jp_j\log p_j\)</td><td>\(\partial(-c_HH)/\partial z_j=c_Hp_j(\log p_j+H)\)</td><td>A full-vocabulary entropy, not a detached sampled surprisal</td></tr>
+    </table>
+  </div>
+  <p>For entropy, apply the softmax Jacobian to \(\partial H/\partial p_k=-(\log p_k+1)\):
+    \(\partial H/\partial z_j=-p_j(\log p_j+H)\); the loss has another minus sign.
+    Apply each term's configured reduction separately.
+    A separate PPO critic updates its own parameters; a shared actor/critic trunk sums their
+    gradients. GRPO removes the critic, not the actor's ordinary transformer backward.
+    See <a href="ppo.html#full">the full PPO objective</a> and
+    <a href="ppo.html#entropy">policy entropy</a>.</p>
+
+  <h2 id="code">11. Reference code — autograd versus the derived backward</h2>
+  <p>This small PyTorch example implements exactly the loss above, not a full trainer.
+    Logits have shape <code>[B, T, V]</code>; the other tensors have shape <code>[B, T]</code>.
+    Old/reference log-probs, advantages, and reduction weights are detached.
+    The manual derivative intentionally excludes exact clip-boundary inputs.</p>
+  <pre><code>import torch
+
+def actor_loss_and_manual_grad(z, actions, old_logp, ref_logp, advantages,
+                               weights, eps=0.2, beta=0.1):
+    old_logp, ref_logp = old_logp.detach(), ref_logp.detach()
+    advantages, weights = advantages.detach(), weights.detach()
+    logp_all = z.log_softmax(dim=-1)
+    logp = logp_all.gather(-1, actions.unsqueeze(-1)).squeeze(-1)
+    ratio = (logp - old_logp).exp()
+    delta = ref_logp - logp
+    k3 = delta.expm1() - delta
+    pg = -torch.minimum(ratio * advantages,
+                        ratio.clamp(1 - eps, 1 + eps) * advantages)
+    loss = (weights * (pg + beta * k3)).sum()
+
+    with torch.no_grad():
+        active = ((advantages &gt; 0) &amp; (ratio &lt; 1 + eps)) | (
+                  (advantages &lt; 0) &amp; (ratio &gt; 1 - eps))
+        g = weights * (-advantages * ratio * active - beta * delta.expm1())
+        dz = -g.unsqueeze(-1) * logp_all.exp()
+        dz.scatter_add_(-1, actions.unsqueeze(-1), g.unsqueeze(-1))
+    return loss, dz
+
+dtype = torch.float64
+z = torch.tensor([0.5, 0.3, 0.2], dtype=dtype).log()
+z = z.repeat(1, 7, 1).requires_grad_()
+actions = torch.zeros((1, 7), dtype=torch.long)
+ratios = torch.tensor([[0.7, 1.0, 1.3, 0.7, 1.0, 1.3, 1.0]], dtype=dtype)
+old_logp = (0.5 / ratios).log()
+ref_logp = torch.full((1, 7), 0.4, dtype=dtype).log()
+advantages = torch.tensor([[2, 2, 2, -2, -2, -2, 9]], dtype=dtype)
+weights = torch.tensor([[1, 1, 1, 1, 1, 1, 0]], dtype=dtype) / 6
+
+loss, manual_dz = actor_loss_and_manual_grad(
+    z, actions, old_logp, ref_logp, advantages, weights)
+loss.backward()
+torch.testing.assert_close(z.grad, manual_dz, rtol=1e-10, atol=1e-12)
+torch.testing.assert_close(z.grad.sum(-1), torch.zeros_like(weights),
+                           rtol=0, atol=1e-12)
+assert torch.count_nonzero(z.grad[0, -1]) == 0
+print("Manual backward matches autograd.")</code></pre>
+  <p><code>expm1(delta) - delta</code> evaluates \(e^\delta-1-\delta\) with better
+    near-zero numerical behavior than subtracting 1 from <code>exp(delta)</code>.
+    Its derivative is still \(1-u=-\operatorname{expm1}(\delta)\) with respect to \(\ell\).
+    Production code also needs stable precision, finite-value handling, exact rollout/learner
+    probability contracts, and its configured loss variant. Clamping log-ratios or detaching
+    additional factors changes the derivative; do not silently substitute those operations.</p>
+
+  <h2 id="summary">12. The entire backward pass in five lines</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Backward edge</th><th>Result for one token</th></tr>
+      <tr><td>Loss → ratio</td><td>\(\partial L_{\rm PG}/\partial\rho=-AC\)</td></tr>
+      <tr><td>Ratio + KL → log-probability</td><td>\(g=-A\rho C+\beta(1-u)\)</td></tr>
+      <tr><td>Log-probability → logits</td><td>\(d\mathbf z=wg(\mathbf e_a-\mathbf p)\)</td></tr>
+      <tr><td>Logits → head weights</td><td>\(dW=\mathbf h^\top d\mathbf z\)</td></tr>
+      <tr><td>Logits → transformer</td><td>\(d\mathbf h=d\mathbf zW^\top\), then ordinary backprop</td></tr>
+    </table>
+  </div>
+  <p><strong>The RL-specific part is the scalar \(g\) and its reduction weight.</strong>
+    Everything below log-softmax reuses the same model derivatives as supervised learning.
+    For sequence-level ratios, dual clipping, or detached importance weights, rederive \(g\)
+    from that actual forward loss rather than reusing the vanilla PPO gate.</p>
+  <p>Related: <a href="ppo.html#loss-variants">PPO loss variants</a> ·
+    <a href="grpo.html#loss-variants">GRPO loss variants</a> ·
+    <a href="ppo-training-walkthrough.html#code">PPO in VeRL</a> ·
+    <a href="grpo-training-walkthrough.html#phases">GRPO in VeRL</a> ·
+    <a href="../foundations/log-probs.html">Log-probabilities from logits</a></p>
+</main>
+<footer>Personal ML notes &nbsp;·&nbsp; PPO / GRPO backward derivation</footer>
+<script>
+(function () {
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  function policyGradient(rho, advantage, epsilon) {
+    const active = (advantage > 0 && rho < 1 + epsilon) ||
+                   (advantage < 0 && rho > 1 - epsilon);
+    return active ? -advantage * rho : 0;
+  }
+  function klGradient(rho, beta) { return beta * (1 - 1 / rho); }
+
+  function drawPlot(canvas, cfg) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+    const mL = 44, mR = 14, mT = 22, mB = 36;
+    const pw = cssW - mL - mR, ph = cssH - mT - mB;
+    const { xMin, xMax, yMin, yMax } = cfg;
+    const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
+    const Y = y => mT + (yMax - y) / (yMax - yMin) * ph;
+    ctx.font = '11px Inter, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(t => {
+      const px = X(t);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.fillText(String(t), px, mT + ph + 6);
+    });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(t => {
+      const py = Y(t);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+      ctx.fillText(String(t), mL - 8, py);
+    });
+    ctx.textAlign = 'left';
+    ctx.fillText('dL / d log p(a)', mL, 10);
+    ctx.textAlign = 'right';
+    ctx.fillText('ratio', cssW - mR, cssH - 4);
+    ctx.strokeStyle = cssVar('--plot-axis');
+    ctx.lineWidth = 1.25;
+    if (yMin < 0 && yMax > 0) {
+      ctx.beginPath(); ctx.moveTo(mL, Y(0)); ctx.lineTo(mL + pw, Y(0)); ctx.stroke();
+    }
+    if (xMin <= 0 && xMax >= 0) {
+      ctx.beginPath(); ctx.moveTo(X(0), mT); ctx.lineTo(X(0), mT + ph); ctx.stroke();
+    }
+    ctx.save();
+    ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    ctx.setLineDash([5, 4]);
+    ctx.strokeStyle = cssVar('--plot-gray');
+    cfg.thresholds.forEach(t => {
+      ctx.beginPath(); ctx.moveTo(X(t), mT); ctx.lineTo(X(t), mT + ph); ctx.stroke();
+    });
+    ctx.lineJoin = 'round';
+    cfg.series.forEach(s => {
+      ctx.lineWidth = s.width || 2;
+      ctx.strokeStyle = cssVar(s.color);
+      ctx.setLineDash(s.dash || []);
+      // Separate paths keep a derivative jump from becoming a fictitious connecting slope.
+      const cuts = [xMin, ...(s.breaks || []), xMax];
+      for (let segment = 0; segment < cuts.length - 1; segment++) {
+        const gap = (xMax - xMin) / pw * 2;
+        const left = cuts[segment] + (segment ? gap : 0);
+        const right = cuts[segment + 1] - (segment < cuts.length - 2 ? gap : 0);
+        ctx.beginPath();
+        for (let i = 0; i <= 260; i++) {
+          const x = left + (right - left) * i / 260;
+          const px = X(x), py = Y(s.fn(x));
+          i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+      }
+    });
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  const canvas = document.getElementById('plot-gradient');
+  const advantageInput = document.getElementById('advantage');
+  const epsilonInput = document.getElementById('epsilon');
+  const betaInput = document.getElementById('beta');
+  function render() {
+    const advantage = Number(advantageInput.value);
+    const epsilon = Number(epsilonInput.value);
+    const beta = Number(betaInput.value);
+    document.getElementById('advantage-value').textContent = advantage.toFixed(2);
+    document.getElementById('epsilon-value').textContent = epsilon.toFixed(2);
+    document.getElementById('beta-value').textContent = beta.toFixed(2);
+    const breaks = advantage === 0 ? [] : [advantage > 0 ? 1 + epsilon : 1 - epsilon];
+    drawPlot(canvas, {
+      xMin: 0.4, xMax: 1.6, yMin: -4, yMax: 4,
+      xTicks: [0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6],
+      yTicks: [-4, -2, 0, 2, 4],
+      thresholds: [1 - epsilon, 1 + epsilon],
+      series: [
+        { fn: r => policyGradient(r, advantage, epsilon),
+          color: '--plot-violet', width: 3, breaks },
+        { fn: r => klGradient(r, beta), color: '--plot-orange', width: 2 },
+        { fn: r => policyGradient(r, advantage, epsilon) + klGradient(r, beta),
+          color: '--plot-teal', width: 2, dash: [6, 3], breaks }
+      ]
+    });
+  }
+  [advantageInput, epsilonInput, betaInput].forEach(input => input.addEventListener('input', render));
+  render();
+  let raf;
+  window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(render); });
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq.addEventListener) mq.addEventListener('change', render);
+})();
+</script>
+</body>
+</html>
