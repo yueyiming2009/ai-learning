@@ -405,6 +405,8 @@
 
 <h3>Parallel and semi-autoregressive drafters</h3>
 
+<p>For the underlying denoising idea, start with <a href="../transformer/diffusion-language-models.html">diffusion language models</a>. A diffusion <em>drafter</em> inside exact speculative decoding is still checked by an autoregressive target; a standalone diffusion model such as <a href="../transformer/diffusion-gemma.html">DiffusionGemma</a> generates from its own learned distribution without that verification step.</p>
+
 <p>The variants above draft <em>autoregressively</em> — each of the \(\gamma\) draft steps waits on the previous one, so draft latency grows with \(\gamma\) and forces short blocks and shallow networks. <strong>Parallel drafters</strong> (<a href="https://arxiv.org/abs/2401.10774">Medusa</a>'s independent heads, and the diffusion-inspired PARD, DART, and DeepSeek's <a href="https://arxiv.org/abs/2602.06036"><strong>DFlash</strong></a>) instead emit the entire block in a <em>single</em> forward pass, making draft cost nearly independent of \(\gamma\) — like a prefill over the block. The price is <strong>suffix decay</strong>: because positions are predicted independently, each one marginalizes over all possible predecessors rather than conditioning on the token actually sampled, so the drafter proposes incoherent combinations ("of&nbsp;problem", "no&nbsp;course") and acceptance falls off at later positions. The modern recipe (DFlash → <a href="https://github.com/deepseek-ai/DeepSpec"><strong>DSpark</strong></a>) layers four techniques to keep single-pass speed while clawing back acceptance:</p>
 
 <div class="step">

@@ -39,6 +39,8 @@ update rules, and the tokenizer math. Representative pages: math notation, backp
 (vector–Jacobian products), NLL & cross-entropy & perplexity, LayerNorm/RMSNorm/BatchNorm
 gradients, SwiGLU, RoPE, optimizers, importance sampling, log-probabilities from logits,
 production BPE, test-time compute scaling, the Jacobian lens.
+[Diffusion models](docs/foundations/diffusion-models.html) derive Gaussian corruption,
+the noise-prediction objective, and reverse sampling, with an interactive density plot.
 
 ### 02 · Hardware — [docs/hardware/](docs/hardware/)
 The physical accelerator, in four pages: inside the GPU chip (SIMT, SMs and Tensor Cores, the
@@ -57,6 +59,9 @@ sparse attention (the lightning indexer), hybrid attention stacks, and condition
 **Training:** the next-token objective and single-device loop, multi-token prediction
 (parallel heads vs. DeepSeek-V3's sequential MTP modules, and the free draft head that falls out),
 and the neural scaling laws that size the run (Kaplan vs. Chinchilla, the compute-optimal frontier).
+[Diffusion language models](docs/transformer/diffusion-language-models.html) add a different
+generative objective: masked/uniform-token corruption, same-position denoising, weighted
+cross-entropy, and blockwise sampling, with an interactive generation-order comparison.
 **Model Architectures:** case studies reading disclosed 2026 frontier designs and training choices through those
 components — DeepSeek-V4 (sequence-compressed sparse attention, mHC residual lanes), Qwen3.5
 (the 3:1 Gated DeltaNet hybrid scaled to 397B, native early-fusion vision), Kimi K3
@@ -72,6 +77,9 @@ limits on architecture disclosure and efficiency claims.
 [Jev](docs/transformer/jev.html) studies a different output contract: typed probabilistic
 decisions rather than generated text, with a hypothetical shared-state/readout graph,
 calibration and confidence distinctions, and an interactive cost-aware decision policy.
+[DiffusionGemma](docs/transformer/diffusion-gemma.html) follows that diffusion learning path
+into Google's Gemma 4–based model: shared-backbone encoding/denoising, uniform-state
+corruption, entropy-bounded sampling, and the low-concurrency speed–quality trade-off.
 Vendor disclosures, black-box observations, and unconfirmed internals stay separate.
 
 ### 04 · Systems & Scaling — [docs/systems/](docs/systems/), [triton/](triton/)
