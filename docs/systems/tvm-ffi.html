@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Learn Apache TVM and TVM-FFI: compiler versus runtime, stable C ABI, Python/C++ calls, DLPack tensors, ownership, GPU streams, and an interactive call-overhead model.">
+  <title>TVM &amp; FFI — From Compiled Kernels to Python Calls</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #ffffff; --surface: #f8f9fa; --border: #e8eaed;
+      --text: #1a1a2e; --muted: #6b7280; --accent: #c2410c;
+      --accent-light: #fff7ed; --nav-bg: rgba(255,255,255,0.94);
+      --fig-bg: #ffffff; --plot-grid: #eceef1; --plot-axis: #9ca3af;
+      --plot-tick: #6b7280; --plot-gray: #9ca3af;
+      --plot-violet: #6d28d9; --plot-teal: #0d9488;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115; --surface: #171b21; --border: #303640;
+        --text: #e5e7eb; --muted: #a3abb8; --accent: #fb923c;
+        --accent-light: #281b13; --nav-bg: rgba(15,17,21,0.94);
+        --fig-bg: #14181e; --plot-grid: #282e38; --plot-axis: #727b88;
+        --plot-tick: #a3abb8; --plot-gray: #9ca3af;
+        --plot-violet: #a78bfa; --plot-teal: #2dd4bf;
+      }
+    }
+    body { margin: 0; font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); line-height: 1.75; }
+    a { color: var(--accent); }
+    a:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+    nav { position: sticky; top: 0; z-index: 100; display: flex; align-items: center; gap: 24px; height: 52px; padding: 0 24px; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
+    .nav-brand { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 0.9rem; text-decoration: none; white-space: nowrap; }
+    .nav-links { display: flex; gap: 4px; overflow-x: auto; min-width: 0; }
+    .nav-links a { padding: 4px 10px; font-size: 0.82rem; color: var(--muted); text-decoration: none; white-space: nowrap; }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); border-radius: 6px; }
+    .hero { padding: 52px 24px 46px; background: linear-gradient(135deg, #431407, #9a3412 65%, #c2410c); color: #fff; text-align: center; }
+    .hero-pill { display: inline-block; padding: 4px 12px; border: 1px solid #fdba7466; border-radius: 20px; font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; }
+    .hero h1 { margin: 14px 0 10px; font-size: clamp(2rem, 5vw, 3rem); line-height: 1.2; }
+    .hero p { max-width: 760px; margin: 0 auto; color: #ffedd5; }
+    .page-wrap { max-width: 980px; margin: auto; padding: 32px 24px 64px; }
+    section { margin-top: 42px; scroll-margin-top: 72px; }
+    h2 { font-size: 1.55rem; border-bottom: 1px solid var(--border); padding-bottom: 10px; line-height: 1.35; }
+    h3 { margin: 26px 0 10px; font-size: 1.12rem; }
+    p { margin: 12px 0; }
+    code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.88em; }
+    p code, li code, td code { background: var(--surface); padding: 2px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+    pre { padding: 18px; overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; line-height: 1.55; }
+    pre code { font-size: 0.82rem; }
+    .note { padding: 15px 19px; border-left: 4px solid var(--accent); background: var(--accent-light); border-radius: 0 8px 8px 0; margin: 20px 0; }
+    .note p { margin: 5px 0; }
+    .muted, .source { color: var(--muted); font-size: 0.85rem; }
+    .table-wrap { overflow-x: auto; margin: 18px 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+    th, td { text-align: left; padding: 12px 14px; border: 1px solid var(--border); vertical-align: top; }
+    th { background: var(--surface); font-weight: 600; }
+    .flow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 22px 0; }
+    .flow > div { border: 1px solid var(--border); border-radius: 9px; padding: 15px; background: var(--surface); }
+    .flow strong { display: block; color: var(--accent); }
+    .flow p { font-size: 0.88rem; margin: 6px 0 0; }
+    .equation { padding: 10px 16px; overflow-x: auto; background: var(--surface); border-radius: 8px; }
+    details { margin: 12px 0; border: 1px solid var(--border); padding: 12px 16px; border-radius: 8px; }
+    summary { cursor: pointer; font-weight: 600; }
+    .figure {
+      background: var(--fig-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 16px 14px;
+      margin: 1.6em 0;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .figure canvas { width: 100%; height: 300px; display: block; }
+    .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; justify-content: center; margin-top: 12px; font-size: 0.82rem; color: var(--text); }
+    .legend-item { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, var(--plot-gray) 0 5px, transparent 5px 9px); }
+    .figure-caption { font-size: 0.85rem; color: var(--muted); line-height: 1.6; margin: 14px 4px 2px; }
+    .controls { display: flex; flex-wrap: wrap; gap: 16px 28px; margin-bottom: 16px; }
+    .controls label { flex: 1; min-width: 190px; font-size: 0.86rem; }
+    .controls input { display: block; width: 100%; accent-color: var(--accent); }
+    .readout { font-size: 0.88rem; background: var(--surface); border-radius: 6px; padding: 10px 14px; }
+    footer { border-top: 1px solid var(--border); padding: 25px; text-align: center; color: var(--muted); font-size: 0.82rem; }
+    @media (max-width: 600px) {
+      nav { padding: 0 12px; gap: 12px; }
+      .hero { padding: 38px 16px; }
+      .page-wrap { padding: 24px 16px 48px; }
+      .flow { grid-template-columns: 1fr; }
+      pre { padding: 12px; }
+      .figure { padding: 14px 10px; }
+    }
+  </style>
+</head>
+<body>
+<nav aria-label="Page navigation">
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>TVM &amp; FFI</a>
+  <div class="nav-links">
+    <a href="../index.html#systems-kernel-programming">↑ Kernel Programming</a>
+    <a href="#map">The map</a>
+    <a href="#compiler">TVM</a>
+    <a href="#ffi">FFI</a>
+    <a href="#lab">CPU lab</a>
+    <a href="#tensors">Tensors</a>
+    <a href="#gpu">GPU rules</a>
+    <a href="#performance">Overhead</a>
+    <a href="#practice">Practice</a>
+  </div>
+</nav>
+<header class="hero">
+  <span class="hero-pill">Systems · Compiler &amp; Runtime</span>
+  <h1>TVM &amp; FFI</h1>
+  <p>How an ML computation becomes machine code, how Python calls that code, and why sharing a tensor buffer is not the same as understanding its computation.</p>
+</header>
+<main class="page-wrap">
+  <div class="note">
+    <p><strong>The one-sentence model:</strong> TVM transforms ML programs into executable artifacts; TVM-FFI supplies a common cross-language calling and object interface; DLPack describes tensors so libraries can share their storage.</p>
+    <p><strong>Start here:</strong> read the map, run the scalar and CPU-tensor lessons, then learn the GPU contract. You do not need CUDA or the full TVM compiler to learn TVM-FFI.</p>
+  </div>
+  <p class="source">Based on the <a href="https://tvm.apache.org/ffi/">Apache TVM-FFI documentation</a> and TVM architecture docs, read October 31, 2026. These are rolling docs, not a pinned release. The examples below are source-checked learning examples, not locally execution-validated TVM installations.</p>
+
+  <section id="map">
+    <h2>1. Separate the four layers</h2>
+    <p>Suppose you have a PyTorch tensor and a fast C++ or CUDA implementation. There are two different problems: <strong>how to produce fast code</strong>, and <strong>how to invoke it safely from another language or framework</strong>. TVM and TVM-FFI address different parts of that story.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">Layer</th><th scope="col">Question it answers</th><th scope="col">What it is not</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Apache TVM compiler</strong></td><td>How can a model or tensor program be transformed, scheduled, and lowered for a target CPU/GPU?</td><td>Just a Python binding library.</td></tr>
+          <tr><td><strong>TVM execution runtime</strong></td><td>How do we load compiled artifacts, manage target-specific execution, and run a model or kernel?</td><td>The full optimization toolchain; deployment need not ship all compiler passes.</td></tr>
+          <tr><td><strong>TVM-FFI</strong></td><td>How do languages agree on values, function calls, modules, ownership, and errors?</td><td>A kernel optimizer, tensor-math library, or autograd engine.</td></tr>
+          <tr><td><strong>DLPack</strong></td><td>Where is this tensor's data, what is its layout, and how is its lifetime transferred/shared?</td><td>A compiler, an operation registry, or a CPU-to-GPU copy mechanism.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><strong>FFI</strong> means <em>foreign function interface</em>: code in one language calls code implemented in another. Python calling a native function stays in the same process; this is not HTTP, RPC, or a network serialization format.</p>
+    <p><strong>TVM-FFI is standalone.</strong> The Python distribution is <code>apache-tvm-ffi</code>, imported as <code>tvm_ffi</code>; the compiler is imported as <code>tvm</code>. You can write a kernel using ordinary C++, CUDA, or another compiler and expose it through TVM-FFI without running any TVM compiler pass.</p>
+    <div class="flow" aria-label="Two production paths converge on a runtime interface">
+      <div><strong>Path A: compile a model</strong><p>Model / tensor program → TVM transformations and code generation → compiled artifact.</p></div>
+      <div><strong>Path B: author a kernel</strong><p>Handwritten C++ / CUDA or a kernel DSL → its own compiler → exported FFI function.</p></div>
+      <div><strong>Common call boundary</strong><p>Python / C++ / another binding → TVM-FFI function → native implementation using tensor descriptors.</p></div>
+    </div>
+    <p class="source">Sources: <a href="https://tvm.apache.org/docs/arch/index.html">TVM architecture</a>; <a href="https://tvm.apache.org/ffi/guides/compiler_integration.html">standalone compiler integration</a>.</p>
+  </section>
+
+  <section id="compiler">
+    <h2>2. What TVM actually compiles</h2>
+    <p>Use \(Y=\max(AB+b,0)\) as the running example. A framework describes the computation; a target needs loops, memory accesses, parallel work assignment, and instructions. TVM's intermediate representations let you optimize at more than one level.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">Concept</th><th scope="col">What you should picture</th><th scope="col">A decision for this example</th></tr></thead>
+        <tbody>
+          <tr><td><strong>IRModule</strong></td><td>A compiler-side collection of program functions, not a loaded shared library.</td><td>Keep graph-level functions and low-level tensor functions in one compilation unit.</td></tr>
+          <tr><td><strong>Relax</strong></td><td>High-level computation, tensor shapes, dataflow, and control flow.</td><td>Eliminate redundant work, fuse suitable operators, or dispatch a subgraph to an external library.</td></tr>
+          <tr><td><strong>TensorIR / low-level tensor IR</strong></td><td>Loop nests, buffers, reductions, memory scopes, and parallelism.</td><td>Tile the matrix multiplication, reuse data, vectorize CPU work, or bind GPU work to threads.</td></tr>
+          <tr><td><strong>Schedule</strong></td><td>A choice of how to execute the computation while preserving its intended semantics.</td><td>Choose tile sizes, loop order, cache placement, and parallel work mapping.</td></tr>
+          <tr><td><strong>Lowering + code generation</strong></td><td>Turn high-level constructs into target-specific executable code, often through downstream tools such as LLVM or CUDA compilers.</td><td>Produce CPU machine code or host launch code plus GPU code.</td></tr>
+          <tr><td><strong>Runtime Module / Function</strong></td><td>A loadable collection of callable functions. A model may also need the Relax VM and target-specific runtime modules.</td><td>Load an artifact, look up an entry point, and pass inputs.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>From “what” to “how”</h3>
+    <pre><code># Conceptual pseudocode, not a TVM API example.
+# Graph view:
+Y = relu(matmul(A, B) + bias)
+
+# One possible fused loop view:
+for i in range(M):
+    for j in range(N):
+        acc = 0
+        for k in range(K):
+            acc += A[i, k] * B[k, j]
+        Y[i, j] = max(acc + bias[j], 0)
+
+# A scheduled implementation might tile i/j/k, reuse tiles,
+# and map independent output tiles to CPU workers or GPU blocks.</code></pre>
+    <p>Fusing the bias and ReLU into the matmul epilogue can avoid writing and rereading intermediate tensors. Scheduling can improve locality and hardware utilization. Neither change comes from FFI: <strong>FFI does not inspect your loop and make it faster.</strong> Fusion is not always profitable or supported; using a tuned library can be the better choice.</p>
+    <p>The reduction over \(k\) is not just another freely parallel loop: partial sums must be combined correctly. Floating-point reordering can change rounding. “Equivalent computation” needs the appropriate numerical tolerance, and deliberately approximate transformations such as quantization need their own accuracy checks.</p>
+    <div class="note">
+      <p><strong>Avoid the tutorial-version trap.</strong> Older material uses Relay, <code>tvm.tir</code>, <code>tvm._ffi</code>, and <code>PackedFunc</code>. The current architecture and creation pages include Relax, <code>tirx</code>/<code>tvm_tirx</code>, <code>tvm.s_tir</code>, and standalone <code>tvm_ffi</code>. Do not mix imports from different generations. Match the tutorial to the installed compiler release.</p>
+    </div>
+    <p><strong>First compiler exercise:</strong> follow the official <a href="https://tvm.apache.org/docs/deep_dive/tensor_ir/tutorials/tir_creation.html">TensorIR creation tutorial</a> using its matching environment. Inspect the IR, compile its CPU example, compare against NumPy, then follow <a href="https://tvm.apache.org/docs/deep_dive/tensor_ir/tutorials/tir_transformation.html">the transformation tutorial</a>. Change one schedule decision and compare both correctness and warmed-up runtime. The goal is to see the program representation change, not merely to obtain a number from a library.</p>
+    <p class="source">Source: <a href="https://tvm.apache.org/docs/arch/index.html">TVM's compilation flow, transformations, and runtime execution</a>.</p>
+  </section>
+
+  <section id="ffi">
+    <h2>3. How one Python call crosses into C++</h2>
+    <p>An <strong>API</strong> is the source-level interface you program against. An <strong>ABI</strong>, or application binary interface, is the agreement compiled code uses: argument layout, calling convention, symbols, and ownership. C++ templates and Python objects are not themselves a universal binary contract.</p>
+    <p>TVM-FFI uses a stable C ABI with a uniform <strong>packed function</strong> signature. “Packed” means the arguments are collected into an array of tagged values, not that a tensor's entire data buffer is serialized.</p>
+    <pre><code>int exported_call(
+    void* handle,
+    const TVMFFIAny* args,
+    int32_t num_args,
+    TVMFFIAny* result
+);</code></pre>
+    <p>At this boundary, <code>TVMFFIAny</code> is a <strong>16-byte tagged value</strong>: small values such as integers live inline; tensors and other objects are represented by pointers/references. The input arguments are borrowed views. The result is owning and must be zero-initialized by a raw C caller. The C return value is a status code: <code>0</code> for success, <code>-1</code> for an error—not the function's mathematical result.</p>
+    <div class="flow" aria-label="Python to C++ call sequence">
+      <div><strong>1 · Convert</strong><p>Python values become tagged ABI arguments. A supported tensor supplies its descriptor without copying its elements.</p></div>
+      <div><strong>2 · Invoke</strong><p>The exported wrapper unpacks and checks argument types, calls the typed C++ function, and translates exceptions into the ABI error channel.</p></div>
+      <div><strong>3 · Return</strong><p>The binding converts the result back to Python, or raises an exception. A GPU launch can return before the GPU finishes.</p></div>
+    </div>
+    <p>Most users should not implement that C wrapper manually. Export a typed C++ function with <code>TVM_FFI_DLL_EXPORT_TYPED_FUNC</code>, or let the inline build helper generate the export. The wrapper checks the <em>argument type</em>; it cannot infer your kernel's required dtype, layout, shape, or aliasing contract.</p>
+    <h3>Three names you will meet</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">Interface</th><th scope="col">Use it for</th><th scope="col">Important distinction</th></tr></thead>
+        <tbody>
+          <tr><td><code>Module</code> + exported symbols</td><td>Loading a kernel library with <code>tvm_ffi.load_module(path)</code> and calling <code>mod.scale(...)</code>.</td><td>A runtime module is not an <code>IRModule</code> or a Python source module.</td></tr>
+          <tr><td>Global function registry</td><td>Named application APIs or callbacks via <code>register_global_func</code> / <code>get_global_func</code>.</td><td>Registering a Python function does not compile its body into native code. A C++ registration exists only after its library is loaded.</td></tr>
+          <tr><td><code>Object</code> + reflection</td><td>Sharing structured state, fields, and methods across languages.</td><td>Explicit object registration and reference-counted lifetime, not arbitrary C++ objects becoming magically portable.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="source">Sources: <a href="https://tvm.apache.org/ffi/concepts/abi_overview.html">ABI layout</a>; <a href="https://tvm.apache.org/ffi/concepts/func_module.html">calling convention</a>; <a href="https://tvm.apache.org/ffi/guides/export_func_cls.html">exports and reflection</a>.</p>
+  </section>
+
+  <section id="lab">
+    <h2>4. CPU lab: first a value, then a tensor</h2>
+    <p>Use a disposable, approved development environment with a C++17-capable compiler and the official <code>apache-tvm-ffi</code> package. The tensor lesson also uses NumPy with DLPack support. Follow the <a href="https://tvm.apache.org/ffi/get_started/quickstart.html">official prerequisites</a> and your organization's package policy. No full TVM compiler, PyTorch, or GPU is needed for these two lessons.</p>
+    <p class="muted">These snippets compile local C++ and load the resulting native library into Python. Review the source before running; loading native code is not sandboxing. No packages are installed by this page.</p>
+    <h3>Lesson A · Cross the boundary with one integer</h3>
+    <pre><code class="language-python">from tvm_ffi.cpp import load_inline
+
+scalar = load_inline(
+    name="ffi_integer_lesson",
+    cpp_sources=r"""
+#include &lt;tvm/ffi/tvm_ffi.h&gt;
+
+int64_t add_two(int64_t x) {
+    return x + 2;
+}
+""",
+    functions=["add_two"],
+)
+
+assert scalar.add_two(40) == 42
+print(scalar.add_two(40))  # 42</code></pre>
+    <p><code>load_inline</code> invokes the host C++ toolchain, builds and caches a shared library, and returns a loaded <code>tvm_ffi.Module</code>. It is a convenience build helper, <strong>not the TVM tensor compiler</strong>. The first call to the helper may take compilation time; repeated native function calls are a different cost.</p>
+    <p>The <code>functions</code> argument generates the equivalent of this export in the translation unit:</p>
+    <pre><code class="language-cpp">TVM_FFI_DLL_EXPORT_TYPED_FUNC(add_two, add_two)</code></pre>
+    <p>That exposes a symbol named <code>__tvm_ffi_add_two</code>. Use either automatic export or the manual macro for the same function, not both. For an already-built compatible library, use <code>tvm_ffi.load_module(path)</code> instead of rebuilding it.</p>
+
+    <h3>Lesson B · Scale an existing NumPy buffer in C++</h3>
+    <p>The next function computes \(y_i=\alpha x_i\). Its contract is deliberately small: 1-D, contiguous, CPU, float32 tensors of equal length. The caller supplies a <strong>fresh writable output buffer</strong>, so there is no partial input/output overlap.</p>
+    <pre><code class="language-python">import numpy as np
+from tvm_ffi.cpp import load_inline
+
+kernels = load_inline(
+    name="ffi_tensor_lesson",
+    cpp_sources=r"""
+#include &lt;tvm/ffi/tvm_ffi.h&gt;
+
+void scale(tvm::ffi::TensorView x,
+           tvm::ffi::TensorView y,
+           double factor) {
+    TVM_FFI_CHECK(x.device().device_type == kDLCPU &amp;&amp;
+                  y.device().device_type == kDLCPU, ValueError)
+        &lt;&lt; "Expected CPU tensors";
+    TVM_FFI_CHECK(x.ndim() == 1 &amp;&amp; y.ndim() == 1, ValueError)
+        &lt;&lt; "Expected 1-D tensors";
+    DLDataType f32{kDLFloat, 32, 1};
+    TVM_FFI_CHECK(x.dtype() == f32 &amp;&amp; y.dtype() == f32, TypeError)
+        &lt;&lt; "Expected float32 tensors";
+    TVM_FFI_CHECK(x.IsContiguous() &amp;&amp; y.IsContiguous(), ValueError)
+        &lt;&lt; "Expected contiguous tensors";
+    TVM_FFI_CHECK(x.size(0) == y.size(0), ValueError)
+        &lt;&lt; "Expected equal lengths";
+
+    const auto* in = static_cast&lt;const float*&gt;(x.data_ptr());
+    auto* out = static_cast&lt;float*&gt;(y.data_ptr());
+    const float alpha = static_cast&lt;float&gt;(factor);
+    for (int64_t i = 0; i &lt; x.size(0); ++i) {
+        out[i] = alpha * in[i];
+    }
+}
+""",
+    functions=["scale"],
+)
+
+x = np.array([1, 2, 3, 4], dtype=np.float32)
+y = np.empty_like(x)
+kernels.scale(x, y, 2.0)
+np.testing.assert_allclose(y, x * 2.0)
+print(y)  # [2. 4. 6. 8.]</code></pre>
+    <p>The C++ function returns <code>void</code> (Python sees <code>None</code>), but <code>y</code> changes. It writes into the output's existing allocation: no tensor result has to be copied back. This is often called a <strong>destination-passing</strong> interface. The ordinary C++ loop is just a teaching kernel, not a claim of beating NumPy's optimized implementations.</p>
+    <h3>Make the contract fail before trusting it</h3>
+    <pre><code class="language-python"># Continue in the same script after Lesson B.
+bad_inputs = [
+    x.astype(np.float64),  # Wrong dtype
+    x[::2],               # Non-contiguous view
+    x.reshape(2, 2),      # Wrong rank
+    x[:-1],               # Length differs from y
+]
+for bad in bad_inputs:
+    try:
+        kernels.scale(bad, y, 2.0)
+    except (TypeError, ValueError) as exc:
+        print(type(exc).__name__, str(exc))
+    else:
+        raise AssertionError("Invalid input was accepted")
+
+empty = np.empty(0, dtype=np.float32)
+kernels.scale(empty, np.empty_like(empty), 2.0)  # Zero iterations</code></pre>
+    <p>A raw pointer cannot tell you whether writing is allowed or whether another argument overlaps its storage. This lab avoids those problems by construction. A general public API must define and enforce its writable-output and aliasing rules rather than relying only on the checks above.</p>
+    <p class="source">API references: <a href="https://tvm.apache.org/ffi/reference/python/cpp/generated/tvm_ffi.cpp.load_inline.html">load_inline</a>; <a href="https://tvm.apache.org/ffi/get_started/quickstart.html">cross-framework quick start</a>; <a href="https://tvm.apache.org/ffi/guides/kernel_library_guide.html">metadata validation and tensor accessors</a>.</p>
+  </section>
+
+  <section id="tensors">
+    <h2>5. Zero-copy means shared storage, not zero responsibility</h2>
+    <p>To interpret a tensor, the callee needs more than <code>float*</code>. A DLPack descriptor carries a data pointer, device, rank, dtype, shape, strides, and byte offset. Strides are measured in <strong>elements</strong>; the offset is measured in <strong>bytes</strong>.</p>
+    <pre><code>For an ordinary byte-addressable dtype:
+address(i0, ..., in) =
+    data + byte_offset
+         + element_size_in_bytes * sum(ij * stride[j])
+
+Python framework tensor ─┐
+FFI tensor descriptor  ──┼──&gt; one underlying allocation
+Another framework view ─┘</code></pre>
+    <p>For a 2-D contiguous array of shape <code>(3, 4)</code>, strides are <code>(4, 1)</code>. Its transpose can share storage while having shape <code>(4, 3)</code> and strides <code>(1, 4)</code>. A kernel that assumes flat contiguous indexing must reject or explicitly handle that layout. “Make contiguous” can allocate and copy; it is not a free part of FFI conversion.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">Type</th><th scope="col">Ownership</th><th scope="col">When to use</th></tr></thead>
+        <tbody>
+          <tr><td><code>DLTensor</code> / <code>TensorView</code></td><td>Borrowed descriptor; no ownership of the data allocation.</td><td>Inspect and use a caller's tensor during a kernel call. Do not store a borrowed view for later use.</td></tr>
+          <tr><td><code>DLManagedTensorVersioned</code></td><td>Descriptor plus a producer-managed cleanup callback and context.</td><td>Managed interchange: the consumer releases its ownership through the agreed deleter.</td></tr>
+          <tr><td><code>tvm::ffi::Tensor</code> / Python <code>tvm_ffi.Tensor</code></td><td>Managed tensor reference that keeps the backing storage alive through its ownership mechanism.</td><td>Return a tensor or retain one in long-lived state; it need not own a <em>new</em> allocation.</td></tr>
+          <tr><td><code>AnyView</code> / <code>Any</code></td><td>The corresponding borrowed / owning distinction for general ABI values.</td><td>Borrow arguments; manage the lifetime of object-valued results.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>Optional PyTorch experiment · Observe aliasing directly</h3>
+    <pre><code class="language-python">import torch
+import tvm_ffi
+
+x = torch.arange(4, dtype=torch.float32)  # CPU; no autograd
+shared = tvm_ffi.from_dlpack(x, require_contiguous=True)
+again = torch.from_dlpack(shared)
+
+assert again.data_ptr() == x.data_ptr()
+again[0] = 99
+assert x[0].item() == 99</code></pre>
+    <p>This experiment shares data; it does not preserve a PyTorch autograd graph through the foreign code. Use only a supported PyTorch/FFI combination; the <a href="https://tvm.apache.org/ffi/">current installation page</a> calls out an additional compatibility package for PyTorch ≤ 2.9. Check your installed versions before adding dependencies.</p>
+    <div class="note">
+      <p><strong>Zero-copy is not a device transfer.</strong> A CUDA tensor stays on its CUDA device. A host CPU loop must not dereference that pointer. It also does not mean “no work”: descriptor conversion, reference management, and stream coordination can still cost time.</p>
+      <p><strong>Same storage is not independent data.</strong> Mutations can be visible through every alias. DLPack does not supply gradient rules, operator semantics, or permission to mutate an otherwise immutable framework value.</p>
+    </div>
+    <p class="source">Source: <a href="https://tvm.apache.org/ffi/concepts/tensor.html">Tensor and DLPack</a>.</p>
+  </section>
+
+  <section id="gpu">
+    <h2>6. Moving from a CPU call to a GPU launch</h2>
+    <p>On the CPU, the loop finishes before the function returns. On CUDA, the host function typically <em>enqueues</em> a kernel and returns while the GPU is still working. A correct signature is only the beginning.</p>
+    <ol>
+      <li><strong>Validate both inputs and outputs.</strong> Check CUDA device type, matching device IDs, dtype, shape, layout, writable output, and supported aliasing.</li>
+      <li><strong>Select the device.</strong> Use the appropriate device guard; the caller's current device need not match the tensor's device.</li>
+      <li><strong>Use the caller's stream.</strong> Obtain the environment stream for that device, not an assumed stream 0.</li>
+      <li><strong>Launch safely.</strong> Handle zero elements, guard out-of-range threads, and check CUDA launch errors. Keep allocations valid until the GPU has finished using them.</li>
+    </ol>
+    <pre><code class="language-cpp">// Schematic fragment inside a validated CUDA host wrapper.
+// Not a complete compilable kernel.
+auto device = x.device();
+tvm::ffi::CUDADeviceGuard guard(device.device_id);
+auto stream = static_cast&lt;cudaStream_t&gt;(
+    TVMFFIEnvGetStream(device.device_type, device.device_id));
+
+// Compute the launch dimensions; skip the launch for n == 0.
+// ScaleKernel&lt;&lt;&lt;blocks, threads, 0, stream&gt;&gt;&gt;(...);
+// Check launch errors using the CUDA runtime API.</code></pre>
+    <p>Supported framework conversions can capture the current framework stream. There are also explicit <code>tvm_ffi.use_torch_stream</code> and <code>tvm_ffi.use_raw_stream</code> contexts when automatic detection is insufficient. The native kernel still needs to <em>use</em> the stream it obtains.</p>
+    <p><strong>Two different lifetime questions:</strong> the borrowed descriptor must be valid while host code reads it, and the backing allocation must remain valid through asynchronous device use. Reference counting alone is not proof of GPU completion. If you use another stream, establish execution dependencies and satisfy the framework allocator's lifetime rules.</p>
+    <p><strong>Two different integration questions:</strong> an eager FFI call can work while <code>torch.compile</code>, autograd, <code>vmap</code>, or graph capture still needs additional integration. Supply framework-specific operator registration, shape/meta information, mutation/alias declarations, and gradient or batching rules as applicable. A portable call ABI does not make an opaque function automatically understood by every graph compiler.</p>
+    <p>For JAX, the official quick start uses a dedicated adapter and registration through JAX's FFI mechanism; it is not simply the PyTorch call pasted into a JIT-compiled JAX function.</p>
+    <p class="source">Sources: <a href="https://tvm.apache.org/ffi/guides/kernel_library_guide.html">complete CUDA kernel-library patterns</a>; <a href="https://tvm.apache.org/ffi/concepts/tensor.html">stream and lifetime interfaces</a>; <a href="https://tvm.apache.org/ffi/get_started/quickstart.html#jax">JAX integration</a>. Related notes: <a href="cuda-streams.html">CUDA streams</a>, <a href="cuda-graphs.html">CUDA Graphs</a>, and <a href="pytorch-execution.html">PyTorch execution</a>.</p>
+  </section>
+
+  <section id="performance">
+    <h2>7. When does call overhead matter?</h2>
+    <p>A tiny native function can spend more time crossing the language boundary than doing useful work. For a larger kernel, the same fixed cost can become negligible. That is a statement about <strong>granularity</strong>, not a guaranteed speedup from choosing one binding library.</p>
+    <p>For a simple serialized model, let \(h\) be the per-call boundary overhead, \(c\) useful work per item, and \(B\) the number of items processed inside one native call:</p>
+    <div class="equation">
+      \[
+      t_{\text{item}}(B)=c+\frac{h}{B},
+      \qquad
+      \text{overhead fraction}=\frac{h}{h+Bc}.
+      \]
+    </div>
+    <div class="figure">
+      <div class="controls">
+        <label for="overhead">Boundary cost h: <output id="overhead-value" for="overhead">2.0</output> µs
+          <input id="overhead" type="range" min="0" max="10" step="0.1" value="2" aria-controls="plot-overhead overhead-readout">
+        </label>
+        <label for="work">Useful work c: <output id="work-value" for="work">0.5</output> µs/item
+          <input id="work" type="range" min="0.1" max="5" step="0.1" value="0.5" aria-controls="plot-overhead overhead-readout">
+        </label>
+      </div>
+      <p class="muted">x: items per native call B · y: amortized µs/item · all values are hypothetical</p>
+      <canvas id="plot-overhead" role="img" aria-label="Modeled time per item as batch size grows from 1 to 64" aria-describedby="overhead-caption overhead-readout">With h = 2 and c = 0.5 microseconds, one item costs 2.5 microseconds; at 16 items per call the amortized cost is 0.625 microseconds per item.</canvas>
+      <div class="legend">
+        <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span>B items in one native call</span>
+        <span class="legend-item"><span class="lg" style="--c:var(--plot-teal)"></span>One native call per item</span>
+        <span class="legend-item"><span class="lg dash"></span>Useful-work floor c</span>
+      </div>
+      <p class="readout" id="overhead-readout" aria-live="polite" aria-atomic="true">At B = 16: 0.625 µs/item versus 2.500 µs/item; 4.00× modeled throughput ratio; 20.0% boundary overhead.</p>
+      <p class="figure-caption" id="overhead-caption"><strong>Amortize the boundary, not the explanation away.</strong> Move the sliders to see when batching matters. This is not a TVM-FFI benchmark or a GPU throughput predictor: it excludes overlap, occupancy changes, launch costs, memory traffic, and time waiting to form a batch. It assumes the native function actually processes B items per call.</p>
+      <noscript><p>Sliders require JavaScript. The formula and default example above remain readable without it.</p></noscript>
+    </div>
+    <p>With \(h=2\) µs and \(c=0.5\) µs, overhead is 80% at \(B=1\), but 20% at \(B=16\). To keep the boundary fraction at or below 10%, the model requires \(B\geq9h/c\), or at least 36 items for those defaults.</p>
+    <p><strong>Measure the right thing.</strong> Separate build/load time from warmed-up calls. For GPU execution, host wall time around an asynchronous call is not kernel completion time. Use CUDA events for device work and appropriate synchronization at the boundaries of an end-to-end timing interval. Do not insert a synchronization into every production call just to make timing easy.</p>
+    <p>TVM scheduling changes the implementation of useful work. Fusion can reduce intermediate memory traffic and kernel launches. FFI targets the language boundary and interoperability. <a href="cuda-graphs.html">CUDA Graphs</a> target repeated host submission overhead. These techniques can complement each other; none makes the others redundant.</p>
+  </section>
+
+  <section id="choose">
+    <h2>8. What should you choose for a real project?</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">Your problem</th><th scope="col">Start with</th><th scope="col">Why</th></tr></thead>
+        <tbody>
+          <tr><td>Optimize and deploy an ML model across targets.</td><td>TVM's compiler and deployment tutorials.</td><td>You need graph/tensor transformations, target code generation, and runtime integration.</td></tr>
+          <tr><td>Expose an existing tensor kernel to several languages/frameworks.</td><td>TVM-FFI + DLPack.</td><td>A common native boundary avoids coupling the kernel directly to every framework's C++ tensor API.</td></tr>
+          <tr><td>Bind a general C++ library tightly to Python.</td><td>Compare pybind11 / nanobind with TVM-FFI.</td><td>Python-oriented binding ergonomics versus an ML-oriented, language-neutral ABI; choose by integration needs, not assumed speed.</td></tr>
+          <tr><td>Call a small existing C API.</td><td>Consider ctypes or cffi.</td><td>A narrow C interface may not need a new object/module system.</td></tr>
+          <tr><td>Make a kernel participate in PyTorch autograd/compilation.</td><td>PyTorch's operator integration APIs, with the native binding of your choice underneath.</td><td>Calling the kernel and teaching the framework its semantics are separate jobs.</td></tr>
+          <tr><td>Write or tune the GPU computation itself.</td><td><a href="triton-kernels.html">Triton</a>, <a href="cute-dsl.html">CuTe DSL</a>, <a href="cuda.html">CUDA</a>, or TVM's low-level programming tools.</td><td>These describe or generate the computation; FFI is the boundary around it.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note">
+      <p><strong>“One library” has a scope.</strong> Avoiding CPython-version and framework-specific bindings does not make a native binary universal across operating systems, CPU architectures, C/C++ runtime dependencies, or GPU instruction sets and drivers. Compatible FFI runtime support and any kernel-specific dependencies still need to be present. Shipping an FFI-only kernel is also different from deploying a full TVM model with its required execution runtime.</p>
+    </div>
+  </section>
+
+  <section id="practice">
+    <h2>9. Check your mental model</h2>
+    <details>
+      <summary>I wrapped my slow matmul with TVM-FFI. Why is it still slow?</summary>
+      <p>The wrapper changes how callers reach the code, not the matmul algorithm, tiling, memory reuse, or instructions. Optimize the kernel or choose a better implementation. Measure boundary overhead separately.</p>
+    </details>
+    <details>
+      <summary>Why can the CPU lesson accept a NumPy array without copying it?</summary>
+      <p>The binding obtains a compatible tensor descriptor through the interchange protocol. C++ reads/writes the existing CPU allocation. Dtype, layout, lifetime, and mutability still have to satisfy the kernel's contract.</p>
+    </details>
+    <details>
+      <summary>Can I save a TensorView in a global variable for a later call?</summary>
+      <p>Not by itself. It is borrowed and does not keep the producer's tensor alive. Retain an appropriate managed tensor/owner for long-lived state, and separately honor asynchronous device-use lifetime rules.</p>
+    </details>
+    <details>
+      <summary>The kernel works on stream 0 but fails with other work. What is missing?</summary>
+      <p>Check the selected device, caller's current stream, execution dependencies between streams, and backing-allocation lifetime. A valid pointer and a matching dtype are not enough to establish correct ordering.</p>
+    </details>
+    <details>
+      <summary>Does a successful eager call prove that gradients and torch.compile work?</summary>
+      <p>No. The framework needs the operation's graph-level contract and, where applicable, gradient, batching, mutation/aliasing, and shape rules. FFI and DLPack do not derive them from machine code.</p>
+    </details>
+    <details>
+      <summary>Is load_inline secretly compiling a TVM IRModule?</summary>
+      <p>No. It builds the C++/CUDA source you supply using the native toolchain. In this guide there is no TVM IRModule at all. The returned object is a loaded runtime Module.</p>
+    </details>
+    <h3>A practical next-hour learning path</h3>
+    <ol>
+      <li><strong>Boundary:</strong> run the scalar lesson, change the C++ result, and identify where export, compilation, loading, and calling happen.</li>
+      <li><strong>Tensors:</strong> run the scale lesson and its invalid-input cases. Explain why the empty input is safe and why a strided input is rejected.</li>
+      <li><strong>Compiler:</strong> work through a version-matched TVM TensorIR example. Inspect the original and transformed program before comparing numerical results.</li>
+      <li><strong>GPU, when available:</strong> follow the official kernel-library guide. Verify a non-default stream and a nonzero device ID where supported before benchmarking.</li>
+    </ol>
+    <p><strong>You understand the stack when you can answer independently:</strong> who generates the code, who owns the allocation, who chooses the execution stream, and who knows the operation's mathematical semantics?</p>
+  </section>
+
+  <section id="sources">
+    <h2>Official reading trail</h2>
+    <p>Read in this order rather than beginning with raw object layout:</p>
+    <ol>
+      <li><a href="https://tvm.apache.org/ffi/get_started/quickstart.html">TVM-FFI quick start</a> and <a href="https://tvm.apache.org/ffi/guides/export_func_cls.html">export functions and classes</a> — build, export, load, call.</li>
+      <li><a href="https://tvm.apache.org/ffi/concepts/tensor.html">Tensor and DLPack</a> — views, ownership, device metadata, stream context.</li>
+      <li><a href="https://tvm.apache.org/ffi/concepts/func_module.html">Function and Module</a> and <a href="https://tvm.apache.org/ffi/concepts/abi_overview.html">ABI overview</a> — the packed calling convention beneath the wrappers.</li>
+      <li><a href="https://tvm.apache.org/ffi/guides/kernel_library_guide.html">Kernel library guide</a> and <a href="https://tvm.apache.org/ffi/guides/compiler_integration.html">compiler integration</a> — production launch contracts and generated-code boundaries.</li>
+      <li><a href="https://tvm.apache.org/docs/arch/index.html">TVM architecture</a> and <a href="https://tvm.apache.org/docs/deep_dive/tensor_ir/tutorials/tir_creation.html">TensorIR creation</a> — return to compilation with the runtime boundary now understood.</li>
+    </ol>
+  </section>
+</main>
+<footer>Personal ML notes · TVM optimizes programs; FFI connects implementations; DLPack connects storage.</footer>
+<script>
+(function () {
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const timePerItem = (h, c, batch) => c + h / batch;
+
+  function drawPlot(canvas, cfg) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const mL = 44, mR = 18, mT = 18, mB = 30;
+    const pw = cssW - mL - mR, ph = cssH - mT - mB;
+    const { xMin, xMax, yMin, yMax } = cfg;
+    const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
+    const Y = y => mT + (yMax - y) / (yMax - yMin) * ph;
+    ctx.font = '11px Inter, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(t => {
+      const px = X(t);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.fillText(String(t), px, mT + ph + 6);
+    });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(t => {
+      const py = Y(t);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+      ctx.fillText(String(t), mL - 8, py);
+    });
+
+    ctx.strokeStyle = cssVar('--plot-axis');
+    ctx.lineWidth = 1.25;
+    if (yMin <= 0 && yMax >= 0) {
+      const py = Y(0);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+    }
+    if (xMin <= 0 && xMax >= 0) {
+      const px = X(0);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+    }
+
+    ctx.save();
+    ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    ctx.lineJoin = 'round';
+    cfg.series.forEach(s => {
+      ctx.beginPath();
+      ctx.lineWidth = s.width || 2;
+      ctx.strokeStyle = cssVar(s.color);
+      ctx.setLineDash(s.dash || []);
+      const samples = 260;
+      for (let i = 0; i <= samples; i++) {
+        const x = xMin + (xMax - xMin) * i / samples;
+        const px = X(x), py = Y(s.fn(x));
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  const overhead = document.getElementById('overhead');
+  const work = document.getElementById('work');
+  const canvas = document.getElementById('plot-overhead');
+  function render() {
+    const h = Number(overhead.value), c = Number(work.value);
+    document.getElementById('overhead-value').textContent = h.toFixed(1);
+    document.getElementById('work-value').textContent = c.toFixed(1);
+    const step = Math.max(0.1, Math.ceil((h + c) / 5 * 10) / 10);
+    const yMax = step * 6;
+    drawPlot(canvas, {
+      xMin: 1, xMax: 64, yMin: 0, yMax,
+      xTicks: [1, 16, 32, 48, 64],
+      yTicks: Array.from({ length: 7 }, (_, i) => Number((i * step).toFixed(1))),
+      series: [
+        { fn: () => c, color: '--plot-gray', width: 1.75, dash: [5, 4] },
+        { fn: () => h + c, color: '--plot-teal', width: 2 },
+        { fn: batch => timePerItem(h, c, batch), color: '--plot-violet', width: 2.75 }
+      ]
+    });
+    const amortized = timePerItem(h, c, 16);
+    const fraction = h / (h + 16 * c) * 100;
+    document.getElementById('overhead-readout').textContent =
+      `At B = 16: ${amortized.toFixed(3)} µs/item versus ${(h + c).toFixed(3)} µs/item; ` +
+      `${((h + c) / amortized).toFixed(2)}× modeled throughput ratio; ${fraction.toFixed(1)}% boundary overhead.`;
+  }
+
+  overhead.addEventListener('input', render);
+  work.addEventListener('input', render);
+  render();
+  let raf;
+  window.addEventListener('resize', () => {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(render);
+  });
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq.addEventListener) mq.addEventListener('change', render);
+})();
+</script>
+</body>
+</html>
