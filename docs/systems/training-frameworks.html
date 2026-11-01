@@ -443,7 +443,7 @@
     <a href="../index.html">← All notes</a>
     <a href="../index.html#systems-distributed-training" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;" title="Back to Systems &amp; Scaling › Distributed Training">↑ Systems · Distributed Training</a>
     <a href="#layers">Three layers</a>
-    <a href="#bets">Three bets</a>
+    <a href="#bets">Four bets</a>
     <a href="#compare">Head to head</a>
     <a href="#crossover">The crossover</a>
     <a href="#choosing">Choosing</a>
@@ -463,7 +463,7 @@
 
   <div class="xref">
     The per-framework deep dives: <a href="megatron-lm.html">Megatron-LM →</a>, <a href="deepspeed.html">DeepSpeed →</a>,
-    and <a href="torchtitan.html">TorchTitan (FSDP2) →</a>. This page assumes the strategy pages:
+    <a href="torchtitan.html">TorchTitan (FSDP2) →</a>, and <a href="yolo.html">YOLO (MAI's in-house stack) →</a>. This page assumes the strategy pages:
     <a href="torch-distributed.html">Data Parallelism &amp; the ZeRO ladder →</a>,
     <a href="tensor-parallelism.html">Tensor Parallelism →</a>, <a href="pipeline-parallelism.html">Pipeline Parallelism →</a>,
     and <a href="sequence-parallelism.html">Sequence Parallelism →</a>. RL post-training frameworks (verl, TRL, slime) are a
@@ -508,12 +508,12 @@
     </table>
   </div>
   <p>
-    The three stacks stake out different corners of that three-layer space, and none dominates: which one is
+    The stacks stake out different corners of that three-layer space, and none dominates: which one is
     fastest depends on where your run sits on the model-size × cluster-size plane.
   </p>
 
   <!-- ════════════════════════ THREE BETS ════════════════════════ -->
-  <h2 id="bets">2 · The three bets — capsule summaries</h2>
+  <h2 id="bets">2 · Four bets — three public stacks and an in-house design</h2>
   <p>
     Each framework is one coherent bet about where the engineering leverage lives. The capsules below are the
     whole argument in miniature; each links to its deep-dive page.
@@ -554,12 +554,34 @@
     </p>
   </div>
 
+  <div class="step">
+    <div class="step-label">YOLO — explicit scheduling, determinism, and fleet-level goodput</div>
+    <p style="margin:0;">
+      Microsoft AI's <em>You Only Launch Once</em> is a from-scratch PyTorch training stack documented in the
+      <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=24">MAI-Thinking-1 report, §2.8</a>.
+      Custom mesh annotations describe placement without inserting communication; explicit schedules, custom
+      kernels, ZeRO-1/2/3, and pipelined dropless MoE give MAI control over the step. Fixed-configuration
+      determinism, modified distributed checkpointing, and Ray hot-standby recovery target usable wall-clock
+      progress. The report cites Megatron-Core (Yan et al., 2026), DeepSpeed (Rasley et al., 2020), and TorchTitan
+      (Liang et al., 2024) as influences, not as disclosed forks or runtime dependencies.
+      <a href="yolo.html">Read the YOLO deep dive →</a>
+    </p>
+  </div>
+
   <!-- ════════════════════════ HEAD TO HEAD ════════════════════════ -->
   <h2 id="compare">3 · Head to head</h2>
+  <div class="note">
+    <strong>Design comparison, not a benchmark ranking.</strong> YOLO is an in-house system; the MAI report
+    supplies no public repository or installation interface and no controlled head-to-head measurements
+    against the three public frameworks. Its reported ~20% final MFU uses a dense BF16/FP16 hardware-peak
+    denominator despite mixed-precision compute, while its 90.0% goodput measures ideal/actual wall-clock
+    duration. These are different metrics, not evidence that one framework wins.
+    <a href="yolo.html#performance">Results and measurement boundaries →</a>
+  </div>
   <div class="table-wrap">
-    <table>
+    <table style="min-width:960px;">
       <thead>
-        <tr><th></th><th>Megatron-LM / -Core</th><th>DeepSpeed</th><th>FSDP2 / TorchTitan</th></tr>
+        <tr><th></th><th>Megatron-LM / -Core</th><th>DeepSpeed</th><th>FSDP2 / TorchTitan</th><th>YOLO (in-house)</th></tr>
       </thead>
       <tbody>
         <tr>
@@ -567,52 +589,70 @@
           <td>Model parallelism, vertically integrated</td>
           <td>Memory: shard + offload everything</td>
           <td>Composable native-PyTorch primitives</td>
+          <td>Explicit scheduling + model/fleet co-design, determinism, goodput</td>
         </tr>
         <tr>
           <td><strong>Parallelism axes</strong></td>
           <td>TP + SP + PP (interleaved) + EP + CP + DP, all first-class</td>
           <td>ZeRO-DP first-class; PP engine; TP not native</td>
           <td>FSDP/HSDP + TP/SP via DTensor + PP; CP landing</td>
+          <td>Custom ZeRO-DP + per-tensor TP/SP + Ulysses CP + EP + PP support</td>
         </tr>
         <tr>
           <td><strong>Memory strategy</strong></td>
           <td>Distributed optimizer (ZeRO-1) + recomputation</td>
           <td>ZeRO-1/2/3, CPU + NVMe offload, ZeRO++</td>
           <td>Per-parameter DTensor sharding, CPU offload</td>
+          <td>Custom ZeRO-1/2/3; fine-grained/layer recomputation and activation offload</td>
         </tr>
         <tr>
           <td><strong>Kernel story</strong></td>
           <td>Hand-fused + Transformer Engine, FP8 turnkey</td>
           <td>Some custom kernels; mostly your model as-is</td>
           <td><code>torch.compile</code> + SDPA + float8 (torchao)</td>
+          <td>Triton/CUDA/CuTe DSL/CUTLASS; custom FP8, quantization, grouped GEMMs</td>
         </tr>
         <tr>
           <td><strong>Comm overlap</strong></td>
           <td>Grad-reduce, param-gather, TP userbuffers, 1F1B</td>
           <td>ZeRO comm overlap (<code>overlap_comm</code>)</td>
           <td>Bucketed overlap + prefetch, async TP</td>
+          <td>Explicit collectives; grouped expert dispatch/compute/collect pipeline</td>
         </tr>
         <tr>
           <td><strong>Model coverage</strong></td>
           <td>Megatron blocks only; porting is real work</td>
           <td>Any <code>nn.Module</code>, unchanged</td>
           <td>Any <code>nn.Module</code>; Titan recipes are Llama-family</td>
+          <td>MAI's model building blocks; no disclosed arbitrary-model adoption API</td>
         </tr>
         <tr>
           <td><strong>Ecosystem home</strong></td>
           <td>NVIDIA (NeMo), frontier pretraining, verl backend</td>
           <td>Hugging Face Trainer/Accelerate fine-tuning</td>
           <td>PyTorch core; research + verl FSDP backend</td>
+          <td>MAI compute runtime; Rocket's learner alongside SGLang rollouts</td>
         </tr>
         <tr>
           <td><strong>Sweet spot</strong></td>
           <td>Dense/MoE pretraining, ≳10B, big NVIDIA clusters</td>
           <td>Fine-tuning &amp; memory-bound runs on modest clusters</td>
           <td>≲70B pretraining/research where hackability matters</td>
+          <td>Disclosed use: MAI pre-/mid-training, SFT, and RL learner; not a public default</td>
+        </tr>
+        <tr>
+          <td><strong>Correctness / recovery emphasis</strong></td>
+          <td>Co-designed parallel execution and distributed checkpoints</td>
+          <td>ZeRO-aware state management/checkpointing</td>
+          <td>Reshardable DCP + torchft fault-tolerance integration</td>
+          <td>Bitwise pre-training at fixed configuration; modified DCP, hot standbys, replay checks</td>
         </tr>
       </tbody>
     </table>
   </div>
+  <p class="figure-caption">YOLO column: <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=25">MAI report
+    §§2.8.1–2.8.4</a>. Unmentioned capabilities are not proven absent. For the precise cited papers and
+    the distinction between design influence and implementation reuse, see <a href="yolo.html#sources">YOLO's sources</a>.</p>
 
   <!-- ════════════════════════ CROSSOVER ════════════════════════ -->
   <h2 id="crossover">4 · Where the crossover lives</h2>
@@ -692,6 +732,10 @@
       hackability and a small codebase matter more than the final few points.</li>
     <li><strong>RL post-training?</strong> You pick twice: verl exposes both an FSDP backend (flexibility, HF-native
       models) and a Megatron-Core backend (scale) under one API — see <a href="../rl/verl-architecture.html">verl</a>.</li>
+    <li><strong>Designing an integrated training platform rather than selecting a public package?</strong>
+      Study <a href="yolo.html">YOLO</a> for descriptive placement with explicit communication, deterministic
+      restart contracts, MoE memory bounds, and goodput-driven recovery. Its report is a design reference,
+      not an available installation target.</li>
   </ol>
   <div class="note">
     Benchmark claims between these stacks go stale in months — FSDP2 + compile closed much of the historical gap,
@@ -703,7 +747,8 @@
   <!-- ════════════════════════ LANDSCAPE ════════════════════════ -->
   <h2 id="landscape">6 · The wider landscape</h2>
   <p>
-    Around the big three sits a ring of frameworks that mostly <em>compose</em> or <em>repackage</em> them:
+    Around the three public stacks sits a ring of frameworks that mostly <em>compose</em> or <em>repackage</em>
+    them. YOLO is a separately built in-house engine, not another wrapper in this ring:
   </p>
   <div class="table-wrap">
     <table>
@@ -738,8 +783,8 @@
       <p>Strategy and memory math are public and shared; frameworks compete on the step implementation — fusion, overlap, buffers. That's where the 20–30% MFU spread lives.</p>
     </div>
     <div class="summary-card">
-      <div class="summary-card-label">Three bets</div>
-      <p>Megatron: vertically integrated model parallelism. DeepSpeed: shard and offload memory, wrap any model. FSDP/TorchTitan: native primitives + compiler fusion.</p>
+      <div class="summary-card-label">Four bets</div>
+      <p>Megatron: vertically integrated model parallelism. DeepSpeed: shard/offload state. FSDP/TorchTitan: native primitives + compiler. YOLO: explicit scheduling, determinism, and fleet-level goodput.</p>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">The crossover</div>
@@ -747,7 +792,7 @@
     </div>
     <div class="summary-card">
       <div class="summary-card-label">Default picks</div>
-      <p>Fits sharded → FSDP2 + compile. Doesn't fit, can't restructure → DeepSpeed. Frontier NVIDIA pretraining → Megatron (or TorchTitan for hackability). Fine-tuning → Accelerate on top.</p>
+      <p>Fits sharded → FSDP2 + compile. Doesn't fit, can't restructure → DeepSpeed. Frontier NVIDIA pretraining → Megatron (or TorchTitan for hackability). Fine-tuning → Accelerate. YOLO is an in-house design reference, not a public default.</p>
     </div>
   </div>
 

@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Microsoft AI's You Only Launch Once training stack: descriptive tensor sharding, explicit communication, custom kernels, dropless MoE, determinism, checkpointing, goodput, and comparison with Megatron-Core, DeepSpeed, and TorchTitan.">
+  <title>YOLO — Explicit Scheduling, Determinism, and Goodput</title>
+  <link rel="canonical" href="https://yueyiming2009.github.io/ai-learning/systems/yolo.html">
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #fff; --surface: #f8f9fa; --border: #e8eaed;
+      --text: #1a1a2e; --muted: #6b7280; --accent: #0d9488; --accent-light: #f0fdfa;
+      --nav-bg: rgba(255,255,255,0.92); --fig-bg: #fff;
+      --plot-grid: #eceef1; --plot-axis: #c7cbd1; --plot-tick: #6b7280;
+      --plot-gray: #9ca3af; --plot-violet: #6d28d9;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115; --surface: #171b21; --border: #262b33;
+        --text: #e5e7eb; --muted: #9aa1ab; --accent: #2dd4bf; --accent-light: #10201e;
+        --nav-bg: rgba(15,17,21,0.9); --fig-bg: #14181e;
+        --plot-grid: #232830; --plot-axis: #3a4149; --plot-tick: #9aa1ab;
+        --plot-gray: #9ca3af; --plot-violet: #a78bfa;
+      }
+    }
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; line-height: 1.75; }
+    a { color: var(--accent); }
+    nav { position: sticky; top: 0; z-index: 100; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 52px; }
+    .nav-brand { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 0.9rem; color: var(--accent); text-decoration: none; white-space: nowrap; }
+    .nav-links { display: flex; gap: 4px; overflow-x: auto; flex: 1; }
+    .nav-links a { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; white-space: nowrap; }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .hero { background: linear-gradient(135deg, #0d9488, #0891b2); color: white; padding: 56px 24px 48px; text-align: center; }
+    .hero h1 { font-size: clamp(1.5rem, 4vw, 2.2rem); font-weight: 600; margin: 0 0 12px; letter-spacing: -0.02em; }
+    .hero p { margin: 0 auto; opacity: 0.9; font-size: 0.97rem; max-width: 680px; }
+    .hero-pill { display: inline-block; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 100px; font-size: 0.78rem; padding: 3px 12px; margin-bottom: 16px; text-transform: uppercase; }
+    .page-wrap { max-width: 900px; margin: 0 auto; padding: 40px 24px 72px; }
+    h2 { font-size: 1.2rem; margin: 2.6em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); scroll-margin-top: 72px; }
+    h3 { font-size: 1rem; margin: 1.6em 0 0.4em; }
+    p { margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-size: 0.88em; }
+    .xref, .note { background: var(--accent-light); border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; margin: 1.2em 0; }
+    .source, .muted { color: var(--muted); font-size: 0.88rem; }
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+    caption { text-align: left; color: var(--muted); padding-bottom: 8px; }
+    th, td { border: 1px solid var(--border); padding: 9px 12px; text-align: left; vertical-align: top; }
+    th { background: var(--surface); font-weight: 600; }
+    .flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap: 10px; margin: 1.2em 0; }
+    .flow div { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+    .flow strong, .flow span { display: block; }
+    .flow span { font-size: 0.86rem; color: var(--muted); }
+    .figure {
+      background: var(--fig-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 16px 14px;
+      margin: 1.6em 0;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .figure canvas { width: 100%; height: 300px; display: block; }
+    .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; justify-content: center; margin-top: 12px; font-size: 0.82rem; color: var(--text); }
+    .legend-item { display: flex; align-items: center; gap: 7px; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, var(--plot-gray) 0 5px, transparent 5px 9px); }
+    .figure-caption { font-size: 0.85rem; color: var(--muted); line-height: 1.6; margin: 14px 4px 2px; }
+    .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin-bottom: 14px; }
+    .controls label { font-size: 0.85rem; }
+    .controls input { display: block; width: 100%; accent-color: var(--accent); }
+    .plot-result { font-size: 0.88rem; margin: 12px 4px; }
+    footer { border-top: 1px solid var(--border); padding: 24px; text-align: center; font-size: 0.82rem; color: var(--muted); }
+    @media (max-width: 600px) { nav { padding: 0 12px; gap: 12px; } .page-wrap { padding: 28px 16px 56px; } }
+  </style>
+</head>
+<body>
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>YOLO</a>
+  <div class="nav-links">
+    <a href="../index.html#systems-distributed-training">Systems · Distributed Training</a>
+    <a href="#overview">The stack</a><a href="#sharding">Sharding</a><a href="#kernels">Kernels</a>
+    <a href="#moe">MoE</a><a href="#determinism">Determinism</a><a href="#recovery">Recovery</a>
+    <a href="#performance">Goodput</a><a href="#compare">Comparison</a><a href="#sources">Sources</a>
+  </div>
+</nav>
+<div class="hero">
+  <span class="hero-pill">Systems · Distributed Training</span>
+  <h1>YOLO — Explicit Scheduling, Determinism, and Goodput</h1>
+  <p>Microsoft AI's You Only Launch Once stack makes tensor placement descriptive and communication explicit. Its distinctive bet is to co-design kernels, MoE execution, reproducibility, and recovery with the model and the fleet—not just make an isolated training step fast.</p>
+</div>
+<main class="page-wrap">
+  <div class="xref">
+    The <strong>training framework</strong> from the <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=24">MAI-Thinking-1 report, §2.8</a>, not the YOLO object detector.
+    Compare with <a href="megatron-lm.html">Megatron-Core/LM</a>, <a href="deepspeed.html">DeepSpeed</a>, and
+    <a href="torchtitan.html">TorchTitan</a>, or use the <a href="training-frameworks.html#compare">cross-framework table</a>.
+    The model's architecture and development recipe stay on <a href="../models/mai-thinking-1.html">MAI-Thinking-1</a>.
+  </div>
+
+  <h2 id="overview">1 · A training engine inside a larger runtime</h2>
+  <p>YOLO is MAI's in-house PyTorch training stack, built from scratch for pre-training, mid-training,
+    supervised fine-tuning, and the learner side of RL. It owns model building blocks, tensor sharding,
+    AdamW, the training loop, dataloading, checkpoints, logging, and observability. The report says it
+    draws on experience from Megatron-Core, DeepSpeed, and TorchTitan; that is <strong>design influence,
+    not a disclosed code fork or dependency relationship</strong>.</p>
+  <div class="flow" aria-label="The roles of the surrounding infrastructure and YOLO">
+    <div><strong>Admission &amp; placement</strong><span>Kubernetes + Kueue + MAI controllers: quota, topology, reservations, and healthy capacity.</span></div>
+    <div><strong>Job runtime</strong><span>Ray actors: placement, communication groups, liveness, and in-job recovery.</span></div>
+    <div><strong>YOLO learner</strong><span>Model, sharding, kernels, optimizer, data, and durable training state.</span></div>
+    <div><strong>RL orchestration</strong><span>Rocket connects the YOLO learner to SGLang inference and rollout workers.</span></div>
+  </div>
+  <p>These are roles, not interchangeable frameworks: Ray does not implement the transformer backward
+    pass, and YOLO is not the entire rollout system. See <a href="../models/mai-thinking-1.html#rocket">Rocket's
+    learner/rollout handoff</a> for the asynchronous RL loop.</p>
+  <p class="source">Sources: <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=24">§2.8</a>,
+    <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=49">§3.6</a>,
+    <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=108">Appendix L.3</a>.</p>
+
+  <h2 id="sharding">2 · Describe placement; schedule communication yourself</h2>
+  <p>Each tensor carries custom partition/replication annotations over an n-dimensional Cartesian mesh.
+    The mesh exposes PyTorch collectives and point-to-point operations. Unlike a layout-propagating
+    dispatcher, these annotations <strong>do not automatically insert communication into the graph</strong>.
+    The execution code owns when each collective runs, avoiding unintended synchronization points.
+    This resembles JAX/DTensor at the placement-description level, not necessarily at the execution level.</p>
+  <p>Per-tensor placement permits different data-parallel degrees for MoE and non-MoE tensors
+    (<em>parallel folding</em>). The report also describes TP for embeddings, loss, and attention weights
+    without TP for MLP/MoE weights. Thus “TP = 1” for the expert GEMMs does not mean that no tensor
+    parallelism exists anywhere in the job.</p>
+  <div class="table-wrap">
+    <table>
+      <caption>Implemented mechanisms; actual degrees depend on the training phase.</caption>
+      <thead><tr><th scope="col">Axis</th><th scope="col">YOLO mechanism</th><th scope="col">Important distinction</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">DP / ZeRO</th><td>Custom stages 1–3; parameters/gradients grouped by sharding, dtype, and ZeRO-unit into contiguous buffers.</td><td>Persistent parameter storage is sharded at every stage. The stage changes the lifetime of gathered buffers, not just their storage format.</td></tr>
+        <tr><th scope="row">TP / SP</th><td>Column/row-parallel GEMMs with activation sequence sharding matching weight-sharding degree.</td><td>Placement is selected per tensor; expert weights need not use the attention TP degree.</td></tr>
+        <tr><th scope="row">CP</th><td>Ulysses-style all-to-all transpose between sequence and attention-head partitions.</td><td>Used for long-context mid-training; do not substitute ring attention into the reported recipe.</td></tr>
+        <tr><th scope="row">EP</th><td>Capacity-capped and dropless expert routing; variable-size all-to-all in later runs.</td><td>Pre-training keeps expert communication within the NVLink domain and DP across racks.</td></tr>
+        <tr><th scope="row">PP</th><td>Pipeline parallelism is supported.</td><td>The report does not provide a universal PP degree or launch recipe to apply to every phase.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>For ZeRO-1, gathered parameters remain through the last micro-batch; for ZeRO-3/FSDP, they are
+    cleared after use. Multi-dimensional parameter chunks also make the communication buffers compatible
+    with distributed checkpoint slicing without extra reorder operations.</p>
+  <p class="source">Source: <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=25">§2.8.1, pp. 25–26</a>.
+    Mechanics: <a href="torch-distributed.html">ZeRO memory/communication</a>,
+    <a href="tensor-parallelism.html">TP</a>, <a href="sequence-parallelism.html">SP and Ulysses</a>.</p>
+
+  <h2 id="kernels">3 · Custom kernels follow an operation-specific precision recipe</h2>
+  <p>YOLO uses Triton, CUDA, CuTe DSL, and CUTLASS kernels rather than describing its speed as one
+    global “FP8” switch. The base-training recipe uses BF16 defaults, E4M3 forward GEMMs, E5M2
+    data-gradient GEMMs, and BF16 weight-gradient compute with FP32 accumulation. FP8 uses delayed
+    scaling with a 1,024-step amax history.</p>
+  <p>Numerically sensitive operations remain FP32: the residual stream, pre-softmax scores/logits,
+    MoE combine, selected parameters such as embeddings/norms/routers, optimizer master state and
+    moments, gradient-reduction/accumulation buffers, and router/final-vocabulary GEMMs. Consequently,
+    neither memory usage nor peak-throughput normalization can be inferred from “FP8 training” alone.</p>
+  <p>The implementation includes grouped MoE GEMMs, joint quantization of original and transposed
+    tensors for backward, scale-layout handling, and quantization fused beside RMSNorm where possible.
+    Non-grouped quantization also uses Blackwell Cluster Launch Control for dynamic kernel load balancing.</p>
+  <div class="note"><strong>Phase boundary:</strong> the base-training FP8 recipe is not the RL
+    learner/inference recipe. The report describes BF16 alignment and MoE router replay for RL;
+    this mitigates mismatch but does not establish bitwise equality between YOLO and SGLang.</div>
+  <p class="source">Sources: <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=22">§2.6.3</a>,
+    <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=25">§2.8.1</a>,
+    <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=52">§3.6.4</a>.</p>
+
+  <h2 id="moe">4 · Dropless routing without unbounded activation memory</h2>
+  <p>Dropless routing avoids discarding selected tokens or padding every expert to a worst-case capacity,
+    but variable expert loads introduce dynamic token-count exchange, irregular GEMMs, and memory swings.
+    YOLO groups local experts and pipelines <strong>dispatch → compute → collect</strong> between groups.
+    Most communication overlaps expert computation; the first dispatch and last collect remain exposed
+    and can overlap load-balance computation or optional shared experts.</p>
+  <p>Its <strong>static-memory dropless</strong> mode splits each group into multiple bounded-capacity
+    rounds. Overflow is handled in later rounds rather than by dropping tokens. Backward recomputes
+    per expert and per round, limiting retained imbalanced activations. Custom CuTe DSL symmetric-memory
+    kernels provide device-initiated variable-size all-to-all over NVLink.</p>
+  <p>Layer checkpointing, fine-grained recomputation, and asynchronous activation offload to pinned
+    host memory on dedicated CUDA streams address different parts of the HBM budget. In the final
+    pre-training configuration, activation offload made ZeRO-2 viable again after initial ZeRO-3
+    deployments became parameter-gather-bound. This is <strong>activation offload</strong>, not a claim
+    that YOLO implements DeepSpeed's CPU-optimizer or NVMe-state offload.</p>
+  <p class="source">Sources: <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=26">§2.8.1</a>,
+    <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=30">§2.8.4, v5</a>.
+    Mechanics: <a href="moe-parallelism.html">expert communication and load balance</a>.</p>
+
+  <h2 id="determinism">5 · Reproducibility is a stack-wide contract</h2>
+  <p>The report promises bitwise reproducible <strong>pre-training for fixed hardware topology,
+    model configuration, and software version</strong>, even when determinism reduces MFU.
+    It does not promise identical weights after changing topology, precision, or kernels.</p>
+  <ul>
+    <li><strong>Data:</strong> fixed micro-batch ordering, including consistent asynchronous prefetch queues across restarts.</li>
+    <li><strong>State:</strong> checkpoint weights, optimizer state, FP8 scaling history, dataloader progress, and RNGs.</li>
+    <li><strong>Kernels:</strong> fixed-order reductions and stable top-k tie-breaking rather than unordered atomic accumulation.</li>
+    <li><strong>Collectives:</strong> disable NVLink SHARP and hold NCCL reduction topologies consistent across runs.</li>
+    <li><strong>Regression detection:</strong> golden configurations compare losses, gradient norms, and weight checksums exactly; intended numerical changes are tracked explicitly.</li>
+  </ul>
+  <p>The trade is not simply “determinism versus speed.” Reproducibility can make regressions,
+    restart errors, and unhealthy execution detectable sooner, improving usable progress even if
+    the fastest individual kernel is rejected.</p>
+  <p class="source">Source: <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=26">§2.8.2, pp. 26–27</a>.</p>
+
+  <h2 id="recovery">6 · Checkpoint the state; recover the admitted job</h2>
+  <p>YOLO builds on PyTorch distributed checkpointing's public APIs and shard-to-storage save-plan
+    logic, while rewriting metadata/serialization paths and caching save plans. The report attributes
+    more than 10× lower CPU-memory overhead and save time to these internal optimizations.
+    This is a comparison with their prior checkpoint path, <strong>not a 10× training-speed claim
+    against TorchTitan or other frameworks</strong>.</p>
+  <div class="flow" aria-label="Checkpoint durability and job recovery">
+    <div><strong>1 · Stage state</strong><span>Training processes copy checkpoint tensors from device to host.</span></div>
+    <div><strong>2 · Write &amp; commit</strong><span>Separate processes save to local Azure Blob infrastructure and coordinate atomic commit through shared key-value state.</span></div>
+    <div><strong>3 · Bound concurrency</strong><span>At most one checkpoint is in flight; the next starts opportunistically after completion.</span></div>
+    <div><strong>4 · Resume</strong><span>Ray hot standbys allow in-job restarts without recreating pods; replayed steps are checked against historical losses.</span></div>
+  </div>
+  <p>Replicated tensors are read once and broadcast with NCCL on load to avoid many ranks hitting
+    one storage blob. Recovery therefore depends on the runtime, host memory, storage/network layout,
+    healthy spare capacity, and topology preservation—not only on saving model weights.</p>
+  <p class="source">Sources: <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=27">§2.8.3, pp. 27–28</a>,
+    <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=108">Appendix L.3</a>.</p>
+
+  <h2 id="performance">7 · Step efficiency and wall-clock progress are separate measurements</h2>
+  <p>The report defines MFU using leading-order model FLOPs divided by end-to-end step time and
+    hardware peak. It excludes checkpoint-recompute FLOPs and normalizes mixed-precision execution
+    to the <strong>dense BF16/FP16 peak of 2.5 PFLOP/s per GB200 GPU</strong>.
+    Goodput instead measures ideal training duration divided by actual wall-clock duration, accounting
+    for lost work, recovery, stalls, and MFU degradation.</p>
+  <div class="table-wrap">
+    <table>
+      <caption>Reported YOLO/model co-design observations—not matched-framework benchmarks.</caption>
+      <thead><tr><th scope="col">Configuration</th><th scope="col">Observed bottleneck / intervention</th><th scope="col">Reported outcome</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">v2: 23B active, 4,096 GB200s</th><td>RDMA overlap, deterministic attention, ZeRO-2 reducing recomputation, and a faster expert-encode kernel.</td><td>MFU 18% → 22%.</td></tr>
+        <tr><th scope="row">v4: latent MoE, top-8/512 experts, 8,192 GB200s</th><td>Smaller expert GEMMs exposed CPU launch overhead; attention/runtime improvements followed.</td><td>MFU approximately 16% → 20%.</td></tr>
+        <tr><th scope="row">v5: 35B active / 1T total</th><td>Activation offload enabled ZeRO-3 → ZeRO-2, removing repeated parameter gathers.</td><td>Final MFU approximately 20%.</td></tr>
+        <tr><th scope="row">Final MAI-Base-1 pre-training</th><td>Fleet/runtime improvements reduced downtime, repeated work, and degraded stepping.</td><td>90.0% goodput at approximately 8K GPUs; reported total overhead 51 hours.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>These observations do not establish that YOLO is faster than Megatron-Core, DeepSpeed, or
+    TorchTitan. Model versions, kernels, cluster size, and memory strategy changed together.
+    Nor is 90% goodput equivalent to 90% MFU.</p>
+  <p class="source">Sources: <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=28">§2.8.4, pp. 28–30</a>,
+    <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=60">§6.2.1</a>.</p>
+
+  <h3>Explore why checkpointing has an interior optimum</h3>
+  <p>This <strong>illustrative model, not a formula or measurement from the report</strong>, holds
+    healthy-step speed fixed. For \(T\) useful-compute minutes between durable checkpoints, exposed
+    checkpoint cost \(c\), mean useful-compute time between rare failures \(M\), and recovery cost \(r\):</p>
+  \[
+    g(T) \approx \frac{1}{1+c/T+(T/2+r)/M},
+    \qquad T_{\mathrm{opt}}=\sqrt{2cM}.
+  \]
+  <p>Failures are assumed uniformly positioned within an interval, losing \(T/2\) minutes on average.
+    The model ignores overlapping overheads and repeated failures during recovery/replay.
+    Asynchronous saves reduce the <em>exposed</em> cost \(c\); hot standbys reduce \(r\);
+    health-aware placement increases \(M\). A longer checkpoint period lowers save overhead but increases rework.</p>
+  <div class="figure">
+    <div class="controls">
+      <label for="checkpoint-cost">Exposed save cost: <output id="checkpoint-cost-value" for="checkpoint-cost">30</output> seconds
+        <input id="checkpoint-cost" type="range" min="1" max="120" step="1" value="30"></label>
+      <label for="failure-interval">Mean useful time between failures: <output id="failure-interval-value" for="failure-interval">6</output> hours
+        <input id="failure-interval" type="range" min="2" max="24" step="1" value="6"></label>
+      <label for="recovery-cost">Recovery cost: <output id="recovery-cost-value" for="recovery-cost">5</output> minutes
+        <input id="recovery-cost" type="range" min="0" max="15" step="1" value="5"></label>
+    </div>
+    <canvas id="plot-goodput" role="img" aria-label="Illustrative goodput percentage versus checkpoint interval in useful-compute minutes, comparing checkpoint overhead alone with overhead including failures and recovery."></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg dash"></span>Checkpoint overhead only; no failures</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span>Checkpoint + rework + recovery</span>
+    </div>
+    <p class="plot-result" id="goodput-result" aria-live="polite"></p>
+    <p class="figure-caption"><strong>The fastest save schedule is not necessarily the best progress schedule.</strong>
+      Horizontal axis: checkpoint interval (2–120 useful-compute minutes); vertical axis: modeled goodput (%).
+      The dot marks the model's optimum. This is a teaching model, not a reconstruction of MAI's 90.0% result,
+      a YOLO configuration recommendation, or a comparison with another framework.</p>
+  </div>
+
+  <h2 id="compare">8 · What YOLO changes in the framework comparison</h2>
+  <div class="table-wrap">
+    <table>
+      <caption>Design contrasts supported by the report and the companion framework guides.</caption>
+      <thead><tr><th scope="col">Compare with</th><th scope="col">Shared idea</th><th scope="col">YOLO's disclosed emphasis</th></tr></thead>
+      <tbody>
+        <tr><th scope="row"><a href="megatron-lm.html">Megatron-Core</a></th><td>Model/parallelism/kernel co-design, per-tensor parallel folding, MoE optimization, and communication overlap.</td><td>Own PyTorch engine integrated with MAI's model and runtime; explicit communication plus determinism and fleet-level goodput. No disclosed fork or matched speed comparison.</td></tr>
+        <tr><th scope="row"><a href="deepspeed.html">DeepSpeed</a></th><td>ZeRO stages and deliberate memory/communication tradeoffs.</td><td>Own ZeRO buffers and gathered-state lifetimes, plus activation offload to retain ZeRO-2. Not disclosed as a generic JSON wrapper or CPU/NVMe model-state offload engine.</td></tr>
+        <tr><th scope="row"><a href="torchtitan.html">TorchTitan</a></th><td>PyTorch, mesh-based tensor placement, and reshardable distributed checkpoints.</td><td>Custom descriptive sharding annotations do not insert collectives; execution scheduling and heavily modified DCP internals remain under MAI's control.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note"><strong>Availability boundary:</strong> the report presents YOLO as an in-house
+    stack and provides no public repository or reusable installation/launch interface. Treat it as
+    a documented systems design, not an installable fourth default alongside the three public stacks.
+    The report discloses no controlled head-to-head throughput, goodput, or total-cost benchmark against them.</div>
+  <p>For a fair experiment, hold architecture, tokens/batch/context, hardware/topology, parallelism,
+    precision, recomputation/offload, and determinism requirements fixed. Report both healthy-step
+    throughput/MFU with the same FLOP denominator and end-to-end progress including durable saves and recovery.
+    Otherwise a better model or a different failure budget can masquerade as a faster framework.</p>
+
+  <h2 id="sources">9 · Sources and evidence limits</h2>
+  <p>Primary source: <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf">The Microsoft AI Team,
+    <em>MAI-Thinking-1: Building a Hill-Climbing Machine</em></a>, accessed November 1, 2026.
+    Sections 2.6, 2.8, 3.6, 6.2, and Appendix L.3 support this page. Reported results belong to the
+    disclosed MAI runs, not to every possible YOLO configuration.</p>
+  <p>The three framework references named in §2.8 are distinct from the original tensor-parallelism
+    and ZeRO algorithm papers:</p>
+  <ul>
+    <li><a href="https://arxiv.org/abs/2603.07685">Yan et al. (2026), <em>Scalable Training of Mixture-of-Experts Models with Megatron Core</em></a>.</li>
+    <li><a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=76">Rasley et al. (2020), <em>DeepSpeed: System Optimizations Enable Training Deep Learning Models with Over 100 Billion Parameters</em></a> (report bibliography).</li>
+    <li><a href="https://arxiv.org/abs/2410.06511">Liang et al. (2024), <em>TorchTitan: One-stop PyTorch Native Solution for Production Ready LLM Pre-training</em></a>.</li>
+  </ul>
+  <p class="muted">The comparison synthesizes disclosed mechanisms and the companion guides; it is
+    not an independent implementation audit. The checkpoint plot is explicitly an analytical illustration.</p>
+</main>
+<footer>Personal ML notes · <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf">MAI technical report</a> · <a href="https://github.com/yueyiming2009/ai-learning">source on GitHub</a></footer>
+<script>
+(function () {
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  function drawPlot(canvas, cfg) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+    const mL = 44, mR = 14, mT = 14, mB = 30;
+    const pw = cssW - mL - mR, ph = cssH - mT - mB;
+    const { xMin, xMax, yMin, yMax } = cfg;
+    const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
+    const Y = y => mT + (yMax - y) / (yMax - yMin) * ph;
+    ctx.font = '11px Inter, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(t => {
+      const px = X(t);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.fillText(String(t), px, mT + ph + 6);
+    });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(t => {
+      const py = Y(t);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+      ctx.fillText(String(t), mL - 8, py);
+    });
+    ctx.strokeStyle = cssVar('--plot-axis');
+    ctx.lineWidth = 1.25;
+    if (yMin < 0 && yMax > 0) { const py = Y(0); ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke(); }
+    if (xMin < 0 && xMax > 0) { const px = X(0); ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke(); }
+    ctx.save();
+    ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    ctx.lineJoin = 'round';
+    cfg.series.forEach(s => {
+      ctx.beginPath();
+      ctx.lineWidth = s.width || 2;
+      ctx.strokeStyle = cssVar(s.color);
+      ctx.setLineDash(s.dash || []);
+      for (let i = 0; i <= 260; i++) {
+        const x = xMin + (xMax - xMin) * i / 260;
+        const px = X(x), py = Y(s.fn(x));
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    ctx.fillStyle = cssVar('--plot-violet');
+    ctx.beginPath(); ctx.arc(X(cfg.point.x), Y(cfg.point.y), 4, 0, 2 * Math.PI); ctx.fill();
+    ctx.restore();
+  }
+
+  const canvas = document.getElementById('plot-goodput');
+  const checkpointCost = document.getElementById('checkpoint-cost');
+  const failureInterval = document.getElementById('failure-interval');
+  const recoveryCost = document.getElementById('recovery-cost');
+  const modeledGoodput = (t, c, m, r) => 100 / (1 + c / t + (t / 2 + r) / m);
+  function render() {
+    const c = Number(checkpointCost.value) / 60;
+    const m = Number(failureInterval.value) * 60;
+    const r = Number(recoveryCost.value);
+    document.getElementById('checkpoint-cost-value').textContent = checkpointCost.value;
+    document.getElementById('failure-interval-value').textContent = failureInterval.value;
+    document.getElementById('recovery-cost-value').textContent = recoveryCost.value;
+    const optimum = Math.sqrt(2 * c * m);
+    const goodput = modeledGoodput(optimum, c, m, r);
+    document.getElementById('goodput-result').textContent =
+      `Illustrative optimum: ${optimum.toFixed(1)} useful-compute minutes between checkpoints; ${goodput.toFixed(1)}% modeled goodput.`;
+    drawPlot(canvas, {
+      xMin: 2, xMax: 120, yMin: 40, yMax: 100,
+      xTicks: [2, 20, 40, 60, 80, 100, 120], yTicks: [40, 50, 60, 70, 80, 90, 100],
+      series: [
+        { fn: t => 100 / (1 + c / t), color: '--plot-gray', width: 1.75, dash: [5, 4] },
+        { fn: t => modeledGoodput(t, c, m, r), color: '--plot-violet', width: 2.75 }
+      ],
+      point: { x: optimum, y: goodput }
+    });
+  }
+  [checkpointCost, failureInterval, recoveryCost].forEach(input => input.addEventListener('input', render));
+  render();
+  let raf;
+  window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(render); });
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq.addEventListener) mq.addEventListener('change', render);
+})();
+</script>
+</body>
+</html>

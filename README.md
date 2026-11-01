@@ -104,8 +104,12 @@ linear-attention kernels (FLA) — sharding & collectives
 (NCCL), tensor/pipeline/sequence/MoE parallelism, the ZeRO/FSDP distributed-training ladder, and
 the training-framework landscape (the cross-framework comparison and crossover) with per-framework
 deep dives into Megatron-LM (the vertically integrated NVIDIA stack: fusion, overlap, FP8, EP),
-DeepSpeed (the ZeRO ladder, Offload/Infinity, ZeRO++), and TorchTitan (the DTensor/DeviceMesh
-substrate, the per-block wrapping order, async TP, float8, reshardable checkpoints).
+DeepSpeed (the ZeRO ladder, Offload/Infinity, ZeRO++), TorchTitan (the DTensor/DeviceMesh
+substrate, the per-block wrapping order, async TP, float8, reshardable checkpoints), and
+[YOLO](docs/systems/yolo.html) (MAI's in-house stack: descriptive sharding with explicit
+communication, custom kernels, deterministic training, MoE memory bounds, and goodput-driven
+checkpoint/recovery). The comparison distinguishes public adoption choices from YOLO's
+report-only design evidence; no controlled head-to-head YOLO benchmark is disclosed.
 [TVM & FFI](docs/systems/tvm-ffi.html) separates model/kernel compilation from the
 cross-language runtime boundary, with Python/C++ CPU lessons, DLPack tensor ownership,
 GPU stream contracts, and an interactive call-overhead model.
