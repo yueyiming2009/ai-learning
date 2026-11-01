@@ -163,8 +163,8 @@ in their own domains.
 | Kimi | [K3](docs/models/kimi-k3.html) connects its hybrid architecture to multimodal pre-training, nine domain/effort teachers, token-reward MOPD, and persistent long-horizon RL state. |
 | GLM | [GLM-5 / 5.2](docs/models/glm-5.html) shares a release-series page with architectural changes and training/serving notes. |
 | MiniMax | [M2.5](docs/models/minimax-m2-5.html) connects the full-attention decision to its agentic-training emphasis. |
-| Nemotron | [3 / 3.5](docs/models/nemotron-3.html) covers size variants and the Nano/Lightning architecture-versus-training comparison. |
-| Gemma | [DiffusionGemma](docs/models/diffusion-gemma.html) is an adaptation of a Gemma 4 backbone, not an unchanged-model inference switch. |
+| Nemotron | [Core 3 / Lightning](docs/models/nemotron-3.html) links to [Nano Omni](docs/models/nemotron-3-nano-omni.html), [3.5 Super VL](docs/models/nemotron-3-5-super-vl.html), its compressed [Bolt 74B](docs/models/nemotron-3-5-bolt-74b.html) descendant, and the separate Gemma-derived [Bolt E4B](docs/models/nemotron-3-5-bolt-e4b.html). Each branch has architecture, training, systems budgets, and release evidence. |
+| Gemma | [DiffusionGemma](docs/models/diffusion-gemma.html) is a diffusion adaptation of Gemma 4; [Bolt E4B](docs/models/nemotron-3-5-bolt-e4b.html), indexed under Nemotron, is a separate RL adaptation of Gemma-4-E4B-it. |
 | OpenAI GPT | [GPT-6 Astra](docs/models/gpt-6-astra.html) distinguishes public behavior/evaluations from undisclosed architecture and training. |
 | TypeSafe Jev | [Jev](docs/models/jev.html) connects its decision interface, calibration, serving, and unconfirmed implementation hypotheses. |
 

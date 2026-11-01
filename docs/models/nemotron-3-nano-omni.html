@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="color-scheme" content="light dark">
+  <meta name="description" content="Nemotron 3 Nano Omni: Nano backbone plus C-RADIO and Parakeet, modality-bridge training, long-context SFT, multimodal RL, recurrent-state budgets and perception-token costs.">
+  <title>Nemotron 3 Nano Omni — One Context for Vision, Audio and Text</title>
+  <link rel="canonical" href="https://yueyiming2009.github.io/ai-learning/models/nemotron-3-nano-omni.html"><link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <script>MathJax={tex:{inlineMath:[['\\(','\\)']],displayMath:[['\\[','\\]']]},options:{skipHtmlTags:['script','noscript','style','textarea','pre']}};</script>
+  <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #fff; --surface: #f8f9fa; --border: #e8eaed; --text: #1a1a2e;
+      --muted: #6b7280; --accent: #b45309; --accent-light: #fffbeb;
+      --nav-bg: rgba(255,255,255,0.94);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115; --surface: #171b21; --border: #262b33; --text: #e5e7eb;
+        --muted: #9aa1ab; --accent: #fbbf24; --accent-light: #251c0b;
+        --nav-bg: rgba(15,17,21,0.94);
+      }
+    }
+    body { margin: 0; font: 16px/1.75 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); }
+    a { color: var(--accent); text-underline-offset: 3px; }
+    a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+    nav { position: sticky; top: 0; z-index: 100; display: flex; align-items: center; gap: 24px; height: 52px; padding: 0 24px; background: var(--nav-bg); border-bottom: 1px solid var(--border); }
+    .nav-brand { display: inline-flex; align-items: center; gap: 7px; font-size: 0.9rem; font-weight: 600; white-space: nowrap; text-decoration: none; }
+    .nav-links { display: flex; flex: 1; gap: 12px; overflow-x: auto; min-width: 0; }
+    .nav-links a { font-size: 0.82rem; white-space: nowrap; text-decoration: none; color: var(--muted); }
+    .hero { background: linear-gradient(135deg, #78350f, #b45309 60%, #c2410c); color: white; padding: 52px 24px; text-align: center; }
+    .hero h1 { font-size: clamp(1.6rem, 4vw, 2.4rem); line-height: 1.3; margin: 12px 0; }
+    .hero p { max-width: 720px; margin: 0 auto; }
+    .hero-pill { display: inline-block; border: 1px solid rgba(255,255,255,0.4); border-radius: 100px; padding: 3px 12px; font-size: 0.78rem; text-transform: uppercase; }
+    .page-wrap { max-width: 960px; margin: 0 auto; padding: 32px 24px 72px; }
+    h2, h3, [id] { scroll-margin-top: 72px; }
+    h2 { margin-top: 44px; padding-bottom: 8px; border-bottom: 1px solid var(--border); font-size: 1.4rem; }
+    h3 { margin-top: 28px; font-size: 1.08rem; }
+    p, li, td { overflow-wrap: anywhere; }
+    li { margin: 8px 0; }
+    code { font: 0.88em ui-monospace, SFMono-Regular, Consolas, monospace; background: var(--surface); padding: 2px 5px; border-radius: 4px; }
+    .model-map, .note { padding: 16px 20px; margin: 20px 0; border-left: 4px solid var(--accent); border-radius: 0 8px 8px 0; background: var(--accent-light); }
+    .model-map p, .note p { margin: 6px 0; }
+    .model-map { font-size: 0.9rem; }
+    .flow { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 0; list-style: none; }
+    .flow li { margin: 0; padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+    .flow strong { display: block; }
+    .table-wrap { overflow-x: auto; margin: 20px 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { text-align: left; vertical-align: top; padding: 11px 13px; border: 1px solid var(--border); }
+    th { background: var(--surface); }
+    caption, .muted { color: var(--muted); font-size: 0.9rem; }
+    caption { text-align: left; margin-bottom: 8px; }
+    footer { border-top: 1px solid var(--border); padding: 24px; text-align: center; color: var(--muted); font-size: 0.82rem; }
+    @media (max-width: 600px) {
+      nav { padding: 0 12px; gap: 16px; }
+      .nav-brand { font-size: 0.78rem; }
+      .page-wrap { padding: 24px 16px 56px; }
+      .flow { grid-template-columns: 1fr; }
+      th, td { padding: 9px; }
+    }
+
+    :root { --plot-grid: #e5e7eb; --plot-tick: #6b7280; --plot-axis: #9ca3af; --plot-violet: #7c3aed; --plot-teal: #0d9488; }
+    @media (prefers-color-scheme: dark) {
+      :root { --plot-grid: #303641; --plot-tick: #9aa1ab; --plot-axis: #687385; --plot-violet: #a78bfa; --plot-teal: #2dd4bf; }
+    }
+    figure { margin: 24px 0; }
+    .diagram-scroll, .equation { overflow-x: auto; margin: 20px 0; }
+    .diagram { width: 100%; min-width: 740px; display: block; color: var(--text); }
+    .diagram rect { fill: var(--surface); stroke: var(--border); }
+    .diagram .focus { fill: var(--accent-light); stroke: var(--accent); }
+    .diagram text { fill: currentColor; font: 14px -apple-system, BlinkMacSystemFont, sans-serif; }
+    .diagram .small { font-size: 12px; }
+    figcaption { color: var(--muted); font-size: 0.9rem; }
+    .figure { padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+    .figure canvas { width: 100%; height: 300px; display: block; }
+    .controls { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; }
+    .controls label { font-size: 0.9rem; }
+    .controls select { max-width: 100%; color: var(--text); background: var(--bg); border: 1px solid var(--border); padding: 6px; }
+    .controls input[type="range"] { width: 140px; accent-color: var(--accent); vertical-align: middle; }
+    .controls select:focus-visible, .controls input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    .legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 0.85rem; }
+    .lg { display: inline-block; width: 18px; height: 3px; background: var(--c); vertical-align: middle; margin-right: 6px; }
+    output { display: block; margin: 12px 0; font-size: 0.9rem; }
+
+    :root { --accent: #3f6212; --accent-light: #f7fee7; }
+    @media (prefers-color-scheme: dark) { :root { --accent: #a3e635; --accent-light: #171f0d; } }
+    .hero { background: linear-gradient(135deg, #1a2e05, #3f6212 65%, #4d7c0f); }
+    .flow { display: block; padding: 18px; line-height: 1.9; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+    .controls input[type="checkbox"] { accent-color: var(--accent); }
+</style>
+</head>
+<body>
+<nav aria-label="Page navigation"><a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 11l9-8 9 8M5 10v10h14V10"/></svg>Nano Omni</a><div class="nav-links"><a href="#lineage">Lineage</a><a href="#architecture">Architecture</a><a href="#training">Recipe</a><a href="#systems">Media/state budget</a><a href="#evaluation">Evidence</a><a href="#sources">Sources</a></div></nav>
+<header class="hero"><span class="hero-pill">Models · Nemotron</span><h1>Nemotron 3 Nano Omni</h1><p>Extend a compact hybrid language backbone with visual and speech encoders, then train the bridge and policy to reason across a shared multimodal context.</p></header>
+<main class="page-wrap">
+  <aside class="model-map" id="model-context">
+    <p><strong><a href="../index.html#models-nemotron">Nemotron family</a> · Released April 28, 2026</strong></p>
+    <p><strong>Lineage:</strong> <a href="nemotron-3.html#small">Nemotron 3 Nano</a> supplies the language backbone; C-RADIO and Parakeet supply perception. Teacher-generated training data is not a claim of Qwen or GPT weight inheritance.</p>
+    <p><a href="#architecture">Modality paths</a> · <a href="#training">Bridge → SFT → RL</a> · <a href="#systems">State/media accounting</a> · <a href="#evaluation">Evaluation</a></p>
+    <p><strong>Coverage:</strong> official card, technical account and pinned configuration, checked November 1, 2026. Omni is a missing branch of the existing family coverage, not an October release.</p>
+  </aside>
+  <h2 id="lineage">1. “Omni” changes the inputs, not the output into speech</h2>
+  <p>The released contract accepts video, audio, images and text and produces text. It targets document intelligence, transcription, video/speech understanding and perception inside agent workflows. The card describes a 31B-class model with roughly 3B active parameters/token and a <strong>256K context</strong>—not an inherited blanket 1M limit from every other Nemotron model.</p>
+  <div class="flow"><strong>Nano language backbone + C-RADIO + Parakeet</strong> → adapter/encoder alignment → staged multimodal SFT with longer context → multimodal RL → BF16 / FP8 / NVFP4 deployment variants.</div>
+
+  <h2 id="architecture">2. Three input paths, one hybrid decoder</h2>
+  <figure><div class="diagram-scroll">
+    <svg class="diagram" viewBox="0 0 920 600" role="img" aria-labelledby="om-title om-desc">
+      <title id="om-title">Nano Omni text, visual and audio paths joining the Nano hybrid backbone</title>
+      <desc id="om-desc">Text embeddings, C-RADIO image/video representations and Parakeet audio features are projected into a 2688-wide language stream. The backbone comprises 23 Mamba layers, 23 MoE layers and 6 GQA layers, then a text output head. Temporal compression and frame selection change the visual token load before decoding.</desc>
+      <defs><marker id="om-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" marker-end="url(#om-arrow)"><path d="M155 150V240"/><path d="M460 150V240"/><path d="M765 150V240"/><path d="M460 300V345"/><path d="M460 425V465"/><path d="M460 525V565"/></g>
+      <rect x="45" y="55" width="220" height="95" rx="8"/><text x="155" y="87" text-anchor="middle">Text tokens</text><text x="155" y="115" text-anchor="middle" class="small">131,072-entry embedding</text><text x="155" y="137" text-anchor="middle" class="small">width 2688</text>
+      <rect x="320" y="55" width="280" height="95" rx="8"/><text x="460" y="87" text-anchor="middle">Images / sampled video frames</text><text x="460" y="115" text-anchor="middle" class="small">C-RADIO v4-H + spatial/temporal bridge</text><text x="460" y="137" text-anchor="middle" class="small">EVS reduces selected video tokens</text>
+      <rect x="655" y="55" width="220" height="95" rx="8"/><text x="765" y="87" text-anchor="middle">Audio</text><text x="765" y="115" text-anchor="middle" class="small">Parakeet encoder + adapter</text><text x="765" y="137" text-anchor="middle" class="small">16kHz processing configuration</text>
+      <rect x="65" y="240" width="790" height="60" rx="8" class="focus"/><text x="460" y="276" text-anchor="middle">One aligned multimodal stream at language width 2688</text>
+      <rect x="180" y="345" width="560" height="80" rx="8" class="focus"/><text x="460" y="374" text-anchor="middle">52 whole layers: 23 Mamba + 23 MoE + 6 GQA</text><text x="460" y="401" text-anchor="middle" class="small">128 routed experts, top-6; one shared expert</text>
+      <rect x="270" y="465" width="380" height="60" rx="8"/><text x="460" y="501" text-anchor="middle">Language-model head</text>
+      <text x="460" y="587" text-anchor="middle">Text, reasoning, transcripts, structured answers or tool calls</text>
+    </svg>
+  </div><figcaption>Each modality arrow terminates at the shared input stream. Frame sampling, temporal processing and token pruning are different operations; the diagram does not equate their compression factors.</figcaption></figure>
+  <div class="table-wrap"><table>
+    <thead><tr><th scope="col">Part</th><th scope="col">Configuration evidence</th><th scope="col">Consequence</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">Nano backbone</th><td>Width 2688; 52 layers; 128 routed experts, top-6; expert intermediate width 1856, shared width 3712.</td><td>This uses the Nano branch, not Super's quarter-width LatentMoE specification.</td></tr>
+      <tr><th scope="row">Attention/state</th><td>6 GQA layers, 32 Q / 2 KV heads, dimension 128; 23 Mamba layers with 64 heads × 64 channels × state size 128.</td><td>Only a few layers retain token-indexed KV, alongside fixed-size recurrent state.</td></tr>
+      <tr><th scope="row">Vision</th><td>C-RADIO v4-H, 16-pixel patches, language connector hidden width 20,480, spatial downsample ratio 0.5, temporal patch size 2.</td><td>Visual token count depends on resolution, crops, frames and temporal aggregation—not just image count.</td></tr>
+      <tr><th scope="row">Audio</th><td>Parakeet config: width 1024, 24 layers, 8 heads, subsampling factor 8, 128 mel bins, 16kHz rate.</td><td>Audio resampling/feature extraction and alignment are separate from the image processor.</td></tr>
+    </tbody>
+  </table></div>
+  <p>The MoE router selects experts from token representations; the sources do not establish a hard “vision expert versus audio expert” partition. Unified multimodal inputs do not imply each modality is assigned one dedicated expert.</p>
+
+  <h2 id="training">3. Learn the cross-modality bridge, then train the agent policy</h2>
+  <ol>
+    <li><strong>Initialize capable components.</strong> Reuse the Nano language backbone, C-RADIO visual encoder and Parakeet speech encoder. Additional teacher models help generate and filter training annotations; those are data relationships.</li>
+    <li><strong>Align adapters and encoders.</strong> The technical account reports about 127B tokens for adapter/encoder training across mixed modality combinations. The model learns to express perception in the language backbone's representational space.</li>
+    <li><strong>Expand multimodal SFT and context.</strong> The Megatron-based pipeline broadens modality coverage and progresses through roughly 16K → 49K → 262K sequence lengths. The release account separately reports around 124M curated post-training examples.</li>
+    <li><strong>Optimize outcomes through RL.</strong> NeMo RL/Gym trains across 25 environment configurations and more than 2.3M rollouts, including visual grounding, chart/document understanding, STEM, video understanding and ASR.</li>
+    <li><strong>Package for different hardware.</strong> BF16, FP8 and NVFP4 artifacts trade memory and throughput; keep their accuracy, parser and runtime settings separate.</li>
+  </ol>
+  <p>Do not sum every data number into one training-token count: adapter tokens, curated examples, RL rollouts and a broader card inventory of approximately 717B multimodal tokens have different scopes. Similarly, a 256K deployment context is not a promise that every video/audio duration fits alongside unlimited generated reasoning.</p>
+  <p>The technical account points to public stage recipes. Without inspecting a resolved launcher, do not assume every encoder is frozen or trained in every stage. A correct adaptation records which modules update and checks text-only regressions as well as multimodal improvement.</p>
+
+  <h2 id="systems">4. Count media tokens and both kinds of state</h2>
+  <p>For a single 512 × 512 crop, 16-pixel patches yield \(32^2=1024\) patches; a 2 × 2 spatial merge would yield 256 visual tokens before temporal processing. This is a simple shape example, not a universal tokens-per-frame constant. Dynamic resolution, multiple crops, video pairing and efficient-video-sampling pruning change the count.</p>
+  <p>The decoder budget is \(T_{\rm text}+T_{\rm vision}+T_{\rm audio}+T_{\rm tools}+T_{\rm generated}\).
+    Pruning redundant video tokens lowers decoder work, but need not remove the encoder work that produced them. A sampling rate of two frames/second and a 50% token-pruning setting do not necessarily halve end-to-end latency.</p>
+  <div class="equation">\[
+    M_{\rm KV}=6\cdot2\cdot2\cdot128\cdot T b_k,\qquad
+    M_{\rm SSM}=23\cdot64\cdot64\cdot128\cdot b_s.
+  \]</div>
+  <p>At 262,144 tokens, target BF16 KV is <strong>1.5 GiB</strong>. One BF16 recurrent state per sequence is <strong>23 MiB</strong>, before convolution state, caches of prior states, media activations and workspaces. At four independent sequences these target-state terms approximately quadruple.</p>
+  <div class="figure" data-budget-kind="omni">
+    <div class="controls"><label>Context exponent <input id="budget-exp" type="range" min="14" max="18" step="1" value="18"></label><label>Concurrent sequences <select id="budget-batch"><option>1</option><option>4</option><option>8</option></select></label><label>KV precision <select id="budget-bytes"><option value="2">BF16</option><option value="1">8-bit scenario</option></select></label></div>
+    <output id="budget-result" aria-live="polite"></output>
+    <canvas id="plot-budget" aria-label="Nano Omni attention cache and fixed recurrent state versus total multimodal context length"></canvas>
+    <div class="legend"><span><i class="lg" style="--c:var(--plot-violet)"></i>KV + one BF16 SSM state</span><span><i class="lg" style="--c:var(--plot-teal)"></i>KV only</span></div>
+    <p class="muted">X: Ki tokens. Y: GiB for target KV plus one BF16 SSM state/sequence. Media encoders and prefix snapshots are excluded; this is not peak device memory.</p>
+  </div>
+  <p>The card lists approximate artifact sizes of 62GB BF16, 33GB FP8 and 21GB NVFP4. A “minimum GPU” row is workload-dependent: the concrete recipes change context length, concurrency, cache precision, frame selection and media limits. These settings must be qualified together, not cherry-picked from different hardware examples.</p>
+
+  <h2 id="evaluation">5. Multimodal quality and system capacity are different outcomes</h2>
+  <p>Reported card values include OCRBench v2 EN 67.04, CharXiv reasoning 63.6, MMLongBench-Doc 57.5 and OSWorld 47.4. Task setup, media preprocessing, reasoning settings and quantized checkpoint affect the interpretation.</p>
+  <p>The technical account's roughly 9.2× video and 7.4× multi-document capacity comparisons hold per-user interactivity constant and compare sustainable aggregate throughput. They are not claims of 9× single-request latency improvement or 9× better accuracy.</p>
+  <p>For an actual agent, preserve timestamps/frame ordering, verify whether audio from a video is included, and evaluate perception-to-tool-action correctness. The model produces text; a speech-generating system still needs an output speech component.</p>
+  <p>The release is governed by the <a href="https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-agreement/">NVIDIA Open Model Agreement</a>, not automatically the OpenMDW terms of later Nemotron releases. No model/container/code installation was performed for this page.</p>
+  <h2 id="sources">Sources</h2>
+  <p>Checked November 1, 2026: <a href="https://huggingface.co/nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16">official card</a>, <a href="https://huggingface.co/nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16/blob/e5e9932441de940c9a62185c870ea5bcd4cd24e2/config.json">pinned configuration</a>, <a href="https://developer.nvidia.com/blog/nvidia-nemotron-3-nano-omni-powers-multimodal-agent-reasoning-in-a-single-efficient-open-model/">technical architecture/training account</a>, and <a href="https://blogs.nvidia.com/blog/nemotron-3-nano-omni-multimodal-ai-agents/">release announcement</a>. Source claims and illustrative memory calculations are labeled separately.</p>
+</main>
+<footer><a href="../index.html#models-nemotron">Nemotron family</a> · <a href="nemotron-3.html#small">Nano backbone</a> · <a href="nemotron-3-5-super-vl.html">Larger visual branch: Super VL</a></footer>
+
+<script>
+(function () {
+  const exponent=document.getElementById('budget-exp');
+  const result=document.getElementById('budget-result');
+  const canvas=document.getElementById('plot-budget');
+  const cssVar=name=>getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  function drawPlot(canvas, cfg) {
+    const w=canvas.clientWidth,h=canvas.clientHeight,dpr=window.devicePixelRatio||1;
+    if (!w || !h) return;
+    canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);
+    const c=canvas.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,w,h);
+    const mL=44,mR=14,mT=14,mB=30,pw=w-mL-mR,ph=h-mT-mB;
+    const X=x=>mL+(x-cfg.xMin)/(cfg.xMax-cfg.xMin)*pw;
+    const Y=y=>mT+(cfg.yMax-y)/(cfg.yMax-cfg.yMin)*ph;
+    c.font='11px sans-serif';c.lineWidth=1;c.strokeStyle=cssVar('--plot-grid');c.fillStyle=cssVar('--plot-tick');
+    c.textAlign='center';c.textBaseline='top';
+    cfg.xTicks.forEach(t=>{c.beginPath();c.moveTo(X(t),mT);c.lineTo(X(t),mT+ph);c.stroke();c.fillText(t,X(t),mT+ph+6);});
+    c.textAlign='right';c.textBaseline='middle';
+    cfg.yTicks.forEach(t=>{c.beginPath();c.moveTo(mL,Y(t));c.lineTo(mL+pw,Y(t));c.stroke();c.fillText(t.toFixed(1),mL-6,Y(t));});
+    c.strokeStyle=cssVar('--plot-axis');c.beginPath();c.moveTo(mL,mT);c.lineTo(mL,mT+ph);c.lineTo(mL+pw,mT+ph);c.stroke();
+    c.save();c.beginPath();c.rect(mL,mT,pw,ph);c.clip();
+    cfg.series.forEach(s=>{c.beginPath();c.strokeStyle=cssVar(s.color);c.lineWidth=2.5;c.setLineDash(s.dash||[]);
+      for(let i=0;i<=260;i++){const x=cfg.xMin+(cfg.xMax-cfg.xMin)*i/260;i?c.lineTo(X(x),Y(s.fn(x))):c.moveTo(X(x),Y(s.fn(x)));}c.stroke();});
+    c.setLineDash([3,3]);c.strokeStyle=cssVar('--plot-axis');c.beginPath();c.moveTo(X(cfg.selected),mT);c.lineTo(X(cfg.selected),mT+ph);c.stroke();c.restore();
+  }
+
+  const batch=document.getElementById('budget-batch'),bytes=document.getElementById('budget-bytes');
+  function render() {
+    const T=2**Number(exponent.value),C=Number(batch.value),b=Number(bytes.value);
+    const main=T=>(6*2*2*128*T*b*C/2**30)+(23*64*64*128*2*C/2**30);
+    const other=T=>6*2*2*128*T*b*C/2**30;
+    result.textContent=`${T.toLocaleString()} tokens × ${C}: ${other(T).toFixed(3)} GiB KV + ${(23*64*64*128*2*C/2**30*1024).toFixed(1)} MiB BF16 SSM = ${main(T).toFixed(3)} GiB. Target state only.`;
+    const end=2**18,ymax=Math.max(0.5,Math.ceil(Math.max(main(end),other(end))*2)/2);
+    drawPlot(canvas,{xMin:0,xMax:end/1024,yMin:0,yMax:ymax,xTicks:[0,end/4096,end/2048,3*end/4096,end/1024],yTicks:[0,ymax/4,ymax/2,3*ymax/4,ymax],selected:T/1024,
+      series:[{fn:x=>main(x*1024),color:'--plot-violet'},{fn:x=>other(x*1024),color:'--plot-teal',dash:[5,4]}]});
+  }
+  batch.addEventListener('change',render);bytes.addEventListener('change',render);
+
+  exponent.addEventListener('input',render);
+  let raf;window.addEventListener('resize',()=>{cancelAnimationFrame(raf);raf=requestAnimationFrame(render);});
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',render);
+  render();
+})();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="color-scheme" content="light dark">
+  <meta name="description" content="Bolt E4B's Gemma lineage, dense local/global attention and per-layer embeddings, RL-only adaptation, Q4_K_M calibration, DFlash and conversational-agent constraints.">
+  <title>Nemotron 3.5 Bolt E4B — Gemma-Derived Conversational Agents</title>
+  <link rel="canonical" href="https://yueyiming2009.github.io/ai-learning/models/nemotron-3-5-bolt-e4b.html"><link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <script>MathJax={tex:{inlineMath:[['\\(','\\)']],displayMath:[['\\[','\\]']]},options:{skipHtmlTags:['script','noscript','style','textarea','pre']}};</script>
+  <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #fff; --surface: #f8f9fa; --border: #e8eaed; --text: #1a1a2e;
+      --muted: #6b7280; --accent: #b45309; --accent-light: #fffbeb;
+      --nav-bg: rgba(255,255,255,0.94);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115; --surface: #171b21; --border: #262b33; --text: #e5e7eb;
+        --muted: #9aa1ab; --accent: #fbbf24; --accent-light: #251c0b;
+        --nav-bg: rgba(15,17,21,0.94);
+      }
+    }
+    body { margin: 0; font: 16px/1.75 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); }
+    a { color: var(--accent); text-underline-offset: 3px; }
+    a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+    nav { position: sticky; top: 0; z-index: 100; display: flex; align-items: center; gap: 24px; height: 52px; padding: 0 24px; background: var(--nav-bg); border-bottom: 1px solid var(--border); }
+    .nav-brand { display: inline-flex; align-items: center; gap: 7px; font-size: 0.9rem; font-weight: 600; white-space: nowrap; text-decoration: none; }
+    .nav-links { display: flex; flex: 1; gap: 12px; overflow-x: auto; min-width: 0; }
+    .nav-links a { font-size: 0.82rem; white-space: nowrap; text-decoration: none; color: var(--muted); }
+    .hero { background: linear-gradient(135deg, #78350f, #b45309 60%, #c2410c); color: white; padding: 52px 24px; text-align: center; }
+    .hero h1 { font-size: clamp(1.6rem, 4vw, 2.4rem); line-height: 1.3; margin: 12px 0; }
+    .hero p { max-width: 720px; margin: 0 auto; }
+    .hero-pill { display: inline-block; border: 1px solid rgba(255,255,255,0.4); border-radius: 100px; padding: 3px 12px; font-size: 0.78rem; text-transform: uppercase; }
+    .page-wrap { max-width: 960px; margin: 0 auto; padding: 32px 24px 72px; }
+    h2, h3, [id] { scroll-margin-top: 72px; }
+    h2 { margin-top: 44px; padding-bottom: 8px; border-bottom: 1px solid var(--border); font-size: 1.4rem; }
+    h3 { margin-top: 28px; font-size: 1.08rem; }
+    p, li, td { overflow-wrap: anywhere; }
+    li { margin: 8px 0; }
+    code { font: 0.88em ui-monospace, SFMono-Regular, Consolas, monospace; background: var(--surface); padding: 2px 5px; border-radius: 4px; }
+    .model-map, .note { padding: 16px 20px; margin: 20px 0; border-left: 4px solid var(--accent); border-radius: 0 8px 8px 0; background: var(--accent-light); }
+    .model-map p, .note p { margin: 6px 0; }
+    .model-map { font-size: 0.9rem; }
+    .flow { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 0; list-style: none; }
+    .flow li { margin: 0; padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+    .flow strong { display: block; }
+    .table-wrap { overflow-x: auto; margin: 20px 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { text-align: left; vertical-align: top; padding: 11px 13px; border: 1px solid var(--border); }
+    th { background: var(--surface); }
+    caption, .muted { color: var(--muted); font-size: 0.9rem; }
+    caption { text-align: left; margin-bottom: 8px; }
+    footer { border-top: 1px solid var(--border); padding: 24px; text-align: center; color: var(--muted); font-size: 0.82rem; }
+    @media (max-width: 600px) {
+      nav { padding: 0 12px; gap: 16px; }
+      .nav-brand { font-size: 0.78rem; }
+      .page-wrap { padding: 24px 16px 56px; }
+      .flow { grid-template-columns: 1fr; }
+      th, td { padding: 9px; }
+    }
+
+    :root { --plot-grid: #e5e7eb; --plot-tick: #6b7280; --plot-axis: #9ca3af; --plot-violet: #7c3aed; --plot-teal: #0d9488; }
+    @media (prefers-color-scheme: dark) {
+      :root { --plot-grid: #303641; --plot-tick: #9aa1ab; --plot-axis: #687385; --plot-violet: #a78bfa; --plot-teal: #2dd4bf; }
+    }
+    figure { margin: 24px 0; }
+    .diagram-scroll, .equation { overflow-x: auto; margin: 20px 0; }
+    .diagram { width: 100%; min-width: 740px; display: block; color: var(--text); }
+    .diagram rect { fill: var(--surface); stroke: var(--border); }
+    .diagram .focus { fill: var(--accent-light); stroke: var(--accent); }
+    .diagram text { fill: currentColor; font: 14px -apple-system, BlinkMacSystemFont, sans-serif; }
+    .diagram .small { font-size: 12px; }
+    figcaption { color: var(--muted); font-size: 0.9rem; }
+    .figure { padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+    .figure canvas { width: 100%; height: 300px; display: block; }
+    .controls { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; }
+    .controls label { font-size: 0.9rem; }
+    .controls select { max-width: 100%; color: var(--text); background: var(--bg); border: 1px solid var(--border); padding: 6px; }
+    .controls input[type="range"] { width: 140px; accent-color: var(--accent); vertical-align: middle; }
+    .controls select:focus-visible, .controls input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    .legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 0.85rem; }
+    .lg { display: inline-block; width: 18px; height: 3px; background: var(--c); vertical-align: middle; margin-right: 6px; }
+    output { display: block; margin: 12px 0; font-size: 0.9rem; }
+
+    :root { --accent: #3f6212; --accent-light: #f7fee7; }
+    @media (prefers-color-scheme: dark) { :root { --accent: #a3e635; --accent-light: #171f0d; } }
+    .hero { background: linear-gradient(135deg, #1a2e05, #3f6212 65%, #4d7c0f); }
+    .flow { display: block; padding: 18px; line-height: 1.9; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+    .controls input[type="checkbox"] { accent-color: var(--accent); }
+</style>
+</head>
+<body>
+<nav aria-label="Page navigation"><a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 11l9-8 9 8M5 10v10h14V10"/></svg>Bolt E4B</a><div class="nav-links"><a href="#lineage">Lineage</a><a href="#architecture">Architecture</a><a href="#training">Recipe</a><a href="#systems">Memory</a><a href="#evaluation">Agent behavior</a><a href="#sources">Sources</a></div></nav>
+<header class="hero"><span class="hero-pill">Models · Nemotron / Gemma lineage</span><h1>Nemotron 3.5 Bolt E4B</h1><p>A different Bolt branch: preserve Gemma's conversational strengths, improve tool use through RL, and package the resulting text model for responsive local agents.</p></header>
+<main class="page-wrap">
+  <aside class="model-map" id="model-context">
+    <p><strong><a href="../index.html#models-nemotron">Nemotron family</a> · Released October 23, 2026</strong></p>
+    <p><strong>Lineage:</strong> initialized from <a href="https://huggingface.co/google/gemma-4-E4B-it">Gemma-4-E4B-it</a>, then post-trained by NVIDIA. It is not a tiny Super VL, a pruned <a href="nemotron-3-5-bolt-74b.html">Bolt 74B</a>, or a latent MoE.</p>
+    <p><a href="#architecture">Dense backbone and PLE</a> · <a href="#training">RL-only adaptation</a> · <a href="#systems">Memory and drafting</a> · <a href="#evaluation">Behavior/evidence</a></p>
+    <p><strong>Evidence:</strong> the official card and dated report confirm a released checkpoint, not merely the earlier October 23 schedule. Configuration fields and original Gemma implementation are distinguished from supported Bolt inputs.</p>
+  </aside>
+  <h2 id="lineage">1. E4B is an effective-size label, not top-4B expert activation</h2>
+  <p>The card describes 8B total / 4B effective parameters and a text-in/text-out interface. The BF16 configuration sets <code>enable_moe_block=false</code>; no routed-expert count or top-\(K\) is configured. The “Bolt” brand groups local deployment goals, not one architecture family.</p>
+  <div class="flow"><strong>Gemma-4-E4B-it weights</strong> → multi-environment RLVR/RLHF in two reasoning modes → selected BF16 policy → importance-matrix Q4_K_M calibration → GGUF release, with a separately trained DFlash drafter.</div>
+  <p>Voice and device assistants can place ASR, vision, or TTS around this model. The published Bolt interface is still text-only. Retained vision/audio config objects in a parent-compatible BF16 artifact do not establish supported multimodal Bolt behavior.</p>
+
+  <h2 id="architecture">2. Dense transformer plus per-layer input embeddings</h2>
+  <figure><div class="diagram-scroll">
+    <svg class="diagram" viewBox="0 0 900 590" role="img" aria-labelledby="e4-title e4-desc">
+      <title id="e4-title">Bolt E4B's dense Gemma backbone and per-layer input path</title>
+      <desc id="e4-desc">Token IDs feed both the tied main embedding and a packed per-layer embedding table. Forty-two layers alternate local and global attention with dense gated MLPs. A 256-wide per-layer input is gated and projected into each layer. This is not MoE routing.</desc>
+      <defs><marker id="e4-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" marker-end="url(#e4-arrow)"><path d="M250 105V155"/><path d="M340 75H655V155"/><path d="M250 225V275"/><path d="M655 225V310H445"/><path d="M250 375V430"/><path d="M250 490V530"/></g>
+      <rect x="150" y="45" width="190" height="60" rx="8"/><text x="245" y="81" text-anchor="middle">Token IDs</text>
+      <rect x="70" y="155" width="360" height="70" rx="8"/><text x="250" y="185" text-anchor="middle">Main embedding: 262,144 × 2560</text><text x="250" y="209" text-anchor="middle" class="small">tied to language output weights</text>
+      <rect x="495" y="155" width="330" height="70" rx="8"/><text x="660" y="185" text-anchor="middle">Packed per-layer embeddings</text><text x="660" y="209" text-anchor="middle" class="small">262,144 × (42 × 256)</text>
+      <rect x="55" y="275" width="390" height="100" rx="8" class="focus"/><text x="250" y="304" text-anchor="middle">42 decoder layers</text><text x="250" y="330" text-anchor="middle" class="small">35 local + 7 global attention layers</text><text x="250" y="355" text-anchor="middle" class="small">dense gated MLP + per-layer-input residual</text>
+      <text x="670" y="354" text-anchor="middle">256-wide side input for each layer</text><text x="670" y="380" text-anchor="middle" class="small">gate → multiply → project to 2560</text>
+      <rect x="70" y="430" width="360" height="60" rx="8"/><text x="250" y="466" text-anchor="middle">Final norm + tied LM head</text>
+      <text x="250" y="555" text-anchor="middle">Text / tool calls</text>
+      <text x="660" y="480" text-anchor="middle">No Mamba. No routed experts.</text><text x="660" y="505" text-anchor="middle" class="small">Do not import the other Bolt's 2-bit MoE recipe.</text>
+    </svg>
+  </div><figcaption>The PLE side input also incorporates a projection of the main embedding in the reference implementation; the diagram emphasizes its separate lookup path, not an independent model.</figcaption></figure>
+  <div class="table-wrap"><table>
+    <thead><tr><th scope="col">Part</th><th scope="col">Pinned BF16 configuration</th><th scope="col">Interpretation</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">Backbone</th><td>42 layers, width 2560, dense gated MLP intermediate width 10,240.</td><td>All dense layers process each token; “effective 4B” is not sparse expert selection.</td></tr>
+      <tr><th scope="row">Attention</th><td>8 Q heads, 2 KV heads; local head dimension 256, global head dimension 512.</td><td>Do not use one head dimension for the entire cache calculation.</td></tr>
+      <tr><th scope="row">Context pattern</th><td>35 sliding-window layers (window 512), 7 full-attention layers, 64K limit; 18 later layers configured for KV sharing.</td><td>Local-window eviction and shared KV sources both affect realized memory.</td></tr>
+      <tr><th scope="row">Per-layer inputs</th><td>Vocabulary 262,144; 256 features per layer, packed across 42 layers.</td><td>Large lookup storage can contribute little per-token matrix work compared with evaluating a similarly sized dense matrix.</td></tr>
+    </tbody>
+  </table></div>
+  <p>The packed PLE table alone has \(262144\times42\times256=2.819\) billion entries. Each input token selects a row, rather than multiplying through every vocabulary entry. This explains one source of the storage-versus-effective-compute distinction; it is not a reconstruction of NVIDIA's complete effective-parameter metric.</p>
+  <p>The reference decoder's PLE branch gates the 256-wide per-layer signal, projects it to model width, normalizes, and adds it residually after the FFN. Source: <a href="https://github.com/huggingface/transformers/blob/ca8c871ede62b521a75a2ddfc5e1968ac9c8e097/src/transformers/models/gemma4/modeling_gemma4.py">pinned Gemma 4 implementation</a>.</p>
+
+  <h2 id="training">3. Why NVIDIA rejected an extra SFT stage</h2>
+  <p>The starting checkpoint is already instruction-tuned. NVIDIA tried additional multi-teacher SFT: it improved tool calling and reduced the RL steps needed, but regressed conversational quality and verbosity. The released Bolt E4B therefore uses <strong>RL-only additional post-training</strong>, not a universal “SFT then RL” template.</p>
+  <ol>
+    <li><strong>Adapt the interface.</strong> When an assistant turn contains text and tool calls, the chat template places text first. <code>conversational_mode</code> adds a concise, speech-friendly system instruction; it is not a separate set of weights.</li>
+    <li><strong>Train across outcomes.</strong> NeMo RL/Gym supply instruction following/hierarchy, tool calling/schema, structured/free-form output and GenRM environments. Both RLVR and RLHF are used.</li>
+    <li><strong>Train both reasoning modes.</strong> The blend deliberately favors non-reasoning over reasoning 2:1. The report gives global batch 256, eight rollouts/prompt, and generation limits of 4096 for reasoning versus 1024 for non-reasoning samples.</li>
+    <li><strong>Control verbosity while preserving quality.</strong> Group-relative penalties and overlong-filter choices are adjusted during RL. Shorter answers are judged for quality, not automatically rewarded as better.</li>
+    <li><strong>Calibrate deployment quantization.</strong> Convert the selected BF16 checkpoint to Q4_K_M with an importance matrix calibrated on about one million tokens of its own RL rollouts. This is not the IQ2/QAD pipeline of Bolt 74B.</li>
+  </ol>
+  <p>The report describes English-only additional post-training and evaluates multilingual retention. Broader inherited language capability does not mean NVIDIA retrained every language. The model card's generic corpus inventory is not a precise token count for this RL adaptation.</p>
+
+  <h2 id="systems">4. Four gigabytes is a workload target, not free context</h2>
+  <p>For a deliberately conservative estimate that ignores cross-layer KV sharing but assumes window eviction, with \(T\) tokens and two-byte cache elements:</p>
+  <div class="equation">\[
+    M_{\rm KV}=2\cdot2\cdot2\,[7\cdot512T+35\cdot256\min(T,512)].
+  \]</div>
+  <p>At 65,536 tokens this is about <strong>1.784 GiB</strong>. The configured 18 shared-KV layers can reduce the number of distinct caches in a supporting engine. This calculator is a no-sharing cache scenario, not the measured cache of NVIDIA's deployment. Weight residency, PLE lookup placement, the drafter, and runtime workspaces need separate budgets.</p>
+  <div class="figure" data-budget-kind="e4b">
+    <div class="controls"><label>Context exponent <input id="budget-exp" type="range" min="10" max="16" step="1" value="16"></label><label>Concurrent sequences <select id="budget-batch"><option>1</option><option>4</option><option>8</option></select></label><label>KV precision <select id="budget-bytes"><option value="2">BF16</option><option value="1">8-bit scenario</option></select></label></div>
+    <output id="budget-result" aria-live="polite"></output>
+    <canvas id="plot-budget" aria-label="Bolt E4B no-sharing local/global attention cache estimate versus context length"></canvas>
+    <div class="legend"><span><i class="lg" style="--c:var(--plot-violet)"></i>Window eviction, no KV sharing</span><span><i class="lg" style="--c:var(--plot-teal)"></i>No eviction or sharing</span></div>
+    <p class="muted">X: Ki tokens. Y: GiB. No weight, draft, workspace or KV-sharing savings included. Cache precision is a numerical scenario, not validated engine support.</p>
+  </div>
+  <p>The companion DFlash model has five Transformer layers and 360M parameters excluding reused target embeddings/head, and proposes seven tokens. The report gives 2.74× per-user decode speed at concurrency one over no speculation; it does not promise that multiplier at every batch size or for prefill.</p>
+
+  <h2 id="evaluation">5. The unit of success is a conversation with actions</h2>
+  <p>The report evaluates 21 benchmarks covering conversation, tool use, instruction control, context and state grounding, with task-specific repeat counts. Q4_K_M examples include MultiChallenge 55.60, ToolSandbox 74.13 and IHEval 82.40. Different benchmarks use different reasoning modes; the same mode flag is not used indiscriminately.</p>
+  <p>For voice/device agents, latency, concise useful responses, tool correctness and state grounding must be checked together. Text output does not directly synthesize speech. A short response can still trigger the wrong action; a high reasoning score can still make an interactive system too slow.</p>
+  <p>The template has a specific asynchronous-tool protocol: immediately acknowledge a pending call, then deliver a later structured update in the supported message form. Do not forge completed tool actions into conversation history or assume every API-compatible harness permits stray tool-result turns.</p>
+  <p>The release uses <a href="https://openmdw.ai/license/1-1/">OpenMDW-1.1</a>, with parent-model terms linked in the card. No model, drafter, plugin, or container was run for this page.</p>
+  <h2 id="sources">Sources</h2>
+  <p>Checked November 1, 2026: <a href="https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-4GB">released Q4_K_M card</a>, <a href="https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-BF16/blob/49843eed8db1f1c616c47af75cfd36e07aec0667/config.json">pinned BF16 configuration</a>, <a href="https://research.nvidia.com/labs/nemotron/files/NVIDIA-Nemotron-3.5-Bolt-E4B-4GB-Technical-Report.pdf">October 23 report</a> (&sect;&sect;2–7), and <a href="https://research.nvidia.com/labs/nemotron/NVIDIA-Nemotron-3.5-Bolt-E4B-4GB/">official research page</a>. Declared deployment limits, source-derived arithmetic, and actual runtime behavior remain distinct.</p>
+</main>
+<footer><a href="../index.html#models-nemotron">Nemotron family</a> · <a href="../index.html#models-gemma">Gemma lineage</a> · <a href="nemotron-3-5-bolt-74b.html">Different Bolt architecture: 74B</a></footer>
+
+<script>
+(function () {
+  const exponent=document.getElementById('budget-exp');
+  const result=document.getElementById('budget-result');
+  const canvas=document.getElementById('plot-budget');
+  const cssVar=name=>getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  function drawPlot(canvas, cfg) {
+    const w=canvas.clientWidth,h=canvas.clientHeight,dpr=window.devicePixelRatio||1;
+    if (!w || !h) return;
+    canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);
+    const c=canvas.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,w,h);
+    const mL=44,mR=14,mT=14,mB=30,pw=w-mL-mR,ph=h-mT-mB;
+    const X=x=>mL+(x-cfg.xMin)/(cfg.xMax-cfg.xMin)*pw;
+    const Y=y=>mT+(cfg.yMax-y)/(cfg.yMax-cfg.yMin)*ph;
+    c.font='11px sans-serif';c.lineWidth=1;c.strokeStyle=cssVar('--plot-grid');c.fillStyle=cssVar('--plot-tick');
+    c.textAlign='center';c.textBaseline='top';
+    cfg.xTicks.forEach(t=>{c.beginPath();c.moveTo(X(t),mT);c.lineTo(X(t),mT+ph);c.stroke();c.fillText(t,X(t),mT+ph+6);});
+    c.textAlign='right';c.textBaseline='middle';
+    cfg.yTicks.forEach(t=>{c.beginPath();c.moveTo(mL,Y(t));c.lineTo(mL+pw,Y(t));c.stroke();c.fillText(t.toFixed(1),mL-6,Y(t));});
+    c.strokeStyle=cssVar('--plot-axis');c.beginPath();c.moveTo(mL,mT);c.lineTo(mL,mT+ph);c.lineTo(mL+pw,mT+ph);c.stroke();
+    c.save();c.beginPath();c.rect(mL,mT,pw,ph);c.clip();
+    cfg.series.forEach(s=>{c.beginPath();c.strokeStyle=cssVar(s.color);c.lineWidth=2.5;c.setLineDash(s.dash||[]);
+      for(let i=0;i<=260;i++){const x=cfg.xMin+(cfg.xMax-cfg.xMin)*i/260;i?c.lineTo(X(x),Y(s.fn(x))):c.moveTo(X(x),Y(s.fn(x)));}c.stroke();});
+    c.setLineDash([3,3]);c.strokeStyle=cssVar('--plot-axis');c.beginPath();c.moveTo(X(cfg.selected),mT);c.lineTo(X(cfg.selected),mT+ph);c.stroke();c.restore();
+  }
+
+  const batch=document.getElementById('budget-batch'),bytes=document.getElementById('budget-bytes');
+  function render() {
+    const T=2**Number(exponent.value),C=Number(batch.value),b=Number(bytes.value);
+    const main=T=>2*2*b*(7*512*T+35*256*Math.min(T,512))*C/2**30;
+    const other=T=>2*2*b*(7*512+35*256)*T*C/2**30;
+    result.textContent=`${T.toLocaleString()} tokens × ${C}: ${main(T).toFixed(3)} GiB with window eviction; ${other(T).toFixed(3)} GiB if all layers retain history. Both ignore configured cross-layer sharing.`;
+    const end=2**16,ymax=Math.max(0.5,Math.ceil(Math.max(main(end),other(end))*2)/2);
+    drawPlot(canvas,{xMin:0,xMax:end/1024,yMin:0,yMax:ymax,xTicks:[0,end/4096,end/2048,3*end/4096,end/1024],yTicks:[0,ymax/4,ymax/2,3*ymax/4,ymax],selected:T/1024,
+      series:[{fn:x=>main(x*1024),color:'--plot-violet'},{fn:x=>other(x*1024),color:'--plot-teal',dash:[5,4]}]});
+  }
+  batch.addEventListener('change',render);bytes.addEventListener('change',render);
+
+  exponent.addEventListener('input',render);
+  let raf;window.addEventListener('resize',()=>{cancelAnimationFrame(raf);raf=requestAnimationFrame(render);});
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',render);
+  render();
+})();
+</script>
+
+</body>
+</html>
