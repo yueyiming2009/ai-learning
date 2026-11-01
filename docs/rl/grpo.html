@@ -518,6 +518,7 @@ def grpo_loss(logprobs, old_logprobs, ref_logprobs, rewards, eps=0.2, beta=0.04)
       <tr><td>DAPO</td><td>Asymmetric clipping and a batch-wide token mean, plus dynamic group sampling and overlong-response handling in the full recipe.</td><td>Still uses group-relative advantages. It is not just a new scalar loss; see the <a href="grpo-training-walkthrough.html#drgrpo">reduction comparison</a> and <a href="https://arxiv.org/abs/2503.14476">DAPO paper</a>.</td></tr>
       <tr><td><a href="#gspo">GSPO / GSPO-token</a><br><code>gspo</code></td><td>Use a geometric sequence ratio for clipping. GSPO-token preserves that ratio's value while routing gradients per token.</td><td>Keep group-relative credit; change the update's granularity and gradient construction.</td></tr>
       <tr><td>GMPO<br><code>geo_mean</code></td><td>In verl, clip token log-ratios in an advantage-aware way <em>before</em> geometric aggregation, then average sequence losses.</td><td>Not GSPO with a new name: clipping before aggregation gives a different objective from clipping the sequence ratio.</td></tr>
+      <tr><td>MAI-style entropy / outer-ratio controls</td><td><a href="ppo.html#adaptive-entropy">Entropy feedback</a> adjusts the inner upper bound; a separate <a href="ppo.html#outer-clip">outer ratio clamp</a> stops extreme policy-loss contributions.</td><td>Keep group-relative advantages. These are reported recipe additions, not requirements of original GRPO; upper-only outer clipping can match dual clipping under the stated conditions.</td></tr>
       <tr><td>Group advantages + CISPO / SAPO / other policy losses</td><td>Replace the clipped surrogate with a <a href="ppo.html#loss-variants">different update objective</a>, or use <a href="policy-gradient.html#loss-variants">direct advantage-weighted log-likelihood</a>.</td><td>The same group advantages can feed different losses. Check masking, reduction, and regularization instead of assuming every combination is original GRPO.</td></tr>
     </table>
   </div>
@@ -526,8 +527,23 @@ def grpo_loss(logprobs, old_logprobs, ref_logprobs, rewards, eps=0.2, beta=0.04)
   <code>bypass_mode</code> is instead a <a href="verl-async-training.html#pisync">rollout-policy/correction dispatch choice</a>,
   not another group-advantage formula.</p>
 
+  <p><strong>Shared controls, shared derivation.</strong> PPO's
+    <a href="ppo.html#outer-clip">outer-clip section</a> derives the active tails,
+    clamp gradients, and relationship to dual clipping; its
+    <a href="ppo.html#adaptive-entropy">adaptive-entropy section</a> compares coefficient,
+    clipping-bound, and advantage-based controllers. They apply to the local policy
+    loss here once group advantages are fixed—no PPO critic is required.
+    <a href="../models/mai-thinking-1.html#stable-updates">MAI-Thinking-1</a> supplies
+    the model-specific application.</p>
+
   <div class="note">
-    Notice there is no entropy-bonus term: GRPO inherits PPO's clipped surrogate but typically leans on the reference KL — and, in verifiable-reward setups with a weak or zero KL, on nothing — to hold up entropy. That makes <em>entropy collapse</em> the characteristic GRPO failure mode (the policy converges onto one template that games the reward). See <a href="ppo.html#entropy" style="color:var(--note-fg);">PPO §6</a> for the entropy coefficient \(c_2\) and why it is often \(0\) here, and <a href="async-rl-monitoring.html#entropy" style="color:var(--note-fg);">async-RL monitoring</a> for the collapse diagnostics.
+    Original GRPO's objective above has no entropy-bonus term. Reference KL anchors
+    the policy but does not enforce a target entropy; weak- or zero-KL recipes may
+    add the controls linked above. Premature entropy collapse can reduce exploration
+    and response diversity, but does not by itself prove reward hacking.
+    See <a href="ppo.html#entropy" style="color:var(--note-fg);">PPO §6</a> for entropy
+    regularization and <a href="async-rl-monitoring.html#entropy" style="color:var(--note-fg);">async-RL monitoring</a>
+    for diagnostics.
   </div>
 
   <h2 id="kl">5. The Unbiased KL Estimator</h2>

@@ -742,6 +742,30 @@ Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
     present when <code>entropy_coef ≠ 0</code>).
   </p>
 
+  <h3 id="entropy-control">When an entropy controller is enabled</h3>
+  <p>A measured entropy curve is only the sensor. Also log the target, target error,
+    and the <em>actuator</em>: the bonus coefficient, inner upper clipping bound, or
+    advantage-regularizer scale actually used for that update. Record the policy
+    version and whether the measurement is raw, smoothed, or importance-weighted.
+    The <a href="ppo.html#adaptive-entropy">controller derivations and toy feedback plot</a>
+    explain why these quantities must be interpreted together for PPO and GRPO.</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Pattern</th><th>Inspect next</th></tr>
+      <tr><td>Entropy below target; actuator still changing</td><td>Controller gain/cadence, rollout delay, estimator noise, and whether the next updates actually use the new setting.</td></tr>
+      <tr><td>Persistent error; actuator pinned at a limit</td><td>Target feasibility and measurement consistency, then actuator range. A saturated controller cannot supply more corrective pressure.</td></tr>
+      <tr><td>Entropy oscillates around target</td><td>Excessive gain, smoothing lag, stale measurements, changing task mix or sampling settings.</td></tr>
+      <tr><td>Entropy tracks target but outcomes worsen</td><td>Held-out success, reward shortcuts, response length and diversity/pass@k. Hitting the target is not proof of useful exploration.</td></tr>
+    </table>
+  </div>
+  <p>For an <a href="ppo.html#outer-clip">outer ratio clamp</a>, separately record raw-ratio
+    quantiles and fractions below/above its bounds, ideally split by advantage sign.
+    Compare gradient norms before norm clipping. Frequent outer-clamp activation may
+    indicate stale data, numerical mismatch, or excessive updates—not an entropy error.
+    Ordinary <code>pg_clipfrac</code>, verl's dual-clip branch fraction, and an
+    outer-bound exceedance fraction are different statistics. These are recommended
+    instrumentation fields, not claims that every framework emits them automatically.</p>
+
   <!-- ── §7 Advantage stats ─────────────────── -->
   <h2 id="advantages">7. Advantage Statistics — Signal Health</h2>
 

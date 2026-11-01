@@ -131,6 +131,14 @@
     .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
     .lg.dash { background: repeating-linear-gradient(90deg, var(--plot-gray) 0 5px, transparent 5px 9px); }
     .figure-caption { font-size: 0.85rem; color: var(--muted); line-height: 1.6; margin: 14px 4px 2px; }
+    .controls { display: flex; flex-wrap: wrap; gap: 12px 24px; margin-bottom: 12px; font-size: 0.85rem; }
+    .controls label { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+    .controls input { width: 105px; accent-color: var(--accent); }
+    .controls select { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 4px; }
+    .controls output { min-width: 2.5em; font-variant-numeric: tabular-nums; }
+    .figure canvas.compact { height: 210px; }
+    .figure h4 { font-size: 0.85rem; font-weight: 600; margin: 12px 0 4px; }
+    mjx-container[display="true"] { overflow-x: auto; overflow-y: hidden; max-width: 100%; }
 
     .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 1.2em 0; }
     .summary-card { background: var(--accent-light); border: 1px solid var(--teal-border); border-radius: 8px; padding: 14px 16px; }
@@ -169,9 +177,11 @@
     <a href="#ratio">Ratio</a>
     <a href="#clip">Clipped loss</a>
     <a href="#loss-variants">Loss variants</a>
+    <a href="#outer-clip">Outer ratio clip</a>
     <a href="#actor-critic">Actor–critic</a>
     <a href="#full">Full loss</a>
     <a href="#entropy">Entropy</a>
+    <a href="#adaptive-entropy">Entropy control</a>
     <a href="#loop">Update loop</a>
     <a href="#summary">Summary</a>
   </div>
@@ -305,6 +315,94 @@
   <a href="rl-training-metrics.html#aggregation">loss reduction</a> remain separate choices,
   except where an implementation fixes them.</p>
 
+  <h3 id="outer-clip">Outer ratio clipping: a second safeguard, also for GRPO</h3>
+  <p><strong>The clipped surrogate still has active tails.</strong> For \(A&lt;0\) and
+    \(\rho&gt;1+\epsilon\), the minimized loss selects the raw branch \(-A\rho\), not the
+    inner plateau. Writing \(\ell=\log\pi_\theta(a\mid s)\), with \(A\) and
+    \(\ell_{\rm old}\) frozen, gives \(\partial\rho/\partial\ell=\rho\) and
+    \(\partial L/\partial\ell=-A\rho\): an extreme ratio can amplify the gradient.
+    For \(A&gt;0\) and a small ratio, the raw branch also remains active, although its
+    log-probability gradient tends to zero as \(\rho\to0\).</p>
+  <p><a href="../models/mai-thinking-1.html#stable-updates">MAI-Thinking-1's GRPO recipe</a>
+    adds a hard <em>outer</em> ratio clamp. Its inner bounds are
+    \(b_-=1-\epsilon\) and \(b_+=(1-\epsilon)^{-1}+k\); the
+    <a href="#adaptive-entropy">entropy controller below</a> adjusts \(k\).
+    During a backward pass, both bounds and the outer bounds are frozen. For an outer
+    interval enclosing the inner one, \(0\leq r_{\min}\leq b_-&lt;1&lt;b_+\leq r_{\max}\),
+    their stated two-level rule can be written together as:</p>
+  <div class="result">
+    <div class="result-label">Inner incentive clip plus outer tail clamp</div>
+    \[
+      \bar\rho=\operatorname{clip}(\rho,r_{\min},r_{\max}),\qquad
+      L_{\rm outer}=-\min\!\left(A\bar\rho,\;
+                         A\operatorname{clip}(\bar\rho,b_-,b_+)\right).
+    \]
+    \[
+      \frac{\partial L_{\rm outer}}{\partial\ell}
+        =-A\rho\,
+          \mathbf1\{r_{\min}&lt;\rho&lt;r_{\max}\}\,
+          \mathbf1\{(A&gt;0\land\rho&lt;b_+)\lor(A&lt;0\land\rho&gt;b_-)\}.
+    \]
+  </div>
+  <p>The derivative is stated away from the clipping kinks; \(A=0\) gives zero.
+    Because the outer interval encloses the inner interval, clipping \(\bar\rho\) to
+    the inner bounds is the same as clipping the original \(\rho\) to them.
+    Outside the outer interval the policy-loss contribution is constant, so its
+    derivative is <strong>zero</strong>, not \(-A\bar\rho\). This is a differentiable
+    clamp, not a detached importance weight as in CISPO. Carry this scalar through
+    log-softmax as in the <a href="ppo-grpo-backward.html#logits">backward derivation</a>.</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Case</th><th>Ordinary inner clipping</th><th>With an enclosing outer clamp</th></tr>
+      <tr><td>\(A&gt;0,\;\rho&lt;b_+\)</td><td>\(g_\ell=-A\rho\)</td><td>Same within the outer interval; zero below a positive \(r_{\min}\).</td></tr>
+      <tr><td>\(A&lt;0,\;\rho&gt;b_-\)</td><td>\(g_\ell=-A\rho\), unbounded as \(\rho\) grows</td><td>Same within the outer interval; zero above \(r_{\max}\).</td></tr>
+      <tr><td>Inner advantage-improving plateau</td><td>\(g_\ell=0\)</td><td>Still zero; normal inner-clipping behavior is preserved.</td></tr>
+    </table>
+  </div>
+  <p><strong>How this relates to dual clipping.</strong> verl's negative-advantage
+    dual clip uses \(L_{\rm dual}=\min(L_{\rm inner},-cA)\) when \(A&lt;0\), \(c&gt;1\),
+    and leaves \(A\geq0\) unchanged. If \(r_{\min}=0\) (no lower floor) and
+    \(r_{\max}=c\geq b_+\), it is algebraically equivalent to the upper-only outer
+    clamp above. A positive lower floor additionally stops low-ratio,
+    positive-advantage updates, which dual clipping does not. Compare the
+    <a href="ppo-training-walkthrough.html#code">verl implementation</a> rather than
+    assuming every “dual,” “outer,” or “asymmetric” clip is identical.</p>
+  <div class="step">
+    <div class="step-label">Worked tail — illustrative bounds, not MAI hyperparameters</div>
+    <p>Let \(b_-=0.8,\;b_+=1.25,\;A=-2,\;r_{\max}=c=3,\;r_{\min}=0\).
+      At \(\rho=2\), all three losses are \(4\) and \(g_\ell=4\).
+      At \(\rho=4\), the inner-only loss is \(8\) with \(g_\ell=8\);
+      the outer and dual losses are \(6\) with \(g_\ell=0\).
+      For \(A=+2,\rho=0.1,r_{\min}=0.2\), only the outer clamp changes the raw
+      tail: its loss is \(-0.4\) with zero gradient, versus \(-0.2\) and
+      \(g_\ell=-0.2\) without the floor.</p>
+  </div>
+  <div class="figure">
+    <div class="controls">
+      <label for="outer-advantage">Advantage A <input id="outer-advantage" type="range" min="-2" max="2" step="0.25" value="-1"><output id="outer-advantage-value" for="outer-advantage">-1.00</output></label>
+      <label for="outer-floor">Outer floor <input id="outer-floor" type="range" min="0" max="0.6" step="0.05" value="0"><output id="outer-floor-value" for="outer-floor">0.00</output></label>
+      <label for="outer-cap">Outer cap / dual c <input id="outer-cap" type="range" min="2" max="5" step="0.25" value="3"><output id="outer-cap-value" for="outer-cap">3.00</output></label>
+      <label for="outer-view">Vertical axis <select id="outer-view"><option value="gradient">Log-probability gradient</option><option value="loss">Minimized policy loss</option></select></label>
+    </div>
+    <canvas id="plot-outer-clip" aria-label="Inner-only, outer-clamped and dual-clipped policy loss or log-probability gradient versus ratio">An upper outer cap stops extreme negative-advantage gradients; an optional lower floor also stops low-ratio positive-advantage gradients.</canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg dash"></span> Inner only</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-teal)"></span> Outer clamp</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-orange)"></span> Dual clip (dashed curve)</span>
+    </div>
+    <p class="figure-caption"><strong>The outer cap stops the tail; it does not rescale its gradient to the cap.</strong>
+      Horizontal: \(\rho\), with fixed inner bounds \(0.8,1.25\). Vertical: the selected
+      loss or \(g_\ell=\partial L/\partial\ell\). Outer and dual curves overlap with no
+      lower floor; switch A positive and raise the floor to see the difference.
+      Gaps mark gradient kinks; dotted vertical lines mark inner and outer bounds.
+      The ratios and bounds are illustrative, not MAI's undisclosed outer settings.</p>
+  </div>
+  <p class="figure-caption">Source: <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=31">MAI report §3.1.1, pp. 31–33, Eqs. (5)–(9)</a>.
+    The report specifies a large upper cap and says the lower bound may be left unconstrained;
+    it does not give a numeric outer cap here. This limits the per-token policy-loss
+    contribution, not every parameter-space gradient, auxiliary loss, or realized optimizer
+    step. Norm clipping and numerical-mismatch fixes remain separate safeguards.</p>
+
   <h2 id="actor-critic">4. Actor–Critic: Where \(\hat A_t\) Comes From</h2>
   <p>A typical PPO implementation is <strong>actor–critic</strong>. The <em>actor</em> is the policy \(\pi_\theta\); the <em>critic</em> is a learned value function \(V_\psi(s)\) — usually a scalar head on the same network — whose job is to supply a baseline for lower-variance advantages. The clipped policy loss itself does not require a critic.</p>
   <p>In this implementation, the advantages plugged into \(\mathcal{L}^{\text{CLIP}}\) are computed by <a href="policy-gradient.html#gae" style="color:var(--accent);">GAE</a> from the critic's value estimates — a single backward pass over the TD errors \(\delta_t = r_t + \gamma V_\psi(s_{t+1}) - V_\psi(s_t)\):</p>
@@ -354,7 +452,7 @@
   actions it actually samples. If the policy gets confident too early it stops sampling the
   alternatives, so it stops receiving any gradient about them, so it can never discover that one
   was better: a positive-feedback trap that ends in a collapsed, possibly suboptimal policy.
-  Without \(-c_2 S\), PPO walks straight into it the moment it finds any high-reward action. The
+  Without an exploration counter-force, PPO can enter this trap after finding a high-reward action. The
   entropy bonus is the counter-force that keeps the policy exploratory long enough to evaluate
   its options.</p>
 
@@ -398,9 +496,9 @@
   <h3>Setting \(c_2\) in practice</h3>
   <ul>
     <li><strong>Classic PPO</strong> (Atari, control): \(c_2 \approx 0.01\) is standard — with no reference policy, the entropy bonus is the main thing preventing premature collapse.</li>
-    <li><strong>RLHF with a KL leash</strong>: \(c_2\) is often set to \(0\). The reference-KL already arrests collapse, and it anchors at \(\pi_{\text{ref}}\) — a fluent, sensible distribution — whereas pulling toward uniform over a 100k-token vocabulary is a crude and sometimes harmful prior.</li>
+    <li><strong>RLHF with a KL leash</strong>: \(c_2\) is often set to \(0\). Reference-KL anchors at \(\pi_{\text{ref}}\), rather than uniform over a large vocabulary. It can resist drift, but does not enforce a target entropy or guarantee against collapse.</li>
     <li><strong>Verifiable-reward GRPO / "RL-zero" reasoning</strong>: with little or no KL leash, entropy management is load-bearing again — too small and the policy collapses into a single template that games the reward. This is the regime the <a href="async-rl-monitoring.html#entropy" style="color:var(--accent);">entropy-collapse diagnostics</a> are built for.</li>
-    <li><strong>Annealing</strong>: \(c_2\) is sometimes decayed over training — explore early, exploit late — mirroring \(\epsilon\)-decay. Adaptive schemes (as in soft actor-critic) instead tune it to hit a <em>target</em> entropy rather than fixing it.</li>
+    <li><strong>Annealing versus feedback</strong>: decaying \(c_2\) on a preset schedule is open-loop. Adaptive entropy control changes a control variable in response to measured entropy, as below; the variable need not be \(c_2\).</li>
   </ul>
 
   <p><strong>Computing it for an LLM.</strong> The action space is the full vocabulary
@@ -409,9 +507,129 @@
   <ul>
     <li><em>Sample estimate</em> — use only the sampled token \(a_t\):
     \(H[\pi] \approx -\frac{1}{|\mathcal{T}|}\sum_{t \in \mathcal{T}} \log\pi_\theta(a_t \mid s_t)\).
-    Fast but high-variance, and biased toward the tokens the policy already prefers.</li>
-    <li><em>Top-k estimate</em> — sum over the top-k logits (e.g., \(k=50\)); captures most of
-    the mass for a peaked distribution.</li>
+    Unbiased at a fixed state when \(a_t\) is sampled from that same policy, but noisy.
+    Old-policy or temperature/top-p-modified samples do not automatically estimate the
+    current actor's entropy.</li>
+    <li><em>Top-k partial sum</em> — sum \(-p_a\log p_a\) over only the top-k actions
+    (e.g., \(k=50\)). It drops the tail's entropy; renormalizing instead measures a different
+    distribution. Use the same definition for both the measurement and its target.</li>
+  </ul>
+
+  <h3 id="adaptive-entropy">Adaptive entropy control: close the feedback loop</h3>
+  <p><strong>Shared with GRPO, not a PPO-only feature.</strong>
+    <a href="grpo.html#loss-variants">Group-relative advantages</a> can feed the same
+    clipped policy loss. The feedback loop is: update the actor, measure entropy
+    \(\hat H_j\), compare it with a target \(H^\star\), then adjust a control variable
+    for the next update. A target can be fixed while the controller adapts; “adaptive”
+    does not necessarily mean the target itself changes.</p>
+  <p><strong>Coefficient tuning from an entropy constraint.</strong>
+    <a href="https://arxiv.org/html/1812.05905v2#S5">SAC §5</a> maximizes return subject to
+    a <em>minimum average entropy</em>, \(H(\theta)\geq H^\star\).
+    Its Lagrangian is \(J(\theta)+\alpha(H(\theta)-H^\star)\), with \(\alpha\geq0\):
+    maximize over the policy, minimize over the multiplier. Holding the current
+    policy fixed, the multiplier gradient is \(H(\theta)-H^\star\), so projected
+    gradient descent gives:</p>
+  <div class="result">
+    <div class="result-label">Automatic entropy coefficient — negative feedback</div>
+    \[
+      D(\alpha)=\alpha\,\operatorname{sg}[\hat H_j-H^\star],\qquad
+      \alpha_{j+1}=\max\!\left(0,\alpha_j+\eta_\alpha(H^\star-\hat H_j)\right).
+    \]
+  </div>
+  <p>Below target, increase \(\alpha\) to strengthen the entropy bonus; above target,
+    decrease it. Here sg means stop-gradient: controller measurements do not
+    backpropagate into the actor. The actor's own entropy term still needs a correct
+    differentiable entropy or entropy-gradient estimator. Setting \(c_2=\alpha_j\)
+    adapts a PPO/GRPO bonus with this principle; it does <strong>not</strong> turn
+    that algorithm into SAC or inherit SAC's convergence results.
+    This is a lower-bound constraint, not exact per-state setpoint tracking:
+    \(\alpha\) cannot become negative to force excess entropy down.</p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Mechanism</th><th>What is adjusted?</th><th>What the feedback controls</th></tr>
+      <tr><td>Automatic bonus coefficient</td><td>\(\alpha\geq0\) multiplying actor entropy</td><td>Pressure toward a minimum average entropy; SAC supplies the constrained formulation.</td></tr>
+      <tr><td>MAI adaptive upper clip</td><td>\(k\) in \(b_+=(1-\epsilon)^{-1}+k\)</td><td>Loosen or tighten the inner clipping incentive according to the entropy error; no explicit bonus.</td></tr>
+      <tr><td>ADAPO</td><td>Asymmetric \(\epsilon_{\rm high}\)</td><td>The paper adjusts it up/down around initial entropy; its DAPO experiments bound it to \([0.2,0.32]\).</td></tr>
+      <tr><td>REPO</td><td>Scale of a log-likelihood-based modification to token advantages</td><td>Change the policy-gradient signal to regulate entropy; the paper describes REPO-D and REPO-R with bidirectional controllers.</td></tr>
+    </table>
+  </div>
+  <p>ADAPO and REPO are documented in
+    <a href="https://arxiv.org/html/2603.11682v1#S5">Entropy-preserving reinforcement learning §5</a>.
+    DAPO's <em>fixed</em> wider upper clip is entropy management, but is not itself an
+    entropy-feedback controller. Sampling temperature changes the behavior distribution;
+    adaptive reference-KL changes a penalty anchored at \(\pi_{\rm ref}\).
+    Neither is interchangeable with an actor entropy target. These examples establish
+    reported mechanisms, not universal adoption across LLM RL recipes.</p>
+
+  <h3 id="entropy-clip-control">MAI: entropy selects the inner upper bound</h3>
+  <p>The <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=32">MAI report, Eqs. (7)–(8)</a>
+    estimates entropy on old-policy prefixes using the <em>raw</em> action ratio,
+    then updates a bounded, sign-error controller after each training step:</p>
+  \[
+    \hat H_j=\frac{1}{|\mathcal T|}\sum_{t\in\mathcal T}
+                \rho_t[-\log\pi_\theta(a_t\mid s_t)],\qquad
+    k_{j+1}=\operatorname{clip}\!\left(
+                k_j+\delta\,\operatorname{sign}(H^\star-\hat H_j),0,k_{\max}\right).
+  \]
+  <p>It initializes \(k=0\), making \(1-\epsilon\) and \((1-\epsilon)^{-1}\)
+    multiplicative inverses: symmetry in <em>log-ratio</em> space. Entropy below target
+    raises \(k\); entropy above target lowers it. A wider upper bound can let rewarded,
+    initially rare alternatives gain more probability before clipping, but the resulting
+    entropy response depends on the advantages and shared parameters, not a guaranteed
+    monotonic law. The separate <a href="#outer-clip">outer cap</a> limits extreme
+    ratios; it is not the variable this controller tunes.</p>
+  <p>The importance-weighted measurement corrects the conditional <em>action</em>
+    distribution when the old policy has the required support; it does not correct
+    old prefixes into the new policy's state distribution. Truncated sampling can
+    violate support, large weights raise variance, and clipping those weights changes
+    the estimate. Track the policy snapshot, sampling distribution, response mask,
+    token reduction, and units alongside any entropy target.</p>
+
+  <div class="figure">
+    <div class="controls">
+      <label for="controller-target">Target H (nats) <input id="controller-target" type="range" min="0.1" max="0.68" step="0.01" value="0.45"><output id="controller-target-value" for="controller-target">0.45</output></label>
+      <label for="controller-gain">Controller gain <input id="controller-gain" type="range" min="0" max="0.8" step="0.05" value="0.15"><output id="controller-gain-value" for="controller-gain">0.15</output></label>
+    </div>
+    <h4>Entropy (nats) versus update</h4>
+    <canvas class="compact" id="plot-controlled-entropy" aria-label="Two-action bandit entropy over 120 updates with a fixed or feedback-controlled entropy coefficient">With feedback, the coefficient rises when entropy drops below target. With a fixed coefficient, entropy can keep falling.</canvas>
+    <h4>Entropy coefficient versus update</h4>
+    <canvas class="compact" id="plot-entropy-coefficient" aria-label="Fixed and adaptive entropy coefficients over the same bandit updates">The adaptive coefficient is limited to 0 through 2 in this illustrative simulation.</canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-teal)"></span> Feedback coefficient</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-orange)"></span> Fixed coefficient</span>
+      <span class="legend-item"><span class="lg dash"></span> Entropy target</span>
+    </div>
+    <p class="figure-caption"><strong>The coefficient reacts to an entropy error, not a training clock.</strong>
+      This is a deterministic two-action bandit, not a PPO, SAC, or MAI training
+      prediction. With \(p=\sigma(z)\), rewards \((1,0)\), and objective \(p+\alpha H(p)\),
+      each unit-size actor step is \(z\leftarrow z+p(1-p)(1-\alpha z)\).
+      Start at \(z=0,\alpha=0.1\), measure exact entropy after each actor step, then
+      apply the projected coefficient update above with an illustrative cap of \(2\).
+      Gain zero reproduces the fixed coefficient. A high target can leave a residual
+      error when the coefficient saturates; neither curve promises better task quality.</p>
+    <p class="figure-caption"><output id="controller-result" for="controller-target controller-gain" aria-live="polite"></output></p>
+  </div>
+
+  <h3 id="entropy-controller-practice">Choosing and diagnosing a controller</h3>
+  <ul>
+    <li><strong>Choose a meaningful target.</strong> For categorical actions, \(0\leq H\leq\log V\);
+      continuous-action differential entropy has different units and can be negative.
+      Do not transfer SAC's continuous-control defaults to LLM vocabulary entropy.
+      Initial entropy, as used by REPO/ADAPO, is a baseline, not a proven optimum.</li>
+    <li><strong>Keep the measurement comparable.</strong> Task mix, response length,
+      masks, temperature, and policy version can change an average without a controller
+      failure. Choose token-mean versus sequence-mean deliberately and pair it with the
+      same target definition.</li>
+    <li><strong>Tune cadence and gain.</strong> Noisy or delayed feedback can oscillate.
+      If smoothing with \(\bar H_j=(1-\lambda)\bar H_{j-1}+\lambda\hat H_j\),
+      initialize from the first measurement and remember that smaller \(\lambda\) adds lag.
+      Smoothing is an engineering option, not part of the reported MAI sign rule above.</li>
+    <li><strong>Log the actuator and outcomes.</strong> Record measured entropy, target/error,
+      coefficient or upper bound, time at controller limits, outer-clipped fractions,
+      ratio tails, and gradient norms. Pair them with reward, held-out success,
+      response length, and diversity/pass@k. Persistent error at a bound calls for
+      checking gain, feasibility, and measurements—not blindly raising the target.
+      See <a href="async-rl-monitoring.html#entropy-control">controller diagnostics</a>.</li>
   </ul>
 
   <p><strong>What the value tells you.</strong> For a uniform distribution over a vocabulary of
@@ -419,11 +637,10 @@
   <ul>
     <li><em>Gradually decreasing</em> — normal: the policy becomes more confident as it learns
     which actions earn reward.</li>
-    <li><em>Rapid collapse to near zero</em> — reward hacking: the policy found a degenerate
-    pattern that scores well but has lost diversity. Often visible in entropy before it appears
-    in reward curves.</li>
-    <li><em>Rising late in training</em> — catastrophic forgetting or gradient noise overwhelming
-    the policy signal; the policy is becoming less decisive.</li>
+    <li><em>Rapid collapse to near zero</em> — investigate lost diversity, degenerate outputs,
+    and reward hacking; entropy alone does not identify the cause.</li>
+    <li><em>Rising late in training</em> — inspect task mix, sampling settings, controller
+    response, and outcome quality before attributing it to forgetting or gradient noise.</li>
   </ul>
 
   <p>For the diagnostic use of entropy during async RL training — the entropy-collapse
@@ -506,13 +723,48 @@
 <script>
 (function () {
   function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+  function policyLoss(r, A, lo, hi) { return -Math.min(r * A, clamp(r, lo, hi) * A); }
   // Per-sample clipped surrogate term as a function of the ratio r, for fixed advantage A.
-  function lclip(r, A, eps) { return Math.min(r * A, clamp(r, 1 - eps, 1 + eps) * A); }
+  function lclip(r, A, eps) { return -policyLoss(r, A, 1 - eps, 1 + eps); }
+  function policyGradient(r, A, lo, hi) {
+    return ((A > 0 && r < hi) || (A < 0 && r > lo)) ? -A * r : 0;
+  }
+  function outerLoss(r, A, lo, hi, floor, cap) { return policyLoss(clamp(r, floor, cap), A, lo, hi); }
+  function outerGradient(r, A, lo, hi, floor, cap) {
+    return r > floor && r < cap ? policyGradient(r, A, lo, hi) : 0;
+  }
+  function dualLoss(r, A, lo, hi, cap) {
+    const loss = policyLoss(r, A, lo, hi);
+    return A < 0 ? Math.min(loss, -cap * A) : loss;
+  }
+  function dualGradient(r, A, lo, hi, cap) {
+    return A < 0 && r > cap ? 0 : policyGradient(r, A, lo, hi);
+  }
 
   // Two-action policy (p, 1-p): entropy and KL to the uniform distribution.
   function xlogx(x)  { return x <= 0 ? 0 : x * Math.log(x); }   // x log x, with 0 log 0 = 0
   function Hbin(p)   { return -xlogx(p) - xlogx(1 - p); }       // entropy of (p, 1-p)
   function KLuni(p)  { return Math.LN2 - Hbin(p); }             // KL(π ‖ uniform) = log2 − H
+
+  function simulateEntropy(target, gain) {
+    let z = 0, alpha = 0.1;
+    const states = [{ H: Math.LN2, alpha }];
+    for (let j = 0; j < 120; j++) {
+      let p = 1 / (1 + Math.exp(-z));
+      z += p * (1 - p) * (1 - alpha * z);
+      p = 1 / (1 + Math.exp(-z));
+      const H = Hbin(p);
+      alpha = clamp(alpha + gain * (target - H), 0, 2);
+      states.push({ H, alpha });
+    }
+    return states;
+  }
+
+  function trajectory(states, key, x) {
+    const index = clamp(x, 0, states.length - 1);
+    const i = Math.floor(index), j = Math.min(i + 1, states.length - 1);
+    return states[i][key] + (index - i) * (states[j][key] - states[i][key]);
+  }
 
   // resolve colors at draw time so the plot follows the OS light/dark scheme
   const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -563,16 +815,26 @@
     ctx.save();
     ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
     ctx.lineJoin = 'round';
+    (cfg.vlines || []).forEach(x => {
+      ctx.strokeStyle = cssVar('--plot-gray');
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 4]);
+      ctx.beginPath(); ctx.moveTo(X(x), mT); ctx.lineTo(X(x), mT + ph); ctx.stroke();
+    });
     cfg.series.forEach(s => {
       ctx.beginPath();
       ctx.lineWidth = s.width || 2;
       ctx.strokeStyle = cssVar(s.color);
       ctx.setLineDash(s.dash || []);
       const N = 260;
+      let started = false;
       for (let i = 0; i <= N; i++) {
         const x = xMin + (xMax - xMin) * i / N;
-        const px = X(x), py = Y(s.fn(x));
-        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+        const y = s.fn(x);
+        if (!Number.isFinite(y)) { started = false; continue; }
+        const px = X(x), py = Y(y);
+        if (started) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+        started = true;
       }
       ctx.stroke();
     });
@@ -604,7 +866,78 @@
     ]
   }]);
 
-  function renderAll() { plots.forEach(([c, cfg]) => drawPlot(c, cfg)); }
+  function drawOuter() {
+    const A = Number(document.getElementById('outer-advantage').value);
+    const floor = Number(document.getElementById('outer-floor').value);
+    const cap = Number(document.getElementById('outer-cap').value);
+    const gradient = document.getElementById('outer-view').value === 'gradient';
+    [['outer-advantage', A], ['outer-floor', floor], ['outer-cap', cap]].forEach(([id, value]) => {
+      document.getElementById(id + '-value').textContent = value.toFixed(2);
+    });
+    const lo = 0.8, hi = 1.25;
+    const gap = (fn, knots) => r => gradient && knots.some(k => Math.abs(r - k) < 0.025) ? NaN : fn(r);
+    const inner = gradient ? r => policyGradient(r, A, lo, hi) : r => policyLoss(r, A, lo, hi);
+    const outer = gradient ? r => outerGradient(r, A, lo, hi, floor, cap) : r => outerLoss(r, A, lo, hi, floor, cap);
+    const dual = gradient ? r => dualGradient(r, A, lo, hi, cap) : r => dualLoss(r, A, lo, hi, cap);
+    const innerKnots = A > 0 ? [hi] : A < 0 ? [lo] : [];
+    const outerKnots = A > 0 ? (floor > 0 ? [floor, hi] : [hi]) : A < 0 ? [lo, cap] : [];
+    const dualKnots = A < 0 ? [lo, cap] : innerKnots;
+    const extent = Math.max(1, Math.abs(A) * (A < 0 ? 5 : hi));
+    const sign = A > 0 ? -1 : 1;
+    drawPlot(document.getElementById('plot-outer-clip'), {
+      xMin: 0, xMax: 5,
+      yMin: sign < 0 ? -1.1 * extent : -0.05 * extent,
+      yMax: sign < 0 ? 0.05 * extent : 1.1 * extent,
+      xTicks: [0, 1, 2, 3, 4, 5], yTicks: [0, sign * extent / 2, sign * extent],
+      vlines: [lo, hi, floor, cap],
+      series: [
+        { fn: gap(inner, innerKnots), color: '--plot-gray', width: 2, dash: [5, 4] },
+        { fn: gap(outer, outerKnots), color: '--plot-teal', width: 2.75 },
+        { fn: gap(dual, dualKnots), color: '--plot-orange', width: 2.25, dash: [8, 4] }
+      ]
+    });
+  }
+
+  function drawController() {
+    const target = Number(document.getElementById('controller-target').value);
+    const gain = Number(document.getElementById('controller-gain').value);
+    document.getElementById('controller-target-value').textContent = target.toFixed(2);
+    document.getElementById('controller-gain-value').textContent = gain.toFixed(2);
+    const controlled = simulateEntropy(target, gain), fixed = simulateEntropy(target, 0);
+    const axis = { xMin: 0, xMax: 120, xTicks: [0, 30, 60, 90, 120] };
+    drawPlot(document.getElementById('plot-controlled-entropy'), {
+      ...axis, yMin: 0, yMax: 0.7, yTicks: [0, 0.2, 0.4, 0.6],
+      series: [
+        { fn: x => trajectory(controlled, 'H', x), color: '--plot-teal', width: 2.75 },
+        { fn: x => trajectory(fixed, 'H', x), color: '--plot-orange', width: 2.25 },
+        { fn: () => target, color: '--plot-gray', width: 1.75, dash: [5, 4] }
+      ]
+    });
+    drawPlot(document.getElementById('plot-entropy-coefficient'), {
+      ...axis, yMin: 0, yMax: 2.05, yTicks: [0, 0.5, 1, 1.5, 2],
+      series: [
+        { fn: x => trajectory(controlled, 'alpha', x), color: '--plot-teal', width: 2.75 },
+        { fn: x => trajectory(fixed, 'alpha', x), color: '--plot-orange', width: 2.25 }
+      ]
+    });
+    const last = controlled[controlled.length - 1];
+    document.getElementById('controller-result').textContent =
+      'Update 120: feedback entropy ' + last.H.toFixed(3) + ' nats, coefficient ' +
+      last.alpha.toFixed(3) + ', target error ' + (target - last.H).toFixed(3) +
+      ' nats; fixed-coefficient entropy ' + fixed[fixed.length - 1].H.toFixed(3) + ' nats.';
+  }
+
+  function renderAll() {
+    plots.forEach(([c, cfg]) => drawPlot(c, cfg));
+    drawOuter();
+    drawController();
+  }
+  ['outer-advantage', 'outer-floor', 'outer-cap', 'outer-view'].forEach(id => {
+    document.getElementById(id).addEventListener('input', drawOuter);
+  });
+  ['controller-target', 'controller-gain'].forEach(id => {
+    document.getElementById(id).addEventListener('input', drawController);
+  });
   renderAll();
   let raf;
   window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(renderAll); });
