@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light dark">
-  <title>Knowledge Distillation for LLMs — Off-Policy, On-Policy, and Reasoning Transfer</title>
+  <title>Knowledge Distillation for LLMs — Off-Policy, On-Policy, and Self-Distillation</title>
+  <meta name="description" content="LLM distillation and self-distillation: offline trace SFT, student-state KL, self-consistency, STaR, ReST-EM, OPSD, and MAI restart recipes, with an interactive sampling plot.">
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
   <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
   <link rel="apple-touch-icon" href="../apple-touch-icon.png">
@@ -51,6 +52,11 @@
       --amber-bg: #fffbeb;
       --amber-fg: #b45309;
       --amber-border: #fde68a;
+      --fig-bg: #ffffff;
+      --plot-grid: #eceef1;
+      --plot-axis: #c7cbd1;
+      --plot-tick: #6b7280;
+      --plot-gray: #9ca3af;
     }
 
     @media (prefers-color-scheme: dark) {
@@ -84,6 +90,11 @@
         --amber-bg: #251c0b;
         --amber-fg: #fbbf24;
         --amber-border: #78350f;
+        --fig-bg: #14181e;
+        --plot-grid: #232830;
+        --plot-axis: #3a4149;
+        --plot-tick: #9aa1ab;
+        --plot-gray: #9ca3af;
       }
     }
 
@@ -160,6 +171,31 @@
     .badge-on   { background: var(--accent-light); color: var(--accent); border: 1px solid var(--teal-border); }
     .badge-filter { background: var(--amber-bg); color: var(--amber-fg); border: 1px solid var(--amber-border); }
 
+    .figure {
+      background: var(--fig-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 16px 14px;
+      margin: 1.6em 0;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .figure canvas { width: 100%; height: 300px; display: block; }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      justify-content: center;
+      margin-top: 12px;
+      font-size: 0.82rem;
+      color: var(--text);
+    }
+    .legend-item { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, var(--plot-gray) 0 5px, transparent 5px 9px); }
+    .figure-caption { font-size: 0.85rem; color: var(--muted); line-height: 1.6; margin: 14px 4px 2px; }
+    .plot-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-bottom: 12px; font-size: 0.85rem; }
+    .plot-controls input { flex: 1; min-width: 120px; accent-color: var(--accent); }
+
     .next-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 1.2em 0; }
     .next-card { border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; text-decoration: none; color: inherit; transition: border-color 0.15s, box-shadow 0.15s; display: block; }
     .next-card:hover { border-color: var(--accent); box-shadow: 0 2px 8px rgba(13,148,136,0.1); }
@@ -183,6 +219,7 @@
     <a href="#off-policy">Off-Policy</a>
     <a href="#data-fidelity">Data Fidelity</a>
     <a href="#on-policy">On-Policy</a>
+    <a href="#self-distillation">Self-Distillation</a>
     <a href="#tradeoffs">Trade-offs</a>
     <a href="#why-r1">Why R1 Chose Off-Policy</a>
     <a href="#mopd">MOPD</a>
@@ -193,7 +230,7 @@
 <div class="hero">
   <span class="hero-pill">Alignment</span>
   <h1>Knowledge Distillation for LLMs</h1>
-  <p>Transfer capabilities between checkpoints or into smaller models. Off-policy SFT on teacher traces versus on-policy distribution matching: how the mechanisms support compression, recovery, and consolidation.</p>
+  <p>Transfer capabilities between checkpoints, into smaller models, or back into your own model. Offline trace SFT, student-state distribution matching, and self-distillation for improvement, recovery, and consolidation.</p>
 </div>
 
 <div class="page-wrap">
@@ -379,10 +416,15 @@
       <li>Keep only responses that pass verification</li>
       <li>SFT the student on the filtered dataset</li>
     </ol>
-    <p style="margin-top:10px;font-size:0.92rem;">The filter removes all incorrect responses before the student ever sees them. The student is trained exclusively on verified-correct teacher reasoning — not a sample from the teacher's full distribution, but from the intersection of the teacher's distribution and the correct answer set.</p>
+    <p style="margin-top:10px;font-size:0.92rem;">The student learns from the subset that passes the verifier, not the teacher's full distribution. With a perfect outcome verifier, this selects correct final outcomes; real graders can admit false positives. Neither a correct answer nor passing tests certifies every intermediate reasoning step.</p>
   </div>
 
-  <p>This is what DeepSeek-R1's distillation to small models does: 800K prompts, many samples per prompt from the 671B teacher, rejection-sampling to keep only correct responses, then SFT on the survivors. The student never sees a wrong answer in training.</p>
+  <p>DeepSeek-R1's students reuse an approximately <strong>800K-example mixture</strong>:
+    roughly 600K reasoning samples selected with outcome and readability checks, plus 200K
+    non-reasoning samples, including reused DeepSeek-V3 SFT data. This is not 800K
+    independently verified reasoning traces. See the
+    <a href="https://arxiv.org/html/2501.12948v1#S2.SS3.SSS3">source dataset recipe (&sect;2.3.3)</a>
+    and <a href="https://arxiv.org/html/2501.12948v1#S2.SS4">student SFT (&sect;2.4)</a>.</p>
 
   <h2 id="on-policy">4. On-Policy Distillation</h2>
 
@@ -443,7 +485,179 @@
 
   <p>This is the cross-stage distillation mechanism used in GLM-5's cascade training: each RL stage is regularized toward the previous stage's policy, preventing catastrophic forgetting while still allowing RL improvement on the new domain. Where the teacher runs matters: GLM-5 currently serves it from the inference engine, and its report lists moving the teacher into the training engine (MLA in MQA mode, \(\pi^{\text{teacher}}_{\text{infer}} \to \pi^{\text{teacher}}_{\text{train}}\)) as future work, so that teacher and student log-probs come from identical kernels and the KL term does not inherit the <a href="async-rl.html#tim">training-inference mismatch</a>.</p>
 
-  <h2 id="tradeoffs">5. Trade-offs</h2>
+  <h2 id="self-distillation">5. Self-Distillation: How a Model Can Teach Itself</h2>
+
+  <p><strong>Self-distillation describes the teacher relationship, not a single loss.</strong>
+    In LLM reasoning literature, the term includes self-training on a model's own sampled
+    traces as well as matching its token distributions. The teacher can be a stronger
+    checkpoint from the same development process, or the very same weights with additional
+    information in the prompt. Neither use requires a smaller student.</p>
+
+  <div class="callout">
+    <div class="callout-label">Three independent choices</div>
+    <p><strong>Who teaches?</strong> An external model, your own earlier/specialist checkpoint,
+      or the same model under richer conditioning.</p>
+    <p><strong>Whose prefixes?</strong> Stored generated traces or newly sampled student states.</p>
+    <p><strong>What target?</strong> Sampled tokens for SFT or a distribution for divergence
+      matching. Calling a recipe “self-distillation” does not settle either of the last two.</p>
+  </div>
+
+  <h3>Where does the teacher advantage come from?</h3>
+  <p>Matching the same model's full distribution under <em>identical conditioning</em> gives
+    zero KL. Unfiltered samples from that distribution also reproduce its targets in
+    expectation; they are not, by themselves, a source of more accurate answers. A useful
+    asymmetry comes from <strong>selection</strong> of successful outputs, extra
+    <strong>sampling or search</strong>, <strong>privileged answers or solutions</strong>,
+    or a <strong>stronger checkpoint</strong>. Training attempts to make those better
+    behaviors available under the student's ordinary inference conditions.</p>
+  <p>“Self” therefore does not mean “no external information.” A correctness label, code
+    test, reference solution, or human-written seed rationale may still supply the signal
+    that makes self-generated supervision useful.</p>
+
+  <div class="table-wrap">
+    <table>
+      <caption>Four cited methods: different sources of better supervision, not interchangeable algorithms.</caption>
+      <thead>
+        <tr><th scope="col">Paper</th><th scope="col">Teacher advantage / external signal</th><th scope="col">Training mechanism</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><a href="https://arxiv.org/abs/2210.11610">Huang et al., 2022</a><br>Large Language Models Can Self-Improve</td>
+          <td>CoT sampling and self-consistency select high-confidence answers on unlabeled questions. Agreement is a confidence proxy, not ground-truth verification.</td>
+          <td>SFT on self-generated rationale/answer targets; no ground-truth answer labels required in this recipe.</td>
+        </tr>
+        <tr>
+          <td><a href="https://arxiv.org/abs/2203.14465">Zelikman et al., 2022</a><br>STaR</td>
+          <td>Few-shot rationale examples and known answers. When ordinary generation fails, condition on the correct answer to generate a rationale.</td>
+          <td>Fine-tune on rationales that yield correct answers, including successful answer-conditioned rationalizations, then repeat.</td>
+        </tr>
+        <tr>
+          <td><a href="https://arxiv.org/abs/2312.06585">Singh et al., 2023</a><br>ReST<sup>EM</sup></td>
+          <td>Binary external feedback selects successful self-generated math/code solutions.</td>
+          <td>Generate and filter (E-step) → supervised fine-tune (M-step) → repeat. Related to, but not identical to, Gulcehre et al.'s ReST.</td>
+        </tr>
+        <tr>
+          <td><a href="https://arxiv.org/abs/2601.18734">Zhao et al., 2026</a><br>OPSD</td>
+          <td>The same model receives a privileged reference solution in its teacher context; the student sees only the question.</td>
+          <td>Match token distributions at student-generated prefixes, with gradients only through the student logits.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 id="self-training">Filtered self-training: generate → select → SFT → repeat</h3>
+  <p>Let checkpoint \(\pi_k\) generate candidate responses. A verifier or confidence rule
+    selects a dataset \(\mathcal{D}_k\). The next supervised update uses the usual
+    sequence loss:</p>
+  <div class="result">
+    <div class="result-label">SFT on selected self-generated traces</div>
+    \[
+      \mathcal{L}_k(\theta)
+      = -\mathbb{E}_{(x,y)\sim\mathcal{D}_k}
+        \left[\sum_t \log \pi_\theta(y_t\mid x,y_{&lt;t})\right]
+    \]
+  </div>
+  <p>The selection rule changes which targets are learned; this displayed loss is not
+    GRPO's group-relative policy-gradient objective. ReST<sup>EM</sup> gives the
+    generate/filter and supervised-update loop an EM-for-RL interpretation. Data may
+    come from the latest checkpoint, but it is a fixed trace dataset during each SFT
+    round, not fresh distribution-matching supervision at every evolving student prefix.
+    Specify both collection and update behavior rather than relying on “on-policy” alone.</p>
+  <p>STaR adds an important escape hatch: if a question gets no successful ordinary sample,
+    reveal its correct answer <em>during rationale generation</em>, retain a successful
+    rationalization, and train the question-only model to produce it. If no acceptable
+    traces exist, that question supplies no positive SFT target; more trials do not
+    guarantee that one will appear.</p>
+
+  <h3>Why extra sampling can supply better traces</h3>
+  <p>For a fixed question and decoding policy, suppose independent draws each have
+    probability \(p\) of a correct outcome. With a perfect outcome verifier, the chance
+    of finding at least one successful trace in \(N\) draws is
+    \(1-(1-p)^N\). This is a <strong>data-collection calculation</strong>, not a prediction
+    of the model's accuracy after fine-tuning.</p>
+  <div class="figure">
+    <div class="plot-controls">
+      <label for="sample-budget">Samples per question: <output id="sample-count" for="sample-budget">8</output></label>
+      <input id="sample-budget" type="range" min="1" max="64" step="1" value="8">
+    </div>
+    <canvas id="plot-self-sampling" aria-label="Per-draw success probability versus chance of finding at least one verified success in N independent draws" aria-describedby="sampling-caption">For independent draws, the probability of at least one success is 1 - (1 - p)^N.</canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg dash"></span> One draw</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--accent);"></span> At least one success in N draws</span>
+    </div>
+    <p id="sampling-readout" class="figure-caption" aria-live="polite">At a per-draw success rate of 10% and a sample budget of 8, the probability of at least one success is 57.0%.</p>
+    <p id="sampling-caption" class="figure-caption"><strong>Sampling can reveal successes without changing the model.</strong>
+      Horizontal axis: per-draw success probability; vertical axis: chance of at least one success.
+      This toy model assumes independent draws and a perfect verifier. At \(p=0\), extra
+      draws cannot help; turning selected traces into better held-out pass@1 still requires
+      learning and evaluation.</p>
+  </div>
+
+  <h3 id="opsd">OPSD: privileged-context guidance on student rollouts</h3>
+  <p>Zhao et al.'s <em>On-Policy Self-Distillation</em> uses one model with two contexts
+    and a dataset \(\mathcal{S}\) of question/reference-solution pairs.
+    The student samples \(\hat y\) from the question \(x\) alone. At each sampled prefix,
+    the teacher sees \(x\), a reference solution \(y^\star\), and that <em>same student
+    prefix</em>. It scores next-token distributions rather than generating a replacement trace.</p>
+  <div class="result">
+    <div class="result-label">Same weights, different information</div>
+    \[
+      \begin{aligned}
+        p_S(\cdot\mid\hat y_{&lt;t}) &amp;= \pi_\theta(\cdot\mid x,\hat y_{&lt;t}) \\
+        p_T(\cdot\mid\hat y_{&lt;t}) &amp;= \pi_\theta(\cdot\mid x,y^\star,\hat y_{&lt;t})
+      \end{aligned}
+    \]
+    \[
+      \mathcal{L}_{\mathrm{OPSD}}
+      = \mathbb{E}_{(x,y^\star)\sim\mathcal{S}}\,
+        \mathbb{E}_{\hat y\sim\pi_\theta(\cdot\mid x)}
+        \left[\frac{1}{|\hat y|}\sum_t
+        D\!\left(\operatorname{sg}[p_T]\;\|\;p_S\right)\right]
+    \]
+    <p style="font-size:0.85rem;color:var(--muted);margin:6px 0 0;">Here \(\operatorname{sg}\)
+      means stop-gradient: sampled prefixes are held fixed and gradients flow only through
+      student logits. The paper studies forward/reverse KL and generalized JSD; \(D\)
+      is a chosen divergence, not a universal requirement to use forward KL.</p>
+  </div>
+  <p><strong>Stop-gradient is not a permanently frozen teacher checkpoint.</strong>
+    Both roles share weights; the teacher targets can change after the student update.
+    Their different conditioning contexts create the teaching advantage. Keep the reference
+    solution out of the student's input and deployment prompt, while aligning both
+    distributions to the same next-token events.</p>
+  <p>Unlike successful-trace-only SFT, OPSD can supervise a student prefix even when its
+    completed response is wrong. The reference-conditioned model must still be capable
+    of providing useful targets on that prefix: dense feedback is not automatically
+    correct feedback, nor is it a label certifying that each reasoning step is valid.</p>
+
+  <h3>MAI's restart recipe is a different use of “self”</h3>
+  <p><a href="../models/mai-thinking-1.html#resets">MAI-Thinking-1</a> collects strong
+    RL rollouts, SFTs a chosen mid-trained checkpoint on those traces, and resumes an RL
+    climb from the SFT result. The teacher advantage comes from behavior already discovered
+    during earlier RL, not from giving the teacher a privileged solution at each student
+    prefix. Its report cites the four papers above as background, but describes
+    <strong>offline trace-SFT restarts, not OPSD</strong>. See
+    <a href="https://microsoft.ai/wp-content/uploads/2026/06/main_20260602_2.pdf#page=34">&sect;3.1.4</a>.</p>
+
+  <h3 id="self-distillation-limits">What to verify before calling it improvement</h3>
+  <ul>
+    <li><strong>Signal validity:</strong> self-consistency can confidently repeat an error;
+      answer checks and tests can miss faulty reasoning or unsupported cases. Audit accepted
+      examples, not just the acceptance rate.</li>
+    <li><strong>Coverage:</strong> successful-only filtering can favor easy questions and
+      collapse solution diversity. Track accepted samples by task/difficulty and retain
+      broader data when needed; repeated rounds can overfit rather than improve.</li>
+    <li><strong>No answer leakage:</strong> privileged answers belong only in the designated
+      teacher/generation context. Keep training problems separate from held-out evaluation.</li>
+    <li><strong>Matched evaluation:</strong> compare held-out pass@1 and pass@N at stated
+      decoding/token budgets, and check safety, tool behavior, and long-context regressions.
+      Include collection, teacher scoring, and SFT/RL compute in efficiency comparisons.</li>
+  </ul>
+  <p><strong>Reasoning traces are demonstrations, not process labels.</strong> SFT learns
+    which tokens to produce. A process reward model instead learns step-level judgments
+    from process supervision. Outcome-filtered traces can be useful without establishing
+    that every intermediate step is correct.</p>
+
+  <h2 id="tradeoffs">6. Trade-offs</h2>
 
   <div class="table-wrap">
     <table>
@@ -474,8 +688,8 @@
       </tr>
       <tr>
         <td><strong>Student bootstrap</strong></td>
-        <td>Not needed — student never generates during training</td>
-        <td>Required — student must produce coherent rollouts early</td>
+        <td>No student rollouts during SFT; self-training still needs useful generation or rationalization</td>
+        <td>Effectiveness depends on the initial policy, teacher guidance, and student capacity</td>
       </tr>
       <tr>
         <td><strong>Best for</strong></td>
@@ -490,30 +704,44 @@
     </table>
   </div>
 
-  <h2 id="why-r1">6. Why DeepSeek-R1 Uses Off-Policy Distillation</h2>
+  <h2 id="why-r1">7. Why DeepSeek-R1 Uses Off-Policy Distillation</h2>
 
-  <p>Given that on-policy distillation is generally more principled, the question is why R1 chose off-policy for transferring reasoning to small models. Three properties of R1's specific setup make off-policy the right call:</p>
+  <p>R1 demonstrates that offline SFT on a curated dataset can transfer strong reasoning
+    capabilities to small models. Three properties explain why this is an attractive
+    recipe; they do not establish that offline distillation universally beats on-policy methods:</p>
 
   <div class="step">
-    <div class="step-label">Reason 1 — The teacher has verified traces</div>
-    <p>R1's teacher outputs long chain-of-thought reasoning. These can be verified against ground-truth math answers and code test suites. Rejection sampling removes all wrong answers before the student sees them. The student is never exposed to incorrect reasoning paths — the distribution it trains on is not the teacher's full distribution, but the teacher's <em>correct subset</em>. This is impossible with on-policy distillation, where the student is generating the rollouts and you can't filter them away before training starts.</p>
+    <div class="step-label">Reason 1 — Selected targets can be reused</div>
+    <p>The reasoning portion uses multiple samples, outcome checks, and readability filters
+      to select useful demonstrations. Offline SFT can reuse the resulting mixture without
+      live teacher scoring. On-policy recipes can also filter rollouts, but filtering adds
+      collection cost and changes which student states receive supervision. Neither recipe
+      makes outcome filtering a guarantee of correct reasoning steps.</p>
   </div>
 
   <div class="step">
-    <div class="step-label">Reason 2 — The student can't bootstrap</div>
-    <p>On-policy distillation requires the student to generate rollouts. A 7B model that hasn't been trained to reason yet produces incoherent chains of thought — the rollouts are garbage, and the KL gradient against a teacher that writes 10,000-token derivations is pure noise. Off-policy SFT sidesteps this: the student just needs to predict teacher tokens one at a time, which is a well-behaved supervised learning problem even for an untrained model. The teacher already solved the hard search problem through RL; the student's job is reduced to imitation.</p>
+    <div class="step-label">Reason 2 — Demonstrations provide a starting point</div>
+    <p>SFT exposes the student to complete selected solutions without requiring it to discover
+      those solutions before the first update. This can help when its initial reasoning is
+      weak. It is not proof that on-policy gradients would be noise: useful guidance can
+      exist at imperfect student prefixes, and effectiveness depends on both policies.</p>
   </div>
 
   <div class="step">
     <div class="step-label">Reason 3 — Long traces transfer process, not just outcome</div>
-    <p>Standard distillation (train on teacher outputs) transfers outcome knowledge: the student learns to produce answers that look like the teacher's answers. R1's reasoning traces are different: they transfer <em>process</em> knowledge. The student sees the teacher working through a problem — the self-correction, the backtracking, the verification steps — at full resolution. This is equivalent to process supervision (PRMs), but with the process labels coming from the RL-trained teacher rather than human annotators. The distribution shift problem matters less when the supervision signal is this strong and this explicit.</p>
+    <p>Long traces demonstrate intermediate strategies, including self-correction and
+      verification, rather than only final answers. The student imitates that token sequence;
+      it does not receive step-level correctness labels as a PRM would. Rich demonstrations
+      can help learning, but the student can still deviate and visit unfamiliar prefixes.</p>
   </div>
 
   <div class="note">
-    The reasoning-trace case is the exception where off-policy distillation beats its general reputation. Most LLM distillation tasks don't have verifiable outcomes and don't produce rich step-by-step traces — for those, on-policy is typically better. R1's distillation works specifically because of the combination: verifiable tasks + RL-trained teacher with long traces + rejection-sampling filter.
+    Choose using task-specific evidence, teacher access, collection/scoring cost, and
+    coverage—not a universal off-policy/on-policy ranking. R1 supports the effectiveness
+    of its curated trace-SFT recipe; OPSD tests a different self-distillation setup.
   </div>
 
-  <h2 id="mopd">7. Multi-Teacher On-Policy Distillation (MOPD)</h2>
+  <h2 id="mopd">8. Multi-Teacher On-Policy Distillation (MOPD)</h2>
 
   <p>On-policy distillation generalizes naturally to multiple teachers. When each teacher is a domain specialist — one trained on math, one on code, one on agentic tasks — the student can be routed to the most relevant teacher at each token during its rollout:</p>
 
@@ -527,9 +755,11 @@
 
   <p>See <a href="cascade-rl.html">Cascade RL</a> for full coverage of MOPD in the multi-stage training context.</p>
 
-  <h2 id="vs-rl">8. Distillation vs RL from Scratch</h2>
+  <h2 id="vs-rl">9. Distillation vs RL from Scratch</h2>
 
-  <p>The R1 paper includes a finding that reframes how to think about small-model training: a 7B model distilled from the full R1 teacher substantially outperforms a 7B model trained with GRPO from scratch (R1-Zero style) on the same compute budget.</p>
+  <p>The R1 report finds that its distilled 7B model outperforms its 7B reasoning-RL
+    experiment. This supports transfer in the reported setup, not a universal compute-matched
+    comparison: a complete cost accounting must include developing the teacher and curating data.</p>
 
   <div class="compare-grid">
     <div class="compare-col">
@@ -549,7 +779,7 @@
       <ul>
         <li>Reasoning paths already found by teacher</li>
         <li>Student learns to follow, not to search</li>
-        <li>Verified traces → no wrong patterns to unlearn</li>
+        <li>Curated traces supply demonstrations; filtering and coverage remain imperfect</li>
       </ul>
     </div>
   </div>
@@ -557,7 +787,10 @@
   <div class="callout">
     <div class="callout-label">Why this matters</div>
     <p>The key implication: the expensive RL exploration only needs to happen at one scale. Once the large model has been trained with RL to discover reasoning strategies, those strategies can be propagated to any number of smaller models via distillation at a fraction of the cost. The RL investment is amortized across all student models.</p>
-    <p style="margin-top:8px;">The limitation: distillation can only transfer what the teacher can do. If the teacher was trained only on math and code, the student won't gain general reasoning — it will specialize too. Distillation inherits the teacher's coverage, gaps and all.</p>
+    <p style="margin-top:8px;">The limitation: transfer depends on the quality and coverage
+      of teacher supervision. Students may generalize beyond individual traces, but a
+      math/code-only dataset does not guarantee capability in new domains. Measure gaps
+      and regressions rather than assuming either perfect transfer or no generalization.</p>
   </div>
 
   <h2>What's Next</h2>
@@ -570,7 +803,7 @@
     <a class="next-card" href="../models/deepseek-r1.html">
       <div class="next-card-label">Primary example</div>
       <div class="next-card-title">DeepSeek-R1</div>
-      <p>The full R1 training pipeline: how the 671B teacher is built via staged RL and how 800K verified traces are distilled into small models.</p>
+      <p>The full R1 training pipeline: staged RL, a curated 800K-example reasoning/non-reasoning mixture, and SFT into smaller models.</p>
     </a>
     <a class="next-card" href="cascade-rl.html">
       <div class="next-card-label">Advanced usage</div>
@@ -597,6 +830,98 @@
 </div>
 
 <footer>Personal ML notes · <a href="https://github.com/yueyiming2009/ai-learning" style="color:inherit;text-decoration:underline;">source on GitHub</a></footer>
+
+<script>
+(function () {
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  function atLeastOne(p, count) { return 1 - Math.pow(1 - p, count); }
+
+  function drawPlot(canvas, cfg) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const mL = 44, mR = 14, mT = 14, mB = 30;
+    const pw = cssW - mL - mR, ph = cssH - mT - mB;
+    const { xMin, xMax, yMin, yMax } = cfg;
+    const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
+    const Y = y => mT + (yMax - y) / (yMax - yMin) * ph;
+
+    ctx.font = '11px Inter, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(t => {
+      const px = X(t);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.fillText(String(t), px, mT + ph + 6);
+    });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(t => {
+      const py = Y(t);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+      ctx.fillText(String(t), mL - 8, py);
+    });
+
+    ctx.strokeStyle = cssVar('--plot-axis');
+    ctx.lineWidth = 1.25;
+    if (yMin <= 0 && yMax >= 0) { const py = Y(0); ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke(); }
+    if (xMin <= 0 && xMax >= 0) { const px = X(0); ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke(); }
+
+    ctx.save();
+    ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    ctx.lineJoin = 'round';
+    cfg.series.forEach(s => {
+      ctx.beginPath();
+      ctx.lineWidth = s.width || 2;
+      ctx.strokeStyle = cssVar(s.color);
+      ctx.setLineDash(s.dash || []);
+      const N = 260;
+      for (let i = 0; i <= N; i++) {
+        const x = xMin + (xMax - xMin) * i / N;
+        const px = X(x), py = Y(s.fn(x));
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  const canvas = document.getElementById('plot-self-sampling');
+  const budget = document.getElementById('sample-budget');
+  const countOutput = document.getElementById('sample-count');
+  const readout = document.getElementById('sampling-readout');
+  function render() {
+    const count = Number(budget.value);
+    countOutput.textContent = String(count);
+    readout.textContent = `At a per-draw success rate of 10% and a sample budget of ${count}, the probability of at least one success is ${(100 * atLeastOne(0.1, count)).toFixed(1)}%.`;
+    drawPlot(canvas, {
+      xMin: 0, xMax: 1, yMin: 0, yMax: 1,
+      xTicks: [0, 0.2, 0.4, 0.6, 0.8, 1],
+      yTicks: [0, 0.2, 0.4, 0.6, 0.8, 1],
+      series: [
+        { fn: p => p, color: '--plot-gray', width: 1.75, dash: [5, 4] },
+        { fn: p => atLeastOne(p, count), color: '--accent', width: 2.75 }
+      ]
+    });
+  }
+  render();
+  budget.addEventListener('input', render);
+  let raf;
+  window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(render); });
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq.addEventListener) mq.addEventListener('change', render);
+})();
+</script>
 
 </body>
 </html>

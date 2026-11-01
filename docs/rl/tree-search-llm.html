@@ -496,27 +496,37 @@
   </div>
 
   <h2 id="train">8. Search-Generated Data for Training</h2>
-  <p>Search at inference time produces better solutions than greedy generation. Those better solutions can be used as training data, closing the AlphaZero loop:</p>
+  <p>Search or repeated sampling can discover useful solutions that one greedy completion
+    misses. Selected solutions can become training data, creating a feedback loop:</p>
 
   <ol>
     <li>Run tree search at inference to find solutions the base model couldn't produce greedily</li>
-    <li>Filter to solutions verified as correct</li>
+    <li>Select solutions using outcome verification or an explicitly identified quality proxy</li>
     <li>Fine-tune the model on these solutions</li>
-    <li>The improved model produces better rollouts → better training data → repeat</li>
+    <li>Evaluate the updated model on held-out tasks; repeat only while quality improves</li>
   </ol>
+  <p>STaR and ReST<sup>EM</sup> do not require tree search. They belong here because they
+    learn from generated solutions, not because their training loops implement MCTS.
+    See <a href="distillation.html#self-training">filtered self-training</a> and the
+    <a href="distillation.html#self-distillation">self-distillation method comparison</a>.</p>
 
   <div class="table-wrap">
     <table>
       <tr><th>Method</th><th>Mechanism</th><th>AlphaZero analogue</th></tr>
       <tr>
-        <td><strong>STaR</strong> (Zelikman et al.)</td>
-        <td>Generate rationales; keep only those that reach the correct answer; fine-tune on them</td>
+        <td><strong>STaR</strong> (Zelikman et al., 2022)</td>
+        <td>Generate rationales; for failed questions, retry with the correct answer supplied; fine-tune on successful rationales and repeat</td>
         <td>Self-play: correct solutions are the training signal</td>
       </tr>
       <tr>
         <td><strong>ReST</strong> (Gulcehre et al.)</td>
         <td>Best-of-N → score with reward model → fine-tune on high-reward outputs → repeat</td>
         <td>Self-play + ORM-scored selection + policy update</td>
+      </tr>
+      <tr>
+        <td><strong>ReST<sup>EM</sup></strong> (Singh et al., 2023)</td>
+        <td>Generate multiple solutions → filter with binary external feedback → supervised fine-tune → repeat</td>
+        <td>Successful self-generated trajectories supply the supervised update</td>
       </tr>
       <tr>
         <td><strong>RLVR</strong> (DeepSeek-R1-Zero)</td>
@@ -533,7 +543,12 @@
 
   <div class="read">
     <div class="read-label">The key constraint</div>
-    <p>All of these methods require a <strong>reliable verifier</strong> — something that can tell correct from incorrect solutions without human annotation. This is easy in math (exact-match answer), code (unit tests), formal proofs (proof checker), and board games (did you win?). It is hard for open-ended generation (helpfulness, style, nuance) — which is exactly why RLHF with human preference labels remains necessary for the latter.</p>
+    <p>Outcome-verified variants need trustworthy answer checks, tests, or proof checkers.
+      Reward-model scores and agreement between samples are instead quality proxies, not
+      correctness certificates. Even a passing final answer or test suite does not validate
+      every reasoning step. For open-ended generation, state which preference or judge signal
+      is used and audit its failure modes; see
+      <a href="distillation.html#self-distillation-limits">self-distillation limits</a>.</p>
   </div>
 
   <h2 id="limits">9. Where LLM Search Differs from AlphaZero</h2>
