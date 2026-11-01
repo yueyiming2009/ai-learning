@@ -6,6 +6,20 @@ running large models.
 
 **Site:** [yueyiming2009.github.io/ai-learning](https://yueyiming2009.github.io/ai-learning)
 
+## Start here
+
+**Follow the whole process:** [Model Training, End to End](docs/transformer/model-training-lifecycle.html)
+maps data, objectives, checkpoints, and evaluation gates across the lifecycle.
+Then [MAI-Thinking-1](docs/transformer/mai-thinking-1.html) follows one reported recipe from
+MAI-Base-1 development through independent specialist climbs, self-distillation restarts,
+consolidation, and final evaluation.
+
+**Explore a component:** use the six-domain reference index below. Pre-training is a stage,
+distillation is a technique used at several stages, and async RL is an execution strategy.
+The guides link to those deep references rather than duplicate their derivations.
+Both guides live with model/training pages; the homepage reading routes do not change the
+six-domain taxonomy.
+
 ## Contents
 
 ```

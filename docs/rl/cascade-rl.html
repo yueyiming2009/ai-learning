@@ -247,12 +247,21 @@
 <div class="hero">
   <span class="hero-pill">Alignment</span>
   <h1>Cascade RL</h1>
-  <p>Sequential domain-specific RL stages with cross-stage distillation. The pattern that replaced single-phase RL in every frontier post-training recipe: specialize in stages, then consolidate without forgetting.</p>
+  <p>Domain-focused RL and capability consolidation: sequential stage patterns, independent specialist branches, and the mechanisms used to retain what each run learned.</p>
 </div>
 
 <div class="page-wrap">
 
-  <p>DeepSeek-R1's training recipe — described on the <a href="deepseek-r1.html" style="color:var(--accent);">R1 page</a> — mixes reasoning and general tasks in a single RL phase. That worked well at DeepSeek's scale. As labs pushed to cover more capabilities (reasoning, agentic coding, tool use, safety, helpfulness) in a single model, a new problem surfaced: RL signals for different domains interfere with each other, and specializing on one domain tends to degrade the others. The answer that Nemotron-Cascade 2, GLM-5, and MAI-Thinking-1 all converged on independently is <strong>Cascade RL</strong>: sequential domain-focused RL climbs, with explicit consolidation mechanisms between stages.</p>
+  <p>The <a href="deepseek-r1.html" style="color:var(--accent);">DeepSeek-R1 pipeline</a> already
+    alternates SFT and RL stages. Broader specialist recipes address a related problem: how to
+    develop reasoning, agentic, and general capabilities without losing earlier gains.
+    <strong>Sequential cascades and independent specialist branches are different structures</strong>,
+    not one universal ordering. MAI-Thinking-1 trains three specialists independently and merges
+    their traces afterward; it is a useful consolidation comparison, not an example of three
+    sequential specialist stages.</p>
+  <p>For the complete process surrounding those stages, read the
+    <a href="../transformer/model-training-lifecycle.html">training lifecycle</a> and
+    <a href="../transformer/mai-thinking-1.html">MAI-Thinking-1's end-to-end recipe</a>.</p>
 
   <h2 id="problem">1. Why Single-Stage RL Breaks Down</h2>
 
@@ -419,19 +428,24 @@
   <p>MOPD extends this to the multi-teacher case by routing each token to the most relevant specialist teacher. A token in a math derivation gets guidance from the math teacher; a tool-call token gets guidance from the agent teacher. The routing can be learned or rule-based (domain classification on the prompt).</p>
 
   <h2 id="entropy">6. Adaptive Entropy Control</h2>
-  <p>As RL training progresses within a domain, the policy becomes increasingly confident — the entropy \(H[\pi_\theta(\cdot\mid s)]\) decreases as the model converges on winning strategies. This is usually desirable within a domain, but creates two problems across stages:</p>
+  <p>During a long RL climb, both entropy collapse and excessive entropy can impede progress.
+    MAI-Thinking-1 controls entropy by changing the <strong>upper policy-ratio clipping bound</strong>,
+    not an entropy-bonus coefficient. In
+    <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=31">report &sect;3.1.1</a>,
+    the bounds are \(1-\epsilon\) and \((1-\epsilon)^{-1}+k\). An importance-weighted
+    token-entropy estimate \(\hat H\) drives the controller:</p>
+  \[
+    k \leftarrow \operatorname{clip}\!\left(k+\delta\,\operatorname{sign}(H^\star-\hat H),\,0,\,k_{\max}\right).
+  \]
   <ul>
-    <li><strong>Within-stage collapse:</strong> if entropy falls too fast, the policy stops exploring alternative strategies and gets stuck in a local optimum. The model finds one way to solve problems and never discovers better ones.</li>
-    <li><strong>Cross-domain rigidity:</strong> a low-entropy policy that's been tightly specialized for math is harder to fine-tune for coding in the next stage — the weights are more committed and the gradients smaller.</li>
+    <li>Below target entropy, increase \(k\) to relax the upper clipping bound.</li>
+    <li>Above target entropy, decrease \(k\) to tighten that bound.</li>
   </ul>
-
-  <p>MAI-Thinking-1 uses <strong>adaptive entropy control</strong>: the entropy bonus coefficient \(c_2\) in the GRPO objective (analogous to PPO's entropy bonus \(-c_2 S[\pi_\theta]\)) is adjusted dynamically based on measured entropy:</p>
-  <ul>
-    <li>If measured entropy drops below a target \(H_{\min}\), increase \(c_2\) to push entropy up.</li>
-    <li>If entropy is high (model still exploring freely), reduce \(c_2\) to allow convergence.</li>
-  </ul>
-
-  <p>This keeps the policy in a productive exploration regime across the full training run — not so exploratory that it can't converge on good strategies, not so collapsed that it can't adapt when the domain changes in the next stage.</p>
+  <p>The report says an explicit entropy bonus underperformed this mechanism. A separate
+    <strong>outer ratio clip</strong> limits extreme contributions in otherwise-unclipped
+    surrogate branches to reduce gradient spikes. These are two controls inside the specialist
+    climbs, not a guarantee of cross-stage retention. See
+    <a href="../transformer/mai-thinking-1.html#stable-updates">their place in the complete recipe</a>.</p>
 
   <h2 id="labs">7. How the Labs Apply It</h2>
   <div class="table-wrap">
@@ -462,7 +476,7 @@
         <td>3 parallel specialists → trace-distill SFT → final RL</td>
         <td>Trace-distillation SFT merges specialists (offline)</td>
         <td>Large curated domain mixes (5M STEM, 160K competitive code)</td>
-        <td>Adaptive \(c_2\) targeting entropy floor</td>
+        <td>Adaptive upper ratio bound targeting entropy</td>
       </tr>
       <tr>
         <td><strong>Nemotron-Cascade 2 / Ultra</strong></td>
@@ -475,7 +489,10 @@
   </div>
 
   <div class="note">
-    All four use GRPO (or a variant) as the within-stage RL algorithm. The differentiation is entirely in the <em>stage structure</em> and <em>consolidation mechanism</em> — not in the RL primitive itself. GRPO from the <a href="grpo.html" style="color:var(--note-fg);">GRPO page</a> is the shared foundation.
+    These recipes share GRPO-family policy optimization, but differ in within-stage stability
+    controls as well as <em>stage structure</em> and <em>consolidation mechanism</em>.
+    The <a href="grpo.html" style="color:var(--note-fg);">GRPO page</a> supplies the foundation;
+    a model report determines the actual recipe.
   </div>
 
   <h3>Parallel vs. sequential specialist training</h3>

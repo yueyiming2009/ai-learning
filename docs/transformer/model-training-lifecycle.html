@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Follow a language model from goals, data and architecture through pre-training, mid-training, post-training, consolidation and release, with checkpoint handoffs and evaluation gates.">
+  <title>Model Training, End to End — The Lifecycle Guide</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #ffffff; --surface: #f8f9fa; --border: #e8eaed;
+      --text: #1a1a2e; --muted: #6b7280; --accent: #7c3aed;
+      --accent-light: #f5f3ff; --nav-bg: rgba(255,255,255,0.94);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115; --surface: #171b21; --border: #262b33;
+        --text: #e5e7eb; --muted: #9aa1ab; --accent: #a78bfa;
+        --accent-light: #1a1626; --nav-bg: rgba(15,17,21,0.94);
+      }
+    }
+    body { margin: 0; font: 16px/1.75 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); }
+    a { color: var(--accent); text-underline-offset: 3px; }
+    a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+    nav { position: sticky; top: 0; z-index: 100; display: flex; align-items: center; gap: 24px; height: 52px; padding: 0 24px; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
+    .nav-brand { display: inline-flex; align-items: center; gap: 7px; font-size: 0.9rem; font-weight: 600; white-space: nowrap; text-decoration: none; }
+    .nav-links { display: flex; flex: 1; gap: 12px; overflow-x: auto; min-width: 0; }
+    .nav-links a { font-size: 0.82rem; white-space: nowrap; text-decoration: none; color: var(--muted); }
+    .hero { background: linear-gradient(135deg, #5b21b6, #7c3aed 60%, #8b5cf6); color: white; padding: 52px 24px; text-align: center; }
+    .hero h1 { font-size: clamp(1.6rem, 4vw, 2.4rem); line-height: 1.3; margin: 12px 0; }
+    .hero p { max-width: 720px; margin: 0 auto; opacity: 0.94; }
+    .hero-pill { display: inline-block; border: 1px solid rgba(255,255,255,0.3); border-radius: 100px; padding: 3px 12px; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    .page-wrap { max-width: 960px; margin: 0 auto; padding: 32px 24px 72px; }
+    h2 { margin-top: 48px; padding-bottom: 8px; border-bottom: 1px solid var(--border); font-size: 1.45rem; scroll-margin-top: 72px; }
+    h3 { margin-top: 28px; font-size: 1.08rem; }
+    p, li, dd { overflow-wrap: anywhere; }
+    li { margin: 8px 0; }
+    code { font: 0.88em ui-monospace, SFMono-Regular, Consolas, monospace; background: var(--surface); padding: 2px 5px; border-radius: 4px; }
+    .note, .gate { padding: 16px 20px; margin: 24px 0; border-left: 4px solid var(--accent); border-radius: 0 8px 8px 0; background: var(--accent-light); }
+    .note p { margin: 6px 0; }
+    .route { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 0; list-style: none; }
+    .route li { margin: 0; padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+    .route strong, .route span { display: block; }
+    .route span { font-size: 0.88rem; color: var(--muted); margin-top: 6px; }
+    .contract { display: grid; grid-template-columns: 135px minmax(0, 1fr); gap: 12px 18px; }
+    .contract dt { font-weight: 600; }
+    .contract dd { margin: 0; }
+    .table-wrap { overflow-x: auto; margin: 20px 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    caption { text-align: left; color: var(--muted); margin-bottom: 8px; }
+    th, td { text-align: left; vertical-align: top; padding: 11px 13px; border: 1px solid var(--border); }
+    th { background: var(--surface); }
+    details { margin: 20px 0; }
+    summary { cursor: pointer; font-weight: 600; }
+    .muted { color: var(--muted); font-size: 0.9rem; }
+    footer { border-top: 1px solid var(--border); padding: 24px; text-align: center; font-size: 0.82rem; color: var(--muted); }
+    @media (max-width: 600px) {
+      nav { padding: 0 12px; gap: 16px; }
+      .nav-brand { font-size: 0.78rem; }
+      .page-wrap { padding: 24px 16px 56px; }
+      .route { grid-template-columns: 1fr; }
+      .contract { grid-template-columns: 1fr; gap: 4px; }
+      .contract dd { margin-bottom: 14px; }
+      th, td { padding: 9px; }
+    }
+  </style>
+</head>
+<body>
+<nav aria-label="Page navigation">
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes">
+    <svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+    Training Lifecycle
+  </a>
+  <div class="nav-links">
+    <a href="#map">Map</a><a href="#design">Design</a><a href="#pretraining">Pre-training</a>
+    <a href="#mid-training">Mid-training</a><a href="#post-training">Post-training</a>
+    <a href="#consolidation">Consolidation</a><a href="#release">Release</a>
+    <a href="#handoffs">Handoffs</a><a href="#reading">Reading path</a><a href="#sources">Sources</a>
+  </div>
+</nav>
+<header class="hero">
+  <span class="hero-pill">Start here &middot; Model development</span>
+  <h1>Model Training, End to End</h1>
+  <p>Follow the checkpoints, datasets, and decisions that turn raw material and a compute budget
+    into a usable language model. Techniques make sense once you know where they fit.</p>
+</header>
+<main class="page-wrap">
+  <div class="note">
+    <strong>Read the process here; follow one real model next.</strong>
+    <p>This is a conceptual map for autoregressive language-model development, not one universal
+      recipe or an executable launcher. The companion
+      <a href="mai-thinking-1.html">MAI-Thinking-1 walkthrough</a> follows a reported recipe from
+      base-model development through specialist training and final evaluation. The existing
+      component pages remain the detailed references.</p>
+  </div>
+
+  <h2 id="map">1. Follow the artifacts, not just the techniques</h2>
+  <ol class="route" aria-label="Model-development stages and their outputs">
+    <li><strong><a href="#design">1. Design and data</a></strong><span>Output: a tested architecture, tokenizer, corpus plan, and compute budget.</span></li>
+    <li><strong><a href="#pretraining">2. Pre-training</a></strong><span>Output: a base checkpoint that predicts language and code.</span></li>
+    <li><strong><a href="#mid-training">3. Mid-training, if needed</a></strong><span>Output: a base adapted to a domain, data mix, or context length.</span></li>
+    <li><strong><a href="#post-training">4. Post-training</a></strong><span>Output: instruction-following, reasoning, or specialist policies.</span></li>
+    <li><strong><a href="#consolidation">5. Consolidation, if needed</a></strong><span>Output: one candidate combining the capabilities you want to ship.</span></li>
+    <li><strong><a href="#release">6. Evaluate and release</a></strong><span>Output: a versioned model plus its inference contract and evidence.</span></li>
+  </ol>
+  <p>The numbers are a reading order, not a mandatory six-job pipeline. You can start from an
+    existing base, omit a distinct mid-training phase, branch into specialists, or iterate
+    SFT and RL. Evaluation accompanies every stage; bad evidence sends you back to the data,
+    objective, or implementation rather than automatically forward.</p>
+  <div class="table-wrap">
+    <table>
+      <caption>Three different axes that a topic index can accidentally flatten.</caption>
+      <thead><tr><th scope="col">Axis</th><th scope="col">Example</th><th scope="col">Question it answers</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Stage</th><td>Pre-training, mid-training, post-training</td><td>What capability are we developing now, from which checkpoint?</td></tr>
+        <tr><th scope="row">Learning technique</th><td>SFT, distillation, GRPO, DPO</td><td>Which data and objective change the weights?</td></tr>
+        <tr><th scope="row">Execution strategy</th><td>FSDP, expert parallelism, asynchronous rollouts</td><td>How do we execute that learning process efficiently and correctly?</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p><strong>Distillation is not necessarily the stage after RL.</strong> It can bootstrap a
+    student, consolidate specialists, or carry progress to a new base before another RL run.
+    <strong>Async RL is not another capability stage:</strong> it changes how rollout collection
+    and parameter updates overlap, introducing freshness and probability-accounting obligations.</p>
+
+  <h2 id="design">2. Design a model you can train and serve</h2>
+  <dl class="contract">
+    <dt>Input</dt><dd>Target tasks, permitted data sources, training budget, hardware, context requirements, and serving cost/latency constraints.</dd>
+    <dt>Work and objective</dt><dd>Build the corpus and tokenizer; run smaller architecture/data ablations. Compare held-out quality at matched cost and test whether gains persist with scale. Choose an operating point, not just the lowest small-model loss.</dd>
+    <dt>Why it exists</dt><dd>The largest run is too expensive to use as the first experiment. Choices such as sparsity, tokenizer, context length, and data repetition affect both learning and the later inference workload.</dd>
+    <dt>Output</dt><dd>Versioned model configuration and tokenizer, source-mixture and filtering rules, split/decontamination policy, and a feasible training plan.</dd>
+    <dt>Evidence to advance</dt><dd>Representative scaling experiments, data-quality checks, and measured memory/throughput on the intended stack. A FLOPs advantage alone does not establish a wall-clock advantage.</dd>
+  </dl>
+  <p class="muted">Mechanics: <a href="scaling-laws.html">scaling laws</a>,
+    <a href="moe-routing.html">MoE</a>, <a href="../systems/mfu.html">MFU and utilization</a>.
+    Worked decision: <a href="mai-thinking-1.html#design">MAI's architecture and scaling ladder</a>.</p>
+
+  <h2 id="pretraining">3. Pre-training: build a broadly capable base</h2>
+  <dl class="contract">
+    <dt>Input</dt><dd>For a from-scratch run: initialized weights, the chosen tokenizer, and the large curated corpus. Continuing an existing base is a different starting point and should be labeled as such.</dd>
+    <dt>Weight update</dt><dd>Usually next-token cross-entropy on packed token sequences: forward pass, token loss, backward pass, optimizer update. Data order, loss masks, learning-rate schedule, and precision are part of the recipe.</dd>
+    <dt>Why it exists</dt><dd>Learn representations and predictive competence across language, knowledge, and code. That does not by itself specify a reliable assistant interface or task-solving policy.</dd>
+    <dt>Output</dt><dd>A base-model checkpoint and resumable training state, tied to the tokenizer/configuration and data history.</dd>
+    <dt>Evidence to advance</dt><dd>Held-out loss and capability trends, broad-domain regressions, stable optimization, and data-exposure accounting. A lower average loss can conceal degraded coverage or excessive repetition.</dd>
+  </dl>
+  <p>The systems problem is executing a large forward/backward workload: model and optimizer
+    sharding, communication overlap, memory, and recovery. Those tools support the stage;
+    they do not define its learning objective.</p>
+  <p class="muted">Mechanics: <a href="pretraining.html">the next-token training loop</a> and
+    <a href="../systems/training-frameworks.html">training frameworks</a>.
+    Worked run: <a href="mai-thinking-1.html#base">MAI's 30T-token base training</a>.</p>
+
+  <h2 id="mid-training">4. Mid-training: prepare the base for its next job</h2>
+  <dl class="contract">
+    <dt>Input</dt><dd>A pretrained base plus deliberately selected domain, quality, or long-document data.</dd>
+    <dt>Weight update</dt><dd>Often continued next-token training with a changed mixture, schedule, or context length. Context extension may also require positional/configuration changes, depending on the architecture.</dd>
+    <dt>Why it exists</dt><dd>Improve the starting point for downstream specialization without spending the entire pre-training run at the most expensive context length or on the final specialized mixture.</dd>
+    <dt>Output</dt><dd>A new base checkpoint with documented domain/context behavior. It is not automatically an instruction-tuned or reasoning-specialist model.</dd>
+    <dt>Evidence to advance</dt><dd>Improvement on target domains and long-context tasks without unacceptable short-context or general-quality regressions. Validate downstream post-training where feasible; NLL alone is not the final product objective.</dd>
+  </dl>
+  <p>“Mid-training” is a recipe label, not a unique optimizer or universally separate phase.
+    Its boundary with continued pre-training varies by report. Long training contexts also
+    do not prescribe the same rollout-length or serving limits in later stages.</p>
+  <p class="muted">Worked transition:
+    <a href="mai-thinking-1.html#mid-training">MAI's 16K &rarr; 64K &rarr; 256K training contexts</a>.</p>
+
+  <h2 id="post-training">5. Post-training: turn competence into behavior</h2>
+  <p>Start from the base that passed the previous checks. Now the data contract changes:
+    demonstrations specify behavior to imitate; preference pairs specify relative choices;
+    RL tasks provide feedback on actions the policy actually samples.</p>
+  <dl class="contract">
+    <dt>Input</dt><dd>Base or mid-trained weights, an exact chat/tool format, and demonstrations, preference pairs, or executable tasks with graders.</dd>
+    <dt>Weight update</dt><dd>SFT trains on selected target tokens. DPO-style methods use preference pairs. RL collects responses or tool trajectories, scores them, constructs advantages, and updates the policy. These are alternatives or ingredients, not mandatory consecutive steps.</dd>
+    <dt>Why it exists</dt><dd>Develop instruction following, useful reasoning, tool use, safety, and other deployment behaviors that the base objective did not explicitly require.</dd>
+    <dt>Output</dt><dd>One broadly tuned policy or several domain specialists, plus their trace datasets, reward/evaluation definitions, and run lineage.</dd>
+    <dt>Evidence to advance</dt><dd>Held-out task quality and regression checks, grader validity, behavior beyond reward score, and stable updates. For agents, inspect full trajectories and environment state, not just final text.</dd>
+  </dl>
+  <div class="note">
+    <strong>Two source-backed paths, not a universal ordering.</strong>
+    <p><a href="../rl/deepseek-r1.html#pipeline">DeepSeek-R1</a> combines cold-start SFT,
+      reasoning RL, rejection-sampling SFT, and final RL. In contrast,
+      <a href="mai-thinking-1.html#specialists">MAI starts its reasoning climb without prior
+      reasoning traces</a> and develops three specialists independently before merging them.</p>
+  </div>
+  <p>RL needs both a learner and an inference/environment workload. Async execution can keep
+    those resources busier, but the trainer must know which policy produced each action and
+    whether the sampled tokens, contexts, and sampling support were preserved.</p>
+  <p class="muted">Mechanics: <a href="../rl/rlhf.html">RLHF</a>,
+    <a href="../rl/dpo-loss.html">DPO</a>, <a href="../rl/grpo.html">GRPO</a>,
+    <a href="../rl/verifier-reward-design.html">reward design</a>,
+    <a href="../rl/async-rl.html">async RL</a>.
+    Execution recipe: <a href="../rl/practical-agentic-rl.html">a bounded agentic-RL experiment</a>.</p>
+
+  <h2 id="consolidation">6. Consolidation: decide what one model must retain</h2>
+  <dl class="contract">
+    <dt>Input</dt><dd>Specialist teachers and their data, or one strong policy whose capabilities should transfer to another checkpoint or smaller model.</dd>
+    <dt>Weight update</dt><dd>For offline trace distillation, SFT a chosen student on teacher-generated examples. Other recipes query teachers on student-generated states. A later RL stage can refine the combined policy.</dd>
+    <dt>Why it exists</dt><dd>Independent specialists are not yet a single deployable generalist. Transfer can also recover progress after instability or make serving cheaper; reducing model size is only one use case.</dd>
+    <dt>Output</dt><dd>A candidate model with an explicit teacher/data lineage. Pooling traces is not averaging specialist weights or copying their optimizer states.</dd>
+    <dt>Evidence to advance</dt><dd>Compare the candidate with each relevant specialist and the earlier generalist at matched evaluation budgets. Check long-context behavior, tool formats, safety, and regressions hidden by aggregate scores.</dd>
+  </dl>
+  <p>Mixture weights need a denominator: a domain can be a modest share of examples but dominate
+    tokens because its traces are long. Data sampling and loss normalization jointly determine
+    training influence. Successful transfer must be measured, not inferred from a balanced-looking pie chart.</p>
+  <p class="muted">Mechanics: <a href="../rl/distillation.html">distillation</a> and
+    <a href="../rl/cascade-rl.html">specialist/consolidation patterns</a>.
+    Worked transitions: <a href="mai-thinking-1.html#resets">MAI's self-distillation restarts</a>
+    and <a href="mai-thinking-1.html#consolidation">its final merge</a>.</p>
+
+  <h2 id="release">7. Evaluation and release: the model is more than its weights</h2>
+  <dl class="contract">
+    <dt>Input</dt><dd>The candidate weights, tokenizer, rendering and tool protocol, plus a proposed inference configuration.</dd>
+    <dt>Work and objective</dt><dd>Measure capability, safety, robustness, latency, memory, and cost. Evaluation normally does not update weights; failures trigger an explicit new training or systems iteration.</dd>
+    <dt>Why it exists</dt><dd>A benchmark score under one harness and token budget is not a guarantee of application quality, safety, or serving efficiency.</dd>
+    <dt>Output</dt><dd>A versioned release package: model/config/tokenizer, supported interface and limits, evaluation settings/results, and an operational rollback/monitoring plan.</dd>
+    <dt>Evidence to advance</dt><dd>Task-specific acceptance criteria and independent held-out evidence under the intended inference stack. Re-evaluate after quantization, template changes, or harness changes; those can alter behavior without changing the original training run.</dd>
+  </dl>
+  <div class="gate"><strong>Evaluation is a continuous control loop.</strong> Keep development
+    evaluations separate from final reporting. If a final test informs further tuning, it has
+    become development feedback; preserve an untouched test or disclose that reuse.
+    No universal benchmark threshold certifies that a model is ready to ship.</div>
+  <p class="muted">Worked evidence and its limits:
+    <a href="mai-thinking-1.html#evaluation">MAI's final evaluations</a>.
+    Serving mechanics: <a href="../index.html#inference">inference references</a>.</p>
+
+  <h2 id="handoffs">8. The handoff that a list of stages leaves out</h2>
+  <p>At every arrow, distinguish <strong>continuing a run</strong>, <strong>starting a new stage
+    from weights</strong>, and <strong>transferring behavior through data</strong>. They preserve
+    different things.</p>
+  <div class="table-wrap">
+    <table>
+      <caption>A recommended handoff record, not a claim that every report discloses all fields.</caption>
+      <thead><tr><th scope="col">Carry or explicitly replace</th><th scope="col">Why it matters</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Weights, model config, tokenizer, chat/tool format</th><td>Weights alone do not identify the inputs and outputs the next stage will see.</td></tr>
+        <tr><th scope="row">Optimizer, schedule, RNG and data cursor</th><td>Faithful continuation needs training state. A deliberate stage reset may initialize new state; record that decision rather than call it an exact resume.</td></tr>
+        <tr><th scope="row">Data lineage, mixtures and masks</th><td>Separate original corpus, demonstrations, teacher traces, and sampled RL trajectories. Record what tokens receive loss and how examples are weighted.</td></tr>
+        <tr><th scope="row">RL behavior and environment versions</th><td>A rollout's policy, sampling support, tool context, and grader determine whether it is valid for an update. Old traces reused for SFT are a new supervised dataset, not automatically valid RL samples.</td></tr>
+        <tr><th scope="row">Evaluation contract and baseline</th><td>Preserve prompts/splits, budgets, harness, scorer versions, and reference checkpoints so a stage's gain or regression is interpretable.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <details>
+    <summary>Why a restart can be part of the recipe, not just failure recovery</summary>
+    <p>An ordinary checkpoint restore resumes weights and training state from an earlier time.
+      MAI instead sometimes turns strong RL rollouts into supervised data and trains a mid-trained
+      checkpoint on them before restarting RL. The discovered behavior survives through traces;
+      the unstable RL checkpoint need not be the student's initialization. That distinction
+      connects <a href="../rl/distillation.html">imitation</a>, optimization stability,
+      and the model's development history.</p>
+  </details>
+
+  <h2 id="reading">9. Two ways to use the site</h2>
+  <p><strong>Follow a model:</strong> this map &rarr;
+    <a href="mai-thinking-1.html">MAI-Thinking-1's complete development story</a> &rarr;
+    <a href="../rl/deepseek-r1.html">DeepSeek-R1's contrasting post-training pipeline</a>.
+    The <a href="mai-base-2.html">MAI-Base-2 case study</a> is a separate generation focused
+    on pre-training, not the base underneath Thinking-1.</p>
+  <p><strong>Investigate a component:</strong> use the stage-local links above or the
+    <a href="../index.html#transformer-training">domain index</a>. Return to the model recipe
+    to ask why that component was chosen and which transition it enables.</p>
+
+  <h2 id="sources">Sources and scope</h2>
+  <ul>
+    <li><a href="https://microsoft.ai/pdf/mai-thinking-1.pdf">Microsoft AI, MAI-Thinking-1:
+      Building a Hill-Climbing Machine</a> — &sect;2 for base development; &sect;3 for RL,
+      self-distillation and consolidation; &sect;&sect;4–6 for evaluation and systems.</li>
+    <li><a href="https://arxiv.org/abs/2501.12948">DeepSeek-R1</a> — a contrasting
+      reasoning/post-training recipe, not evidence that every model needs the same stages.</li>
+  </ul>
+  <p class="muted">Written November 1, 2026. Stage contracts and suggested advancement checks
+    are explanatory synthesis. Source-specific facts and limitations belong in the linked
+    worked cases. No end-to-end training run is reproduced by this guide.</p>
+</main>
+<footer>Personal ML notes &middot; <a href="../index.html#start-here">Choose a reading route</a></footer>
+</body>
+</html>
