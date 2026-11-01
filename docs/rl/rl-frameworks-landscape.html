@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light dark">
-  <title>RL Frameworks Landscape — Self-Hosted Frameworks &amp; Managed Training</title>
+  <title>RL Frameworks Landscape — Open Frameworks, In-House Systems &amp; Managed Training</title>
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
   <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
   <link rel="apple-touch-icon" href="../apple-touch-icon.png">
@@ -280,9 +280,10 @@
 <div class="hero">
   <span class="hero-pill">RL Frameworks · Landscape</span>
   <h1>RL Frameworks Landscape</h1>
-  <p>The map of LLM-RL execution — self-hosted frameworks such as verl, TRL, OpenRLHF, NeMo,
-  slime and SkyRL, training APIs from Tinker, Fireworks and Microsoft Foundry, and managed
-  reinforcement-tuning jobs. Compare who owns the loop, not just who supplies the GPUs.</p>
+  <p>The map of LLM-RL execution — public frameworks such as verl, TRL, OpenRLHF, NeMo,
+  slime and SkyRL, MAI's in-house Rocket system, training APIs from Tinker, Fireworks and
+  Microsoft Foundry, and managed reinforcement-tuning jobs. Compare availability and who owns
+  the loop, not just who supplies the GPUs.</p>
 </div>
 
 <div class="page-wrap">
@@ -291,7 +292,8 @@
     Read this first as the map, then go deep: <a href="verl-architecture.html">verl Architecture</a>
     and <a href="trl.html">TRL</a> are the two anchor write-ups; the
     <a href="slime-miles-walkthrough.html">slime / Miles walkthrough</a> traces a third design
-    step-by-step. Everything here builds on the algorithm pages (<a href="ppo.html">PPO</a>,
+    step-by-step. <a href="rocket.html">Rocket</a> adds a report-backed in-house design, not
+    another publicly installable framework. Everything here builds on the algorithm pages (<a href="ppo.html">PPO</a>,
     <a href="grpo.html">GRPO</a>) and the systems pages (<a href="async-rl.html">Async RL</a>,
     <a href="resource-pool-placement.html">Placement</a>).
   </div>
@@ -306,6 +308,7 @@
   <div class="table-wrap">
     <table>
       <tr><th>Axis</th><th>The question</th><th>The options</th></tr>
+      <tr><td><strong>Availability and evidence</strong></td><td>Can you inspect and operate it, or only study its disclosed design?</td><td>Public source/package · report-only in-house system · provider-accessible service; production reports are not matched benchmarks</td></tr>
       <tr><td><strong>Operating boundary</strong></td><td>Who runs the GPU fleet and distributed execution?</td><td>Self-operated runtime · cloud-hosted user training job · remote training primitives · managed tuning job</td></tr>
       <tr><td><strong>Algorithm ownership</strong></td><td>Who chooses rollouts, advantages, and optimizer steps?</td><td>Your trainer code · your client loop over primitives · provider workflow configured with data and graders</td></tr>
       <tr><td><strong>Controller model</strong></td><td>Who orchestrates the dataflow between stages?</td><td>SPMD Trainer · <a href="verl-architecture.html#hybrid">hybrid single/multi-controller</a> · server-centric · client loop over remote primitives</td></tr>
@@ -336,7 +339,9 @@
   <h2 id="profiles">2. Frameworks and Managed Training</h2>
   <p><strong>Provider additions checked October 28, 2026.</strong> The profiles below summarize
   public documentation, not executed compatibility tests or training benchmarks. Model, region,
-  parameter-mode and preview restrictions are specific to each offering.</p>
+  parameter-mode and preview restrictions are specific to each offering.
+  <strong>Rocket added November 1</strong> from the MAI report; no public Rocket release is
+  established by the sources checked.</p>
 
   <div class="fw">
     <h3>verl</h3>
@@ -382,6 +387,22 @@
     <a href="async-rl.html">TIM-style</a> elimination of training–inference mismatch rather than IS
     correction. The <a href="slime-miles-walkthrough.html">slime / Miles walkthrough</a> traces one
     PPO step on a 30B MoE through it.</p>
+  </div>
+
+  <div class="fw" id="rocket">
+    <h3>Rocket</h3>
+    <div class="who">Microsoft AI / MAI · YOLO + SGLang + Ray · in-house, report-backed</div>
+    <p>A controller dispatches tasks to <strong>problem workers</strong> that own response groups
+    and advantages; <strong>rollout workers</strong> drive individual generations, tools and grading.
+    YOLO learns from filtered batches while a separate SGLang fleet serves rollouts. Large runs
+    primarily use off-policy execution; the reported recipe publishes weights every five gradient
+    steps and rejects rollouts more than eight inference updates stale.</p>
+    <p>The report describes BF16 learner/inference alignment, MoE routing and top-p mask replay,
+    a precomputed shard-to-shard weight-transfer plan, and a 4,864-GB300-chip job split into
+    4,096 inference and 768 learner chips. Those are design/production observations, not a
+    controlled speed comparison. <strong>Rocket is not established as an open-source package or
+    a customer training API</strong>; study it beside public frameworks without treating it as
+    an installation choice. <a href="rocket.html">Architecture, lag illustration and evidence limits →</a></p>
   </div>
 
   <div class="fw" id="skyrl">
@@ -566,6 +587,15 @@
         <td>Own the runtime, compose the agent layer</td>
       </tr>
       <tr>
+        <td><a href="rocket.html"><strong>Rocket</strong></a> (in-house / report-only)</td>
+        <td>Controller + problem/rollout Ray actors</td>
+        <td>YOLO</td>
+        <td>SGLang + router</td>
+        <td>Large runs primarily off-policy; bounded version age</td>
+        <td>Reported GRPO-derived recipe; no public trainer API established</td>
+        <td>Study large-scale MoE RL design; not a public adoption option</td>
+      </tr>
+      <tr>
         <td><strong>Tinker</strong> (managed)</td>
         <td>Client-owned loop over remote primitives</td>
         <td>Service-managed; LoRA, not full fine-tuning</td>
@@ -631,6 +661,7 @@
       <tr><td>Rollout-dominated runs needing fine-grained <a href="resource-pool-placement.html">placement</a> and async throughput</td><td><strong>verl</strong></td></tr>
       <tr><td>All-NVIDIA cluster, maximum-scale, enterprise support</td><td><strong>NeMo-Aligner / NeMo-RL</strong></td></tr>
       <tr><td>SGLang-centric stack; async MoE RL with TIM-style mismatch handling</td><td><strong>slime</strong></td></tr>
+      <tr><td>Studying an in-house large-scale async RL architecture rather than choosing an installable framework</td><td><a href="rocket.html">Rocket</a>; report-backed case study, not a public package or service</td></tr>
     </table>
   </div>
 
@@ -645,6 +676,8 @@
     GPUs → <strong>TRL</strong>. Ray + vLLM at mid-scale without Megatron → <strong>OpenRLHF</strong>.
     Hybrid controller, every backend, async at production scale → <strong>verl</strong>. NVIDIA
     Megatron stack at the frontier → <strong>NeMo</strong>. SGLang-native async → <strong>slime</strong>.
+    <a href="rocket.html">Rocket</a> adds an <strong>in-house design reference</strong>, not another
+    installable option or a measured winner over those systems.
     The <a href="#axes">axes</a> matter more than the names — frameworks come and go, the design
     trade-offs persist.</p>
   </div>
@@ -658,6 +691,7 @@
       <tr><td><a href="https://github.com/OpenRLHF/OpenRLHF">OpenRLHF</a></td><td>Ray + DeepSpeed + vLLM RLHF</td></tr>
       <tr><td><a href="https://github.com/NVIDIA/NeMo-RL">NeMo-RL</a> · <a href="https://github.com/NVIDIA/NeMo-Aligner">NeMo-Aligner</a></td><td>NVIDIA Megatron-Core alignment</td></tr>
       <tr><td><a href="https://github.com/THUDM/slime">slime</a></td><td>SGLang-native RL — see <a href="slime-miles-walkthrough.html">walkthrough</a></td></tr>
+      <tr><td><a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=49">MAI-Thinking-1 report, §3.6</a> · <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=36">§3.1.5</a></td><td><a href="rocket.html">Rocket</a>: controller/workers, YOLO/SGLang, transfer and recovery; cadence/age limits. In-house system, not a verified public release or head-to-head benchmark.</td></tr>
       <tr><td><a href="https://tinker-docs.thinkingmachines.ai/tinker/">Tinker overview</a> · <a href="https://tinker-docs.thinkingmachines.ai/tinker/losses/custom/">Custom losses</a> · <a href="https://tinker-docs.thinkingmachines.ai/tinker/losses/">Built-in losses</a></td><td>Overview/custom-loss mechanism checked October 28; the detailed built-in contracts retain their October 22 source date.</td></tr>
       <tr><td><a href="https://docs.skyrl.ai/docs/tinker/overview">SkyRL Tinker API</a> · <a href="https://docs.skyrl.ai/docs/tinker/limitations">Limitations</a> · <a href="https://docs.skyrl.ai/docs/tutorials/fully_async">Fully async</a></td><td>Self-operated API scope and generator restrictions; hosted docs are not pinned by the repository snapshot.</td></tr>
       <tr><td><a href="https://docs.fireworks.ai/fine-tuning/training-api/introduction.md">Fireworks Training API</a> · <a href="https://docs.fireworks.ai/fine-tuning/training-api/serverless.md">Serverless</a> · <a href="https://docs.fireworks.ai/fine-tuning/rl-rollout-integration.md">BYOT</a></td><td>Operating modes and lifecycle; experimental recipes and private-preview external-bucket hotload are distinct from serverless service availability.</td></tr>

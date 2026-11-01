@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Microsoft AI's Rocket RL framework: Ray controllers and workers, YOLO learning, SGLang rollouts, bounded policy lag, sampling and routing replay, weight transfer, fault tolerance, and comparison with public RL frameworks.">
+  <title>Rocket &mdash; MAI's Large-Scale Asynchronous RL Framework</title>
+  <link rel="canonical" href="https://yueyiming2009.github.io/ai-learning/rl/rocket.html">
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #fff; --surface: #f8f9fa; --border: #e8eaed;
+      --text: #1a1a2e; --muted: #6b7280; --accent: #0d9488; --accent-light: #f0fdfa;
+      --nav-bg: rgba(255,255,255,0.92); --fig-bg: #fff;
+      --plot-grid: #eceef1; --plot-axis: #c7cbd1; --plot-tick: #6b7280;
+      --plot-gray: #9ca3af; --plot-violet: #6d28d9;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115; --surface: #171b21; --border: #262b33;
+        --text: #e5e7eb; --muted: #9aa1ab; --accent: #2dd4bf; --accent-light: #10201e;
+        --nav-bg: rgba(15,17,21,0.9); --fig-bg: #14181e;
+        --plot-grid: #232830; --plot-axis: #3a4149; --plot-tick: #9aa1ab;
+        --plot-gray: #9ca3af; --plot-violet: #a78bfa;
+      }
+    }
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; line-height: 1.75; }
+    a { color: var(--accent); }
+    nav { position: sticky; top: 0; z-index: 100; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; gap: 24px; height: 52px; }
+    .nav-brand { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 0.9rem; color: var(--accent); text-decoration: none; white-space: nowrap; }
+    .nav-links { display: flex; gap: 4px; overflow-x: auto; flex: 1; }
+    .nav-links a { font-size: 0.82rem; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 6px; white-space: nowrap; }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    a:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    .hero { background: linear-gradient(135deg, #064e3b, #0d9488); color: white; padding: 56px 24px 48px; text-align: center; }
+    .hero h1 { font-size: clamp(1.5rem, 4vw, 2.2rem); font-weight: 600; margin: 0 0 12px; letter-spacing: -0.02em; }
+    .hero p { margin: 0 auto; opacity: 0.9; font-size: 0.97rem; max-width: 700px; }
+    .hero-pill { display: inline-block; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 100px; font-size: 0.78rem; padding: 3px 12px; margin-bottom: 16px; text-transform: uppercase; }
+    .page-wrap { max-width: 940px; margin: 0 auto; padding: 40px 24px 72px; }
+    h2 { font-size: 1.2rem; margin: 2.6em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); scroll-margin-top: 72px; }
+    h3 { font-size: 1rem; margin: 1.6em 0 0.4em; }
+    p { margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-size: 0.88em; }
+    .xref, .note { background: var(--accent-light); border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; margin: 1.2em 0; }
+    .source, .muted { color: var(--muted); font-size: 0.88rem; }
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+    caption { text-align: left; color: var(--muted); padding-bottom: 8px; }
+    th, td { border: 1px solid var(--border); padding: 9px 12px; text-align: left; vertical-align: top; }
+    th { background: var(--surface); font-weight: 600; }
+    .flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; margin: 1.2em 0; }
+    .flow div { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+    .flow strong, .flow span { display: block; }
+    .flow span { font-size: 0.86rem; color: var(--muted); }
+    .figure {
+      background: var(--fig-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 16px 14px;
+      margin: 1.6em 0;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .figure canvas { width: 100%; height: 300px; display: block; }
+    .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; justify-content: center; margin-top: 12px; font-size: 0.82rem; color: var(--text); }
+    .legend-item { display: flex; align-items: center; gap: 7px; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, var(--plot-gray) 0 5px, transparent 5px 9px); }
+    .figure-caption { font-size: 0.85rem; color: var(--muted); line-height: 1.6; margin: 14px 4px 2px; }
+    .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin-bottom: 14px; }
+    .controls label { font-size: 0.85rem; }
+    .controls input { display: block; width: 100%; accent-color: var(--accent); }
+    .plot-result { font-size: 0.88rem; margin: 12px 4px; }
+    footer { border-top: 1px solid var(--border); padding: 24px; text-align: center; font-size: 0.82rem; color: var(--muted); }
+    @media (max-width: 600px) { nav { padding: 0 12px; gap: 12px; } .page-wrap { padding: 28px 16px 56px; } }
+  </style>
+</head>
+<body>
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home &mdash; all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Rocket</a>
+  <div class="nav-links">
+    <a href="../index.html#rl-rl-frameworks">RL Frameworks</a>
+    <a href="#stack">Architecture</a><a href="#task">One task</a><a href="#freshness">Policy lag</a>
+    <a href="#alignment">Alignment</a><a href="#inference">Inference</a><a href="#transfer">Weight transfer</a>
+    <a href="#reliability">Reliability</a><a href="#compare">Comparison</a><a href="#sources">Sources</a>
+  </div>
+</nav>
+<div class="hero">
+  <span class="hero-pill">RL Frameworks &middot; Report-backed case study</span>
+  <h1>Rocket &mdash; MAI's Asynchronous RL Framework</h1>
+  <p>A controller and two kinds of workers connect YOLO learning to SGLang generation.
+    The challenge is not merely overlapping work: it is keeping group rewards, policy versions,
+    sampling distributions, weight layouts, and a failure-prone inference fleet consistent.</p>
+</div>
+<main class="page-wrap">
+  <div class="xref">
+    <strong>In-house system, not an open-source installation guide.</strong> The
+    <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=49">MAI-Thinking-1 report, &sect;3.6</a>
+    describes Rocket, but the public sources checked on November 1, 2026 do not establish a
+    released Rocket repository, license, or supported package. SGLang and Ray being public does
+    not make Rocket public. Compare its design with the
+    <a href="rl-frameworks-landscape.html">framework landscape</a>; keep the model's specialist
+    climbs and consolidation on <a href="../models/mai-thinking-1.html">MAI-Thinking-1</a>,
+    and the learner's kernels and sharding on <a href="../systems/yolo.html">YOLO</a>.
+  </div>
+
+  <h2 id="stack">1 &middot; Separate the algorithm controller from the GPU engines</h2>
+  <p>Rocket is Microsoft AI's orchestration framework for large-scale distributed RL. The report
+    motivates building it around MAI's need for asynchronous runs across several thousand GPUs.
+    That is the team's account of its requirements and implementation choice, <strong>not a
+    controlled demonstration that current public frameworks cannot reach that scale</strong>.</p>
+  <div class="flow" aria-label="Rocket dataflow: tasks to controller to problem workers to rollout workers to inference, with filtered results sent to the learner">
+    <div><strong>1. Controller</strong><span>Sample tasks, dispatch work, filter completed groups, and assemble learner batches.</span></div>
+    <div><strong>2. Problem workers</strong><span>Own groups of responses, pass-rate selection, group grading when needed, and normalized advantages.</span></div>
+    <div><strong>3. Rollout workers</strong><span>Own individual episodes: prompt, generation, tool calls, observations, stopping, and optional grading.</span></div>
+    <div><strong>4. SGLang + router</strong><span>Serve model generations; route traffic, reuse prefixes where useful, and isolate unhealthy replicas.</span></div>
+    <div><strong>5. YOLO learner</strong><span>Consume filtered training batches and update the policy with the reported GRPO-derived objective.</span></div>
+    <div><strong>6. Weight publication</strong><span>Reshard and transform learner weights for inference; repeat while other work is in flight.</span></div>
+  </div>
+  <p>The request path is controller &rarr; problem worker &rarr; rollout worker &rarr; serving pool;
+    results return to the problem worker, then the controller sends accepted batches to the learner.
+    The controller and each problem/rollout worker are Python processes / Ray actors. The GPU learner
+    and inference pools have their own distributed execution. Figure 19 also includes checkpointing,
+    metrics, persistent rollout storage, and curriculum feedback; it does not specify their complete
+    storage schemas or a prioritized-replay algorithm.</p>
+  <p>Controller implementations can switch between on-policy and off-policy RL. MAI reports using
+    off-policy execution for large jobs and reserving on-policy mode for smaller experiments and
+    debugging. These are execution choices, not different model architectures.</p>
+  <p class="source">Sources: <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=50">&sect;&sect;3.6.1&ndash;3.6.3, Figure 19</a>;
+    <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=108">Appendix L.3</a> separates Kubernetes/Kueue admission from Ray's in-job runtime.</p>
+
+  <h2 id="task">2 &middot; Follow one task, not just one generated sequence</h2>
+  <ol>
+    <li><strong>Probe a problem.</strong> The problem worker asks rollout workers for an early
+      group, retries worker failures, and aggregates graded outcomes into a task pass rate.
+      The reported recipe uses 16 early responses and an acceptable interval of 0.05&ndash;0.8.</li>
+    <li><strong>Spend more only on accepted problems.</strong> Generate the full group and apply
+      a second pass-rate filter, reported as 0.1&ndash;0.8. Nearly uniform success or failure gives
+      little group-relative reward signal; filtering also changes which problems reach the learner.</li>
+    <li><strong>Build each episode.</strong> A rollout worker sends a prompt to inference, parses
+      the response, executes tools, appends observations, and repeats until a final answer or a
+      step/time limit. It is not necessarily a single HTTP generation request.</li>
+    <li><strong>Grade at the right scope.</strong> Independent answers can be graded on the rollout
+      worker; pairwise or group-dependent judgments belong on the problem worker. A user-defined
+      aggregation policy combines multiple grades into an overall reward.</li>
+    <li><strong>Normalize and train.</strong> The problem worker computes response-level advantages
+      (with task-specific penalties/heuristics); the controller filters the returned results and
+      forms batches for YOLO.</li>
+  </ol>
+  <div class="note"><strong>A disclosed counting ambiguity:</strong> &sect;3.1.5 specifies
+    <em>128 total</em> rollouts with 16 early rollouts, while &sect;3.6.2 describes
+    <em>an additional 128</em> after the early 16. The report does not reconcile these descriptions.
+    Do not silently turn either 128 or 144 into a universal Rocket group-size invariant.</div>
+  <p>The reported objective uses \(A_i=(R_i-\mathrm{mean}(R_{1:G}))/\mathrm{std}(R_{1:G})\),
+    shared across response \(i\)'s tokens. Loss normalization is over tokens in the global batch,
+    not an equal average of per-response means. Its stability modifications include an
+    entropy-controlled upper clip bound and a separate outer ratio clip.
+    These belong to <a href="grpo.html">GRPO</a> and the
+    <a href="ppo.html#adaptive-entropy">adaptive-clipping derivation</a>, not to Ray scheduling.</p>
+  <p class="source">Sources: <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=31">&sect;3.1.1</a>,
+    <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=34">&sect;3.1.3</a>,
+    <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=36">&sect;3.1.5</a>,
+    <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=50">&sect;&sect;3.6.2&ndash;3.6.3</a>.</p>
+
+  <h2 id="freshness">3 &middot; Bounded lag is still off-policy</h2>
+  <p>The recipe publishes learner weights to inference every <strong>five gradient steps</strong>
+    and discards a rollout if its generating policy is <strong>more than eight inference updates
+    stale</strong>. The report translates eight publication intervals to 40 gradient steps.
+    A serving-policy version, a gradient step, and elapsed seconds are different units.</p>
+  <p>For a simple illustration, assume the rollout uses version zero, published at learner step
+    zero; publication is instantaneous and occurs every \(k\) steps. After \(s\) learner steps:</p>
+  \[
+    a(s)=\left\lfloor \frac{s}{k}\right\rfloor,\qquad
+    \mathrm{admit}(s) \iff a(s)\leq A_{\max}.
+  \]
+  <p>This models a publication-version gate, not Rocket's undisclosed implementation. At publication
+    boundaries with \(k=5\), age eight is reached at step 40; age nine first occurs at step 45.
+    Passing that gate does not imply equality with the current learner policy.</p>
+  <div class="figure">
+    <div class="controls">
+      <label for="publish-every">Steps per publication: <output id="publish-value" for="publish-every">5</output>
+        <input id="publish-every" type="range" min="1" max="10" step="1" value="5">
+      </label>
+      <label for="max-age">Allowed version age: <output id="age-value" for="max-age">8</output>
+        <input id="max-age" type="range" min="0" max="12" step="1" value="8">
+      </label>
+      <label for="elapsed-steps">Elapsed learner steps: <output id="steps-value" for="elapsed-steps">40</output>
+        <input id="elapsed-steps" type="range" min="0" max="60" step="1" value="40">
+      </label>
+    </div>
+    <canvas id="plot-staleness" role="img" aria-label="Illustrative serving-policy version age versus elapsed learner steps, with an inclusive admission limit" aria-describedby="staleness-caption staleness-result"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span>Version age (dot = selected step)</span>
+      <span class="legend-item"><span class="lg dash"></span>Inclusive admission limit</span>
+    </div>
+    <p class="plot-result" id="staleness-result" aria-live="polite">At step 40: version age 8; passes the age gate. First rejected step: 45.</p>
+    <p class="figure-caption" id="staleness-caption"><strong>A version limit is not a wall-clock deadline.</strong>
+      Change publication cadence without changing the allowed age: the same version budget spans
+      a different number of learner steps. This is a synthetic single-version rollout, with no transfer
+      delay, queue delay, or in-flight weight change; it is not measured Rocket throughput or a
+      reconstruction of its token-level version bookkeeping.</p>
+    <noscript><p>With the reported cadence and this toy gate, step 40 has age 8 and passes;
+      step 45 has age 9 and fails. JavaScript enables the parameter sweep.</p></noscript>
+  </div>
+  <p>Longer generations increase latency without increasing learner step time proportionally.
+    Hard, long-running problems therefore tend to become more off-policy and risk rejection.
+    MAI reports lowering the learning rate from \(10^{-6}\) to \(9\times10^{-7}\) at higher lengths
+    for stability. This changes policy movement; it does not make an old sample fresh.
+    See <a href="async-rl.html#lag">lag distributions</a> and
+    <a href="async-rl-monitoring.html">async diagnostics</a>.</p>
+  <p class="source">Source: <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=36">&sect;3.1.5</a>.
+    Exact mixed-version episode accounting, partial-rollout policy, and queue eviction details
+    are not supplied by that paragraph.</p>
+
+  <h2 id="alignment">4 &middot; Three mismatches require three different controls</h2>
+  <div class="table-wrap">
+    <table>
+      <caption>Do not collapse freshness, numerical alignment, and sampling support into one &ldquo;on-policy&rdquo; switch.</caption>
+      <thead><tr><th scope="col">Mismatch</th><th scope="col">Reported control</th><th scope="col">What it does not establish</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Policy changed over time</th><td>Bound rollout age; train with a GRPO-derived token ratio against the generating policy.</td><td>Bounded off-policy data is not current-policy data.</td></tr>
+        <tr><th scope="row">Different execution numerics or MoE routes</th><td>BF16 on both YOLO and SGLang, plus MoE routing replay.</td><td>Shared dtype and replay do not prove bitwise equality across kernels, schedules, and parallelism.</td></tr>
+        <tr><th scope="row">Different sampling support</th><td>Save and replay the rollout's top-p mask before the learner softmax; the reported nucleus value is 0.97.</td><td>Matching token IDs or replaying expert routes alone does not reproduce the truncated action distribution.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>If \(M_t\) is the recorded nucleus at token \(t\), replay changes the learner distribution to</p>
+  \[
+    \widetilde{\pi}_{\theta}(v\mid h_t,M_t)
+    =\frac{\mathbf{1}[v\in M_t]\exp z_\theta(v\mid h_t)}
+    {\sum_{u\in M_t}\exp z_\theta(u\mid h_t)}.
+  \]
+  <p>The mask is the one recorded during generation, <strong>not a newly selected nucleus under
+    the updated learner</strong>. Replay also changes the softmax denominator and gradients for
+    retained tokens. The report finds unmasked training can diverge rapidly; carrying the masks
+    has storage and transfer overhead. MoE routing replay instead concerns internal expert choices,
+    not the vocabulary mask.</p>
+  <p>Public <a href="https://docs.sglang.io/docs/advanced_features/sglang_for_rl.md">SGLang RL documentation</a>
+    explains deterministic inference and notes that matching deterministic learner kernels is also
+    needed for true training/inference alignment. That is useful context, not evidence that Rocket
+    uses Miles' true-on-policy implementation. The MAI report establishes its own BF16/replay recipe.</p>
+  <p class="source">Sources: <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=34">&sect;3.1.3</a>,
+    <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=52">&sect;3.6.4</a>.
+    Background: <a href="async-rl.html#tim">numerical TIM versus token/sampling fidelity</a>.</p>
+
+  <h2 id="inference">5 &middot; The rollout workload determines the serving optimization</h2>
+  <p>The largest reported RL job uses <strong>4,864 GB300 chips: 4,096 for inference and 768
+    for learning</strong>. That split is about 84% inference, or 5.33 inference chips per learner
+    chip. It describes one allocation, not a recommended ratio or a framework speedup.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Workload</th><th scope="col">Pressure</th><th scope="col">Reported choice</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Single-turn reasoning</th><td>Short prompts, generations up to 128k; KV-cache capacity dominates.</td><td>Reduce weight/KV footprint using expert parallelism and DP attention. Disable prefix caching so sliding-window tokens can be evicted during long generations.</td></tr>
+        <tr><th scope="row">Multi-turn tools / coding</th><td>Growing prompts and relatively short generations; repeated prefill dominates.</td><td>Lean on prefix reuse; reported prefix-cache hit rates reach 97&ndash;98% in production RL runs.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>MAI also describes communication optimizations using DeepEP and expert load balancing.
+    The cache result is workload-specific: it does not imply a 97&ndash;98% throughput improvement,
+    or that caching remains valid across arbitrary weight updates.</p>
+  <p>The public <a href="https://docs.sglang.io/docs/advanced_features/sgl_model_gateway.md">SGLang Model Gateway guide</a>
+    explains cache-aware routing, worker health, and flow control. Its current feature set is
+    broader than the report's deployment description. A capability in today's upstream gateway
+    is not automatically a capability of MAI's pinned production version.</p>
+  <p class="source">Source: <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=51">&sect;3.6.4, pp. 51&ndash;52</a>.
+    Related: <a href="../inference/rl-inference.html">RL inference</a> and
+    <a href="../inference/kv-cache.html">KV-cache mechanics</a>.</p>
+
+  <h2 id="transfer">6 &middot; Weight publication is a compiled redistribution problem</h2>
+  <p>A learner rank and an inference rank need not own the same part of a parameter. Different
+    FSDP, pipeline, attention-DP, layout, or precision choices make a whole-model broadcast an
+    inadequate description of the handoff.</p>
+  <ol>
+    <li><strong>Intersect layouts once.</strong> At job start, the planner intersects source and
+      destination shards. Every nonempty overlap produces a transfer entry with source rank,
+      destination rank, byte extent, and required casts or layout permutations.</li>
+    <li><strong>Move only needed slices.</strong> Resharding follows from those overlaps, without
+      first materializing full tensors. Transformations run on the cheaper side; packing, transfer,
+      and unpacking are pipelined across sub-shards.</li>
+    <li><strong>Expand across live replicas.</strong> The logical plan targets one learner and
+      one inference server. Runtime transfer groups expand destination ranks to live replicas,
+      allowing replacement or membership changes without rebuilding that logical plan.</li>
+    <li><strong>Exploit DP replication.</strong> A subset of learner DP groups can each serve a
+      separate slice of inference replicas. The report illustrates 36 inference servers split
+      into four independent nine-server transfers, limiting both fan-out and failure scope.</li>
+  </ol>
+  <p>Transfer latency creates serving idleness and policy lag; it is not merely checkpoint I/O.
+    The report discusses possible dtype/layout transformations, but separately says the reported
+    RL learner and inference computations use BF16. Do not infer an FP8 RL recipe from general
+    transfer-planner flexibility or YOLO's pre-training kernels.</p>
+  <div class="note"><strong>Upstream mechanism versus Rocket implementation:</strong>
+    <a href="https://docs.sglang.io/docs/advanced_features/sglang_for_rl.md">SGLang's public guide</a>
+    documents disk, tensor, and distributed weight updates, with explicit pause/refit/resume
+    coordination. This explains the serving-side problem. The MAI report does not identify a
+    public Rocket API, exact SGLang endpoint sequence, or transport protocol for its custom plan;
+    do not label it NCCL, RDMA, or a particular checkpoint-engine integration without evidence.</div>
+  <p class="source">Source: <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=52">&sect;3.6.5, pp. 52&ndash;53</a>.
+    Compare <a href="verl-architecture.html#resharding">verl resharding</a> and
+    <a href="verl-async-training.html#weights">verl's checkpoint engine</a>.</p>
+
+  <h2 id="reliability">7 &middot; &ldquo;Alive&rdquo; is weaker than &ldquo;making progress&rdquo;</h2>
+  <p>At thousands of inference chips, failures are normal pool behavior. Rocket's reported
+    defenses operate at different scopes:</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Scope</th><th scope="col">Detection / action</th><th scope="col">Failure contained</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Replica</th><td>Self-watchdog probes generation and scheduler memory; unhealthy servers restart gracefully.</td><td>Hung or unhealthy serving process.</td></tr>
+        <tr><th scope="row">Router</th><td>Per-backend circuit breaking, staged recovery probes, rediscovery, and per-replica flow control.</td><td>Failed replicas or slow backends spreading backlog across the pool.</td></tr>
+        <tr><th scope="row">Task / rollout</th><td>Problem workers retry failed rollout work; failed inference requests can be retried on another replica.</td><td>One worker or server failure aborting otherwise usable task work.</td></tr>
+        <tr><th scope="row">Job</th><td>Actor-class liveness thresholds trigger clean restarts; a separate step-progress watchdog detects stalls.</td><td>A job that lacks sufficient healthy capacity, or looks alive but no longer advances.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Retries preserve useful work, but the report does not establish exactly-once rollout delivery,
+    tool side-effect deduplication, or a transactional snapshot across every async component.
+    Those are additional contracts, especially for stateful tools; do not infer them from
+    fault tolerance alone.</p>
+  <p class="source">Sources: <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=50">&sect;3.6.2</a>,
+    <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=52">&sect;3.6.4</a>,
+    <a href="https://microsoft.ai/pdf/mai-thinking-1.pdf#page=108">Appendix L.3</a>.
+    Upstream context: <a href="https://docs.sglang.io/docs/advanced_features/sgl_model_gateway.md">SGLang gateway reliability</a>.</p>
+
+  <h2 id="compare">8 &middot; Put Rocket beside public frameworks, not in their install menu</h2>
+  <div class="table-wrap">
+    <table>
+      <caption>Architectural comparison, not a matched performance ranking. Public-framework details are covered in the linked guides.</caption>
+      <thead><tr><th scope="col">System</th><th scope="col">Execution boundary</th><th scope="col">Useful contrast with Rocket</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Rocket</th><td>In-house controller + problem/rollout Ray actors; YOLO learner, SGLang inference.</td><td>Report-backed group selection, bounded lag, sampling/routing replay, and compiled weight redistribution. No released Rocket package established by checked sources.</td></tr>
+        <tr><th scope="row"><a href="verl-architecture.html">verl</a></th><td>Public hybrid-controller framework; worker groups, resource pools, FSDP/Megatron, vLLM/SGLang.</td><td>Comparable separation of orchestration and GPU execution, with inspectable public interfaces and async implementations. Rocket is not a disclosed verl fork.</td></tr>
+        <tr><th scope="row"><a href="slime-miles-walkthrough.html">slime / Miles</a></th><td>Public SGLang-centric rollout with Megatron learning.</td><td>Shared serving engine does not imply shared learner numerics, trajectory schema, weight-transfer path, or true-on-policy guarantees.</td></tr>
+        <tr><th scope="row"><a href="nemo-rl.html">NeMo RL</a></th><td>Public Ray orchestration, policy/generation/environment interfaces, DTensor or Megatron backends.</td><td>Another split between a Python driver and distributed role workers, not proof of implementation ancestry or matched throughput.</td></tr>
+        <tr><th scope="row"><a href="rl-frameworks-landscape.html">OpenRLHF</a></th><td>Public Ray role actors with DeepSpeed and vLLM.</td><td>Ray actors alone do not determine the algorithm, group workflow, serving engine, or shard-transfer implementation.</td></tr>
+        <tr><th scope="row"><a href="trl.html">TRL</a></th><td>Public Trainer-based post-training API on the HuggingFace stack.</td><td>A different abstraction level and on-ramp. Rocket's reported fleet size is not a controlled scaling comparison against TRL.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p><strong>Reusable lesson:</strong> compare controller ownership, group/episode boundaries,
+    policy-version admission, probability fidelity, weight publication, and recovery semantics.
+    A list of shared dependencies is not enough. For black-box agent harnesses, see
+    <a href="harnessed-agentic-rl.html">the harness/trainer contract</a>; the Rocket report describes
+    rollout-worker tool orchestration, not a documented drop-in proxy for arbitrary external harnesses.</p>
+
+  <h2 id="sources">9 &middot; Source ledger and disclosure limits</h2>
+  <p>Checked November 1, 2026. Rocket-specific implementation claims above come from the MAI
+    technical report. The other public sources explain upstream mechanisms and model context;
+    they are not independent validation of Rocket's deployment or evidence of its release.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Public source</th><th scope="col">Supports</th><th scope="col">Boundary</th></tr></thead>
+      <tbody>
+        <tr><th scope="row"><a href="https://microsoft.ai/pdf/mai-thinking-1.pdf">MAI-Thinking-1: Building a Hill-Climbing Machine</a></th><td>&sect;3.1, pp. 31&ndash;36: objective, sampling, cadence and lag; &sect;3.6, pp. 49&ndash;53: Rocket; Appendix L.3, p. 108: job runtime.</td><td>Team-reported architecture and production observations, not public Rocket code or a reproducible cross-framework benchmark.</td></tr>
+        <tr><th scope="row"><a href="https://docs.sglang.io/docs/advanced_features/sglang_for_rl.md">SGLang for RL Systems</a></th><td>Public refit, pause/resume, version-attribution and deterministic-inference concepts.</td><td>Rolling upstream documentation, not a pin of the SGLang version or feature set used by MAI.</td></tr>
+        <tr><th scope="row"><a href="https://docs.sglang.io/docs/advanced_features/sgl_model_gateway.md">SGLang Model Gateway</a></th><td>Cache-aware load balancing, worker health, circuit breakers, retries and flow control.</td><td>Upstream capability does not establish Rocket's exact configuration, flags or integration.</td></tr>
+        <tr><th scope="row"><a href="https://microsoft.ai/models/mai-thinking-1/">Microsoft's MAI-Thinking-1 model page</a></th><td>Model identity and public Foundry preview context.</td><td>Model/API access does not imply access to Rocket, YOLO, original training weights or the training fleet.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Still undisclosed here: a supported Rocket launch/configuration schema, complete tensor payload
+    and loss-mask contract, per-token policy-version treatment across updates, exact tool retry
+    semantics, full recovery-state manifest, transfer timings, and controlled throughput/quality
+    comparisons with public frameworks. The 4,864-chip allocation and 97&ndash;98% cache-hit figure
+    are useful observations, not substitutes for those measurements.</p>
+</main>
+<footer><a href="rl-frameworks-landscape.html">Framework landscape</a> &middot;
+  <a href="../systems/yolo.html">YOLO learner</a> &middot;
+  <a href="../models/mai-thinking-1.html#rocket">MAI model-training context</a></footer>
+<script>
+(() => {
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const publicationAge = (step, interval) => Math.floor(step / interval);
+
+  function drawPlot(canvas, cfg) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+    const mL = 44, mR = 16, mT = 28, mB = 46;
+    const pw = cssW - mL - mR, ph = cssH - mT - mB;
+    const { xMin, xMax, yMin, yMax } = cfg;
+    const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
+    const Y = y => mT + (yMax - y) / (yMax - yMin) * ph;
+
+    ctx.font = '11px Inter, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(t => {
+      const px = X(t);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.fillText(String(t), px, mT + ph + 6);
+    });
+    ctx.fillText('Learner steps since initial publication', mL + pw / 2, cssH - 13);
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(t => {
+      const py = Y(t);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+      ctx.fillText(String(t), mL - 8, py);
+    });
+    ctx.textAlign = 'left';
+    ctx.fillText('Serving-policy version age', mL, 12);
+    ctx.strokeStyle = cssVar('--plot-axis');
+    ctx.lineWidth = 1.25;
+    if (yMin <= 0 && yMax >= 0) { const py = Y(0); ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke(); }
+    if (xMin <= 0 && xMax >= 0) { const px = X(0); ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke(); }
+
+    ctx.save();
+    ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    ctx.lineJoin = 'round';
+    cfg.series.forEach(s => {
+      ctx.beginPath();
+      ctx.lineWidth = s.width || 2;
+      ctx.strokeStyle = cssVar(s.color);
+      ctx.setLineDash(s.dash || []);
+      let previousY;
+      const N = 300;
+      for (let i = 0; i <= N; i++) {
+        const x = xMin + (xMax - xMin) * i / N;
+        const px = X(x), py = Y(s.fn(x));
+        if (i === 0) ctx.moveTo(px, py);
+        else {
+          if (s.step) ctx.lineTo(px, previousY);
+          ctx.lineTo(px, py);
+        }
+        previousY = py;
+      }
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    ctx.fillStyle = cssVar('--plot-violet');
+    ctx.beginPath(); ctx.arc(X(cfg.point.x), Y(cfg.point.y), 4, 0, 2 * Math.PI); ctx.fill();
+    ctx.restore();
+  }
+
+  const canvas = document.getElementById('plot-staleness');
+  const intervalInput = document.getElementById('publish-every');
+  const ageInput = document.getElementById('max-age');
+  const stepsInput = document.getElementById('elapsed-steps');
+  const intervalOutput = document.getElementById('publish-value');
+  const ageOutput = document.getElementById('age-value');
+  const stepsOutput = document.getElementById('steps-value');
+  const result = document.getElementById('staleness-result');
+
+  function render() {
+    const interval = Number(intervalInput.value);
+    const limit = Number(ageInput.value);
+    const steps = Number(stepsInput.value);
+    const age = publicationAge(steps, interval);
+    intervalOutput.value = String(interval);
+    ageOutput.value = String(limit);
+    stepsOutput.value = String(steps);
+    result.textContent = `At step ${steps}: version age ${age}; ${age <= limit ? 'passes' : 'fails'} the age gate. First rejected step: ${(limit + 1) * interval}.`;
+    const yMax = Math.max(publicationAge(60, interval), limit) + 1;
+    const tickStep = Math.max(1, Math.ceil(yMax / 6));
+    const yTicks = [];
+    for (let t = 0; t <= yMax; t += tickStep) yTicks.push(t);
+    drawPlot(canvas, {
+      xMin: 0, xMax: 60, yMin: 0, yMax,
+      xTicks: [0, 10, 20, 30, 40, 50, 60], yTicks,
+      series: [
+        { fn: step => publicationAge(step, interval), color: '--plot-violet', width: 2.5, step: true },
+        { fn: () => limit, color: '--plot-gray', width: 1.75, dash: [5, 4] }
+      ],
+      point: { x: steps, y: age }
+    });
+  }
+
+  [intervalInput, ageInput, stepsInput].forEach(input => input.addEventListener('input', render));
+  let raf;
+  window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(render); });
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq.addEventListener) mq.addEventListener('change', render);
+  render();
+})();
+</script>
+</body>
+</html>

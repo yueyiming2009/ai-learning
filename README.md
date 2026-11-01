@@ -137,9 +137,13 @@ and GRPO pages remain the deep references rather than being merged into the reci
 **Environments:** the training-environment stack — anatomy + ecosystem landscape,
 OpenEnv, verifiers &amp; the Environments Hub, verifier/reward design, sandboxing at scale,
 task generation &amp; curriculum. **Frameworks:** the framework landscape (self-operated runtimes
-versus Tinker's managed LoRA training API, separating algorithm ownership from runtime control),
+versus managed training APIs and report-backed in-house systems, separating availability,
+algorithm ownership, and runtime control),
 verl (HybridFlow) architecture, resource-pool
-placement, TRL, the slime–Miles walkthrough. **Training:** start with
+placement, TRL, the slime–Miles walkthrough, and
+[Rocket](docs/rl/rocket.html) (MAI's in-house YOLO–SGLang async RL system: group/rollout workers,
+policy lag, sampling replay, shard-transfer planning, and recovery; not an established public package).
+**Training:** start with
 [RL Training Basics & Metrics](docs/rl/rl-training-metrics.html) — one prompt and three answers
 through a GRPO update, introducing dashboard fields as they arise. Equations, PPO/critic
 details, and the source-pinned metric glossary are expandable references.
