@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light dark">
-  <title>Kimi K3 — Four Rewrites of the Transformer at 2.8T</title>
+  <meta name="description" content="Kimi K3 architecture and training: native multimodal pre-training, nine domain/effort teachers, token-reward MOPD, persistent agentic rollouts, and open-weight evidence.">
+  <title>Kimi K3 — Architecture, Nine Teachers &amp; Long-Horizon Training</title>
   <link rel="canonical" href="https://yueyiming2009.github.io/ai-learning/models/kimi-k3.html">
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
   <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
@@ -446,6 +447,9 @@
     <a href="#qat">MXFP4 QAT</a>
     <a href="#mtp">MTP → EAGLE</a>
     <a href="#scale">Scale &amp; context</a>
+    <a href="#training-recipe">Training recipe</a>
+    <a href="#rl-runtime">RL runtime</a>
+    <a href="#release-evidence">Weights &amp; evidence</a>
     <a href="#compared">Compared</a>
     <a href="#summary">Summary</a>
   </div>
@@ -455,16 +459,23 @@
 <div class="hero">
   <span class="hero-pill">Model family</span>
   <h1>Kimi K3</h1>
-  <p>The largest open model ever released rewrites all four transformer subsystems at once: KDA + gated-MLA hybrid attention with no positional encoding, attention over the residual stream itself, a latent-space MoE with quantile-balanced routing, and Per-Head Muon — trained quantization-aware in MXFP4 to a million tokens of context.</p>
+  <p>A 2.8T-parameter multimodal model joins KDA + gated MLA, attention over depth, latent experts,
+    and Per-Head Muon with an end-to-end training recipe: native multimodal pre-training,
+    nine domain/effort teachers, and deployment-aware consolidation.</p>
 </div>
 
 <div class="page-wrap">
 
   <aside class="model-map" id="model-context" aria-label="Model identity, lineage, and coverage">
     <p><strong><a href="../index.html#models-kimi">Kimi family</a> &middot; Model-centered reading map</strong></p>
-    <p><strong>Lineage:</strong> This collection currently covers K3. Comparisons with other Kimi releases or other labs explain design choices; they do not by themselves establish a parent checkpoint.</p>
-    <p><a href="#attention">Architecture</a> &middot; <a href="#qat">Training precision</a> &middot; <a href="#scale">Training and context</a> &middot; <a href="#compared">Comparisons</a></p>
-    <p><strong>Coverage:</strong> Architecture, optimization, and serving choices share this page; full training-stage handoffs are not reconstructed from model size or release naming.</p>
+    <p><strong>Lineage:</strong> K3 builds on earlier Kimi data pipelines and uses prior-series
+      domain models to generate SFT traces. Those are method/data-transfer relationships,
+      not evidence that K3 simply continues a K2 or K2.5 checkpoint.</p>
+    <p><a href="#attention">Architecture</a> &middot; <a href="#training-recipe">Training recipe</a> &middot;
+      <a href="#rl-runtime">RL runtime</a> &middot; <a href="#release-evidence">Release evidence</a></p>
+    <p><strong>Coverage:</strong> Architecture and the source-checked pre-training → SFT →
+      specialist RL → consolidation sequence share this page. The November 1 refresh uses
+      the v2 technical report and official weights/license card, without reproducing a run.</p>
   </aside>
 
 
@@ -992,11 +1003,12 @@
     K3's released weights are MXFP4 (microscaling FP4: 4-bit floats with shared block exponents) for the
     MoE experts, MXFP8 for their activations, higher precision for attention, latent projections, shared
     experts, and routers. What makes this notable is <em>when</em> quantization happens: K3 trains
-    quantization-aware through the entire post-training pipeline — SFT <em>and</em> RL. The policy that
-    RL optimizes is bit-identical to the policy that serves: no
-    <a href="../rl/verl-async-training.html">train/inference mismatch</a> for the
-    <a href="../inference/inference-quantization.html">quantized</a> model, because there is no separate
-    quantization step after training. (K2 Thinking pioneered the pattern with INT4; K3 moves it to the
+    quantization-aware through the entire post-training pipeline — SFT <em>and</em> RL.
+    The report says rollout and training share the quantization scheme, avoiding a separate
+    post-training quantization change. That aligns one source of
+    <a href="../rl/async-rl.html#tim">training–inference mismatch</a>; it does not by itself
+    prove bitwise equality across kernels, batching, or policy versions.
+    (K2 Thinking pioneered the pattern with INT4; K3 moves it to the
     MX float formats that Blackwell-class hardware executes natively.)
   </p>
 
@@ -1029,12 +1041,88 @@
       spatial/temporal attention, jointly trained with the LM from the start.
     </li>
     <li>
-      <strong>Post-training:</strong> SFT → per-domain RL experts (one per reasoning-effort level) →
-      multi-teacher on-policy distillation (MOPD) into one unified model — the cascade pattern covered
-      on the <a href="../rl/cascade-rl.html">Cascade RL page</a>, with token-budget rewards controlling
-      effort levels.
+      <strong>Post-training:</strong> SFT → three domains × three effort levels → nine teacher
+      policies → MOPD into one unified model. K3's specific teacher assignment and token-reward
+      mechanism are described below; do not substitute another model's consolidation objective.
     </li>
   </ul>
+
+  <h3 id="training-recipe">From the multimodal base to one multi-effort model</h3>
+  <div class="table-wrap">
+    <table>
+      <caption>Checkpoint and data transitions reported in v2, &sect;&sect;3–4.</caption>
+      <thead><tr><th scope="col">Stage</th><th scope="col">Inputs and learning signal</th><th scope="col">Output / handoff</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Native multimodal pre-training</th><td>Text and vision jointly optimized from the start with a shared next-token objective; Per-Head Muon, weight clipping, quantile balancing, cosine schedule with 1% warmup.</td><td>A shared multimodal base, not a language-only model with a vision tower grafted on afterward.</td></tr>
+        <tr><th scope="row">Long-context curriculum</th><td>8K → 64K during pre-training, then 256K → 1M during cooldown, with cleaned/upsampled long data and synthesized tasks requiring distant information.</td><td>A long-context starting point for agent training; no positional rescaling is required by this NoPE/KDA design.</td></tr>
+        <tr><th scope="row">Cold-start SFT</th><td>Trajectories from prior Kimi domain-specialized models, multi-stage verification and human annotation, serialized in the XTML chat format. QAT begins here.</td><td>An initial policy with tool calling and long-horizon agent behavior; prior models transfer supervision, not necessarily weights.</td></tr>
+        <tr><th scope="row">Domain/effort RL</th><td>General tasks, general agents, and coding agents, each trained for low/high/max effort. Task rewards and budget penalties shape behavior.</td><td>Nine expert policies. The max-effort policy is developed first within the effort curriculum; lower-budget variants follow.</td></tr>
+        <tr><th scope="row">Multi-teacher consolidation</th><td>For a sampled domain and effort, select the corresponding teacher and compute a clipped teacher/student log-ratio reward on student rollout tokens.</td><td>One model covering domains and reasoning levels; not a per-token competition to choose whichever teacher assigns the highest probability.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p><strong>Effort is trained, not just a request-time cutoff.</strong> A cold-start estimate
+    supplies a per-problem budget. Exceeding a scaled budget overrides the task reward with
+    −1. General tasks count thinking tokens; agentic tasks count cumulative output tokens,
+    including reasoning and tool arguments. A domain-specific curriculum reduces the budget
+    multiplier from max toward high and low effort.</p>
+  <p><strong>K3's MOPD interface is a token reward:</strong></p>
+  \[
+    r_t = \operatorname{clip}\!\left(
+      \operatorname{sg}\!\left[\log \pi_{\mathrm{teacher}}^{(d,e)}(y_t\mid x,y_{&lt;t})
+      - \log \pi_\theta(y_t\mid e,x,y_{&lt;t})\right],
+      -R_{\max}, R_{\max}\right).
+  \]
+  <p>The domain/effort pair chooses the teacher; the detached, clipped signal enters the
+    existing RL machinery, including partial rollouts. This differs from both offline SFT
+    on saved teacher traces and a direct supervised KL-loss implementation. The report also
+    describes collecting expert trajectories for SFT, but does not give a complete
+    checkpoint/optimizer-state manifest for every intermediate consolidation step.</p>
+  <p>Sources:
+    <a href="https://arxiv.org/html/2607.24653v2#S3.SS3">pre-training recipe</a>,
+    <a href="https://arxiv.org/html/2607.24653v2#S3.SS4">context extension</a>,
+    <a href="https://arxiv.org/html/2607.24653v2#S4.SS1">post-training method</a>.
+    Shared mechanics: <a href="../rl/distillation.html">distillation</a> and
+    <a href="../transformer/model-training-lifecycle.html">the model-training lifecycle</a>.</p>
+
+  <h3 id="rl-runtime">Persistent state makes million-token agentic RL practical</h3>
+  <p>K3 uses a <strong>co-located, phase-based RL system with partial rollouts</strong>.
+    Generation pauses after a fraction of trajectories completes, policy updates proceed,
+    and unfinished trajectories resume next iteration. A synchronous outer loop therefore
+    does not imply every token was sampled with the current weights: a long episode can
+    span multiple policy versions. The report describes per-token regularization to tolerate
+    this staleness, not a universal guarantee for arbitrary lag.</p>
+  <ul>
+    <li><strong>Model state:</strong> evicted reusable prefixes are written back to a CPU-DRAM
+      cache pool; KDA states and their matching MLA cache blocks move together.
+      Training states move to NVMe between phases to reduce memory contention.</li>
+    <li><strong>Admission:</strong> active/queued requests and KV utilization drive adaptive
+      throttling instead of a single fixed concurrency estimate.</li>
+    <li><strong>Environment state:</strong> resumable microVM sandboxes preserve the workspace
+      across pauses; forking supports grading without changing the original environment.</li>
+  </ul>
+  <p>This connects the hybrid architecture to the training system: preserving token history
+    alone is insufficient if recurrent/cache state or the environment is lost. Source:
+    <a href="https://arxiv.org/html/2607.24653v2#S5.SS3">v2 &sect;5.3</a>.
+    Background: <a href="../rl/async-rl.html#lag">staleness</a> and
+    <a href="../rl/env-scaling-sandboxing.html">sandbox lifecycle</a>.</p>
+
+  <h3 id="release-evidence">Open weights, evaluation settings, and license limits</h3>
+  <p>The <a href="https://huggingface.co/moonshotai/Kimi-K3">official card</a> links the
+    downloadable weights and reports results at max reasoning effort and temperature 1.0,
+    with top-p 0.95 for single-step tasks and 1.0 for agentic tasks. Its benchmark footnotes
+    matter: Kimi Code, Claude Code, Codex, and other harnesses appear in different comparisons;
+    some GPU tasks use H20-calibrated environments. These are not all matched-harness,
+    matched-hardware reruns. Scores without and with tools are also distinct conditions.</p>
+  <p>The <a href="https://huggingface.co/moonshotai/Kimi-K3/blob/main/LICENSE">Kimi K3 License</a>
+    is a custom license. It includes a separate-agreement condition for Model-as-a-Service
+    operators above its aggregate $20M/consecutive-twelve-month revenue threshold, separate
+    attribution thresholds for large commercial products, and explicit internal-use/official-access
+    exceptions. Read those definitions rather than treating “open weights” as unmodified MIT.</p>
+  <p><strong>Evidence boundary:</strong> November 1 additions are source-checked against the
+    pinned v2 report and model card. Full pre-training token counts, complete intermediate
+    handoff state, and independent reproductions remain absent. No weights, training code,
+    sandbox, or inference engine was run for this update.</p>
 
   <h2 id="compared">8. K3 Against Its Contemporaries</h2>
   <p>
@@ -1134,7 +1222,7 @@
 </div>
 
 <footer>
-  Personal ML notes &nbsp;·&nbsp; Kimi K3 — four rewrites of the transformer at 2.8T
+  Personal ML notes &nbsp;·&nbsp; Kimi K3 — architecture and long-horizon training
   &nbsp;·&nbsp; <a href="../transformer/gated-deltanet.html" style="color:inherit">← Gated DeltaNet page</a>
 </footer>
 
