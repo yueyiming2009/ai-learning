@@ -72,6 +72,9 @@ Assembling the Foundations pieces into a working model and training it. **Core A
 self-attention (forward & backward), the pre-norm block, recurrent depth / loop transformers
 plus their open-model and serving landscape, MoE routing, and the 2026 residual-stream redesigns
 (hyper-connections / attention residuals).
+[Latent MoE](docs/transformer/latent-moe.html) owns the shared compressed-expert mechanism:
+tensor/gradient flow, parameter/FLOP/logical-traffic budgets, and variant links to Kimi,
+Nemotron, MAI-Base-1, and Muse Spark Open.
 **Sequence Mixing & Memory:** linear attention, Mamba & SSMs
 (discretization → selection → the Mamba-2 duality), Gated DeltaNet, KDA,
 sparse attention (the lightning indexer), hybrid attention stacks, and conditional memory.
@@ -150,8 +153,8 @@ in their own domains.
 |---|---|
 | DeepSeek | [R1](docs/models/deepseek-r1.html) joins V3-Base's architecture with the R1-Zero/R1 branches and dense-student distillation; [V4](docs/models/deepseek-v4.html) is a later architecture generation, not an asserted R1 fine-tune. |
 | Microsoft MAI | [Thinking-1](docs/models/mai-thinking-1.html) covers Base-1 through specialist consolidation; [Base-2](docs/models/mai-base-2.html) is a later pre-training/co-design case, not Thinking-1's base. |
-| Mistral | [Mistral Large 4 / Le Chonk](docs/models/mistral-large-4.html) combines indexed MLA/MoE architecture with the preview → additional RL → open-weight release story. |
-| Meta Muse | [Muse Spark Open](docs/models/muse-spark-open.html) covers its shared base with Spark 1.3, multimodal architecture, open-release safety training, and serving/evaluation boundaries. |
+| Mistral | [Mistral Large 4 / Le Chonk](docs/models/mistral-large-4.html) connects a source-pinned block diagram, indexed MLA and KV/index reuse, full-width experts, analytical cache budgets, and the preview → additional RL → release story. |
+| Meta Muse | [Muse Spark Open](docs/models/muse-spark-open.html) combines media-bank fusion, local/global gated GQA, residual gates, compressed experts, memory budgets, and a pinned public SFT customization path; it keeps original-training unknowns separate. |
 | Qwen | [Qwen3.5](docs/models/qwen-3-5.html) combines its design-testbed progression, dense/MoE variants, and SFT engineering walkthrough. |
 | Kimi | [K3](docs/models/kimi-k3.html) connects its hybrid architecture to multimodal pre-training, nine domain/effort teachers, token-reward MOPD, and persistent long-horizon RL state. |
 | GLM | [GLM-5 / 5.2](docs/models/glm-5.html) shares a release-series page with architectural changes and training/serving notes. |

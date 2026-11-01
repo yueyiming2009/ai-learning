@@ -10,6 +10,11 @@
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
   <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
   <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <script>
+    MathJax = {tex: {inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']]},
+      options: {skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre']}};
+  </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; }
     :root {
@@ -61,6 +66,29 @@
       .page-wrap { padding: 24px 16px 56px; }
       th, td { padding: 9px; }
     }
+
+    :root { --plot-grid: #e5e7eb; --plot-tick: #6b7280; --plot-axis: #9ca3af; --plot-violet: #7c3aed; --plot-teal: #0d9488; }
+    @media (prefers-color-scheme: dark) {
+      :root { --plot-grid: #303641; --plot-tick: #9aa1ab; --plot-axis: #687385; --plot-violet: #a78bfa; --plot-teal: #2dd4bf; }
+    }
+    figure { margin: 24px 0; }
+    .diagram-scroll, .equation { overflow-x: auto; margin: 20px 0; }
+    .diagram { width: 100%; min-width: 740px; display: block; color: var(--text); }
+    .diagram rect { fill: var(--surface); stroke: var(--border); }
+    .diagram .focus { fill: var(--accent-light); stroke: var(--accent); }
+    .diagram text { fill: currentColor; font: 14px -apple-system, BlinkMacSystemFont, sans-serif; }
+    .diagram .small { font-size: 12px; }
+    figcaption { color: var(--muted); font-size: 0.9rem; }
+    .figure { padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+    .figure canvas { width: 100%; height: 300px; display: block; }
+    .controls { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; }
+    .controls label { font-size: 0.9rem; }
+    .controls select { max-width: 100%; color: var(--text); background: var(--bg); border: 1px solid var(--border); padding: 6px; }
+    .controls input[type="range"] { width: 140px; accent-color: var(--accent); vertical-align: middle; }
+    .controls select:focus-visible, .controls input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    .legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 0.85rem; }
+    .lg { display: inline-block; width: 18px; height: 3px; background: var(--c); vertical-align: middle; margin-right: 6px; }
+    output { display: block; margin: 12px 0; font-size: 0.9rem; }
   </style>
 </head>
 <body>
@@ -71,6 +99,7 @@
   </a>
   <div class="nav-links">
     <a href="#identity">Lineage</a><a href="#architecture">Architecture</a><a href="#training">Training</a>
+    <a href="#latent-experts">Latent experts</a><a href="#cache-budget">Memory math</a><a href="#customization">SFT path</a>
     <a href="#serving">Serving</a><a href="#evaluation">Evaluation</a><a href="#license">License</a><a href="#sources">Sources</a>
   </div>
 </nav>
@@ -86,11 +115,13 @@
     <p><strong>Lineage:</strong> Muse Spark Open shares a base with Muse Spark 1.3 and has
       additional safety post-training for open distribution. It is not a claim that the
       original hosted Muse Spark weights were released unchanged.</p>
-    <p><a href="#architecture">Architecture</a> &middot; <a href="#training">Training disclosures</a> &middot;
-      <a href="#serving">Systems</a> &middot; <a href="#evaluation">Evaluation</a></p>
-    <p><strong>Coverage:</strong> Meta's model card, release account, PyTorch integration
-      article, and evaluation methodology, checked November 1, 2026. The complete original
-      training recipe is not disclosed by these sources.</p>
+    <p><a href="#architecture">Architecture</a> &middot; <a href="#latent-experts">Latent experts</a> &middot;
+      <a href="#cache-budget">Memory budgets</a> &middot; <a href="#customization">Public SFT path</a> &middot;
+      <a href="#evaluation">Evaluation</a></p>
+    <p><strong>Coverage:</strong> model card plus the public TorchTitan implementation and
+      customization recipe pinned at <code>d86c77d</code>, checked November 1, 2026.
+      The implementation reveals the local/global attention layout, compressed experts,
+      residual gates, and media-data path; the original production training history remains separate.</p>
   </aside>
 
   <h2 id="identity">1. The open-weight branch, not merely the API model</h2>
@@ -110,28 +141,109 @@
     automatically obtained by pruning this MoE.</p>
 
   <h2 id="architecture">2. Gated GQA, routed experts, and multimodal perception</h2>
+  <figure>
+    <div class="diagram-scroll">
+      <svg class="diagram" viewBox="0 0 990 720" role="img" aria-labelledby="muse-diagram-title muse-diagram-desc">
+        <title id="muse-diagram-title">Muse Spark Open multimodal stack and normalized gated decoder block</title>
+        <desc id="muse-diagram-desc">Text embeddings, projected vision banks, and audio banks merge by token indices into an 8192-wide stream. Sixty-two decoder layers contain gated GQA followed by compressed MoE. The router reads the full input; expert computation compresses to 4096 and restores 8192. Learned residual gates combine normalized branches rather than plain addition.</desc>
+        <defs><marker id="muse-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="currentColor"/></marker></defs>
+        <g fill="none" stroke="currentColor" marker-end="url(#muse-arrow)">
+          <path d="M100 125V185H235V220"/><path d="M255 125V185"/><path d="M410 125V185H255"/>
+          <path d="M235 280V325"/><path d="M235 395V450"/><path d="M235 515V565"/>
+          <path d="M730 80V115"/><path d="M730 160V195"/><path d="M730 275V310"/>
+          <path d="M730 365V405"/><path d="M730 450V490"/><path d="M730 570V610"/>
+          <path d="M730 80H955V338H895"/><path d="M730 382H930V638H895"/>
+        </g>
+        <rect x="25" y="35" width="150" height="90" rx="8"/><text x="100" y="64" text-anchor="middle">Text IDs</text><text x="100" y="89" text-anchor="middle" class="small">embedding + RMSNorm</text><text x="100" y="110" text-anchor="middle" class="small">202,048 × 8192</text>
+        <rect x="185" y="35" width="140" height="90" rx="8"/><text x="255" y="64" text-anchor="middle">Images / video</text><text x="255" y="89" text-anchor="middle" class="small">shared vision forward</text><text x="255" y="110" text-anchor="middle" class="small">adapter → projection</text>
+        <rect x="340" y="35" width="140" height="90" rx="8"/><text x="410" y="64" text-anchor="middle">Waveforms</text><text x="410" y="89" text-anchor="middle" class="small">audio encoder</text><text x="410" y="110" text-anchor="middle" class="small">8192-wide output bank</text>
+        <rect x="65" y="220" width="340" height="60" rx="8" class="focus"/><text x="235" y="247" text-anchor="middle">Gather media banks at token positions</text><text x="235" y="269" text-anchor="middle" class="small">one [tokens, 8192] decoder input</text>
+        <rect x="65" y="325" width="340" height="70" rx="8" class="focus"/><text x="235" y="354" text-anchor="middle">62 decoder layers</text><text x="235" y="379" text-anchor="middle" class="small">46 local RoPE + 16 global NoPE</text>
+        <rect x="65" y="450" width="340" height="65" rx="8"/><text x="235" y="477" text-anchor="middle">Final norm → untied LM head</text><text x="235" y="499" text-anchor="middle" class="small">scale + tanh soft cap → text logits</text>
+        <text x="235" y="593" text-anchor="middle">Generated text</text><text x="235" y="620" text-anchor="middle" class="small">Media banks have separate token-alignment maps.</text>
+        <text x="730" y="60" text-anchor="middle">One block · FP32 residual stream</text>
+        <rect x="600" y="115" width="260" height="45" rx="8"/><text x="730" y="144" text-anchor="middle">RMSNorm → BF16 branch input</text>
+        <rect x="570" y="195" width="320" height="80" rx="8" class="focus"/><text x="730" y="220" text-anchor="middle">GQA: 128 Q / 16 KV, head dim 64</text><text x="730" y="244" text-anchor="middle" class="small">QK norm → local/global attention</text><text x="730" y="264" text-anchor="middle" class="small">output norm × sigmoid gate → Wₒ</text>
+        <rect x="565" y="310" width="330" height="55" rx="8"/><text x="730" y="344" text-anchor="middle">Branch norm → learned residual mix</text>
+        <rect x="600" y="405" width="260" height="45" rx="8"/><text x="730" y="434" text-anchor="middle">RMSNorm → BF16 branch input</text>
+        <rect x="570" y="490" width="320" height="80" rx="8" class="focus"/><text x="730" y="517" text-anchor="middle">Latent MoE: 8192 → 4096 → 8192</text><text x="730" y="542" text-anchor="middle" class="small">8/256 experts; per-expert output norm</text><text x="730" y="561" text-anchor="middle" class="small">router reads 8192; no shared experts</text>
+        <rect x="565" y="610" width="330" height="55" rx="8"/><text x="730" y="644" text-anchor="middle">Branch norm → learned residual mix</text>
+      </svg>
+    </div>
+    <figcaption>Model-level paths from pinned TorchTitan code. “Public implementation”
+      is stronger evidence than a guessed block diagram, but does not establish that every
+      hosted endpoint or historical training checkpoint used identical kernels.</figcaption>
+  </figure>
   <div class="table-wrap">
     <table>
-      <caption>Architecture fields explicitly reported in Meta's model card.</caption>
+      <caption>Model-card dimensions supplemented by the pinned TorchTitan production flavor and forward path.</caption>
       <thead><tr><th scope="col">Part</th><th scope="col">Disclosed design</th><th scope="col">Consequence</th></tr></thead>
       <tbody>
         <tr><th scope="row">Language backbone</th><td>62 layers, hidden width 8,192, vocabulary 202,048; untied input/output embeddings.</td><td>Input and output matrices are separate parameters rather than one shared embedding table.</td></tr>
-        <tr><th scope="row">Attention</th><td>128 query heads and 16 KV heads, head dimension 64; output gate/output normalization and QK normalization.</td><td>Grouped-query attention reduces KV-head count. This is not MLA or a KDA recurrent-state architecture.</td></tr>
-        <tr><th scope="row">Experts</th><td>256 experts with top-8 routing.</td><td>Only a fraction of expert computation is active per token; total weight storage remains much larger than active compute.</td></tr>
+        <tr><th scope="row">Attention</th><td>128 query heads and 16 KV heads, head dimension 64; output gate/output normalization and QK normalization. The public model definition specifies 16 global NoPE layers and 46 RoPE layers with a 2048-token local window.</td><td>Grouped-query sharing and local attention save different parts of the KV budget. This is not MLA or recurrent KDA.</td></tr>
+        <tr><th scope="row">Experts</th><td>256 experts, top-8; the public implementation compresses 8192 → 4096, runs 4096-intermediate-width SwiGLU experts, then restores 8192.</td><td>This is <a href="../transformer/latent-moe.html">Latent/compressed MoE</a>, with no shared experts in this implementation—not ordinary full-width experts.</td></tr>
         <tr><th scope="row">Perception encoder</th><td>1.8B parameters, 50 layers, width 1,536, 16 heads, 14 × 14 patches, output width 4,096.</td><td>Perceptual features condition a shared text-generating model.</td></tr>
         <tr><th scope="row">Encoder position/attention</th><td>Learned absolute positions plus 2D RoPE; sparse attention with every fourth and last layer full; LayerNorm and GELU.</td><td>These are encoder specifications, not a declaration that the language backbone uses the same sparse-attention layout.</td></tr>
       </tbody>
     </table>
   </div>
-  <p>The card establishes audio/video input support but does not provide a complete audio
-    front-end or audiovisual tokenization graph. Do not apply the image-patch encoder's
-    dimensions to every modality. The useful contrast with
+  <p>The card's image-encoder fields do not describe every modality. The public model path
+    packs images and video frames into one vision forward, applies an adapter/projection and
+    perception normalization, then gathers the resulting feature banks at token-aligned indices.
+    Audio has its own waveform encoder and feature bank, normalized before the same token-alignment
+    step. This is more specific than “multimodal embeddings are concatenated.” The useful contrast with
     <a href="mistral-large-4.html#architecture">Le Chonk's indexed MLA</a> and
     <a href="kimi-k3.html#attention">K3's KDA/MLA hybrid</a> is the disclosed attention
     mechanism, not an inferred common architecture.</p>
   <p class="muted">Mechanics: <a href="../transformer/attention.html">attention</a>,
     <a href="../transformer/moe-routing.html">MoE routing</a>,
     <a href="../inference/kv-cache.html">KV-cache accounting</a>.</p>
+
+  <h3 id="decoder-block">Read one block in execution order</h3>
+  <p>For each normalized input \(x\in\mathbb R^{8192}\), the fused QKV projection produces
+    \((128+2\times16)\times64=10240\) features: 8192 Q, 1024 K, and 1024 V.
+    Eight query heads share each KV head. Per-head Q/K normalization precedes positional
+    encoding. <strong>One-based layers 2, 6, 10, …, 62 are global and use no RoPE</strong>;
+    the other 46 layers use a 2048-token sliding window and complex RoPE.</p>
+  <p>The attention result is normalized per head, flattened to 8192 features, multiplied
+    by an input-dependent sigmoid gate of the same width, and projected with \(W_o\).
+    That full-width gate is a learned \(8192\times8192\) projection, not one scalar per head.</p>
+  <p>A second, different gate controls the residual connection after branch normalization:</p>
+  <div class="equation">\[
+    \beta=\sigma(g/\tau),\qquad
+    \alpha=\sqrt{\max(1-\beta^2,\epsilon)},\qquad
+    h_{\rm next}=\alpha\odot h+\beta\odot {\rm branch}.
+  \]</div>
+  <p>The gate \(g\) is a learned per-channel parameter, not the attention output's
+    input-dependent gate. Away from the floor, \(\alpha^2+\beta^2=1\); this does not
+    guarantee an exactly preserved norm for correlated streams and branches. The pinned
+    implementation carries the residual in FP32 while attention/expert branches use BF16.</p>
+  <p class="muted">Sources:
+    <a href="https://github.com/pytorch/torchtitan/blob/d86c77d609b4c35d71b4ed7a18e0c69f2a4f11fb/torchtitan/models/muse_spark/model.py#L85-L205">attention order</a>,
+    <a href="https://github.com/pytorch/torchtitan/blob/d86c77d609b4c35d71b4ed7a18e0c69f2a4f11fb/torchtitan/models/muse_spark/model.py#L262-L400">residual gates and block</a>,
+    <a href="https://github.com/pytorch/torchtitan/blob/d86c77d609b4c35d71b4ed7a18e0c69f2a4f11fb/torchtitan/models/muse_spark/flavors.py#L1000-L1045">production flavor</a>.</p>
+
+  <h3 id="latent-experts">Muse's compressed experts: the detail the model-card summary missed</h3>
+  <p>The router reads all 8192 features and computes FP32 sigmoid scores. Expert bias affects
+    top-8 selection; mixture weights use the selected unbiased scores, normalized across
+    those eight experts. A load-based bias update handles balancing. Meanwhile the compute
+    path applies a shared 8192 → 4096 projection and normalization <em>before dispatch</em>.</p>
+  <p>Each selected expert computes a gated \(4096\to4096\to4096\) FFN. Its output is normalized
+    <strong>before weighting and aggregation</strong>; the combined 4096-wide result is then
+    projected back to 8192. No full-width shared expert is configured—the class explicitly
+    rejects one. Compare with <a href="kimi-k3.html#moe">Kimi's norm after the sum</a> and
+    <a href="nemotron-3.html#latentmoe">Nemotron's two-matrix ReLU² experts</a>.</p>
+  <p>The routed matrices alone contain <strong>12.885B parameters per layer, 798.864B over
+    62 layers</strong>. The two compression projections add 67.109M/layer.
+    At top-8, forward matrix work for this branch is about <strong>0.940 GFLOPs/token/layer</strong>;
+    full-width experts at the same intermediate width would cost 1.611 GFLOPs. This is
+    a shape-controlled counterfactual, not a claim that equal quality survives removing compression.</p>
+  <p>The <a href="../transformer/latent-moe.html">Latent MoE guide</a> owns the shared
+    tensor/gradient derivation and calculator. Here the defining choices are full-width routing,
+    half-width expert computation, per-expert normalization, and no shared branch.</p>
+  <p class="muted">Sources:
+    <a href="https://github.com/pytorch/torchtitan/blob/d86c77d609b4c35d71b4ed7a18e0c69f2a4f11fb/torchtitan/models/muse_spark/moe.py">compressed MoE forward</a> and
+    <a href="https://github.com/pytorch/torchtitan/blob/d86c77d609b4c35d71b4ed7a18e0c69f2a4f11fb/torchtitan/models/muse_spark/flavors.py#L453-L550">router/expert configuration</a>.</p>
 
   <h2 id="training">3. What is known about how the model was trained</h2>
   <p>The model card describes multimodal data from public sources, web crawling, acquired data,
@@ -142,7 +254,7 @@
     computer interaction, and long-horizon workflows. The model learns to plan, act, observe,
     and recover from errors; the open release adds safety post-training because downstream
     deployments may not retain the hosted product's safeguards.</p>
-  <div class="note"><strong>Missing recipe details:</strong> the exact pre-training token budget,
+  <div class="note"><strong>Missing original-training details:</strong> the exact pre-training token budget,
     optimizer/schedule, full SFT/RL ordering, reward objectives, specialist/consolidation
     structure, and intermediate checkpoint handoffs are not supplied here. Do not draw a
     precise nine-teacher or SFT → GRPO pipeline just because another model uses one.</div>
@@ -153,7 +265,8 @@
   <p class="muted">Sources: <a href="https://huggingface.co/meta-models/Muse-Spark-Open-816B-A42B#training-data">training-data disclosure</a>
     and <a href="https://pytorch.org/blog/muse-spark-open/">PyTorch integration account</a>.
     Context: <a href="../transformer/model-training-lifecycle.html#handoffs">stage handoffs</a>
-    and <a href="../systems/torchtitan.html">TorchTitan</a>.</p>
+    and     <a href="../systems/torchtitan.html">TorchTitan</a>. The concrete customization path below
+    is separately supported by public code.</p>
 
   <h2 id="serving">4. Portability and memory are workload-dependent</h2>
   <p>Meta lists BF16 and NVFP4 weights, support across multiple inference engines, and an
@@ -173,6 +286,70 @@
     <a href="https://pytorch.org/blog/muse-spark-open/">kernel integration</a>, and the
     <a href="https://huggingface.co/meta-models/Muse-Spark-Open-816B-A42B#model-access-and-best-practices">model card</a>.
     No hardware, kernels, model code, or weights were run for this page.</p>
+
+  <h3 id="cache-budget">Worked cache budget: local/global layout changes the answer</h3>
+  <p>At two bytes per element, one token's K and V in one attention layer occupy
+    \(2\times16\times64\times2=4096\) bytes. Assuming a serving backend evicts local
+    KV outside its window, \(C\) independent requests of length \(T\) require:</p>
+  <div class="equation">\[
+    M_{\rm KV}=C\cdot4096\,[16T+46\min(T,2048)].
+  \]</div>
+  <p>At \(T=2^{20}\) and \(C=1\), that is <strong>64.36 GiB</strong>, versus
+    <strong>248 GiB</strong> if all 62 layers retained full history. A training
+    sliding-window mask does not by itself guarantee this cache-eviction implementation.
+    Prefix sharing, quantization, metadata, and engine-specific allocation can change actual usage.</p>
+  <div class="figure">
+    <div class="controls">
+      <label>Context exponent <input id="cache-exp" type="range" min="15" max="20" step="1" value="20"></label>
+      <label>Independent requests <select id="cache-batch"><option>1</option><option>4</option><option>8</option></select></label>
+      <label>Cache bytes/element <select id="cache-bytes"><option value="2">2 (BF16)</option><option value="1">1 (hypothetical 8-bit)</option></select></label>
+    </div>
+    <output id="cache-result" aria-live="polite"></output>
+    <canvas id="plot-model-cache" aria-label="Muse local/global and all-full-history KV cache GiB versus context length"></canvas>
+    <div class="legend"><span><i class="lg" style="--c:var(--plot-violet)"></i>16 global + 46 windowed</span><span><i class="lg" style="--c:var(--plot-teal)"></i>All 62 retain full history</span></div>
+    <p class="muted">X: Ki tokens. Y: aggregate GiB. Analytical cache payload only,
+      not a measured peak-memory result or a guaranteed engine configuration.</p>
+    <noscript><p>Default: one 1M-token BF16 request uses about 64.36 GiB with window eviction, versus 248 GiB without it.</p></noscript>
+  </div>
+  <p><strong>Weights are the other large term.</strong> 816B BF16 parameters imply about
+    1519.9 GiB of raw weight payload; ideal four-bit packing implies 380.0 GiB before
+    scales and higher-precision exceptions. One-device “42B active” arithmetic cannot size
+    an 816B deployment.</p>
+  <p>With an illustrative EP16 placement, the calculated 798.864B routed expert parameters
+    contribute <strong>93 GiB BF16 per rank</strong>. The remaining nominal parameters add
+    roughly 31.9 GiB/rank <em>if replicated</em>, before activations, adapters, scratch, and cache.
+    This explains why even a LoRA run needs a serious placement plan.</p>
+
+  <h3 id="customization">A real public SFT recipe—not a reconstruction of Meta's original run</h3>
+  <p>The pinned TorchTitan recipe
+    <code>muse_spark_816b_a42b_ultradata_lora_sft_cp16_128k</code> provides a concrete
+    post-release adaptation path. Its stated target is 16 GB300 GPUs, 128K sequences,
+    CP16/EP16/TP1, BF16 Dist-MoE and FA4. This is a source example, not a run performed here.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Transition</th><th scope="col">What the public recipe specifies</th><th scope="col">Correctness gate</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Released assets → model</th><td>Local model/tokenizer assets; existing native checkpoints take precedence over initial HF loading.</td><td>Use a fresh checkpoint destination for a new adaptation. Never mistake an implicit resume for loading the released base.</td></tr>
+        <tr><th scope="row">Conversations → packed batches</th><td>Message/tool conversion, a Muse renderer, first-fit packing, up to eight documents; chunked cross-entropy in the underlying training configuration.</td><td>Inspect rendered IDs, target/loss masks, and document boundaries. Do not treat tool outputs as assistant-generated actions by accident.</td></tr>
+        <tr><th scope="row">Adaptation → update</th><td>LoRA rank 8, alpha 16, targeting fused QKV, output projection/gate, and expert input/return matrices; AdamW at 1e-4, betas 0.9/0.95, zero weight decay.</td><td>Check exactly which parameters receive gradients. These are customization settings, not the original pre-training optimizer.</td></tr>
+        <tr><th scope="row">Update → saved artifact</th><td>Native checkpoints retain adapters and training state; the documented HF export omits adapters.</td><td>Reload the intended adapted artifact and compare held-out behavior. An HF export without adapters is not the trained result.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p><strong>Multimodal distributed training adds a participation contract.</strong> Enabled
+    perception encoders run on every DP rank, using dummy media where necessary, so FSDP
+    all-gathers/reduce-scatters stay aligned. Unlisted modalities are skipped consistently;
+    unused encoder gradients remain <code>None</code>. Rank-dependent “no image, skip the
+    encoder” logic can hang even when the text tensors look correct.</p>
+  <p>Full-parameter Adam-style training at an illustrative 16 bytes/parameter would require
+    about 13.1 TB of aggregate state before activations. LoRA reduces trainable gradient/
+    optimizer state, not the need to place the frozen expert weights. The README further
+    restricts TP/EP/CP combinations; e.g. Ulysses requires TP × CP to divide 16 KV heads.
+    Do not multiply individually valid parallelism flags arbitrarily.</p>
+  <p class="muted">Sources:
+    <a href="https://github.com/pytorch/torchtitan/blob/d86c77d609b4c35d71b4ed7a18e0c69f2a4f11fb/torchtitan_recipes/models/muse_spark.py#L661-L805">data/LoRA recipe and checkpoint warnings</a>,
+    <a href="https://github.com/pytorch/torchtitan/blob/d86c77d609b4c35d71b4ed7a18e0c69f2a4f11fb/torchtitan/models/muse_spark/README.md">modality and parallelism contracts</a>,
+    <a href="https://github.com/pytorch/torchtitan/blob/d86c77d609b4c35d71b4ed7a18e0c69f2a4f11fb/torchtitan/models/muse_spark/model.py#L634-L797">media-bank fusion</a>.</p>
 
   <h2 id="evaluation">5. A score table is a mixture of measurement protocols</h2>
   <p>The October card reports 61.8 on JobBench, 89.2 on MCP-Atlas, 76.4 on
@@ -213,8 +390,56 @@
     <a href="https://huggingface.co/meta-models/Muse-Spark-Open-816B-A42B">official model card and terms</a>,
     <a href="https://pytorch.org/blog/muse-spark-open/">PyTorch release/integration article</a>,
     and the <a href="https://research.meta.ai/static/muse-spark-open-evaluation-methodology">evaluation methodology</a>.
-    Public disclosures, explanatory interpretation, and unreleased training details remain separate.</p>
+    The deeper walkthrough also reads the public
+    <a href="https://github.com/pytorch/torchtitan/tree/d86c77d609b4c35d71b4ed7a18e0c69f2a4f11fb/torchtitan/models/muse_spark">TorchTitan model implementation</a>
+    and its adaptation recipe. The gated Hugging Face config was not accessed; no access
+    gate was bypassed. Implementation facts, analytical budgets, and original-training
+    unknowns are explicitly different evidence classes.</p>
 </main>
 <footer><a href="../index.html#models-muse">Meta Muse family</a> &middot; <a href="../transformer/model-training-lifecycle.html">Training lifecycle</a></footer>
+
+<script>
+(function () {
+  const exponent=document.getElementById('cache-exp');
+  const batch=document.getElementById('cache-batch');
+  const bytes=document.getElementById('cache-bytes');
+  const result=document.getElementById('cache-result');
+  const canvas=document.getElementById('plot-model-cache');
+  const cssVar=name=>getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  function drawPlot(canvas, cfg) {
+    const w=canvas.clientWidth,h=canvas.clientHeight,dpr=window.devicePixelRatio||1;
+    if (!w || !h) return;
+    canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);
+    const c=canvas.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,w,h);
+    const mL=44,mR=14,mT=14,mB=30,pw=w-mL-mR,ph=h-mT-mB;
+    const X=x=>mL+(x-cfg.xMin)/(cfg.xMax-cfg.xMin)*pw;
+    const Y=y=>mT+(cfg.yMax-y)/(cfg.yMax-cfg.yMin)*ph;
+    c.font='11px sans-serif';c.lineWidth=1;c.strokeStyle=cssVar('--plot-grid');c.fillStyle=cssVar('--plot-tick');
+    c.textAlign='center';c.textBaseline='top';
+    cfg.xTicks.forEach(t=>{c.beginPath();c.moveTo(X(t),mT);c.lineTo(X(t),mT+ph);c.stroke();c.fillText(t,X(t),mT+ph+6);});
+    c.textAlign='right';c.textBaseline='middle';
+    cfg.yTicks.forEach(t=>{c.beginPath();c.moveTo(mL,Y(t));c.lineTo(mL+pw,Y(t));c.stroke();c.fillText(t.toFixed(1),mL-6,Y(t));});
+    c.strokeStyle=cssVar('--plot-axis');c.beginPath();c.moveTo(mL,mT);c.lineTo(mL,mT+ph);c.lineTo(mL+pw,mT+ph);c.stroke();
+    c.save();c.beginPath();c.rect(mL,mT,pw,ph);c.clip();
+    cfg.series.forEach(s=>{c.beginPath();c.strokeStyle=cssVar(s.color);c.lineWidth=2.5;c.setLineDash(s.dash||[]);
+      for(let i=0;i<=260;i++){const x=cfg.xMin+(cfg.xMax-cfg.xMin)*i/260;i?c.lineTo(X(x),Y(s.fn(x))):c.moveTo(X(x),Y(s.fn(x)));}c.stroke();});
+    c.setLineDash([3,3]);c.strokeStyle=cssVar('--plot-axis');c.beginPath();c.moveTo(X(cfg.selected),mT);c.lineTo(X(cfg.selected),mT+ph);c.stroke();c.restore();
+  }
+
+  function render() {
+    const C=Number(batch.value),b=Number(bytes.value),T=2**Number(exponent.value);
+    const configured=T=>(2 * 16 * 64 * (16 * T + 46 * Math.min(T, 2048)))*C*b/2**30;
+    const baseline=T=>(2 * 16 * 64 * 62 * T)*C*b/2**30;
+    result.textContent=`${T.toLocaleString()} tokens × ${C} requests × ${b} bytes: ${configured(T).toFixed(2)} GiB (16 global + 46 windowed); ${baseline(T).toFixed(2)} GiB (all layers retain history). Cache payload only.`;
+    const ymax=Math.ceil(Math.max(configured(1048576),baseline(1048576))/10)*10;
+    drawPlot(canvas,{xMin:0,xMax:1024,yMin:0,yMax:ymax,xTicks:[0,256,512,768,1024],yTicks:[0,ymax/4,ymax/2,3*ymax/4,ymax],selected:T/1024,
+      series:[{fn:x=>configured(x*1024),color:'--plot-violet'},{fn:x=>baseline(x*1024),color:'--plot-teal',dash:[5,4]}]});
+  }
+  exponent.addEventListener('input',render);batch.addEventListener('change',render);bytes.addEventListener('change',render);
+  let raf;window.addEventListener('resize',()=>{cancelAnimationFrame(raf);raf=requestAnimationFrame(render);});
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',render);
+  render();
+})();
+</script>
 </body>
 </html>
