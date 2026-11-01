@@ -1,0 +1,2222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Qwen3.5 — Architecture, Parameter Counts &amp; SFT Sharding</title>
+  <link rel="canonical" href="https://yueyiming2009.github.io/ai-learning/models/qwen-3-5.html">
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --border: #e8eaed;
+      --text: #1a1a2e;
+      --muted: #6b7280;
+      --accent: #7c3aed;
+      --accent-light: #f5f3ff;
+      --warning-bg: #fffbeb;
+      --warning-border: #f59e0b;
+      --step-bg: #f9fafb;
+      --step-border: #d1d5db;
+      --boxed-bg: #f0fdf4;
+      --boxed-border: #16a34a;
+      --compare-bg: #eff6ff;
+      --compare-border: #3b82f6;
+      --ink: #374151;
+      --row-hover: #fafafa;
+      --note-fg: #78350f;
+      --result-fg: #16a34a;
+      --compare-fg: #2563eb;
+      --violet-border: #ddd6fe;
+      --nav-bg: rgba(255,255,255,0.92);
+      --fig-bg: #ffffff;
+      --plot-grid: #eceef1;
+      --plot-axis: #c7cbd1;
+      --plot-tick: #9ca3af;
+      --plot-violet: #7c3aed;
+      --plot-violet2: #a78bfa;
+      --plot-amber: #d97706;
+      --plot-teal: #0d9488;
+      --plot-gray: #9ca3af;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --surface: #171b21;
+        --border: #262b33;
+        --text: #e5e7eb;
+        --muted: #9aa1ab;
+        --accent: #a78bfa;
+        --accent-light: #1a1626;
+        --warning-bg: #251c0b;
+        --warning-border: #b45309;
+        --step-bg: #14181e;
+        --step-border: #333a44;
+        --boxed-bg: #0e2016;
+        --boxed-border: #15803d;
+        --compare-bg: #101a2b;
+        --compare-border: #1e40af;
+        --ink: #cbd5e1;
+        --row-hover: #191e25;
+        --note-fg: #fcd34d;
+        --result-fg: #4ade80;
+        --compare-fg: #60a5fa;
+        --violet-border: #372a5e;
+        --nav-bg: rgba(15,17,21,0.9);
+        --fig-bg: #14181e;
+        --plot-grid: #232830;
+        --plot-axis: #3a4149;
+        --plot-tick: #6b7280;
+        --plot-violet: #a78bfa;
+        --plot-violet2: #c4b5fd;
+        --plot-amber: #fbbf24;
+        --plot-teal: #2dd4bf;
+        --plot-gray: #6b7280;
+      }
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 52px;
+    }
+    .nav-brand {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .nav-links a {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .nav-back {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      white-space: nowrap;
+      transition: color 0.15s;
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+    .nav-back:hover { color: var(--text); }
+
+    .hero {
+      background: linear-gradient(135deg, #5b21b6 0%, #7c3aed 50%, #8b5cf6 100%);
+      color: white;
+      padding: 56px 24px 48px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.5rem, 4vw, 2.2rem);
+      font-weight: 600;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    .hero p {
+      margin: 0 auto;
+      opacity: 0.85;
+      font-size: 0.97rem;
+      max-width: 640px;
+    }
+    .hero-pill {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 100px;
+      font-size: 0.78rem;
+      padding: 3px 12px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .page-wrap {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 2.8em 0 0.8em;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text);
+    }
+    h3 {
+      font-size: 0.97rem;
+      font-weight: 600;
+      margin: 1.6em 0 0.4em;
+      color: var(--ink);
+    }
+    p { margin: 0.6em 0; }
+    ol, ul { padding-left: 1.5em; margin: 0.6em 0; }
+    li { margin-bottom: 0.4em; }
+    em { color: var(--ink); }
+    a { color: var(--accent); }
+
+    code {
+      font-family: 'SF Mono', SFMono-Regular, ui-monospace, Menlo, monospace;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.88em;
+    }
+    pre {
+      overflow-x: auto;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      font-size: 0.85rem;
+      line-height: 1.6;
+    }
+    pre code { border: 0; padding: 0; font-size: inherit; }
+    .plot-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 18px;
+      margin-bottom: 16px;
+    }
+    .plot-controls label { display: grid; gap: 4px; font-size: 0.82rem; color: var(--muted); }
+    .plot-controls select {
+      max-width: 100%;
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 6px;
+      font: inherit;
+    }
+    .plot-controls select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .plot-readout { display: block; margin-top: 14px; font-size: 0.9rem; }
+    details.ledger { margin: 1.2em 0; }
+    details.ledger > summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 16px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface);
+      font-weight: 600;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    tr:hover td { background: var(--row-hover); }
+
+    .step {
+      background: var(--step-bg);
+      border: 1px solid var(--step-border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .step-label {
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-label::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    .note {
+      background: var(--warning-bg);
+      border-left: 3px solid var(--warning-border);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 16px;
+      margin: 1em 0;
+      font-size: 0.92em;
+      color: var(--note-fg);
+    }
+    .note::before { content: '⚠ '; }
+
+    .result {
+      background: var(--boxed-bg);
+      border: 1.5px solid var(--boxed-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+      text-align: center;
+      overflow-x: auto;
+    }
+    .result-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--result-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    .compare {
+      background: var(--compare-bg);
+      border: 1.5px solid var(--compare-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 1.2em 0;
+    }
+    .compare-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--compare-fg);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 10px;
+    }
+    .compare-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 600px) { .compare-grid { grid-template-columns: 1fr; } }
+    .compare-col-label {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--ink);
+      margin-bottom: 4px;
+    }
+
+    .figure {
+      background: var(--fig-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 16px 14px;
+      margin: 1.6em 0;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .figure svg { width: 100%; height: auto; display: block; }
+    .arch-stack svg { max-width: 520px; margin: 0 auto; }
+    figure.figure { margin-left: 0; margin-right: 0; }
+    .figure canvas {
+      width: 100%;
+      height: 300px;
+      display: block;
+    }
+    .figure canvas[hidden] { display: none; }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      justify-content: center;
+      margin-top: 12px;
+      font-size: 0.82rem;
+      color: var(--text);
+    }
+    .legend-item { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, var(--c) 0 5px, transparent 5px 9px); }
+    .figure-caption {
+      font-size: 0.85rem;
+      color: var(--muted);
+      line-height: 1.6;
+      margin: 14px 4px 2px;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .summary-card {
+      background: var(--accent-light);
+      border: 1px solid var(--violet-border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .summary-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .summary-card p { margin: 0; font-size: 0.9rem; }
+
+    .next-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 1.2em 0;
+    }
+    .next-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      text-decoration: none;
+      color: inherit;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      display: block;
+    }
+    .next-card:hover { border-color: var(--accent); box-shadow: 0 2px 8px rgba(124,58,237,0.1); }
+    .next-card-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .next-card-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 4px; }
+    .next-card p { margin: 0; font-size: 0.88rem; color: var(--muted); }
+
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    @media (max-width: 600px) {
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 32px 16px 60px; }
+    }
+
+    .model-map { border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 8px; padding: 16px 20px; margin: 0 0 28px; background: var(--surface); scroll-margin-top: 72px; }
+    .model-map p { margin: 8px 0; font-size: 0.9rem; overflow-wrap: anywhere; }
+    .model-map a { color: var(--accent); text-underline-offset: 3px; }
+    .model-map a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Qwen3.5</a>
+  <div class="nav-links">
+    <a href="#model-context">Model map</a>
+    <a href="../index.html">← All notes</a>
+    <a href="../index.html#models-qwen">&uarr; Models &middot; Qwen</a>
+    <a href="#testbed">The testbed</a>
+    <a href="#stack">The hybrid stack</a>
+    <a href="#gdn">DeltaNet layers</a>
+    <a href="#gated-attn">Gated attention</a>
+    <a href="#moe">MoE</a>
+    <a href="#mtp">MTP</a>
+    <a href="#multimodal">Multimodal</a>
+    <a href="#compared">Compared</a>
+    <a href="#parameters">Parameter ledger</a>
+    <a href="#sft-memory">SFT memory</a>
+    <a href="#sharding">Sharding layouts</a>
+    <a href="#megatron">Megatron EP / TP</a>
+    <a href="#collective-paths">Collectives &amp; bandwidth</a>
+    <a href="#sft-checklist">SFT recipe</a>
+    <a href="#summary">Summary</a>
+  </div>
+  <a class="nav-back" href="../transformer/gated-deltanet.html">← Gated DeltaNet</a>
+</nav>
+
+<div class="hero">
+  <span class="hero-pill">Model family</span>
+  <h1>Qwen3.5</h1>
+  <p>From the hybrid architecture to the training cluster: count every decoder layer, separate routed compute from resident weights, and choose an SFT sharding strategy for the 27B, 35B-A3B, or 397B-A17B model.</p>
+</div>
+
+<div class="page-wrap">
+
+  <aside class="model-map" id="model-context" aria-label="Model identity, lineage, and coverage">
+    <p><strong><a href="../index.html#models-qwen">Qwen family</a> &middot; Model-centered reading map</strong></p>
+    <p><strong>Lineage:</strong> <a href="#testbed">Qwen3-Next is the design testbed</a>; Qwen3.5 brings that hybrid approach to several dense/MoE sizes. These are design and variant relationships, not an asserted chain of checkpoint fine-tunes.</p>
+    <p><a href="#stack">Architecture</a> &middot; <a href="#parameters">Model sizes</a> &middot; <a href="#sft-memory">SFT walkthrough</a> &middot; <a href="#compared">Comparisons</a></p>
+    <p><strong>Coverage:</strong> The SFT sections are an engineering walkthrough for these models, not a reconstruction of every stage of the original training run.</p>
+  </aside>
+
+
+  <p>
+    Qwen3.5 (February 2026, Apache 2.0) is the generation where Alibaba's hybrid-attention experiment
+    became the flagship. Its architecture was not invented at 397B — it was validated at 80B first
+    (Qwen3-Next, September 2025), then scaled 5× with almost no structural change. That makes Qwen3.5
+    the cleanest public example of how frontier labs now de-risk architecture: <em>prove the recipe on a
+    testbed model, then spend the real compute on a known-good shape.</em>
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th></th><th>Qwen3.5-397B-A17B (flagship)</th></tr>
+      <tr><td>Total / activated params</td><td>397B / 17B</td></tr>
+      <tr><td>Layers × hidden dim</td><td>60 × 4096</td></tr>
+      <tr><td>Layer layout</td><td>\(15 \times \bigl(3 \times (\text{Gated DeltaNet} \to \text{MoE}) \;+\; 1 \times (\text{Gated Attention} \to \text{MoE})\bigr)\)</td></tr>
+      <tr><td>Linear-attention layers</td><td>Gated DeltaNet — 64 value heads, 16 QK heads, head dim 128, conv kernel 4</td></tr>
+      <tr><td>Full-attention layers</td><td>GQA 32 query / 2 KV heads, head dim 256, sigmoid output gate</td></tr>
+      <tr><td>Positions</td><td>Partial RoPE (¼ of dims), \(\theta = 10^7\); interleaved M-RoPE for vision</td></tr>
+      <tr><td>MoE</td><td>512 routed experts, top-10 + 1 shared; expert dim 1024</td></tr>
+      <tr><td>Objective</td><td>Next-token + <a href="../transformer/multi-token-prediction.html">MTP</a> (1 layer, trained multi-step)</td></tr>
+      <tr><td>Context</td><td>262,144 native → ~1M extended</td></tr>
+      <tr><td>Vocab</td><td>248,320 tokens, 201 languages</td></tr>
+      <tr><td>Modalities</td><td>Text, image, video — native early fusion</td></tr>
+    </table>
+  </div>
+
+  <p>
+    The full release spans 0.8B → 397B (dense up to 27B, MoE above) on one architecture, plus the hosted
+    Qwen3.5-Plus. No standalone tech report had appeared as of this writing — the spec below follows the
+    model card, the released <code>config.json</code>, and the official blog.
+  </p>
+  <div class="compare">
+    <div class="compare-label">Reading this as a training guide</div>
+    The architecture tour below uses <strong>397B-A17B</strong>, not a generic Qwen3.5 config.
+    Jump to the <a href="#parameters">exact parameter ledger</a> for the 27B / 35B / 397B differences,
+    the <a href="#sft-memory">interactive memory budget</a>, the
+    <a href="#megatron">Megatron EP/TP explorer and launch example</a>, or the
+    <a href="#collective-paths">forward/backward collective and bandwidth calculations</a>.
+    The SFT estimates default to
+    <strong>text-only, full-parameter AdamW, without vision or MTP</strong>; other scopes are called out.
+    Sparse activation saves compute, not storage for the unselected experts.
+  </div>
+
+  <figure class="figure arch-figure arch-block">
+    <svg viewBox="10 32 580 958" role="img" aria-label="One Qwen3.5 block: three Gated DeltaNet layers then one gated-attention layer, each followed by the same MoE FFN. In a DeltaNet layer a causal conv1d (kernel 4) feeds q, k, v; k and v write into a recurrent state of 64 value heads, each a fixed 128 by 128 matrix that persists from token to token and never grows; q reads it and the result passes an RMSNorm with an output gate. In the attention layer, GQA with 32 query and 2 KV heads at head dim 256 appends 1024 elements per token to a KV cache that grows with the sequence length, partial RoPE rotates a quarter of the dims, and a sigmoid output gate precedes the output projection. The FFN routes each token to 10 of 512 experts plus one shared expert.">
+      <defs>
+        <marker id="q35-ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+        <marker id="q35-ar-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--accent)"/></marker>
+      </defs>
+      <g font-size="13" fill="currentColor" stroke="currentColor" stroke-width="1.2">
+
+        <!-- ═══ one 3:1 block ═══ -->
+        <rect x="20" y="40" width="560" height="942" rx="10" fill="none" stroke-dasharray="6 4" stroke-opacity=".55"/>
+        <text x="32" y="60" font-size="13" font-weight="600" stroke="none">One block: 3 DeltaNet layers + 1 attention layer, ×15</text>
+
+        <text x="260" y="88" text-anchor="middle" font-size="13" stroke="none">x<tspan font-size="9" dy="3">ℓ</tspan><tspan dy="-3"> — residual stream, d = 4096</tspan></text>
+        <line x1="260" y1="96" x2="260" y2="112" marker-end="url(#q35-ar)"/>
+        <!-- residual skip 1 -->
+        <polyline points="260,100 120,100 120,351 246,351" fill="none" stroke-opacity=".5" marker-end="url(#q35-ar)"/>
+        <text x="112" y="228" text-anchor="end" font-size="12" fill-opacity=".7" stroke="none">skip</text>
+
+        <rect x="215" y="114" width="90" height="26" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="131" text-anchor="middle" font-size="12" stroke="none">RMSNorm</text>
+        <line x1="260" y1="140" x2="260" y2="152" marker-end="url(#q35-ar)"/>
+
+        <!-- Gated DeltaNet group -->
+        <rect x="170" y="154" width="390" height="180" rx="8" fill="none" stroke-opacity=".35"/>
+        <text x="554" y="328" text-anchor="end" font-size="12" fill-opacity=".7" stroke="none">Gated DeltaNet — 3 of every 4 layers</text>
+
+        <rect x="185" y="164" width="150" height="40" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="180" text-anchor="middle" font-size="12" stroke="none">q, k, v projections</text>
+        <text x="260" y="196" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">then causal conv1d, kernel 4</text>
+
+        <rect x="395" y="164" width="150" height="48" rx="6" style="fill:var(--accent);fill-opacity:.14;stroke:var(--accent)"/>
+        <text x="470" y="179" text-anchor="middle" font-size="12" stroke="none">recurrent state S<tspan font-size="9" dy="3">t</tspan></text>
+        <text x="470" y="193" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">64 value heads × 128×128</text>
+        <text x="470" y="207" text-anchor="middle" font-size="11" font-weight="600" style="fill:var(--accent)" stroke="none">constant size at any T</text>
+        <line x1="340" y1="184" x2="388" y2="184" marker-end="url(#q35-ar)"/>
+        <text x="364" y="179" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">write</text>
+        <path d="M545,176 H558 V200 H547" fill="none" style="stroke:var(--accent)" stroke-width="1.6" marker-end="url(#q35-ar-acc)"/>
+        <text x="556" y="226" text-anchor="end" font-size="11" fill-opacity=".75" stroke="none">t−1 → t</text>
+
+        <rect x="185" y="236" width="150" height="44" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="254" text-anchor="middle" font-size="12" stroke="none">read: q · S<tspan font-size="9" dy="3">t</tspan></text>
+        <text x="260" y="270" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">16 QK heads · 4 v each</text>
+
+        <line x1="260" y1="204" x2="260" y2="234" marker-end="url(#q35-ar)"/>
+        <text x="268" y="223" font-size="11" fill-opacity=".75" stroke="none">q</text>
+        <polyline points="470,212 470,258 342,258" fill="none" marker-end="url(#q35-ar)"/>
+        <text x="366" y="253" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">read S<tspan font-size="8" dy="2">t</tspan></text>
+
+        <line x1="260" y1="280" x2="260" y2="292" marker-end="url(#q35-ar)"/>
+        <rect x="185" y="294" width="150" height="26" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="311" text-anchor="middle" font-size="12" stroke="none">RMSNorm ⊙ output gate</text>
+
+        <line x1="260" y1="320" x2="260" y2="339" marker-end="url(#q35-ar)"/>
+        <circle cx="260" cy="351" r="11" style="fill:var(--surface)" stroke-opacity=".7"/>
+        <text x="260" y="355" text-anchor="middle" font-size="14" stroke="none">+</text>
+
+        <!-- compact MoE after each DeltaNet layer -->
+        <line x1="260" y1="362" x2="260" y2="376" marker-end="url(#q35-ar)"/>
+        <rect x="170" y="378" width="390" height="38" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="365" y="394" text-anchor="middle" font-size="12" stroke="none">MoE FFN sublayer</text>
+        <text x="365" y="409" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">pre-norm → 10 of 512 experts + 1 shared → skip (drawn in full below)</text>
+
+        <!-- ×3 bracket -->
+        <path d="M568,154 H576 V416 H568" fill="none" stroke-opacity=".7"/>
+        <text x="572" y="146" text-anchor="middle" font-size="11" font-weight="600" stroke="none">×3</text>
+
+        <!-- attention sublayer -->
+        <line x1="260" y1="416" x2="260" y2="432" marker-end="url(#q35-ar)"/>
+        <polyline points="260,424 120,424 120,692 246,692" fill="none" stroke-opacity=".5" marker-end="url(#q35-ar)"/>
+        <text x="112" y="560" text-anchor="end" font-size="12" fill-opacity=".7" stroke="none">skip</text>
+
+        <rect x="215" y="434" width="90" height="26" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="451" text-anchor="middle" font-size="12" stroke="none">RMSNorm</text>
+        <line x1="260" y1="460" x2="260" y2="472" marker-end="url(#q35-ar)"/>
+
+        <rect x="170" y="474" width="390" height="200" rx="8" fill="none" stroke-opacity=".35"/>
+        <text x="554" y="668" text-anchor="end" font-size="12" fill-opacity=".7" stroke="none">gated attention — 1 of every 4 layers</text>
+
+        <rect x="185" y="484" width="150" height="40" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="500" text-anchor="middle" font-size="12" stroke="none">q, k, v projections</text>
+        <text x="260" y="516" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">GQA 32 q / 2 KV · dim 256</text>
+
+        <rect x="395" y="484" width="150" height="48" rx="6" style="fill:var(--plot-amber);fill-opacity:.16;stroke:var(--plot-amber)"/>
+        <text x="470" y="499" text-anchor="middle" font-size="12" stroke="none">KV cache</text>
+        <text x="470" y="513" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">1024 elems / token / layer</text>
+        <text x="470" y="527" text-anchor="middle" font-size="11" font-weight="600" style="fill:var(--plot-amber)" stroke="none">grows with T</text>
+        <line x1="340" y1="504" x2="388" y2="504" marker-end="url(#q35-ar)"/>
+        <text x="364" y="499" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">append</text>
+
+        <rect x="185" y="550" width="150" height="52" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="568" text-anchor="middle" font-size="12" stroke="none">softmax attention</text>
+        <text x="260" y="582" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">RoPE on 64 of 256 dims</text>
+        <text x="260" y="595" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">reads every cached token</text>
+
+        <line x1="260" y1="524" x2="260" y2="548" marker-end="url(#q35-ar)"/>
+        <text x="268" y="540" font-size="11" fill-opacity=".75" stroke="none">q</text>
+        <polyline points="470,532 470,576 342,576" fill="none" marker-end="url(#q35-ar)"/>
+        <text x="366" y="571" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">all T</text>
+
+        <line x1="260" y1="602" x2="260" y2="614" marker-end="url(#q35-ar)"/>
+        <rect x="185" y="616" width="150" height="26" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="633" text-anchor="middle" font-size="12" stroke="none">σ(W<tspan font-size="9" dy="3">g</tspan><tspan dy="-3">x) ⊙ attn → W</tspan><tspan font-size="9" dy="3">O</tspan></text>
+
+        <line x1="260" y1="642" x2="260" y2="680" marker-end="url(#q35-ar)"/>
+        <circle cx="260" cy="692" r="11" style="fill:var(--surface)" stroke-opacity=".7"/>
+        <text x="260" y="696" text-anchor="middle" font-size="14" stroke="none">+</text>
+
+        <!-- MoE sublayer, in full -->
+        <line x1="260" y1="703" x2="260" y2="718" marker-end="url(#q35-ar)"/>
+        <polyline points="260,708 120,708 120,922 246,922" fill="none" stroke-opacity=".5" marker-end="url(#q35-ar)"/>
+        <text x="112" y="818" text-anchor="end" font-size="12" fill-opacity=".7" stroke="none">skip</text>
+
+        <rect x="215" y="720" width="90" height="26" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="737" text-anchor="middle" font-size="12" stroke="none">RMSNorm</text>
+        <line x1="260" y1="746" x2="260" y2="766" marker-end="url(#q35-ar)"/>
+        <circle cx="260" cy="758" r="2.5" stroke="none"/>
+        <polyline points="260,758 470,758 470,828" fill="none" marker-end="url(#q35-ar)"/>
+
+        <rect x="170" y="764" width="390" height="134" rx="8" fill="none" stroke-opacity=".35"/>
+        <text x="365" y="892" text-anchor="middle" font-size="12" fill-opacity=".7" stroke="none">MoE FFN — after every mixer</text>
+
+        <rect x="185" y="768" width="150" height="40" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="784" text-anchor="middle" font-size="12" stroke="none">router</text>
+        <text x="260" y="800" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">aux balance loss 0.001</text>
+        <line x1="260" y1="808" x2="260" y2="828" marker-end="url(#q35-ar)"/>
+        <text x="268" y="822" font-size="11" fill-opacity=".75" stroke="none">top-10</text>
+
+        <rect x="185" y="830" width="150" height="44" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="260" y="848" text-anchor="middle" font-size="12" stroke="none">10 of 512 routed experts</text>
+        <text x="260" y="863" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">expert dim 1024</text>
+
+        <rect x="395" y="830" width="150" height="44" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="470" y="848" text-anchor="middle" font-size="12" stroke="none">1 shared expert</text>
+        <text x="470" y="863" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">every token</text>
+
+        <line x1="260" y1="874" x2="260" y2="909" marker-end="url(#q35-ar)"/>
+        <polyline points="470,874 470,922 273,922" fill="none" marker-end="url(#q35-ar)"/>
+        <circle cx="260" cy="922" r="11" style="fill:var(--surface)" stroke-opacity=".7"/>
+        <text x="260" y="926" text-anchor="middle" font-size="14" stroke="none">+</text>
+        <line x1="260" y1="933" x2="260" y2="950" marker-end="url(#q35-ar)"/>
+        <text x="260" y="966" text-anchor="middle" font-size="13" stroke="none">x<tspan font-size="9" dy="3">ℓ+4</tspan></text>
+
+      </g>
+    </svg>
+    <figcaption class="figure-caption">
+      <strong>One block: three DeltaNet layers, one attention layer, and two different memories.</strong> A
+      DeltaNet layer writes each token into a
+      <span style="color:var(--accent);font-weight:600;">recurrent state</span> — 64 value heads, each a
+      128 × 128 matrix updated by the gated delta rule — and reads it back with \(q\); the state is the same
+      size after the first token as after the 262,144th. The attention layer instead appends 1024 elements
+      per token to a <span style="color:var(--plot-amber);font-weight:600;">KV cache</span> that grows
+      with \(T\), and reads all of it. Both mixers feed the same MoE FFN (10 of 512 experts + 1 shared),
+      and both end in an output gate: gated RMSNorm on the DeltaNet path, a sigmoid gate before
+      \(W_O\) on the attention path.
+    </figcaption>
+  </figure>
+  <figure class="figure arch-figure arch-stack">
+    <svg viewBox="590 32 402 560" role="img" aria-label="The Qwen3.5 stack: text tokens through a 248,320-entry embedding and images or video through a 27-layer ViT projected to 4096 dims enter one stream with interleaved M-RoPE; 15 blocks of three DeltaNet layers plus one gated-attention layer follow, so 45 layers hold a fixed-size state while only 15 accumulate a KV cache that grows with context; then final norm and LM head, and one MTP layer trained multi-step that drafts tokens ahead.">
+      <defs>
+        <marker id="q35b-ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+        <marker id="q35b-ar-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--accent)"/></marker>
+      </defs>
+      <g font-size="13" fill="currentColor" stroke="currentColor" stroke-width="1.2">
+        <rect x="600" y="40" width="380" height="542" rx="10" fill="none" stroke-dasharray="6 4" stroke-opacity=".55"/>
+        <text x="612" y="60" font-size="13" font-weight="600" stroke="none">The stack: 60 layers + MTP</text>
+
+        <!-- two inputs, one stream -->
+        <rect x="612" y="76" width="150" height="40" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="687" y="92" text-anchor="middle" font-size="12" stroke="none">text → embedding</text>
+        <text x="687" y="108" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">vocab 248,320</text>
+        <rect x="778" y="76" width="150" height="40" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="853" y="92" text-anchor="middle" font-size="12" stroke="none">image / video → ViT</text>
+        <text x="853" y="108" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">27 layers, 1152 → 4096</text>
+        <polyline points="687,116 687,132 770,132 770,138" fill="none" marker-end="url(#q35b-ar)"/>
+        <polyline points="853,116 853,132 770,132" fill="none"/>
+        <text x="693" y="128" font-size="10" fill-opacity=".75" stroke="none">tokens</text>
+        <text x="859" y="128" font-size="10" fill-opacity=".75" stroke="none">patches</text>
+
+        <rect x="612" y="140" width="316" height="30" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="770" y="159" text-anchor="middle" font-size="12" stroke="none">one stream, d = 4096 · interleaved M-RoPE (t, h, w)</text>
+        <line x1="770" y1="170" x2="770" y2="182" marker-end="url(#q35b-ar)"/>
+
+        <!-- 15 blocks -->
+        <rect x="612" y="184" width="316" height="212" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="770" y="200" text-anchor="middle" font-size="12" stroke="none">15 × block of 4 layers = 60 layers</text>
+        <text x="704" y="218" text-anchor="middle" font-size="11" font-weight="600" stroke="none">layer</text>
+        <text x="856" y="218" text-anchor="middle" font-size="11" font-weight="600" stroke="none">memory per layer</text>
+        <g stroke-opacity=".5">
+          <rect x="624" y="226" width="160" height="18" rx="3" fill="none"/>
+          <rect x="624" y="251" width="160" height="18" rx="3" fill="none"/>
+          <rect x="624" y="276" width="160" height="18" rx="3" fill="none"/>
+          <rect x="624" y="301" width="160" height="18" rx="3" fill="none"/>
+        </g>
+        <g font-size="10" stroke="none" fill-opacity=".8">
+          <text x="632" y="239">4k−3</text><text x="662" y="239">Gated DeltaNet → MoE</text>
+          <text x="632" y="264">4k−2</text><text x="662" y="264">Gated DeltaNet → MoE</text>
+          <text x="632" y="289">4k−1</text><text x="662" y="289">Gated DeltaNet → MoE</text>
+          <text x="632" y="314">4k</text><text x="662" y="314">gated attention → MoE</text>
+        </g>
+        <g style="fill:var(--accent);fill-opacity:.55;stroke:var(--accent)">
+          <rect x="796" y="228" width="14" height="14" rx="2"/><rect x="796" y="253" width="14" height="14" rx="2"/><rect x="796" y="278" width="14" height="14" rx="2"/>
+        </g>
+        <g font-size="10" stroke="none" fill-opacity=".8">
+          <text x="816" y="239">state, fixed size</text>
+          <text x="816" y="264">state, fixed size</text>
+          <text x="816" y="289">state, fixed size</text>
+        </g>
+        <rect x="796" y="303" width="14" height="14" rx="2" style="fill:var(--plot-amber);fill-opacity:.55;stroke:var(--plot-amber)"/>
+        <path d="M812,310 L826,310 L826,305 L832,310 L826,315 L826,310" fill="none" style="stroke:var(--plot-amber)" stroke-width="1.4"/>
+        <text x="838" y="314" font-size="10" font-weight="600" style="fill:var(--plot-amber)" stroke="none">KV grows with T</text>
+
+        <text x="770" y="342" text-anchor="middle" font-size="11" font-weight="600" style="fill:var(--accent)" stroke="none">45 layers: ≈94 MB of state, constant at any context</text>
+        <text x="770" y="358" text-anchor="middle" font-size="10" fill-opacity=".75" stroke="none">15 layers: KV cache ≈8 GB at 262K (≈32 GB if all 60 cached)</text>
+        <text x="770" y="374" text-anchor="middle" font-size="10" fill-opacity=".75" stroke="none">→ memory grows at ¼ the slope of a full-attention stack</text>
+        <text x="770" y="388" text-anchor="middle" font-size="10" fill-opacity=".75" stroke="none">the block repeats 15×, unchanged from the 80B testbed</text>
+
+        <line x1="770" y1="396" x2="770" y2="408" marker-end="url(#q35b-ar)"/>
+        <rect x="612" y="410" width="316" height="30" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="770" y="429" text-anchor="middle" font-size="12" stroke="none">final RMSNorm → LM head → token t+1</text>
+
+        <line x1="770" y1="440" x2="770" y2="468" marker-end="url(#q35b-ar)"/>
+        <text x="778" y="458" font-size="11" fill-opacity=".75" stroke="none">final hidden state</text>
+        <rect x="612" y="470" width="316" height="52" rx="6" style="fill:var(--surface)" stroke-opacity=".6"/>
+        <text x="770" y="489" text-anchor="middle" font-size="12" stroke="none">MTP module — 1 layer, shares the embedding</text>
+        <text x="770" y="505" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">trained multi-step: drafts several tokens ahead</text>
+        <path d="M928,484 H946 V510 H930" fill="none" marker-end="url(#q35b-ar)"/>
+        <text x="951" y="501" font-size="11" stroke="none">step</text>
+        <text x="770" y="544" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">at serving, the same module is a self-speculative draft head:</text>
+        <text x="770" y="558" text-anchor="middle" font-size="11" fill-opacity=".75" stroke="none">8.6× decode throughput at 32K, 19× at 256K</text>
+      </g>
+    </svg>
+    <figcaption class="figure-caption">
+      <strong>The stack: 15 identical blocks, and where the memory goes.</strong> Text and vision enter the
+      same 4096-dim stream — a 27-layer ViT projects image and video patches into it, and interleaved
+      M-RoPE splits the rotated dims across time, height and width. Of the 60 layers, 45 keep a
+      <span style="color:var(--accent);font-weight:600;">fixed-size state</span> (≈94 MB in total, whatever
+      the context) and only 15 accumulate a
+      <span style="color:var(--plot-amber);font-weight:600;">KV cache</span>, so total memory grows at a
+      quarter of the full-attention slope — ≈8 GB at the native 262K context where all-softmax would hold
+      ≈32 GB. One MTP layer, trained multi-step, doubles as the speculative draft head at serving time.
+    </figcaption>
+  </figure>
+
+  <h2 id="testbed">1. The Testbed Pattern — Qwen3-Next Was the Experiment</h2>
+  <p>
+    Qwen3-Next (80B-A3B) introduced every load-bearing idea: the 3:1 hybrid attention layout, output-gated
+    attention, the 512-expert high-sparsity MoE, MTP, partial RoPE, and a package of numerics-stability
+    fixes (zero-centered RMSNorm, weight decay on norm gains). Qwen3.5 changes the dials, not the design:
+  </p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Axis</th><th>Qwen3-Next (Sept 2025)</th><th>Qwen3.5 (Feb 2026)</th><th>Qwen3.8-Flash-Next (Aug 2026)</th></tr>
+      <tr><td>Scale</td><td>80B total / 3B active</td><td>397B / 17B</td><td>125B / 6B, + 51B n-gram tables off-accelerator</td></tr>
+      <tr><td>Depth × width</td><td>48 × 2048</td><td>60 × 4096</td><td>48 layers</td></tr>
+      <tr><td>DeltaNet value heads</td><td>32</td><td>64</td><td>48 (sigmoid output gate)</td></tr>
+      <tr><td>Hybrid ratio, attention config</td><td colspan="2">identical — 3:1, GQA 2 KV heads @ 256, output gates, partial RoPE ¼</td><td>3:1 kept; full layers become <a href="../transformer/sparse-attention.html#csa">QSA</a> at CPT (top-2048 over 4-token blocks)</td></tr>
+      <tr><td>MoE config</td><td colspan="3">identical — 512 routed, top-10 + 1 shared</td></tr>
+      <tr><td>Residual stream</td><td colspan="2">standard pre-norm</td><td><a href="../transformer/hyper-connections.html">Gated Residual</a> — 4 branches, elementwise gated read</td></tr>
+      <tr><td>Optimizer</td><td colspan="2">AdamW</td><td>Muon (split per head), refit LR/batch scaling law</td></tr>
+      <tr><td>Modality</td><td>text (separate -VL branch)</td><td colspan="2">native early-fusion vision, M-RoPE</td></tr>
+      <tr><td>Vocab</td><td>~150K</td><td colspan="2">248,320 (201 languages)</td></tr>
+    </table>
+  </div>
+  <p>
+    The third column is the <em>next</em> testbed. Qwen3.8-Flash-Next (Aug 2026) is released as a
+    preview of the Qwen 4 architecture, and this time the design does change: sparse attention in the
+    full layers, a widened and gated residual stream, an n-gram embedding layer at layer 2, and Muon in
+    place of AdamW — with a report that ablates each one
+    (<a href="https://github.com/QwenLM/Qwen3.8-Flash-Next/blob/main/tech_report.pdf">On the Design of
+    Qwen3.8-Next Architecture</a>). Its headline is the same pattern at a smaller scale: the 125B-A6B
+    testbed matches the 397B-A17B flagship on 8 of 14 pre-training benchmarks at roughly a ninth of
+    the training FLOPs.
+  </p>
+  <p>
+    The one genuinely new capability is multimodality (§7). Everything else is the testbed recipe with
+    more of everything — which is itself the result: the hybrid architecture <em>survived a 5× scale-up
+    unmodified</em>, the strongest evidence yet that linear-attention hybrids are not a small-model
+    curiosity.
+  </p>
+
+  <h2 id="stack">2. The Hybrid Stack — Why 3:1</h2>
+  <p>
+    Of Qwen3.5's 60 layers, 45 mix tokens with <a href="../transformer/gated-deltanet.html">Gated DeltaNet</a> — a
+    fixed-size recurrent memory, \(O(1)\) per token — and 15 with softmax attention
+    (<code>full_attention_interval: 4</code>: every fourth layer). The split assigns each mechanism what
+    it is best at:
+  </p>
+  <ul>
+    <li>
+      <strong>DeltaNet layers carry the bulk of sequence modeling.</strong> Most token mixing —
+      local syntax, topic tracking, incremental state — does not need exact retrieval over the entire
+      history. A <a href="../transformer/linear-attention.html">linear-attention state</a> handles it at constant
+      per-token cost and constant memory.
+    </li>
+    <li>
+      <strong>Full-attention layers restore exact recall.</strong> A fixed-size state is lossy by
+      information theory — verbatim recall over long spans (a needle in 200K tokens of haystack) can't
+      live there. Fifteen softmax layers, each seeing the entire uncompressed history, provide the exact
+      random-access path. They are the expensive 25% that make the cheap 75% safe.
+    </li>
+  </ul>
+
+  <div class="figure">
+    <canvas id="plot-hybrid" aria-label="Total sequence memory versus context length for a full-attention stack, the 3:1 hybrid stack, and the recurrent state floor"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-amber)"></span> full attention in all 60 layers</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span> Qwen3.5 hybrid (15 KV layers + state)</span>
+      <span class="legend-item"><span class="lg dash" style="--c:var(--plot-gray)"></span> DeltaNet state floor (constant)</span>
+    </div>
+    <p class="figure-caption">
+      <strong>The hybrid pays a fixed state cost to cut the per-token cost 4×.</strong> Total
+      sequence memory across the stack (BF16), log–log. The 45 DeltaNet layers hold a constant
+      ≈94 MB of recurrent state (64 heads × 128×128 per layer) regardless of context — which is why
+      the hybrid line starts <em>above</em> the full-attention line and stays there until ≈1K tokens.
+      Past the crossover, only 15 of 60 layers accumulate KV cache, so the hybrid grows at ¼ the
+      slope: at the native 262K context it holds ≈8 GB where full attention would hold ≈32 GB, and the
+      gap is one contributor to the reported decode-throughput advantage at 256K, not a prediction
+      of SFT speed.
+    </p>
+  </div>
+  <p>
+    <strong>This is an inference-cache illustration, not a training-memory estimate.</strong>
+    It assumes BF16 recurrent state and omits the small convolution cache; the pinned configs now
+    specify <code>mamba_ssm_dtype: float32</code>, which doubles the recurrent-state term to ≈189 MB
+    in backends honoring that setting. Training also retains activations or recomputes them for
+    backward. A fixed-size decode state does <em>not</em> imply constant-memory training.
+  </p>
+
+  <div class="note">
+    The ratio is a capacity bet, not a law. Qwen3-Next and Qwen3.5 use 3:1; <a href="kimi-k3.html">Kimi
+    K3</a> independently landed on 3:1 (KDA : gated MLA); MiniMax's earlier hybrid used 7:1. Published
+    ablations from the Kimi Linear line found 3:1 the quality-neutral sweet spot — more full layers waste
+    compute, fewer starts to cost recall. That two labs converged independently is the field's current
+    best empirical answer. The full design pattern — ratio economics, placement rules, serving
+    consequences — is on the <a href="../transformer/hybrid-attention.html" style="color:var(--accent);">hybrid
+    attention page</a>.
+  </div>
+
+  <h2 id="gdn">3. Inside the DeltaNet Layers</h2>
+  <p>
+    The mechanism — delta-rule overwrite plus learned forgetting,
+    \(S_t = \alpha_t(I - \beta_t k_t k_t^\top)S_{t-1} + \beta_t k_t v_t^\top\) — is derived step by step
+    on the <a href="../transformer/gated-deltanet.html">Gated DeltaNet page</a>, including the exact decode loop and the
+    chunked kernel that trains it. What the 397B config adds:
+  </p>
+  <ul>
+    <li>
+      <strong>64 value heads × 16 QK heads, head dim 128</strong> — each \((q, k)\) pair serves four value
+      heads, and each value head owns a 128 × 128 state. Doubled from the testbed's 32 value heads: at
+      fixed head dim, state capacity scales with head count, and a 5× bigger model needs a bigger memory.
+    </li>
+    <li>
+      <strong>Depthwise causal conv1d (kernel 4)</strong> after the input \(q,k,v\) projections and
+      before QK normalization / the delta rule — the cheap local-mixing preprocessor.
+    </li>
+    <li>
+      A per-head <a href="../foundations/rmsnorm-gated.html">gated RMSNorm</a> on the way out —
+      the output gate that lets a head silence its own readout.
+    </li>
+  </ul>
+
+  <h2 id="gated-attn">4. The Gated Attention Layers</h2>
+  <p>
+    The 15 softmax layers are not vanilla either. Config: GQA with 32 query / 2 KV heads at head dim 256
+    (a large head dim and an aggressively small KV group count — 1024 KV elements per token per layer),
+    with two modifications:
+  </p>
+  <ul>
+    <li>
+      <strong>A sigmoid output gate on attention.</strong> Each layer computes
+      \(o_t = W_O\bigl[\sigma(W_g x_t) \odot \mathrm{Attn}(x_t)\bigr]\) — an input-dependent, per-channel
+      gate between the attention read and the output projection. The gated-attention line of work
+      (Qwen's own "Gated Attention" paper) found this kills two chronic pathologies at once:
+      <em>attention sinks</em> (heads dumping probability on the first token because softmax must sum
+      to 1 — the gate gives them a way to output nothing instead) and <em>massive activations</em>
+      (outlier channels that wreck low-precision inference). DeepSeek-V4 reaches the same destination
+      with an explicit sink logit in the softmax; Kimi K3 adopts the same sigmoid gate on top of MLA.
+    </li>
+    <li>
+      <strong>Partial RoPE: only ¼ of each head's dims rotate</strong> (64 of 256), at
+      \(\theta = 10^7\). The unrotated dims are position-free content channels; the long wavelength keeps
+      the rotated dims slow enough to extrapolate. Same compromise as
+      <a href="deepseek-v4.html">DeepSeek-V4</a> (64 of 512), one step short of
+      <a href="kimi-k3.html">Kimi K3</a>'s full NoPE on global layers — across all three frontier
+      models, positional signal is in retreat.
+    </li>
+  </ul>
+  <p>
+    Stability details inherited from Qwen3-Next — zero-centered RMSNorm with weight decay on the norm
+    gains, QK-norm — are attributed to Qwen3.5 by the official blog's "stability optimizations" umbrella
+    rather than re-documented per-component; the config confirms only <code>rms_norm_eps 1e-6</code>.
+  </p>
+
+  <h2 id="moe">5. MoE — 4% Activation</h2>
+  <p>
+    Every layer's FFN is a <a href="../transformer/moe-routing.html">mixture of experts</a>: 512 routed experts of
+    intermediate dim 1024, top-10 per token, plus one always-on shared expert. With hidden dim 4096,
+    each routed expert is a thin slice — fine-grained experts in the DeepSeekMoE tradition — and the
+    activated fraction works out to ≈4.3% of total parameters (17B of 397B). The router uses a small
+    auxiliary balance loss (coef 0.001); the shared expert absorbs common-to-all-tokens computation so
+    the routed experts can specialize.
+  </p>
+  <p>
+    Note what Qwen3.5 <em>doesn't</em> adopt: no aux-loss-free bias balancing
+    (<a href="deepseek-v4.html">DeepSeek</a>), no quantile-based router
+    (<a href="kimi-k3.html">Kimi</a>). The MoE is deliberately boring — the architecture risk budget was
+    spent on attention.
+  </p>
+
+  <h2 id="mtp">6. Multi-Token Prediction, Trained Multi-Step</h2>
+  <p>
+    One <a href="../transformer/multi-token-prediction.html">MTP</a> layer (<code>mtp_hidden_layers: 1</code>, no
+    separate MTP embedding) trained with multi-step unrolling — the module predicts several tokens ahead
+    during training, not just one. The dual payoff is the standard one: a denser training signal, and a
+    free self-<a href="../inference/speculative-decoding.html">speculative draft head</a> at serving
+    time — a large part of the blog's headline decode-throughput claims (8.6× vs Qwen3-Max at 32K
+    context, 19× at 256K) is the hybrid stack and MTP drafting compounding.
+  </p>
+
+  <h2 id="multimodal">7. Native Multimodality — Early Fusion</h2>
+  <p>
+    Qwen3.5's actually-new axis. Prior Qwen generations trained a text LLM, then grafted vision on as a
+    separate <code>-VL</code> branch. Qwen3.5 puts a vision encoder inside the base model — a
+    27-layer, SigLIP-class ViT (hidden 1152, patch 16, projected into the LLM's 4096-dim stream) — and
+    pretrains on mixed text-image-video from the start:
+  </p>
+  <ul>
+    <li>
+      <strong>Early fusion:</strong> visual tokens enter the same transformer stack as text tokens; there
+      is no frozen-encoder + adapter stage. The blog reports mixed-modality pretraining at ≈100% of
+      text-only throughput (and ~50% activation-memory reduction from the broader efficiency work),
+      i.e. multimodality at approximately zero training-throughput cost.
+    </li>
+    <li>
+      <strong>Interleaved M-RoPE:</strong> the rotary dims are partitioned across (temporal, height,
+      width) — config <code>mrope_section [11, 11, 10]</code> of the 32 rotated pairs — with the
+      interleaved layout preserving pure-text behavior when no vision tokens are present.
+    </li>
+    <li>
+      The claim to beat: the blog reports the natively-fused model outperforming the equivalent-scale
+      separately-trained Qwen3-VL — early fusion at no capability cost to text.
+    </li>
+  </ul>
+  <p>
+    Together with <a href="kimi-k3.html">Kimi K3</a>'s from-scratch MoonViT-V2, this makes 2026 the year
+    native multimodality became the default for frontier open models —
+    <a href="deepseek-v4.html">DeepSeek-V4</a> is now the text-only outlier (its report lists
+    multimodality as future work).
+  </p>
+
+  <h2 id="compared">8. Qwen3.5 Against Its Contemporaries</h2>
+  <p>
+    All three 2026 frontier open models converged on extreme-sparsity MoE + MTP + ~1M context, and split
+    on attention: Qwen3.5 and Kimi K3 bet on <em>recurrent state</em> (linear-attention hybrids), while
+    DeepSeek-V4 kept softmax everywhere and compressed the sequence it reads. Qwen3.5 is the smallest and
+    most conservative of the three — no residual-stream redesign, no exotic router — and the only one
+    shipping one architecture from 0.8B to 397B. That conservatism lasted one generation:
+    Qwen3.8-Flash-Next (§1) adds a four-branch gated residual, replaces the full-attention layers with
+    QSA, and moves to Muon.
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th></th><th>Qwen3.5-397B</th><th>DeepSeek-V4-Pro</th><th>Kimi K3</th></tr>
+      <tr><td>Total / active</td><td>397B / 17B</td><td>1.6T / 49B</td><td>2.78T / 104B</td></tr>
+      <tr><td>Attention</td><td>3:1 Gated DeltaNet : gated attention</td><td>CSA + HCA (all softmax, sequence-compressed)</td><td>3:1 KDA : gated MLA</td></tr>
+      <tr><td>Long-range memory</td><td>Recurrent state + sparse full layers</td><td>Compressed KV summaries</td><td>Recurrent state + sparse full layers</td></tr>
+      <tr><td>Positions</td><td>Partial RoPE (64/256), \(\theta=10^7\), M-RoPE</td><td>Partial RoPE (64/512) + output \(-t\) rotation</td><td>NoPE on global layers</td></tr>
+      <tr><td>MoE</td><td>512+1, top-10, aux loss</td><td>384+1, top-6, aux-loss-free</td><td>896+2, top-16, quantile balancing</td></tr>
+      <tr><td>Residual stream</td><td>standard</td><td>mHC (4 lanes, Sinkhorn)</td><td>Block AttnRes (8 blocks)</td></tr>
+      <tr><td>Context</td><td>262K → ~1M</td><td>1M native</td><td>1M native</td></tr>
+      <tr><td>Multimodal</td><td>native early-fusion vision</td><td>text-only</td><td>native from-scratch vision</td></tr>
+    </table>
+  </div>
+
+  <h2 id="parameters">9. Parameter Ledger — Count the Tensors, Not the Model Name</h2>
+  <p>
+    Here a <strong>layer</strong> means one decoder block: mixer + FFN + two residual-stream RMSNorms.
+    Counts are scalar parameters, not bytes; M = \(10^6\), B = \(10^9\), and GiB = \(2^{30}\) bytes.
+    These are derived from the <a href="#parameter-sources">pinned official configs and Transformers
+    v5.3.0 implementation</a>, including gates and norms. The reconstructed text + vision + MTP totals
+    agree with the published safetensors parameter totals. They are not rounded marketing counts.
+  </p>
+
+  <h3>First choose the checkpoint</h3>
+  <div class="table-wrap">
+    <table>
+      <caption>Three worked examples, not every member of the Qwen3.5 family</caption>
+      <tr><th>Config field</th><th>27B dense</th><th>35B-A3B MoE</th><th>397B-A17B MoE</th></tr>
+      <tr><td>Decoder depth / hidden width \(d\)</td><td>64 / 5120</td><td>40 / 2048</td><td>60 / 4096</td></tr>
+      <tr><td>DeltaNet / full-attention layers</td><td>48 / 16</td><td>30 / 10</td><td>45 / 15</td></tr>
+      <tr><td>Full-attention Q / KV heads; head dim</td><td>24 / 4; 256</td><td>16 / 2; 256</td><td>32 / 2; 256</td></tr>
+      <tr><td>DeltaNet key / value heads; head dims</td><td>16 / 48; 128 / 128</td><td>16 / 32; 128 / 128</td><td>16 / 64; 128 / 128</td></tr>
+      <tr><td>FFN intermediate width</td><td>17,408 dense</td><td>512 per expert</td><td>1024 per expert</td></tr>
+      <tr><td>Routed experts / top-k / shared experts</td><td>Not MoE</td><td>256 / 8 / 1</td><td>512 / 10 / 1</td></tr>
+      <tr><td>Each DeltaNet decoder layer</td><td>383,273,184</td><td>842,700,992</td><td>6,575,157,504</td></tr>
+      <tr><td>Each full-attention decoder layer</td><td>372,255,232</td><td>836,246,016</td><td>6,562,001,408</td></tr>
+      <tr><td>Each embedding / LM head (untied)</td><td>1,271,398,400</td><td>508,559,360</td><td>1,017,118,720</td></tr>
+      <tr><td>Text model, including both vocabulary matrices and final norm</td><td>26,895,998,464</td><td>34,660,610,688</td><td>396,346,350,336</td></tr>
+    </table>
+  </div>
+  <p>
+    <strong>This specifies every decoder layer:</strong> using one-based numbering, layers
+    \(4,8,12,\ldots,L\) have the full-attention count; every other layer has the DeltaNet count.
+    In checkpoint names these are zero-based <code>layers.3</code>, <code>layers.7</code>, etc.
+    The 397B layer-1 count is therefore 6,575,157,504, layer 4 is 6,562,001,408, and the same
+    four-layer pattern repeats through layer 60.
+  </p>
+
+  <h3>The 397B block, tensor by tensor</h3>
+  <p>
+    For a bias-free linear map, count \(d_{\rm in}d_{\rm out}\).
+    A SwiGLU expert has three matrices, so \(P_{\rm expert}=3dm\), <em>not</em> \(2dm\).
+    For the flagship, \(d=4096\), expert width \(m=1024\), DeltaNet key width
+    \(K=16\cdot128=2048\), and value width \(V=64\cdot128=8192\).
+  </p>
+  <div class="table-wrap">
+    <table>
+      <caption>FFN and residual norms: present in each of the 60 decoder layers</caption>
+      <tr><th>Component</th><th>Shape / count rule</th><th>Parameters per layer</th></tr>
+      <tr><td>One routed SwiGLU expert</td><td>\(3\cdot4096\cdot1024\)</td><td>12,582,912</td></tr>
+      <tr><td>All 512 routed experts</td><td>\(512\cdot12{,}582{,}912\)</td><td>6,442,450,944</td></tr>
+      <tr><td>One shared SwiGLU expert</td><td>\(3\cdot4096\cdot1024\)</td><td>12,582,912</td></tr>
+      <tr><td>Router <code>mlp.gate.weight</code></td><td>\([512,4096]\)</td><td>2,097,152</td></tr>
+      <tr><td>Shared-expert sigmoid gate</td><td>\([1,4096]\)</td><td>4,096</td></tr>
+      <tr><td><strong>MoE FFN subtotal</strong></td><td>All routed + shared + both gates</td><td><strong>6,457,135,104</strong></td></tr>
+      <tr><td>Two block RMSNorms</td><td>\(2d\)</td><td>8,192</td></tr>
+    </table>
+  </div>
+  <details class="ledger" open>
+    <summary>DeltaNet mixer: 118,014,208 parameters</summary>
+    <div class="table-wrap">
+      <table>
+        <tr><th>Tensor(s)</th><th>Shape / rule</th><th>Parameters</th></tr>
+        <tr><td><code>in_proj_qkv.weight</code></td><td>\([2K+V,d]=[12288,4096]\)</td><td>50,331,648</td></tr>
+        <tr><td><code>in_proj_z.weight</code> (output gate)</td><td>\([8192,4096]\)</td><td>33,554,432</td></tr>
+        <tr><td><code>out_proj.weight</code></td><td>\([4096,8192]\)</td><td>33,554,432</td></tr>
+        <tr><td><code>in_proj_a</code> + <code>in_proj_b</code></td><td>Two \([64,4096]\) weights</td><td>524,288</td></tr>
+        <tr><td>Depthwise <code>conv1d.weight</code></td><td>\([12288,1,4]\), no bias</td><td>49,152</td></tr>
+        <tr><td><code>A_log</code> + <code>dt_bias</code> + output norm</td><td>\(64+64+128\)</td><td>256</td></tr>
+      </table>
+    </div>
+    <p>The 128-element output-norm gain is shared across value heads, not repeated 64 times.
+      Total layer: \(118{,}014{,}208+6{,}457{,}135{,}104+8{,}192
+      =\boxed{6{,}575{,}157{,}504}\).</p>
+  </details>
+  <details class="ledger" open>
+    <summary>Gated full-attention mixer: 104,858,112 parameters</summary>
+    <div class="table-wrap">
+      <table>
+        <tr><th>Tensor(s)</th><th>Shape / rule</th><th>Parameters</th></tr>
+        <tr><td><code>q_proj.weight</code>: query <em>and output gate</em></td><td>\([2\cdot32\cdot256,4096]\)</td><td>67,108,864</td></tr>
+        <tr><td><code>k_proj</code> + <code>v_proj</code></td><td>Two \([512,4096]\) weights</td><td>4,194,304</td></tr>
+        <tr><td><code>o_proj.weight</code></td><td>\([4096,8192]\)</td><td>33,554,432</td></tr>
+        <tr><td><code>q_norm</code> + <code>k_norm</code></td><td>\(256+256\)</td><td>512</td></tr>
+      </table>
+    </div>
+    <p>Do not add a second <code>W_g</code> tensor: the conceptual attention gate is already packed into
+      <code>q_proj</code>. Total layer:
+      \(104{,}858{,}112+6{,}457{,}135{,}104+8{,}192=\boxed{6{,}562{,}001{,}408}\).</p>
+  </details>
+  <div class="result">
+    <div class="result-label">Flagship text-model reconciliation</div>
+    \[
+      \begin{aligned}
+      P_{\rm text}
+      &amp;=45(6{,}575{,}157{,}504)\\
+      &amp;\quad+15(6{,}562{,}001{,}408)\\
+      &amp;\quad+2(248{,}320\cdot4096)+4096\\
+      &amp;=396{,}346{,}350{,}336.
+      \end{aligned}
+    \]
+  </div>
+  <p>
+    Routed experts alone are <strong>386.547B parameters, about 97.5% of the text model</strong>.
+    A token selects ten experts, but different tokens select different experts; a batch can exercise
+    the whole bank. Full SFT must budget for all trainable experts and their optimizer states.
+    This is why expert placement matters far more than saving a few million attention parameters.
+  </p>
+
+  <h3>Vision and MTP are separate accounting decisions</h3>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Additional component</th><th>27B</th><th>35B-A3B</th><th>397B-A17B</th></tr>
+      <tr><td>Vision encoder + merger</td><td>460,730,096</td><td>446,571,248</td><td>456,010,480</td></tr>
+      <tr><td>One MTP module</td><td>424,699,392</td><td>844,640,768</td><td>6,595,568,128</td></tr>
+      <tr><td>Full published checkpoint tensor total</td><td>27,781,427,952</td><td>35,951,822,704</td><td>403,397,928,944</td></tr>
+    </table>
+  </div>
+  <p>
+    Each of the 27 vision transformer blocks has <strong>15,239,504</strong> parameters, including
+    attention/MLP biases and two LayerNorms. Patch embedding adds 1,770,624 and learned positions
+    2,654,208. The merger adds 40,119,040 for the flagship (its last projection changes with LLM width).
+    RoPE itself adds no learned parameters.
+    The MTP module is one <em>full-attention</em> decoder block plus a \([d,2d]\) fusion projection
+    and three \(d\)-element norms:
+    \(P_{\rm MTP}=P_{\rm full\ layer}+2d^2+3d\).
+    Shared vocabulary matrices are not counted again.
+  </p>
+  <div class="note">
+    <strong>A config mentioning MTP does not mean your trainer uses it.</strong>
+    The pinned Transformers implementation ignores unexpected <code>mtp.*</code> checkpoint keys;
+    the NVIDIA Bridge recipes explicitly instantiate MTP and enable its auxiliary loss by default.
+    For ordinary next-token SFT, choose deliberately whether to keep it. The memory examples below
+    exclude it. Freezing a loaded vision tower removes its gradients/optimizer states, not its weights;
+    omitting the tower entirely is the text-only budget used here.
+  </div>
+  <details class="ledger">
+    <summary>Reproduce the layer counts in a local model before distributed wrapping</summary>
+    <p>For a Transformers causal-LM text model, use <code>text = model.model</code>; for the
+      conditional-generation wrapper, use <code>text = model.model.language_model</code>.
+      This also works on a meta-initialized model: it only inspects parameter shapes. Run before
+      FSDP/TP/EP, so local shards are not mistaken for global tensors.</p>
+    <pre><code>text = model.model.language_model  # conditional-generation wrapper
+for index, layer in enumerate(text.layers):
+    count = sum(p.numel() for p in layer.parameters())
+    trainable = sum(p.numel() for p in layer.parameters() if p.requires_grad)
+    print(index + 1, layer.layer_type, count, trainable)
+print("instantiated total", sum(p.numel() for p in model.parameters()))</code></pre>
+    <p>Log the actual model class and any skipped checkpoint keys as well. An instantiated model
+      without MTP should not be expected to match the full on-disk checkpoint total.</p>
+  </details>
+
+  <h2 id="sft-memory">10. SFT Memory — Resident State Is Only the First Term</h2>
+  <p>
+    A common mixed-precision AdamW budget is <strong>16 bytes per trainable parameter</strong>:
+    BF16 weight (2), BF16 gradient (2), FP32 master weight (4), and two FP32 moments (8).
+    Keeping gradients in FP32 instead makes that 18 bytes. FSDP2 can instead retain FP32 parameter
+    shards, FP32 gradients and FP32 moments (16 bytes), materializing BF16 compute weights transiently.
+    These are different layouts with similar headline totals: inspect the actual optimizer and dtype
+    policy, rather than adding a second master copy to an FP32 parameter that already serves that role.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <caption>Ideal resident model state for the 16-byte layout; \(N\) is the data-sharding group size</caption>
+      <tr><th>Strategy</th><th>Bytes per rank</th><th>What remains replicated?</th></tr>
+      <tr><td>DDP</td><td>\(16P\)</td><td>Everything</td></tr>
+      <tr><td>ZeRO-1</td><td>\(4P+12P/N\)</td><td>BF16 weights and gradients</td></tr>
+      <tr><td>ZeRO-2</td><td>\(2P+14P/N\)</td><td>BF16 weights</td></tr>
+      <tr><td>ZeRO-3 / full FSDP sharding</td><td>\(16P/N\)</td><td>No full persistent replica; units are gathered for compute</td></tr>
+    </table>
+  </div>
+  <p>
+    Even the flagship's BF16 text weights alone are <strong>738.3 GiB</strong>. ZeRO-2 cannot
+    make those replicated weights fit on an 80-GiB device. Full sharding, model parallelism, or
+    offload is required. Under ideal full sharding, text-only resident state is:
+  </p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Model / 16-byte state</th><th>8 GPUs</th><th>16 GPUs</th><th>64 GPUs</th><th>128 GPUs</th></tr>
+      <tr><td>27B dense</td><td>50.10 GiB</td><td>25.05 GiB</td><td>6.26 GiB</td><td>3.13 GiB</td></tr>
+      <tr><td>35B-A3B</td><td>64.56 GiB</td><td>32.28 GiB</td><td>8.07 GiB</td><td>4.04 GiB</td></tr>
+      <tr><td>397B-A17B</td><td>738.25 GiB</td><td>369.13 GiB</td><td>92.28 GiB</td><td>46.14 GiB</td></tr>
+    </table>
+  </div>
+  <p>
+    A useful first-pass budget is
+    \(M_{\rm budget}=bP/N+2U+R\) bytes:
+    \(U\) is the largest individually gathered parameter unit and \(R\) is a user-supplied allowance
+    for activations, temporary gradients, communication/workspace buffers and allocator overhead.
+    Here units are individual decoder blocks, the embedding, and the LM head.
+    Thus the largest BF16 unit is <strong>2.37 GiB for 27B</strong> (a vocabulary matrix),
+    <strong>1.57 GiB for 35B</strong>, and <strong>12.25 GiB for 397B</strong> (a decoder block).
+    Prefetching another block can keep a second large unit live.
+  </p>
+  <div class="figure">
+    <div class="plot-controls">
+      <label>Text checkpoint
+        <select id="memory-model">
+          <option value="27">27B dense</option>
+          <option value="35">35B-A3B MoE</option>
+          <option value="397" selected>397B-A17B MoE</option>
+        </select>
+      </label>
+      <label>Resident bytes / parameter
+        <select id="memory-bytes"><option value="16">16 bytes</option><option value="18">18 bytes</option></select>
+      </label>
+      <label>Sharding group size
+        <select id="memory-ranks">
+          <option value="8">8 GPUs</option><option value="16">16 GPUs</option>
+          <option value="32">32 GPUs</option><option value="64">64 GPUs</option>
+          <option value="128" selected>128 GPUs</option>
+        </select>
+      </label>
+      <label>Usable GiB / GPU
+        <select id="memory-capacity">
+          <option value="40">40 GiB</option><option value="80" selected>80 GiB</option>
+          <option value="140">140 GiB</option><option value="180">180 GiB</option>
+        </select>
+      </label>
+      <label>Other-memory allowance \(R\)
+        <select id="memory-reserve">
+          <option value="8">8 GiB</option><option value="16" selected>16 GiB</option>
+          <option value="24">24 GiB</option><option value="32">32 GiB</option>
+        </select>
+      </label>
+    </div>
+    <canvas id="plot-sft-memory" aria-label="Ideal full-sharding resident memory and a one-gathered-unit budget versus GPU count, with an adjustable usable-memory line. Both axes are logarithmic."></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span> resident model state</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-amber)"></span> + one BF16 unit + allowance</span>
+      <span class="legend-item"><span class="lg dash" style="--c:var(--plot-gray)"></span> usable device memory</span>
+    </div>
+    <output id="memory-readout" class="plot-readout" aria-live="polite"
+      for="memory-model memory-bytes memory-ranks memory-capacity memory-reserve">397B, 128 ranks: 46.14 GiB resident + 12.25 GiB gathered + 16 GiB allowance = 74.39 GiB.</output>
+    <p class="figure-caption">
+      <strong>Adding GPUs shrinks sharded state, not the full unit gathered for computation.</strong>
+      This is an arithmetic planning tool for plain full sharding, not an EP/TP/PP simulator or a
+      measured peak-memory prediction. The allowance is not computed from sequence length; it must
+      be replaced with profiling evidence. A budget below the line does not guarantee fit.
+      Use actual available GiB, not a GPU's marketed GB capacity. The table above remains usable
+      without JavaScript.
+    </p>
+  </div>
+  <div class="note">
+    <strong>Do not extrapolate from the inference-cache plot.</strong> SFT normally sets
+    <code>use_cache=False</code>. Its memory pressure includes saved mixer/MLP activations, routed
+    token buffers and loss intermediates. Just one BF16 logits tensor at microbatch 1, sequence
+    8192, vocabulary 248,320 is <strong>3.79 GiB</strong>; FP32 doubles that.
+    Use a supported fused/chunked loss that avoids the full live logits/softmax allocation,
+    and verify the actual allocation path rather than trusting the word “fused.”
+  </div>
+
+  <h2 id="sharding">11. Shard the Expensive Dimension</h2>
+  <p>
+    <a href="../systems/torch-distributed.html">FSDP</a> and
+    <a href="../systems/deepspeed.html">ZeRO</a> shard stored state across data-parallel ranks,
+    then gather weights to compute a module. <a href="../systems/tensor-parallelism.html">TP</a>
+    splits matrix computation, <a href="../systems/pipeline-parallelism.html">PP</a> splits depth,
+    and <a href="../systems/moe-parallelism.html">EP</a> assigns whole experts to owners and moves
+    tokens to them. <strong>Sharding the expert tensor with plain FSDP is not expert parallelism:</strong>
+    its all-gather reconstructs the bank for that module, even if each token uses only top-k experts.
+  </p>
+
+  <h3>A. 27B dense: full sharding is the straightforward baseline</h3>
+  <p>
+    On one fast-interconnect 8-GPU node with about 80 GiB usable per device, the 50.10-GiB
+    text-state floor makes FSDP2 / ZeRO-3 a reasonable <em>candidate</em> for short-context full SFT.
+    Start at microbatch 1 and 2K–4K sequence length with activation checkpointing; measure before
+    increasing either. Sixteen GPUs offer substantially more headroom but may add inter-node gathers.
+    There are no routed experts to distribute, so EP has no role.
+  </p>
+  <p>
+    Use individual decoder blocks as FSDP units, and shard the embedding and LM head separately.
+    Wrapping only the root gathers the entire model; leaving both vocabulary matrices in a large
+    root group can also inflate the live set. Initialize on meta / load shards without first building
+    a full GPU replica. Create the optimizer <em>after</em> sharding.
+  </p>
+  <details class="ledger">
+    <summary>FSDP2 placement sketch for a text-only causal-LM model</summary>
+    <p>This illustrates boundaries, not a complete launcher or checkpoint loader.
+      It assumes an initialized distributed process group and a text-only
+      <code>Qwen3_5ForCausalLM</code> model; a production trainer must supply shard-aware pretrained
+      loading, the data sampler, loss masking and distributed checkpoint save/resume.</p>
+    <pre><code>import torch
+from torch.distributed.fsdp import fully_shard, MixedPrecisionPolicy
+
+model.config.use_cache = False
+model.gradient_checkpointing_enable()
+policy = MixedPrecisionPolicy(
+    param_dtype=torch.bfloat16, reduce_dtype=torch.float32
+)
+for layer in model.model.layers:
+    fully_shard(layer, mp_policy=policy, reshard_after_forward=True)
+fully_shard(model.model.embed_tokens, mp_policy=policy)
+fully_shard(model.lm_head, mp_policy=policy)
+fully_shard(model, mp_policy=policy)
+optimizer = torch.optim.AdamW(model.parameters(), lr=5e-6)</code></pre>
+    <p>Use FP32 master parameter shards for the 16-byte FSDP2 layout described above.
+      Check the peak with checkpointing and prefetch enabled: recomputation can cause additional
+      parameter gathers, and accumulating gradients without synchronization can increase memory.</p>
+  </details>
+
+  <h3>B. 35B-A3B: prefer local expert ownership when communication dominates</h3>
+  <p>
+    Eight-way plain full sharding starts at 64.56 GiB per rank before activations; it is a tight
+    80-GiB full-SFT setup, not “a 3B training job.” A supported MoE training engine can instead keep
+    experts on their owners, use grouped GEMMs, and dispatch tokens. With EP=8, each rank owns
+    <strong>32 of the 256 experts per local decoder layer</strong>; each bank is 100,663,296
+    parameters before shared/dense components. Keep frequent expert traffic inside an NVLink-class
+    domain where possible.
+  </p>
+  <p>
+    NVIDIA's pinned 16-H100 SFT recipe uses <strong>TP=1, PP=2, EP=8, expert-TP=1</strong>,
+    with 17 / 23 decoder layers split across stages to account for the vision-side workload.
+    It uses full-layer recomputation and a TE loss path to avoid the large vocabulary buffer.
+    For text-only SFT with no MTP, a 20 / 20 split is a starting hypothesis, not an inherited optimum:
+    measure the embedding, logits and stage times before choosing it.
+  </p>
+
+  <h3>C. 397B-A17B: combine EP, PP and modest TP</h3>
+  <p>
+    Sixty-four 80-GiB GPUs cannot hold even the ideal 16-byte text state without offload or a
+    lower-memory optimizer: the floor is 92.28 GiB per rank. At 128 GPUs the floor falls to
+    46.14 GiB, but plain FSDP would repeatedly gather 12.25-GiB blocks. Prefer a model-aware
+    MoE engine and treat this as a multi-node systems problem.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <caption>Pinned NVIDIA Bridge SFT presets: reference configurations, not benchmarks reproduced here</caption>
+      <tr><th>Model</th><th>GPUs</th><th>Dense TP / PP / CP</th><th>Expert EP / expert-TP</th><th>Important scope</th></tr>
+      <tr><td>27B</td><td>16 H100</td><td>4 / 4 / 1</td><td>Not MoE</td><td>Multimodal + MTP, 4096 tokens</td></tr>
+      <tr><td>35B-A3B</td><td>16 H100</td><td>1 / 2 / 1</td><td>8 / 1</td><td>Multimodal + MTP; full-layer recompute</td></tr>
+      <tr><td>397B-A17B</td><td>128 H100</td><td>2 / 4 / 1</td><td>32 / 1</td><td>Multimodal + MTP; full-layer recompute</td></tr>
+    </table>
+  </div>
+  <p>
+    Read the <a href="https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/c4067f501aebefe03f27813f8ac0e4fe835249dd/src/megatron/bridge/recipes/qwen_vl/h100/qwen35_vl.py">recipe definitions</a>,
+    not just a launch script's comments; those can lag tuned defaults.
+    These presets train vision and MTP too, so their budgets are <em>not</em> the text-only
+    \(16P/N\) numbers. For next-token-only SFT, Bridge documents
+    <code>cfg.model.mtp_num_layers = None</code>; use a supported text path to omit vision, or
+    explicitly freeze the tower/projector and still count their stored weights.
+  </p>
+  <div class="step">
+    <div class="step-label">128-GPU flagship layout, with the rank arithmetic exposed</div>
+    <p>With CP=1, the dense and expert parts partition the <em>same</em> ranks differently:</p>
+    \[
+      N=PP\cdot TP\cdot DP_{\rm dense}
+       =PP\cdot EP\cdot TP_{\rm expert}\cdot DP_{\rm expert}.
+    \]
+    <p>For the flagship preset:
+      \(128=4\cdot2\cdot16=4\cdot32\cdot1\cdot1\).
+      <strong>Do not multiply TP × PP × EP and call that the world size.</strong>
+      This requires an engine supporting separate dense/expert parallel layouts, not arbitrary
+      combinations of generic distributed flags.</p>
+    <p>PP=4 starts with 15 decoder layers per stage; EP=32 gives 16 routed experts per layer
+      per expert rank. That is \(15\cdot16\cdot12{,}582{,}912
+      =3{,}019{,}898{,}880\) routed parameters per rank, or 45 GiB under the 16-byte state
+      assumption, <em>before</em> dense/shared parameters, embeddings, vision, MTP and activations.
+      With expert-DP=1 there is no further expert optimizer-state sharding in this layout.</p>
+    <p>Use TP=2 within a fast local pair. The flagship has only two KV heads: larger TP requires
+      explicit KV replication or another supported mapping. GDN also needs head-aware partitioning.
+      Its packed projections, convolution channels and head-specific gates must agree on ownership.</p>
+  </div>
+  <p>
+    EP=32 spans multiple 8-GPU nodes, so all-to-all bandwidth and tail latency matter. If that traffic
+    dominates, compare smaller EP with more expert-DP sharding or a different pipeline split, rather
+    than assuming larger EP is always faster. PP moves boundary activations instead of repeatedly
+    gathering every layer, but introduces bubbles: for a simple balanced non-interleaved schedule,
+    utilization is roughly \(m/(m+PP-1)\) with \(m\) microbatches. Profile real stage times; the last
+    stage may own the LM head and MTP, and the first may own vision.
+  </p>
+  <p>
+    For longer sequences, <a href="../systems/sequence-parallelism.html">sequence parallelism</a>
+    reduces replicated activation work within TP; context parallelism splits sequence computation.
+    Neither is a generic fix for Qwen's hybrid stack. Confirm support for GDN recurrence,
+    convolution boundary exchange, full attention and packed-sample boundaries in the exact backend.
+    Start at CP=1 unless the measured activation limit calls for a verified hybrid-model CP path.
+  </p>
+
+  <h2 id="megatron">12. Megatron in Practice — EP Is Not Expert TP</h2>
+  <p>
+    Use <a href="../systems/megatron-lm.html#bridge">Megatron Bridge</a>'s Qwen3.5 provider and SFT
+    recipes, built on Megatron-Core. Generic <code>pretrain_gpt.py</code> flags do not supply the
+    hybrid model implementation or convert its checkpoint. The following names are from the
+    <a href="https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/c4067f501aebefe03f27813f8ac0e4fe835249dd/scripts/training/run_recipe.py">pinned Bridge recipe runner</a>;
+    its short options are not the same CLI syntax as Megatron-LM's pretraining entry point.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Bridge model field</th><th>Runner option</th><th>What it partitions</th></tr>
+      <tr><td><code>tensor_model_parallel_size</code></td><td><code>-tp</code></td><td>Dense mixer projections and dense/shared FFNs; not automatically the routed expert matrices</td></tr>
+      <tr><td><code>expert_model_parallel_size</code></td><td><code>-ep</code></td><td>Expert IDs: each owner gets \(E/EP\) experts per layer</td></tr>
+      <tr><td><code>expert_tensor_parallel_size</code></td><td><code>-etp</code></td><td>Matrices <em>inside</em> each routed expert; abbreviated ETP below</td></tr>
+      <tr><td><code>pipeline_model_parallel_size</code></td><td><code>-pp</code></td><td>Decoder stages; account separately for embeddings, vision, loss and MTP</td></tr>
+      <tr><td><code>context_parallel_size</code></td><td><code>-cp</code></td><td>Context; fixed to 1 in this walkthrough</td></tr>
+      <tr><td><code>sequence_parallel</code></td><td><code>model.sequence_parallel=true</code></td><td>Sequence-sharded activations inside the dense TP group; no extra world-size multiplier</td></tr>
+    </table>
+  </div>
+  <p>
+    <strong>Set ETP explicitly.</strong> In Bridge's topology helper, an unspecified ETP inherits TP.
+    With separate dense/expert layouts, TP=2, EP=8, ETP=1 means two-way dense tensor parallelism,
+    eight-way expert ownership, and <em>no</em> tensor split inside an expert.
+    TP=2, EP=4, ETP=2 instead gives each expert to a two-GPU team.
+    Both expert layouts consume eight ranks per expert replica, but their collectives differ.
+  </p>
+  <div class="step">
+    <div class="step-label">35B-A3B: what is physically split?</div>
+    <p><strong>EP=8, ETP=1:</strong> each rank owns 32 expert IDs. Each expert retains its full
+      \([512,2048]\) gate/up matrices and \([2048,512]\) down matrix, so its routed bank has
+      100,663,296 parameters, or 192 MiB in BF16.</p>
+    <p><strong>EP=4, ETP=2:</strong> each rank participates in 64 expert IDs, holding half of each
+      expert's matrices: gate/up \([256,2048]\), down \([2048,256]\). The same 100,663,296 parameters
+      fit on each rank, but expert-TP communication now complements EP dispatch.</p>
+    <p><strong>Dense TP=2:</strong> the full-attention query-plus-gate projection is logically
+      \([8192,2048]\), split into \([4096,2048]\) per rank. K and V each become \([256,2048]\);
+      the output projection becomes \([2048,2048]\) per rank and its partial results must be summed.
+      These are logical weight shapes, not a prescription for slicing Megatron's packed storage.
+      Norms and the router are not all divided by TP; the provider owns their mapping.</p>
+  </div>
+
+  <h3>Interactive expert-ownership and state budget</h3>
+  <p>
+    This isolates <strong>one decoder layer's routed expert bank</strong>. It does not include
+    shared experts, attention/GDN, vocabulary matrices, vision, MTP, activations or temporary gathers,
+    and is not a whole-model fit prediction. PP affects how many ranks remain per stage; this plot
+    does not assume that the tuned 17/23-layer pipeline is balanced.
+    For \(P_e=3dm\), define local routed parameters \(R=EP^{-1}ETP^{-1}E P_e\) and
+    expert data-parallel replicas \(D_e=N/(PP\cdot EP\cdot ETP)\).
+  </p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Expert-only quantity</th><th>Bytes per rank, per layer</th></tr>
+      <tr><td>BF16 resident expert weights, before any DP parameter sharding</td><td>\(2R\)</td></tr>
+      <tr><td>16-byte layout with optimizer-only DP sharding (ZeRO-1-style)</td><td>\((4+12/D_e)R\)</td></tr>
+      <tr><td>Ideal full DP sharding of that same layout</td><td>\(16R/D_e=16E P_e PP/N\)</td></tr>
+    </table>
+  </div>
+  <p>
+    The last expression is independent of EP/ETP at fixed \(N,PP\): changing the model-parallel
+    split trades replication for ownership, rather than creating more total memory.
+    It still changes live weights, communication and GEMM size. These two 16-byte state policies
+    are illustrative; the cited NVIDIA recipes can use FP32 gradients and different DP sharding.
+    Do not treat either curve as their measured peak.
+  </p>
+  <div class="figure">
+    <div class="plot-controls">
+      <label>MoE checkpoint
+        <select id="ep-model"><option value="35">35B-A3B</option><option value="397">397B-A17B</option></select>
+      </label>
+      <label>Total GPUs \(N\)
+        <select id="ep-world">
+          <option value="8">8</option><option value="16" selected>16</option>
+          <option value="32">32</option><option value="64">64</option><option value="128">128</option>
+        </select>
+      </label>
+      <label>PP stages
+        <select id="ep-pp"><option value="1">1</option><option value="2" selected>2</option><option value="4">4</option></select>
+      </label>
+      <label>Dense TP
+        <select id="ep-tp"><option value="1">1</option><option value="2">2</option></select>
+      </label>
+      <label>Expert ownership EP
+        <select id="ep-degree">
+          <option value="1">1</option><option value="2">2</option><option value="4">4</option>
+          <option value="8" selected>8</option><option value="16">16</option>
+          <option value="32">32</option><option value="64">64</option>
+        </select>
+      </label>
+      <label>Expert tensor split ETP
+        <select id="ep-etp"><option value="1">1</option><option value="2">2</option><option value="4">4</option></select>
+      </label>
+    </div>
+    <canvas id="plot-expert-memory" aria-label="Per-layer routed expert weight and training-state memory versus expert parallel degree, at fixed world size, pipeline degree and expert tensor degree."></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span> BF16 expert weights</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-amber)"></span> optimizer-only DP sharding</span>
+      <span class="legend-item"><span class="lg dash" style="--c:var(--plot-teal)"></span> ideal full DP sharding</span>
+    </div>
+    <output id="ep-readout" class="plot-readout" aria-live="polite"
+      for="ep-model ep-world ep-pp ep-tp ep-degree ep-etp">35B-A3B: dense DP=8, expert DP=1; 32 expert IDs per rank, each unsplit. Routed weights: 0.1875 GiB per layer; 16-byte expert state: 1.5000 GiB per layer.</output>
+    <p class="figure-caption">
+      <strong>Dense TP does not shrink the routed bank when ETP is fixed.</strong> The amber dot is
+      the selected EP setting. With 16 GPUs and PP=2, EP=8/ETP=1 and EP=4/ETP=2 have the same
+      expert memory, but different execution and communication. Invalid rank products are rejected,
+      not rounded. Arithmetic validity does not certify backend, dispatcher or physical topology
+      support; keep fast groups local and inspect the actual rank map.
+    </p>
+  </div>
+  <p>
+    The explorer deliberately limits dense TP to 1 or 2 for these two-KV-head MoE checkpoints.
+    The dense 27B model has four KV heads and an upstream TP=4 preset, but no EP bank to plot.
+    In all cases, require integral dense/expert DP degrees, \(EP\mid E\), head-compatible TP and
+    an expert width divisible by ETP. The CP=1 rank products are the ones in §11.
+  </p>
+
+  <h3>Launch a known recipe before changing the mesh</h3>
+  <details class="ledger">
+    <summary>16-GPU 35B-A3B example: TP=1, PP=2, EP=8, ETP=1</summary>
+    <p>Run in an approved, compatible environment containing the pinned Bridge checkout, its
+      dependencies and a converted pretrained checkpoint. This is a <strong>multimodal CORD-v2
+      wiring example retaining vision and MTP</strong>, not a text-only instruction-data recipe
+      or a claim that 100 steps is enough. Replace dataset/checkpoint/output paths for your run.
+      Launch this command once on each of two 8-GPU nodes; <code>torchrun</code> creates the
+      eight local workers. Do not also launch eight copies per node with <code>srun</code>.</p>
+    <pre><code>torchrun --nnodes=2 --nproc-per-node=8 \
+  --node-rank="${NODE_RANK:?set 0 or 1 for this node}" \
+  --master-addr="${MASTER_ADDR:?set the reachable rank-0 node address}" \
+  --master-port=29500 \
+  scripts/training/run_recipe.py \
+  --recipe qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config \
+  --mode sft --dataset cord-v2 --step_func qwen3_vl_step \
+  -tp 1 -pp 2 -cp 1 -ep 8 -etp 1 \
+  model.sequence_parallel=false \
+  --pretrained_checkpoint /checkpoints/Qwen3.5-35B-A3B \
+  --save_dir /checkpoints/qwen35-sft \
+  --seq_length 4096 --micro_batch_size 1 --global_batch_size 32 \
+  --max_steps 100 --warmup_iters 10 --save_interval 50</code></pre>
+    <p>Add <code>--dry-run</code> to inspect the resolved recipe first. This keeps the preset's
+      17/23 stage split, recomputation, dispatcher and loss implementation; it does not just set
+      parallel degrees. Here dense DP=8, so microbatch 1 and global batch 32 imply four accumulation
+      microbatches. TP ranks process shards of the same sample, not extra independent samples.</p>
+  </details>
+  <div class="table-wrap">
+    <table>
+      <caption>Other pinned recipe choices; use the matching provider, not only new parallel flags</caption>
+      <tr><th>Recipe suffix after <code>qwen35_vl_</code></th><th>8-GPU nodes</th><th>Runner parallel options</th><th>Sequence parallel</th></tr>
+      <tr><td><code>27b_sft_16gpu_h100_bf16_config</code></td><td>2</td><td><code>-tp 4 -pp 4 -cp 1</code>; omit EP/ETP options</td><td><code>false</code> in this preset</td></tr>
+      <tr><td><code>397b_a17b_sft_128gpu_h100_bf16_config</code></td><td>16</td><td><code>-tp 2 -pp 4 -cp 1 -ep 32 -etp 1</code></td><td><code>true</code></td></tr>
+    </table>
+  </div>
+  <p>
+    When experimenting with other meshes, do not retain incompatible preset stage counts or a
+    node-specific dispatcher setup. Megatron's combined TP+EP training path requires sequence
+    parallelism when both degrees exceed one. Expert-TP adds its own collectives; compare ETP=1
+    first for these narrow experts. Validate conversion/logit parity, a forward/backward step,
+    gradients and checkpoint resume before measuring speed.
+  </p>
+
+  <h2 id="collective-paths">13. Follow the Collectives — Then Count the Bytes</h2>
+  <p>
+    <strong>HBM bandwidth, network bandwidth and capacity are different budgets.</strong>
+    Parameter counts estimate storage; a forward/backward trace tells you which tensors are read,
+    written and communicated. Start with the
+    <a href="../systems/collectives.html#duality">collective/autograd conventions</a> and
+    <a href="../systems/tensor-parallelism.html#mlp">column/row-parallel pair</a>.
+    The traces below describe classic Megatron paths; Transformer Engine, fusion and overlap can
+    change scheduling or retain different buffers without changing the mathematical dependencies.
+  </p>
+
+  <h3>TP: one column-parallel → local compute → row-parallel pair</h3>
+  <p>
+    Let \(X\) contain \(T\) token rows of width \(d\) for one dense TP group. Column-parallel input
+    projections produce disjoint feature/head slices; the row-parallel output projection produces
+    partial sums. A mixer or dense FFN can use this pattern. <strong>A routed MoE FFN is not simply
+    another dense TP pair:</strong> count EP, expert-TP and shared-expert work separately.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Boundary</th><th>Without sequence parallelism</th><th>With sequence parallelism</th></tr>
+      <tr><td>Forward: before column projection</td><td>Replicated \(X\); no collective</td><td>AllGather sequence shards of \(X\)</td></tr>
+      <tr><td>Forward: after row projection</td><td>AllReduce partial \(Y\) sums</td><td>ReduceScatter partial \(Y\) sums into sequence shards</td></tr>
+      <tr><td>Backward: entering row projection</td><td>Replicated \(dY\); no collective</td><td>AllGather sequence shards of \(dY\)</td></tr>
+      <tr><td>Backward: column input gradient</td><td>AllReduce partial \(dX\)</td><td>ReduceScatter partial \(dX\)</td></tr>
+      <tr><td>Backward: column weight gradient \(dW\)</td><td>Local GEMM using saved \(X\)</td><td>May AllGather saved sequence-sharded \(X\) again before the local \(dW\) GEMM</td></tr>
+    </table>
+  </div>
+  <p>
+    The extra input gather is real in the
+    <a href="https://github.com/NVIDIA/Megatron-LM/blob/2441047036f3206d19fd0dd118be25e0ff21f223/megatron/core/tensor_parallel/layers.py">classic trainable linear backward</a>:
+    it saves the local input shard and gathers it again for weight-gradient computation.
+    A backend retaining the full input, freezing the weight, or deferring weight gradients changes
+    that schedule. Activation recomputation can add another forward's collectives as well.
+    Conversely, do not add an AllReduce to the backward of the row-parallel output reduction when
+    its incoming gradient is already a replicated logical gradient: Megatron's paired
+    identity/AllReduce mappings avoid counting that reduction twice.
+  </p>
+
+  <h3>EP: dispatch and combine both have a reverse path</h3>
+  <pre><code>Forward:
+  local tokens → router/top-k → permute/expand assignments
+    → EP AllToAll(dispatch) → owned-expert GEMMs
+    → EP AllToAll(combine) → unpermute + weighted sum → output
+
+Backward:
+  dOutput → reverse weighted sum / expand gradients
+    → reverse-combine AllToAll → expert dInput and dWeight GEMMs
+    → reverse-dispatch AllToAll → sum assignment dInputs → dTokens</code></pre>
+  <p>
+    This is <strong>four activation/activation-gradient AllToAll transfers</strong> per
+    forward+backward through the routed branch, not four total NCCL calls in every implementation.
+    Routing probabilities and counts can travel separately. In the
+    <a href="https://github.com/NVIDIA/Megatron-LM/blob/2441047036f3206d19fd0dd118be25e0ff21f223/megatron/core/transformer/moe/token_dispatcher.py">baseline all-to-all dispatcher</a>,
+    ETP&gt;1 additionally gathers dispatched tokens over expert-TP before expert compute and
+    reduce-scatters partial expert outputs before the EP combine; backward reverses those operations.
+    Do not count a second generic TP reduction if the dispatcher already owns it.
+    Flex/HybridEP/DeepEP paths may deduplicate token copies per destination, fuse reductions, or
+    use lower-precision transfers. Inspect the selected dispatcher rather than applying the
+    baseline byte formula to every optimized kernel.
+  </p>
+  <p>
+    Two other paths sit outside this layer trace.
+    <strong>PP</strong> sends boundary activations forward and boundary gradients backward with
+    point-to-point operations, not an AllReduce over pipeline stages.
+    <strong>DP</strong> synchronizes parameter gradients across replicas: ordinary Megatron
+    distributed-optimizer training reduce-scatters gradients, updates local optimizer shards,
+    then gathers updated parameter shards. Dense weights use dense-DP groups; routed experts use
+    expert-DP groups. At expert-DP=1 there is no replica synchronization for those experts.
+    Full parameter sharding instead introduces module-level weight gathers around compute;
+    count the configured strategy, accumulation schedule and recomputation, not a generic
+    once-per-step gather.
+  </p>
+
+  <h3>Network arithmetic: logical tensor size is not bytes sent</h3>
+  <p>
+    Write \(b\) for bytes per communicated element and \(S=Tdb\) for the full logical activation
+    tensor of a TP group. With \(p\) ranks, the ring-model <strong>bytes sent per rank</strong> are
+    \(2(p-1)S/p\) for AllReduce and \((p-1)S/p\) for AllGather or ReduceScatter.
+    Received bytes are the same in a balanced exchange. Do not add TX+RX and then divide by
+    a one-direction bandwidth; do not multiply per-rank traffic by all ranks and divide by one
+    GPU's link bandwidth either.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <caption>Payload model, excluding protocol overhead and small metadata</caption>
+      <tr><th>Forward + backward work</th><th>Per-rank sent bytes</th><th>Scope</th></tr>
+      <tr><td>One TP pair, no SP</td><td>\(4(p-1)S/p\)</td><td>Two AllReduces</td></tr>
+      <tr><td>One TP pair, SP main path</td><td>\(4(p-1)S/p\)</td><td>Two AllGathers + two ReduceScatters</td></tr>
+      <tr><td>SP input re-gather for \(dW\), if needed</td><td>\((p-1)S/p\) additional</td><td>One more AllGather</td></tr>
+      <tr><td>One routed FFN, baseline EP, TP=ETP=1</td><td>\(4(1-1/e)T_{\rm local}kdb\)</td><td>Four transfers; balanced routing across \(e=EP\) owners, no peer deduplication</td></tr>
+    </table>
+  </div>
+  <p>
+    In the EP formula, \(T_{\rm local}\) is the unique token count contributed by one dispatcher
+    rank, not the global batch's token count. For TP/ETP&gt;1, first derive token ownership after
+    redistribution and add its collectives; do not substitute \(T/TP\) blindly.
+    At EP=1 the remote payload is zero, but local permutation, router and GEMM costs remain.
+    For imbalanced routing, use the busiest sender/receiver rather than average traffic.
+  </p>
+  <div class="step">
+    <div class="step-label">Worked TP example — flagship mixer, 4096 tokens, TP=2</div>
+    <p>For BF16 activations, \(S=4096\cdot4096\cdot2=32\) MiB.
+      One TP pair sends 64 MiB per rank over forward+backward without SP, or on the main SP path.
+      The classic SP input re-gather adds 16 MiB, making <strong>80 MiB</strong>.
+      At an <em>assumed</em> effective one-direction payload bandwidth of 100 GB/s, those terms
+      take \(64\cdot2^{20}/10^{11}=0.671\) ms and
+      \(80\cdot2^{20}/10^{11}=0.839\) ms respectively, before latency and contention.</p>
+  </div>
+  <div class="step">
+    <div class="step-label">Worked EP example — 35B-A3B, 4096 local tokens, EP=8</div>
+    <p>Use TP=ETP=1, top-k=8, \(d=2048\), BF16 activations and balanced, expanded token assignments.
+      One dispatch has \(4096\cdot8\cdot2048\cdot2=128\) MiB of logical payload per rank;
+      \(7/8\) is remote, so each of the four transfers sends <strong>112 MiB</strong>.
+      Forward+backward therefore sends 448 MiB and receives another 448 MiB per rank.
+      At an assumed effective 50 GB/s in each direction, the bandwidth-only service-time sum is
+      \(448\cdot2^{20}/(50\cdot10^9)=\boxed{9.40\ {\rm ms}}\), not 18.8 ms.</p>
+    <p>This is an all-to-all baseline calculation, not a measurement of the tuned HybridEP recipe.
+      Use payload bandwidth measured for the actual group and message sizes. NIC sharing,
+      fabric oversubscription, skew and additional metadata can raise time; peer deduplication
+      or communication/compute overlap can reduce the exposed time.</p>
+  </div>
+  <p>
+    For a ring, latency contributes roughly \(2(p-1)\alpha\) to an AllReduce and
+    \((p-1)\alpha\) to each AllGather/ReduceScatter; other algorithms have different latency terms.
+    If timing a kernel takes \(\Delta t\), effective payload bandwidth is
+    \(B_{\rm eff}=V_{\rm sent}/\Delta t\) under these definitions. Use decimal GB/s
+    (\(10^9\) bytes/s), not GiB/s, consistently. A 400-Gbit/s NIC is at most 50 GB/s per direction
+    before overhead and sharing; an advertised aggregate/bidirectional NVLink number is not
+    automatically the per-rank one-direction bandwidth for this collective.
+  </p>
+
+  <h3>HBM arithmetic: a resident expert still has to stream its matrices</h3>
+  <p>
+    For one GEMM \(Y=XW^\top\), with \(X\in\mathbb{R}^{n\times a}\) and
+    \(W\in\mathbb{R}^{o\times a}\), count \(F=2nao\) FLOPs.
+    A simple forward streaming model reads \(X,W\) once and writes \(Y\) once:
+    \(V_{\rm HBM}=b(na+oa+no)\).
+    This is an idealized tensor-traffic model, not a guaranteed hardware-counter value: cache
+    reuse/fusion can eliminate HBM accesses, and tiling, padding or extra buffers can add them.
+    Arithmetic intensity is \(I=F/V_{\rm HBM}\), and a roofline estimate is
+    \[
+      t_{\rm GEMM}\gtrsim
+      \max\left(\frac{F}{F_{\rm effective}},\frac{V_{\rm HBM}}{B_{\rm HBM}}\right).
+    \]
+    Use measured/effective compute and HBM rates for the relevant dtype and shapes; this
+    \(B_{\rm HBM}\) is <em>not</em> the network bandwidth in the preceding examples.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <caption>35B expert's fused gate/up projection: \(a=2048,\ o=1024\), BF16; forward only</caption>
+      <tr><th>Tokens assigned to one expert \(n\)</th><th>FLOPs</th><th>Ideal tensor traffic</th><th>Intensity</th></tr>
+      <tr><td>16</td><td>67,108,864</td><td>4.09375 MiB</td><td>15.63 FLOP/byte</td></tr>
+      <tr><td>1024</td><td>4,294,967,296</td><td>10 MiB</td><td>409.60 FLOP/byte</td></tr>
+    </table>
+  </div>
+  <p>
+    The EP example above gives \(n\approx EP\cdot T_{\rm local}\cdot k/E
+    =8\cdot4096\cdot8/256=1024\) assignments per expert under balanced routing.
+    That is why “all MoE GEMMs are memory-bound” is too broad: routing and batching determine
+    the actual matrix sizes. At illustrative rates of 3 TB/s HBM and 1 PFLOP/s BF16 compute,
+    the ridge point is about 333 FLOP/byte. The 16-token GEMM is bandwidth-limited in this model;
+    the 1024-token GEMM is compute-limited (3.50 μs of ideal HBM service versus 4.29 μs of compute).
+    These are model terms, not measured kernel latencies.
+  </p>
+  <p>
+    Backward adds \(dX=dY\,W\) and \(dW=dY^\top X\), each about the forward GEMM's FLOP count.
+    If all three tensors stream afresh on each GEMM and gradients use the same dtype, this
+    unfused model totals roughly \(3F\) FLOPs and \(3V_{\rm HBM}\) tensor traffic across
+    forward+backward. FP32 gradient accumulation changes bytes: accumulating a parameter gradient
+    can read and write an existing FP32 buffer. The optimizer later reads/writes weights, master
+    weights and moments too. Count those kernels separately; <strong>16 bytes of resident model
+    state is not 16 bytes of HBM traffic per training step.</strong>
+  </p>
+  <div class="compare">
+    <div class="compare-label">Turn the calculation into a profile</div>
+    Measure GEMM/permute HBM bytes, collective durations and overlap after warmup. Compute
+    \(B_{\rm HBM,eff}=(\text{DRAM read bytes}+\text{DRAM write bytes})/t\) for a kernel and
+    \(B_{\rm net,eff}=V_{\rm sent}/t\) for a collective with the chosen normalization.
+    Sum serialized operations; use the critical path for overlapped work, rather than summing
+    every kernel duration or taking one maximum over the entire step. Compare TP/EP meshes at
+    fixed global supervised-token batch, sequence length, checkpointing and loss policy.
+    Reducing communication on paper is not a win if expert GEMMs become too small or the pipeline
+    spends more time idle.
+  </div>
+
+  <h2 id="sft-checklist">14. An Efficient SFT Run Is More Than a Sharding Flag</h2>
+  <h3>Choose full SFT or adapters before choosing the mesh</h3>
+  <p>
+    For a modest instruction dataset or limited hardware, start with a smaller model or
+    <strong>LoRA / QLoRA</strong>, and compare held-out quality against full SFT.
+    LoRA removes base-weight optimizer states, not the need to store/read the frozen base.
+    An idealized fully sharded BF16-base LoRA budget is
+    \((2P_{\rm frozen}+16P_{\rm adapter})/N\), plus gathered weights and activations.
+    Four-bit storage changes the base term toward \(0.5P_{\rm frozen}\), but scales, unquantized
+    modules and dequantization buffers make the real number larger; confirm that the quantizer
+    supports this model's packed expert tensors and GDN path.
+  </p>
+  <p>
+    Adapter targeting is architecture-specific. <code>q_proj</code>/<code>v_proj</code> alone
+    cover only the full-attention quarter of the stack. To adapt GDN, consider
+    <code>in_proj_qkv</code>, <code>in_proj_z</code>, <code>in_proj_a</code>,
+    <code>in_proj_b</code> and <code>out_proj</code>; the full-attention path uses
+    <code>q_proj</code>, <code>k_proj</code>, <code>v_proj</code>, <code>o_proj</code>.
+    Scope targets to the language model so a suffix match does not accidentally adapt vision.
+    In the pinned implementation, routed expert <code>gate_up_proj</code>/<code>down_proj</code>
+    are 3D <code>nn.Parameter</code> banks, not ordinary <code>nn.Linear</code> modules.
+    “All linear” therefore need not include them: use a supported
+    <a href="https://huggingface.co/docs/peft/v0.21.0/package_reference/lora">PEFT parameter-targeting</a>
+    path or the engine's MoE adapters. Inspect trainable names and gradients. For one linear matrix,
+    rank-\(r\) LoRA adds \(r(d_{\rm in}+d_{\rm out})\) parameters; per-expert adapters multiply that
+    cost by the number of adapted experts.
+  </p>
+
+  <h3>Make a correct small run, then increase utilization</h3>
+  <ol>
+    <li><strong>Pin the checkpoint and stack.</strong> Use approved, compatible Transformers/PEFT or
+      Megatron Bridge/Core and kernel versions; do not copy a Qwen3-Next or serving-only TP recipe.
+      Check that pretrained conversion preserves gates, expert ordering, norms, vocabulary matrices
+      and the chosen MTP scope. Use shard-aware load/save/resume so rank 0 does not need a full
+      materialized optimizer checkpoint.</li>
+    <li><strong>Make the SFT objective explicit.</strong> Use the checkpoint's chat template and
+      intended thinking mode; mask system/user/tool/padding tokens when training assistant-only
+      outputs, and retain the intended assistant end tokens. Normalize by actual supervised tokens
+      across ranks and accumulation steps, not by a mean of unequal sequence means.
+      Verify the router auxiliary loss is intentionally enabled and added with the expected scale:
+      <code>router_aux_loss_coef</code> in a config alone does not prove the trainer applies it.</li>
+    <li><strong>Establish a short-context baseline.</strong> Start with microbatch 1 and 2K–4K tokens,
+      BF16 compute, cache disabled and checkpointing. Full-SFT learning rates around
+      \(5\cdot10^{-6}\)–\(2\cdot10^{-5}\) appear in the cited presets, but are starting points,
+      not a universal optimum. Choose steps/warmup from your dataset and monitor held-out quality,
+      gradient norms and finite loss.</li>
+    <li><strong>Use the actual fast paths.</strong> Full-attention FlashAttention/SDPA support is
+      not enough: the 75% GDN path also needs a supported chunked delta-rule backward and fast
+      causal convolution. MoE needs efficient dispatch and grouped GEMMs. Detect fallback warnings;
+      profile loss memory and kernel time before changing parallelism.</li>
+    <li><strong>Pack only with hybrid-aware isolation.</strong> A correct packed batch resets
+      GDN recurrent state <em>and</em> causal-convolution history at sample boundaries, and applies
+      matching boundaries to full attention and labels. An attention mask or reset position IDs
+      alone may not reset the recurrent path. Compare packed vs. separate-example loss; otherwise
+      use length buckets and padding rather than silently leaking context between examples.</li>
+    <li><strong>Tune against useful throughput.</strong> Record non-padding and supervised tokens/s,
+      peak allocated/reserved memory, optimizer-step peak, gather/all-to-all time, pipeline idle
+      time and expert-load imbalance after warmup. Increase microbatch or sequence length one at
+      a time, then compare meshes at the same token budget and objective. Global sequence batch
+      is \(B_{\rm micro}\cdot G_{\rm accumulation}\cdot DP_{\rm dense}\) for the CP=1 layouts above;
+      do not multiply by total GPUs or EP again. Confirm checkpoint resume before scaling out.</li>
+  </ol>
+  <div class="compare">
+    <div class="compare-label">Practical decision rule</div>
+    <strong>27B:</strong> start with full sharding and measure activations.
+    <strong>35B MoE:</strong> compare that baseline with node-local expert ownership.
+    <strong>397B MoE:</strong> use a supported EP + PP layout with modest TP and a real network budget.
+    If hardware or data does not justify full SFT, adapters or a smaller checkpoint are usually a
+    better first experiment than a deeply offloaded flagship. Offload can make a run fit, but
+    PCIe/host-memory traffic may erase the throughput advantage.
+  </div>
+
+  <h2 id="summary">15. Summary</h2>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-card-label">The recipe</div>
+      <p>Qwen3-Next's shape, scaled 5×: 3:1 Gated DeltaNet : gated attention, 512-expert MoE at 4% activation, MTP.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Hybrid logic</div>
+      <p>45 recurrent-state layers carry sequence modeling at \(O(1)\); 15 full layers restore exact recall.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Gated attention</div>
+      <p>\(\sigma(W_g x) \odot \mathrm{Attn}(x)\) before \(W_O\) — kills attention sinks and massive activations.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">New this gen</div>
+      <p>Native early-fusion vision with interleaved M-RoPE, at ≈zero throughput cost; vocab 248K / 201 languages.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">The meta-lesson</div>
+      <p>Architecture validated on an 80B testbed, then scaled unmodified — de-risked novelty.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Claimed payoff</div>
+      <p>8.6× decode throughput vs Qwen3-Max at 32K, 19× at 256K; base quality matching a &gt;1T dense-attention predecessor.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Parameter reality</div>
+      <p>6.575B per DeltaNet block; 6.562B per full-attention block. Text totals 396.346B; vision and MTP are additional.</p>
+    </div>
+    <div class="summary-card">
+      <div class="summary-card-label">Training reality</div>
+      <p>Budget all trainable experts, not just top-k. Sharded state, live gathered units, activations and communication all matter.</p>
+    </div>
+  </div>
+
+  <h2>What's Next</h2>
+  <div class="next-grid">
+    <a class="next-card" href="../transformer/gated-deltanet.html">
+      <div class="next-card-label">Prerequisite</div>
+      <div class="next-card-title">Gated DeltaNet</div>
+      <p>The delta rule, the forgetting gate, and the exact layer Qwen3.5 stacks 45 deep — derived from scratch.</p>
+    </a>
+    <a class="next-card" href="../transformer/hybrid-attention.html">
+      <div class="next-card-label">Design pattern</div>
+      <div class="next-card-title">Hybrid Attention Stacks</div>
+      <p>Why 3:1, where to place the full layers, and the two-object cache it creates at serving time.</p>
+    </a>
+    <a class="next-card" href="../transformer/linear-attention.html">
+      <div class="next-card-label">Foundation</div>
+      <div class="next-card-title">Linear Attention</div>
+      <p>Why attention becomes an RNN with a matrix state, and the capacity limits that force the hybrid design.</p>
+    </a>
+    <a class="next-card" href="kimi-k3.html">
+      <div class="next-card-label">Same bet, bigger</div>
+      <div class="next-card-title">Kimi K3</div>
+      <p>The other 3:1 linear hybrid — KDA's channel-wise gates, gated MLA, and NoPE at 2.8T parameters.</p>
+    </a>
+    <a class="next-card" href="deepseek-v4.html">
+      <div class="next-card-label">The rival answer</div>
+      <div class="next-card-title">DeepSeek-V4</div>
+      <p>Long context without recurrence: compressed-KV summaries, sparse selection, and softmax attention everywhere.</p>
+    </a>
+    <a class="next-card" href="../transformer/moe-routing.html">
+      <div class="next-card-label">Deep dive</div>
+      <div class="next-card-title">MoE Routing</div>
+      <p>Gating, top-k selection, and the load-balancing machinery behind the 512-expert layer.</p>
+    </a>
+    <a class="next-card" href="../foundations/rmsnorm-gated.html">
+      <div class="next-card-label">Deep dive</div>
+      <div class="next-card-title">Gated RMSNorm</div>
+      <p>The per-head output normalization on every DeltaNet layer's way out.</p>
+    </a>
+  </div>
+
+  <h3 id="parameter-sources">Reproducible parameter and training sources</h3>
+  <p>
+    Parameter ledger checked September 29, 2026. Configs and checkpoint indexes are pinned to
+    <a href="https://huggingface.co/Qwen/Qwen3.5-397B-A17B/tree/8472618112abcbd45acbcdc58436aff4233c23f7">397B revision 8472618</a>,
+    <a href="https://huggingface.co/Qwen/Qwen3.5-35B-A3B/tree/59d61f3ce65a6d9863b86d2e96597125219dc754">35B revision 59d61f3</a>, and
+    <a href="https://huggingface.co/Qwen/Qwen3.5-27B/tree/fc05daec18b0a78c049392ed2e771dde82bdf654">27B revision fc05dae</a>.
+    Tensor construction follows
+    <a href="https://github.com/huggingface/transformers/blob/v5.3.0/src/transformers/models/qwen3_5_moe/modeling_qwen3_5_moe.py">Transformers v5.3.0 MoE</a>
+    and <a href="https://github.com/huggingface/transformers/blob/v5.3.0/src/transformers/models/qwen3_5/modeling_qwen3_5.py">dense implementation</a>.
+    Training references:
+    <a href="https://docs.pytorch.org/tutorials/intermediate/FSDP_tutorial.html">PyTorch FSDP2 tutorial</a>,
+    <a href="https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/c4067f501aebefe03f27813f8ac0e4fe835249dd/examples/models/qwen/qwen35_vl/README.md">NVIDIA Bridge Qwen3.5 guide, including MTP scope</a>,
+    and the <a href="https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/c4067f501aebefe03f27813f8ac0e4fe835249dd/src/megatron/bridge/recipes/qwen_vl/h100/qwen35_vl.py">pinned H100 SFT recipes</a>.
+    EP/TP rank arithmetic follows the
+    <a href="https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/c4067f501aebefe03f27813f8ac0e4fe835249dd/scripts/common/benchmark_parallelism.py">Bridge topology helper</a>.
+    Classic collective traces use Megatron-Core revision
+    <a href="https://github.com/NVIDIA/Megatron-LM/tree/2441047036f3206d19fd0dd118be25e0ff21f223">2441047</a>;
+    this source snapshot explains the operations, not a claim that it is the tested Core dependency
+    of the pinned Bridge environment. The bandwidth examples are analytical models, not hardware
+    measurements.
+    Parameter counts are derived; memory figures are explicitly scoped estimates; the sharding
+    presets are upstream reference configurations, not throughput measurements made for this page.
+  </p>
+  <p style="margin-top:2.5em; font-size:0.85rem; color:var(--muted);">
+    <strong>Sources:</strong>
+    <a href="https://huggingface.co/Qwen/Qwen3.5-397B-A17B">Qwen3.5-397B-A17B model card and config.json</a>;
+    <a href="https://www.alibabacloud.com/blog/602894">official release blog</a>;
+    <a href="https://github.com/QwenLM/Qwen3.5">QwenLM/Qwen3.5</a>;
+    <a href="https://arxiv.org/abs/2604.15804">Qwen3.5-Omni technical report (arXiv:2604.15804)</a>.
+    No standalone Qwen3.5 technical report had been published as of August 2026; layer layout, MoE, MTP,
+    and RoPE claims above are confirmed by the released <code>config.json</code>.
+  </p>
+
+</div>
+
+<footer>
+  Personal ML notes &nbsp;·&nbsp; Qwen3.5 — architecture, parameter counts &amp; SFT sharding
+  &nbsp;·&nbsp; <a href="../transformer/gated-deltanet.html" style="color:inherit">← Gated DeltaNet page</a>
+</footer>
+
+<script>
+(function () {
+  function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+  // Total sequence memory (MB, BF16) across the stack, log10-log10 space.
+  // Full attention in all 60 layers: 60 * 1024 elems/token * 2 B.
+  // Hybrid: 15 attention layers' KV + constant DeltaNet state
+  //   state = 45 layers * 64 heads * 128*128 elems * 2 B = 94.4 MB.
+  var KV_PER_TOKEN_LAYER = 1024 * 2 / 1e6;       // MB per token per attention layer
+  var STATE_MB = 45 * 64 * 128 * 128 * 2 / 1e6;  // ≈ 94.4 MB
+
+  function fullPts() {
+    var pts = [];
+    for (var u = 2; u <= 6.001; u += 0.05) {
+      var T = Math.pow(10, u);
+      pts.push([u, Math.log10(60 * KV_PER_TOKEN_LAYER * T)]);
+    }
+    return pts;
+  }
+  function hybridPts() {
+    var pts = [];
+    for (var u = 2; u <= 6.001; u += 0.05) {
+      var T = Math.pow(10, u);
+      pts.push([u, Math.log10(STATE_MB + 15 * KV_PER_TOKEN_LAYER * T)]);
+    }
+    return pts;
+  }
+  function floorPts() {
+    return [[2, Math.log10(STATE_MB)], [6, Math.log10(STATE_MB)]];
+  }
+
+  function drawPlot(canvas, cfg) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const mL = 56, mR = 14, mT = 14, mB = 40;
+    const pw = cssW - mL - mR, ph = cssH - mT - mB;
+    const { xMin, xMax, yMin, yMax } = cfg;
+    const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
+    const Y = y => mT + (yMax - y) / (yMax - yMin) * ph;
+
+    ctx.font = '11px Inter, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(t => {
+      const px = X(t[0]);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.fillText(t[1], px, mT + ph + 6);
+    });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(t => {
+      const py = Y(t[0]);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+      ctx.fillText(t[1], mL - 8, py);
+    });
+    ctx.strokeStyle = cssVar('--plot-gray');
+    if (xMin <= 0 && xMax >= 0) {
+      ctx.beginPath(); ctx.moveTo(X(0), mT); ctx.lineTo(X(0), mT + ph); ctx.stroke();
+    }
+    if (yMin <= 0 && yMax >= 0) {
+      ctx.beginPath(); ctx.moveTo(mL, Y(0)); ctx.lineTo(mL + pw, Y(0)); ctx.stroke();
+    }
+
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(cfg.xLabel, mL + pw / 2, cssH - 8);
+    ctx.save();
+    ctx.translate(12, mT + ph / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText(cfg.yLabel, 0, 0);
+    ctx.restore();
+
+    ctx.save();
+    ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    ctx.lineJoin = 'round';
+    cfg.series.forEach(s => {
+      ctx.beginPath();
+      ctx.lineWidth = s.width || 2;
+      ctx.strokeStyle = s.color.indexOf('--') === 0 ? cssVar(s.color) : s.color;
+      ctx.setLineDash(s.dash || []);
+      s.points.forEach((p, i) => {
+        const px = X(p[0]), py = Y(p[1]);
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      });
+      ctx.stroke();
+      if (s.marker) {
+        ctx.fillStyle = ctx.strokeStyle;
+        s.points.forEach(p => {
+          ctx.beginPath(); ctx.arc(X(p[0]), Y(p[1]), s.marker, 0, 2 * Math.PI); ctx.fill();
+        });
+      }
+    });
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  const plots = [];
+  const hybridCanvas = document.getElementById('plot-hybrid');
+  if (hybridCanvas) plots.push([hybridCanvas, {
+    xMin: 2, xMax: 6, yMin: 0.6, yMax: 5.3,
+    xTicks: [[2, '100'], [3, '1K'], [4, '10K'], [5, '100K'], [6, '1M']],
+    yTicks: [[1, '10 MB'], [2, '100 MB'], [3, '1 GB'], [4, '10 GB'], [5, '100 GB']],
+    xLabel: 'context length (tokens, log scale)',
+    yLabel: 'sequence memory, all layers (log scale)',
+    series: [
+      { points: floorPts(),  color: '--plot-gray',  width: 2, dash: [5, 4] },
+      { points: fullPts(),   color: '--plot-amber', width: 2.25 },
+      { points: hybridPts(), color: '--plot-violet', width: 2.75 }
+    ]
+  }]);
+
+  const memoryModels = {
+    '27': { label: '27B', parameters: 26895998464, unit: 1271398400 },
+    '35': { label: '35B-A3B', parameters: 34660610688, unit: 842700992 },
+    '397': { label: '397B-A17B', parameters: 396346350336, unit: 6575157504 }
+  };
+  const memoryControls = {
+    model: document.getElementById('memory-model'),
+    bytes: document.getElementById('memory-bytes'),
+    ranks: document.getElementById('memory-ranks'),
+    capacity: document.getElementById('memory-capacity'),
+    reserve: document.getElementById('memory-reserve')
+  };
+  const memoryCanvas = document.getElementById('plot-sft-memory');
+  const memoryReadout = document.getElementById('memory-readout');
+
+  function memoryBudget(model, bytes, ranks, reserve) {
+    const resident = bytes * model.parameters / ranks / Math.pow(2, 30);
+    const gathered = 2 * model.unit / Math.pow(2, 30);
+    return { resident, gathered, total: resident + gathered + reserve };
+  }
+
+  function renderMemory() {
+    const model = memoryModels[memoryControls.model.value];
+    const bytes = Number(memoryControls.bytes.value);
+    const ranks = Number(memoryControls.ranks.value);
+    const capacity = Number(memoryControls.capacity.value);
+    const reserve = Number(memoryControls.reserve.value);
+    const budget = memoryBudget(model, bytes, ranks, reserve);
+    const low = memoryBudget(model, bytes, 128, reserve).resident;
+    const high = Math.max(capacity, memoryBudget(model, bytes, 8, reserve).total);
+    const yMin = Math.floor(Math.log2(Math.min(low, capacity))) - 0.25;
+    const yMax = Math.ceil(Math.log2(high)) + 0.25;
+    const residentPoints = [], totalPoints = [], yTicks = [];
+    for (let i = 0; i <= 260; i++) {
+      const x = 3 + 4 * i / 260;
+      const point = memoryBudget(model, bytes, Math.pow(2, x), reserve);
+      residentPoints.push([x, Math.log2(point.resident)]);
+      totalPoints.push([x, Math.log2(point.total)]);
+    }
+    for (let y = Math.ceil(yMin); y <= yMax; y += 2) yTicks.push([y, String(Math.pow(2, y))]);
+    drawPlot(memoryCanvas, {
+      xMin: 3, xMax: 7, yMin, yMax,
+      xTicks: [[3, '8'], [4, '16'], [5, '32'], [6, '64'], [7, '128']],
+      yTicks,
+      xLabel: 'full-sharding ranks (log scale)',
+      yLabel: 'GiB / rank (log scale)',
+      series: [
+        { points: residentPoints, color: '--plot-violet', width: 2.5 },
+        { points: totalPoints, color: '--plot-amber', width: 2.5 },
+        { points: [[3, Math.log2(capacity)], [7, Math.log2(capacity)]],
+          color: '--plot-gray', width: 2, dash: [5, 4] }
+      ]
+    });
+    const remaining = capacity - budget.total;
+    const status = remaining >= 0
+      ? remaining.toFixed(2) + ' GiB nominal room; not a fit guarantee.'
+      : 'Over budget by ' + Math.abs(remaining).toFixed(2) + ' GiB.';
+    memoryReadout.textContent = model.label + ', ' + ranks + ' ranks: '
+      + budget.resident.toFixed(2) + ' GiB resident + ' + budget.gathered.toFixed(2)
+      + ' GiB gathered + ' + reserve + ' GiB allowance = ' + budget.total.toFixed(2)
+      + ' GiB. ' + status;
+  }
+
+  const expertModels = {
+    '35': { label: '35B-A3B', experts: 256, width: 512, perExpert: 3145728 },
+    '397': { label: '397B-A17B', experts: 512, width: 1024, perExpert: 12582912 }
+  };
+  const expertControls = {
+    model: document.getElementById('ep-model'),
+    world: document.getElementById('ep-world'),
+    pp: document.getElementById('ep-pp'),
+    tp: document.getElementById('ep-tp'),
+    ep: document.getElementById('ep-degree'),
+    etp: document.getElementById('ep-etp')
+  };
+  const expertCanvas = document.getElementById('plot-expert-memory');
+  const expertReadout = document.getElementById('ep-readout');
+
+  function expertLayout(model, world, pp, tp, ep, etp) {
+    if (![world, pp, tp, ep, etp].every(n => Number.isInteger(n) && n > 0)) {
+      return { error: 'All parallel degrees and the world size must be positive integers.' };
+    }
+    if (world % (pp * tp) !== 0) return { error: 'Total GPUs must be divisible by PP × dense TP.' };
+    if (world % (pp * ep * etp) !== 0) return { error: 'Total GPUs must be divisible by PP × EP × ETP.' };
+    if (model.experts % ep !== 0) return { error: 'EP must divide the expert count.' };
+    if (model.width % etp !== 0) return { error: 'ETP must divide the expert intermediate width.' };
+    if (tp > 2) return { error: 'This explorer requires dense TP=1 or 2 for the two KV heads.' };
+    const denseDP = world / (pp * tp), expertDP = world / (pp * ep * etp);
+    const localParameters = model.experts * model.perExpert / (ep * etp);
+    const gib = Math.pow(2, 30);
+    return {
+      denseDP, expertDP, localParameters,
+      localExperts: model.experts / ep,
+      weights: 2 * localParameters / gib,
+      optimizerSharded: (4 + 12 / expertDP) * localParameters / gib,
+      fullySharded: 16 * localParameters / expertDP / gib
+    };
+  }
+
+  function renderExperts() {
+    const model = expertModels[expertControls.model.value];
+    const world = Number(expertControls.world.value), pp = Number(expertControls.pp.value);
+    const tp = Number(expertControls.tp.value), ep = Number(expertControls.ep.value);
+    const etp = Number(expertControls.etp.value);
+    const selected = expertLayout(model, world, pp, tp, ep, etp);
+    expertCanvas.hidden = Boolean(selected.error);
+    if (selected.error) {
+      expertReadout.textContent = 'Invalid layout: ' + selected.error + ' No memory estimate shown.';
+      return;
+    }
+    const maxEP = Math.min(model.experts, world / (pp * etp));
+    const weights = [], optimizerSharded = [], fullySharded = [], xTicks = [];
+    for (let degree = 1; degree <= maxEP; degree *= 2) {
+      const budget = expertLayout(model, world, pp, tp, degree, etp);
+      const x = Math.log2(degree);
+      weights.push([x, budget.weights]);
+      optimizerSharded.push([x, budget.optimizerSharded]);
+      fullySharded.push([x, budget.fullySharded]);
+      xTicks.push([x, String(degree)]);
+    }
+    const maximum = optimizerSharded[0][1];
+    const base = Math.pow(10, Math.floor(Math.log10(maximum / 4)));
+    const step = Math.ceil(maximum / 4 / base) * base;
+    const yMax = Math.ceil(maximum * 1.05 / step) * step;
+    const yTicks = [];
+    for (let i = 0; i * step <= yMax + 1e-9; i++) {
+      const y = i * step;
+      yTicks.push([y, String(Number(y.toFixed(2)))]);
+    }
+    drawPlot(expertCanvas, {
+      xMin: -0.2, xMax: Math.log2(maxEP) + 0.2, yMin: 0, yMax, xTicks, yTicks,
+      xLabel: 'EP degree (log scale; N, PP, ETP fixed)',
+      yLabel: 'expert GiB / layer / rank',
+      series: [
+        { points: weights, color: '--plot-violet', width: 2.5, marker: 2 },
+        { points: fullySharded, color: '--plot-teal', width: 2, dash: [5, 4], marker: 2 },
+        { points: optimizerSharded, color: '--plot-amber', width: 2.5, marker: 2 },
+        { points: [[Math.log2(ep), selected.optimizerSharded]], color: '--plot-amber', marker: 5 }
+      ]
+    });
+    const sequenceParallel = tp > 1 && ep > 1 ? ' Use sequence_parallel=true for TP+EP.' : '';
+    expertReadout.textContent = model.label + ': dense DP=' + selected.denseDP
+      + ', expert DP=' + selected.expertDP + '; ' + selected.localExperts
+      + ' expert IDs per rank, each split ' + etp + ' way(s). Routed parameters: '
+      + selected.localParameters.toLocaleString('en-US') + ' per layer. BF16 weights: '
+      + selected.weights.toFixed(4) + ' GiB; optimizer-only DP sharding: '
+      + selected.optimizerSharded.toFixed(4) + ' GiB; ideal full DP sharding: '
+      + selected.fullySharded.toFixed(4) + ' GiB.' + sequenceParallel
+      + ' Expert bank only; not a whole-model fit estimate.';
+  }
+
+  Object.values(memoryControls).forEach(control => control.addEventListener('change', renderMemory));
+  Object.values(expertControls).forEach(control => control.addEventListener('change', renderExperts));
+  function renderAll() {
+    plots.forEach(([c, cfg]) => drawPlot(c, cfg));
+    renderMemory();
+    renderExperts();
+  }
+  renderAll();
+  let raf;
+  window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(renderAll); });
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq.addEventListener) mq.addEventListener('change', renderAll);
+})();
+</script>
+
+</body>
+</html>

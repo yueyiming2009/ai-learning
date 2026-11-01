@@ -10,15 +10,19 @@ running large models.
 
 **Follow the whole process:** [Model Training, End to End](docs/transformer/model-training-lifecycle.html)
 maps data, objectives, checkpoints, and evaluation gates across the lifecycle.
-Then [MAI-Thinking-1](docs/transformer/mai-thinking-1.html) follows one reported recipe from
+Then [MAI-Thinking-1](docs/models/mai-thinking-1.html) follows one reported recipe from
 MAI-Base-1 development through independent specialist climbs, self-distillation restarts,
 consolidation, and final evaluation.
 
-**Explore a component:** use the six-domain reference index below. Pre-training is a stage,
+**Explore a model family:** [Models & Families](https://yueyiming2009.github.io/ai-learning/#models)
+groups architecture and training coverage into one canonical model/release-series page, with
+explicit lineage labels and links to related models.
+
+**Explore a component:** use the reference domains below. Pre-training is a stage,
 distillation is a technique used at several stages, and async RL is an execution strategy.
 The guides link to those deep references rather than duplicate their derivations.
-Both guides live with model/training pages; the homepage reading routes do not change the
-six-domain taxonomy.
+The generic lifecycle stays under Transformer & Pretraining; named-model architecture and
+development recipes live together in Models.
 
 ## Contents
 
@@ -30,16 +34,17 @@ docs/                Rendered HTML pages (published via GitHub Pages)
   transformer/       03 · Transformer & Pretraining
   systems/           04 · Systems & Scaling
   rl/                05 · Reinforcement Learning
-  inference/         06 · Inference
+  models/            06 · Models & Families
+  inference/         07 · Inference
 triton/              Triton GPU kernel notebooks
 rl/                  Reinforcement-learning systems notes (markdown)
 ```
 
-The `docs/` subfolders mirror the six domains of the site index one-for-one; a page's
-folder *is* its domain.
+The `docs/` subfolders mirror the seven domains of the site index one-for-one; a canonical
+page's folder *is* its domain. Old model URLs remain as compatibility redirects, not duplicate pages.
 
 The site index ([`docs/index.html`](https://yueyiming2009.github.io/ai-learning)) is the
-canonical, complete list of pages, organized into six top-level domains. The summaries
+canonical, complete list of pages, organized into seven top-level domains. The summaries
 below are a high-level map, not an exhaustive index.
 
 Use **Search pages** on the site index to filter cards by title, description, tag, or
@@ -76,25 +81,8 @@ and the neural scaling laws that size the run (Kaplan vs. Chinchilla, the comput
 [Diffusion language models](docs/transformer/diffusion-language-models.html) add a different
 generative objective: masked/uniform-token corruption, same-position denoising, weighted
 cross-entropy, and blockwise sampling, with an interactive generation-order comparison.
-**Model Architectures:** case studies reading disclosed 2026 frontier designs and training choices through those
-components — DeepSeek-V4 (sequence-compressed sparse attention, mHC residual lanes), Qwen3.5
-(the 3:1 Gated DeltaNet hybrid scaled to 397B, native early-fusion vision), Kimi K3
-(KDA + NoPE gated MLA, Block AttnRes, latent-space MoE, MXFP4 QAT), GLM-5 (MLA-256, IndexShare
-indexer sharing, Muon Split, shared-weight MTP), MiniMax-M2.5 (the full-attention counterpoint
-and its published ablation), Nemotron 3 & 3.5 (Mamba-2 hybrid, LatentMoE, NVFP4 pretraining,
-and Lightning — the 30B whose generation bump is pure training), and GPT-6 Astra (adaptive
-reasoning behavior, public API/system-card facts, and the boundary between evidence and
-undisclosed architecture). [MAI-Base-2](docs/transformer/mai-base-2.html) adds a training/co-design
-case: repetition-preserving source scaling, fixed-memory dropless MoE enabling experts in every
-layer, distributed Muon, and activation-gradient clipping as a data diagnostic, with explicit
-limits on architecture disclosure and efficiency claims.
-[Jev](docs/transformer/jev.html) studies a different output contract: typed probabilistic
-decisions rather than generated text, with a hypothetical shared-state/readout graph,
-calibration and confidence distinctions, and an interactive cost-aware decision policy.
-[DiffusionGemma](docs/transformer/diffusion-gemma.html) follows that diffusion learning path
-into Google's Gemma 4–based model: shared-backbone encoding/denoising, uniform-state
-corruption, entropy-bounded sampling, and the low-concurrency speed–quality trade-off.
-Vendor disclosures, black-box observations, and unconfirmed internals stay separate.
+The [training lifecycle](docs/transformer/model-training-lifecycle.html) connects these
+mechanisms across stages; named-model case studies are grouped in Models & Families below.
 
 ### 04 · Systems & Scaling — [docs/systems/](docs/systems/), [triton/](triton/)
 The engineering substrate that trains it across many devices, built bottom-up — MFU, the PyTorch
@@ -127,7 +115,7 @@ AlphaZero → tree search for LLMs. Imitation separates expert supervision from 
 and connects learner-state coverage to LLM distillation.
 [PPO/GRPO backward derivation](docs/rl/ppo-grpo-backward.html) follows the clipped loss through
 the ratio, KL term, log-probabilities, logits, and model weights, with worked examples.
-**Alignment:** RLHF, GRPO, DPO, DeepSeek-R1, cascade RL,
+**Alignment:** RLHF, GRPO, DPO, cascade RL,
 distillation, and generative recommendation (retrieval vs ranking, slate rewards, and a dated
 research/production landscape), paired with a worked ranking-RL training loop, interactive
 policy updates, a comparison with general/LLM RL, and a separate-project GenRank–verl integration
@@ -151,7 +139,31 @@ details, and the source-pinned metric glossary are expandable references.
 Continue to PPO/GRPO training walkthroughs, then async RL and
 its monitoring, and reward pipelining.
 
-### 06 · Inference — [docs/inference/](docs/inference/)
+### 06 · Models & Families — [docs/models/](docs/models/)
+
+Architecture and training walkthroughs share one canonical page per model or closely related
+release series. Each page has a family/lineage map, links to its architecture and training
+coverage, and explicit evidence limits. Generic algorithms and framework walkthroughs remain
+in their own domains.
+
+| Family | Model-centered pages and relationships |
+|---|---|
+| DeepSeek | [R1](docs/models/deepseek-r1.html) joins V3-Base's architecture with the R1-Zero/R1 branches and dense-student distillation; [V4](docs/models/deepseek-v4.html) is a later architecture generation, not an asserted R1 fine-tune. |
+| Microsoft MAI | [Thinking-1](docs/models/mai-thinking-1.html) covers Base-1 through specialist consolidation; [Base-2](docs/models/mai-base-2.html) is a later pre-training/co-design case, not Thinking-1's base. |
+| Qwen | [Qwen3.5](docs/models/qwen-3-5.html) combines its design-testbed progression, dense/MoE variants, and SFT engineering walkthrough. |
+| Kimi | [K3](docs/models/kimi-k3.html) connects its hybrid architecture, optimization, quantized training, and serving choices. |
+| GLM | [GLM-5 / 5.2](docs/models/glm-5.html) shares a release-series page with architectural changes and training/serving notes. |
+| MiniMax | [M2.5](docs/models/minimax-m2-5.html) connects the full-attention decision to its agentic-training emphasis. |
+| Nemotron | [3 / 3.5](docs/models/nemotron-3.html) covers size variants and the Nano/Lightning architecture-versus-training comparison. |
+| Gemma | [DiffusionGemma](docs/models/diffusion-gemma.html) is an adaptation of a Gemma 4 backbone, not an unchanged-model inference switch. |
+| OpenAI GPT | [GPT-6 Astra](docs/models/gpt-6-astra.html) distinguishes public behavior/evaluations from undisclosed architecture and training. |
+| TypeSafe Jev | [Jev](docs/models/jev.html) connects its decision interface, calibration, serving, and unconfirmed implementation hypotheses. |
+
+Checkpoint inheritance, teacher-data transfer, design reuse, and release succession are
+different edges. Family grouping never establishes an otherwise undisclosed parent checkpoint.
+Legacy model URLs and their section fragments remain supported through redirects.
+
+### 07 · Inference — [docs/inference/](docs/inference/)
 Serving a trained model fast — the prefill/decode compute model, KV cache, and batching;
 techniques (FlashAttention, PagedAttention, speculative decoding, quantization, prefill–decode
 disaggregation, MoE serving and the expert coverage law); and workloads (offline batch, online SLO serving, RL rollout/reward serving).

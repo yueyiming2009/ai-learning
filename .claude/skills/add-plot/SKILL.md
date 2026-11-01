@@ -5,7 +5,7 @@ description: Add an interactive visualization to a learning page in this repo wh
 
 # Add a plot when it aids understanding
 
-This repo is a self-contained ML/RL learning site (`docs/<domain>/*.html` across six domain
+This repo is a self-contained ML/RL learning site (`docs/<domain>/*.html` across seven domain
 folders, plus `rl/` and `triton/`).
 Each page is a single standalone HTML file with inline CSS + MathJax, **no build step and no
 external JS libraries**. When a page explains something with a *shape* — an activation, a

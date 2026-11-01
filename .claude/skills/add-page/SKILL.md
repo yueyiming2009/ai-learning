@@ -12,40 +12,60 @@ it sits in the right folder *and* has a **card** in the matching place on the in
 skill is the single source of truth for *where* both of those are.
 
 **The folder structure mirrors the taxonomy one-for-one.** `docs/` holds exactly
-`index.html` plus six domain directories: `foundations/ hardware/ transformer/ systems/
-rl/ inference/`. A page's directory *is* its domain — pick the domain once (table below)
+`index.html` plus seven domain directories: `foundations/ hardware/ transformer/ systems/
+rl/ models/ inference/`. A page's directory *is* its domain — pick the domain once (table below)
 and it determines both the file's path and the section its card goes in. Never add a
 loose `.html` at the top of `docs/`.
 
 Related: [`add-plot`](../add-plot/SKILL.md) governs the figures *inside* a page; this skill
 governs the page's *entry on the index*.
 
-## The taxonomy (6 collapsible domains)
+## The taxonomy (7 collapsible domains)
 
-`docs/index.html` is organized into six top-level **domains**, each a
+`docs/index.html` is organized into seven top-level **domains**, each a
 `<details class="domain" id="…">` that is **collapsed by default** (no `open` attribute). Its
 `<summary class="domain-header">` carries the numbered badge, the `<h1>`, and a `▸` chevron;
 inside the `<details>` come a `<p class="domain-desc">` and the **subsections** (`<h2>`,
 restyled as small uppercase labels), each holding a `card-grid` of cards. The domains run in
-reading order — isolated math, then the chips, then the model, then the cluster, then RL, then
-serving. Within Systems & Scaling and within Inference the subsections run bottom-up
+reading order — isolated math, then the chips, transformer components, the cluster, RL,
+model-centered case studies, and serving. Within Systems & Scaling and within Inference the subsections run bottom-up
 (kernels → up; foundations → workloads).
 
 | # | Domain (folder / `id` / class / accent) | Subsections (in page order) | A page belongs here if it's about… |
 |---|---|---|---|
 | 01 | **Deep Learning Foundations** — `docs/foundations/` / `#foundations` / `domain-foundations` / indigo | Foundations · Loss Functions · Normalization · Activations & FFN · Positional Encoding · Optimization · Sampling & Estimation · Tokenization · Test-Time Scaling · Interpretability | the math of how a model computes & trains, component by component: a gradient, a loss's probabilistic basis, an optimizer rule, the tokenizer algorithm — **derivations that stand alone from the transformer** |
 | 02 | **Hardware** — `docs/hardware/` / `#hardware` / `domain-hardware` / lime | Accelerators | the physical chip: SM/tensor-core layout, memory hierarchy, interconnect topology |
-| 03 | **Transformer & Pretraining** — `docs/transformer/` / `#transformer` / `domain-transformer` / violet | Core Architecture · Sequence Mixing & Memory · Training · Model Architectures | assembling the pieces into a working model and training it: attention, the block, depth recurrence, routing and residual structure; sequence mixers and memory layers (linear attention, DeltaNet, Mamba); the next-token objective; how to **size** the run (scaling laws) — and the **model case studies** that read a complete frontier architecture (DeepSeek-V4, Qwen3.5, Kimi K3) through those components |
+| 03 | **Transformer & Pretraining** — `docs/transformer/` / `#transformer` / `domain-transformer` / violet | Core Architecture · Sequence Mixing & Memory · Training | reusable transformer components, sequence mixers and memory, pre-training objectives, scaling laws, and the generic model-training lifecycle; named-model case studies live in Models |
 | 04 | **Systems & Scaling** — `docs/systems/` / `#systems` / `domain-systems` / orange | Performance · Kernel Programming · Communication & Parallelism · Distributed Training | the substrate that trains it across many devices: kernels, MFU, collectives, parallelism, distributed plumbing. Kernel Programming has a read-in-order intro (CUDA → cuBLAS → Triton → CUTLASS → CuTe DSL → cuTile, then the Blackwell kernel model and FLA as deep dives) — keep its card order matched to it |
-| 05 | **Reinforcement Learning** — `docs/rl/` / `#rl` / `domain-rl` / teal | RL Theory · Alignment & RLHF · Agentic RL · RL Environments · RL Frameworks · Training Walkthroughs · RL Efficiency | anything RL — the theory (MDP → tree search), the alignment methods (RLHF/GRPO/DPO/…), the agentic vertical (ReAct, long-horizon tool use, multi-turn rollout training, harness/trainer decoupling), the environments layer (landscape, OpenEnv, verifiers, reward design, sandboxing, task supply), the frameworks that run RL jobs (verl/TRL/landscape/placement), and the systems pages (walkthroughs, async RL, efficiency) |
-| 06 | **Inference** — `docs/inference/` / `#inference` / `domain-inference` / blue | Inference Foundations · Inference Techniques · Inference Workloads | serving a trained model fast: the prefill/decode compute model, its optimizations, and serving workloads |
+| 05 | **Reinforcement Learning** — `docs/rl/` / `#rl` / `domain-rl` / teal | RL Theory · Alignment & RLHF · Agentic RL · RL Environments · RL Frameworks · Training Walkthroughs · RL Efficiency | reusable RL theory, methods, environments, frameworks, and execution/experiment walkthroughs; model-specific training narratives such as DeepSeek-R1 belong in Models |
+| 06 | **Models & Families** — `docs/models/` / `#models` / `domain-models` / fuchsia | DeepSeek · Microsoft MAI · Qwen · Kimi · GLM · MiniMax · Nemotron · Gemma · OpenAI GPT · TypeSafe Jev | one canonical page per model or closely related release series, integrating architecture, data/training recipe, systems, results, and evidence limits; families label lineage and variant relationships |
+| 07 | **Inference** — `docs/inference/` / `#inference` / `domain-inference` / blue | Inference Foundations · Inference Techniques · Inference Workloads | serving a trained model fast: the prefill/decode compute model, its optimizations, and serving workloads |
 
 Rule of thumb: **Foundations = "why this formula is true, in isolation," Hardware = "the chip,"
 Transformer & Pretraining = "the model, assembled and trained," Systems & Scaling = "the cluster
-that trains it," RL = "anything reinforcement learning, theory through production,"
-Inference = "serving it fast."** RL and Inference each own their *whole* vertical — an RL
-training walkthrough goes under RL (not a generic "practices" bucket), and an inference serving
-recipe goes under Inference.
+that trains it," RL = "reusable RL methods and execution," Models = "one named model and its
+family, architecture through training and results," Inference = "serving it fast."**
+Framework walkthroughs and bounded training experiments remain under RL even when they use a
+particular model as a testbed. A walkthrough of how that model itself was developed belongs on
+its canonical Models page, not in a second architecture-only or recipe-only page.
+
+### Model-centered pages and lineage
+
+- Use one family heading `#models-<family>` with its description and card grid. Keep each page
+  indexed once, even if it connects several stages or families through distillation.
+- Model pages begin with a compact family/lineage and coverage map linking their architecture,
+  training, systems, and evidence sections. Keep detailed existing sections and visuals; do not
+  fabricate missing training stages to fill a template.
+- Distinguish direct checkpoint initialization, teacher-data transfer, architectural reuse,
+  release succession, and size variants. Link sibling model pages and cite underlying sources.
+  A family name or later release date is not proof of a weight-inheritance edge.
+- Order related cards by their disclosed lineage/release progression when that helps the story.
+  Family groups may exceed the usual six-subsection guideline; keep each group small instead
+  of creating family mega-pages or duplicating cards.
+- Preserve migrated URLs as small `noindex` redirects with a canonical URL, a visible fallback
+  link, and JavaScript that carries `location.search` and `location.hash` to the new page.
+  Retain old section IDs in the destination and check them through the redirect. Redirect stubs
+  are compatibility files, not duplicate learning pages, and get no index card.
 
 **The Foundations ↔ Transformer seam is the one that gets mis-drawn.** The test is whether the
 page is a *standalone derivation* or a *transformer component*. SwiGLU and RoPE are gradient
@@ -122,7 +142,7 @@ scaffolding a new one.
 
 ## Reminder — when the *structure* needs to change (ask, don't silently restructure)
 
-The 6-domain taxonomy is deliberate, and since the folders mirror it, changing the taxonomy now
+The 7-domain taxonomy is deliberate, and since the folders mirror it, changing the taxonomy now
 also **moves files on disk**. Adding a card is routine; changing the taxonomy is a **user
 decision** because it touches the folder layout, the hero nav pills, the accent-color CSS, the
 README, and this file. After placing a card, check these triggers and **surface any that fire to the user**
@@ -132,11 +152,11 @@ instead of acting on them:
   it → propose a *new subsection* (cheap, in-domain) and confirm the label with the user.
 - **It fits no domain, or fits two.** A topic that spans domains (or none) is a sign the seams
   are off → flag it; don't force it into the least-bad bucket.
-- **A new top-level domain seems needed.** STOP. Adding a 7th domain changes the hero pills
+- **A new top-level domain seems needed.** STOP. Adding another domain changes the hero pills
   (`.hero-domains`), needs a new `domain-*` accent block in the CSS, a numbered badge, a new
   collapsed `<details id="…">` whose `id` the open-on-hash script will match, a new `docs/`
   folder, and a README domain. Confirm scope with the user first.
-- **A subsection exceeds ~6–8 cards, or a domain exceeds ~6 subsections.** The page is getting
+- **A subsection exceeds ~6–8 cards, or a non-Models domain exceeds ~6 subsections.** The page is getting
   dense again — the exact problem this structure was built to fix. Flag it as a split candidate.
 
 When the taxonomy *does* change (with user sign-off), update all of them in the same commit so

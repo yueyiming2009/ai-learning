@@ -469,12 +469,12 @@
       <thead><tr><th>Format</th><th>Element</th><th>Scale dtype</th><th>Block size (K)</th><th>Notes</th></tr></thead>
       <tbody>
         <tr><td><strong>MXFP8 / MXFP6 / MXFP4</strong></td><td>E4M3/E5M2 · FP6 · E2M1</td><td>UE8M0 (power of two)</td><td>32</td><td>OCP Microscaling standard; mixable per operand (e.g. MXFP8 acts × MXFP4 weights)</td></tr>
-        <tr><td><strong>NVFP4</strong></td><td>E2M1</td><td>UE4M3 (fractional)</td><td class="good">16</td><td>NVIDIA's format: finer blocks + a per-tensor FP32 scale — the <a href="../transformer/nemotron-3.html">4-bit pretraining</a> recipe</td></tr>
+        <tr><td><strong>NVFP4</strong></td><td>E2M1</td><td>UE4M3 (fractional)</td><td class="good">16</td><td>NVIDIA's format: finer blocks + a per-tensor FP32 scale — the <a href="../models/nemotron-3.html">4-bit pretraining</a> recipe</td></tr>
       </tbody>
     </table>
   </div>
 
-  <p>For the kernel author, block scaling adds one genuinely new duty: the scale-factor tensors are <strong>operands living in TMEM</strong>, with their own prescribed layouts — so the mainloop grows a second data path (TMA scale factors to smem, copy into TMEM alongside the accumulator budget) and the <a href="cutlass.html#epilogues">epilogue</a> typically grows the reverse: computing per-block amax and quantizing the output so the <em>next</em> GEMM can consume it. CUTLASS's <code>CollectiveBuilder</code> generates all of this from a dtype choice (<code>nv_float4_t</code>, <code>mx_float8_t</code>…); <a href="cublas.html#cublaslt">cublasLt</a> exposes the same paths as block-scaled matmul APIs. The 4× rate over Hopper FP8 is why every 2025-26 frontier stack — <a href="../transformer/nemotron-3.html">NVFP4 pretraining</a>, <a href="../transformer/kimi-k3.html">MXFP4 serving</a> — is racing down this path.</p>
+  <p>For the kernel author, block scaling adds one genuinely new duty: the scale-factor tensors are <strong>operands living in TMEM</strong>, with their own prescribed layouts — so the mainloop grows a second data path (TMA scale factors to smem, copy into TMEM alongside the accumulator budget) and the <a href="cutlass.html#epilogues">epilogue</a> typically grows the reverse: computing per-block amax and quantizing the output so the <em>next</em> GEMM can consume it. CUTLASS's <code>CollectiveBuilder</code> generates all of this from a dtype choice (<code>nv_float4_t</code>, <code>mx_float8_t</code>…); <a href="cublas.html#cublaslt">cublasLt</a> exposes the same paths as block-scaled matmul APIs. The 4× rate over Hopper FP8 is why every 2025-26 frontier stack — <a href="../models/nemotron-3.html">NVFP4 pretraining</a>, <a href="../models/kimi-k3.html">MXFP4 serving</a> — is racing down this path.</p>
 
   <!-- ══════════════════════════════════════════ -->
   <h2 id="reaching">Reaching tcgen05 from each rung of the ladder</h2>
@@ -503,7 +503,7 @@
   <ul>
     <li><strong><a href="../inference/flash-attention.html">FlashAttention-4</a></strong> — everything on this page deployed in anger: TMEM ping-pong, 2-CTA backward, softmax on the FMA pipe.</li>
     <li><strong><a href="cutlass.html#mainloop">CUTLASS</a></strong> — the Hopper mainloop this page diffs against, and the collective layer that absorbs the change.</li>
-    <li><strong><a href="../transformer/nemotron-3.html">Nemotron 3</a></strong> / <strong><a href="../inference/inference-quantization.html">Inference Quantization</a></strong> — the training and serving recipes built on block-scaled MMA.</li>
+    <li><strong><a href="../models/nemotron-3.html">Nemotron 3</a></strong> / <strong><a href="../inference/inference-quantization.html">Inference Quantization</a></strong> — the training and serving recipes built on block-scaled MMA.</li>
     <li><strong><a href="../hardware/gpu-generations.html">GPU Generations</a></strong> — the chip-level Blackwell story (dies, memory, NVL72) that frames the per-SM view here.</li>
     <li><strong>Primary sources</strong> — PTX ISA ch. 9.7.17 (<code>tcgen05</code>), CUTLASS <code>media/docs/cpp/blackwell_functionality.md</code>, and the CuTe DSL tcgen05 programming guide; Colfax Research's Blackwell GEMM tutorial series is the best worked walkthrough.</li>
   </ul>
