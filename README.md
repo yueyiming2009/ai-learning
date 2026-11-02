@@ -24,6 +24,12 @@ The guides link to those deep references rather than duplicate their derivations
 The generic lifecycle stays under Transformer & Pretraining; named-model architecture and
 development recipes live together in Models.
 
+**Measure whether a change helped:** [Evaluation Foundations](docs/evaluation/evaluation-foundations.html)
+→ [Agent Evaluation](docs/evaluation/agent-evaluation.html)
+→ [A Paired Evaluation, End to End](docs/evaluation/practical-evaluation.html).
+Separate training reward from held-out evidence, compare systems at declared budgets, and
+reproduce the analysis on explicitly synthetic records before adapting it to real runs.
+
 ## Contents
 
 ```
@@ -36,15 +42,16 @@ docs/                Rendered HTML pages (published via GitHub Pages)
   rl/                05 · Reinforcement Learning
   models/            06 · Models & Families
   inference/         07 · Inference
+  evaluation/        08 · Evaluation
 triton/              Triton GPU kernel notebooks
 rl/                  Reinforcement-learning systems notes (markdown)
 ```
 
-The `docs/` subfolders mirror the seven domains of the site index one-for-one; a canonical
+The `docs/` subfolders mirror the eight domains of the site index one-for-one; a canonical
 page's folder *is* its domain. Old model URLs remain as compatibility redirects, not duplicate pages.
 
 The site index ([`docs/index.html`](https://yueyiming2009.github.io/ai-learning)) is the
-canonical, complete list of pages, organized into seven top-level domains. The summaries
+canonical, complete list of pages, organized into eight top-level domains. The summaries
 below are a high-level map, not an exhaustive index.
 
 Use **Search pages** on the site index to filter cards by title, description, tag, or
@@ -180,6 +187,18 @@ Legacy model URLs and their section fragments remain supported through redirects
 Serving a trained model fast — the prefill/decode compute model, KV cache, and batching;
 techniques (FlashAttention, PagedAttention, speculative decoding, quantization, prefill–decode
 disaggregation, MoE serving and the expert coverage law); and workloads (offline batch, online SLO serving, RL rollout/reward serving).
+
+### 08 · Evaluation — [docs/evaluation/](docs/evaluation/)
+Evidence that model and agent changes produce the intended behavior, across training and
+deployment. **Foundations & Measurement:** task distributions, split boundaries, contamination,
+grader audits, paired uncertainty, and evaluation gates across pretraining, SFT and RL;
+an interactive plot separates an observed gain from its precision.
+**Models & Agents:** whole-system evaluation, end-state checks, policy constraints, resets,
+attempt accounting, matched budgets, and an interactive pass@k versus pass^k comparison.
+**Training & Practice:** a runnable standard-library paired analysis with manifest validation,
+task-cluster bootstrap, costs and a decision rule. Its records are explicitly synthetic, not a
+reported model result. Reward optimization remains under RL, named-model results under Models,
+and generic evaluation protocols live here.
 
 ## Publishing
 

@@ -12,23 +12,23 @@ it sits in the right folder *and* has a **card** in the matching place on the in
 skill is the single source of truth for *where* both of those are.
 
 **The folder structure mirrors the taxonomy one-for-one.** `docs/` holds exactly
-`index.html` plus seven domain directories: `foundations/ hardware/ transformer/ systems/
-rl/ models/ inference/`. A page's directory *is* its domain — pick the domain once (table below)
+`index.html` plus eight domain directories: `foundations/ hardware/ transformer/ systems/
+rl/ models/ inference/ evaluation/`. A page's directory *is* its domain — pick the domain once (table below)
 and it determines both the file's path and the section its card goes in. Never add a
 loose `.html` at the top of `docs/`.
 
 Related: [`add-plot`](../add-plot/SKILL.md) governs the figures *inside* a page; this skill
 governs the page's *entry on the index*.
 
-## The taxonomy (7 collapsible domains)
+## The taxonomy (8 collapsible domains)
 
-`docs/index.html` is organized into seven top-level **domains**, each a
+`docs/index.html` is organized into eight top-level **domains**, each a
 `<details class="domain" id="…">` that is **collapsed by default** (no `open` attribute). Its
 `<summary class="domain-header">` carries the numbered badge, the `<h1>`, and a `▸` chevron;
 inside the `<details>` come a `<p class="domain-desc">` and the **subsections** (`<h2>`,
 restyled as small uppercase labels), each holding a `card-grid` of cards. The domains run in
 reading order — isolated math, then the chips, transformer components, the cluster, RL,
-model-centered case studies, and serving. Within Systems & Scaling and within Inference the subsections run bottom-up
+model-centered case studies, serving, and cross-cutting evaluation. Within Systems & Scaling and within Inference the subsections run bottom-up
 (kernels → up; foundations → workloads).
 
 | # | Domain (folder / `id` / class / accent) | Subsections (in page order) | A page belongs here if it's about… |
@@ -40,14 +40,21 @@ model-centered case studies, and serving. Within Systems & Scaling and within In
 | 05 | **Reinforcement Learning** — `docs/rl/` / `#rl` / `domain-rl` / teal | RL Theory · Alignment & RLHF · Agentic RL · RL Environments · RL Frameworks · Training Walkthroughs · RL Efficiency | reusable RL theory, methods, environments, frameworks, and execution/experiment walkthroughs; model-specific training narratives such as DeepSeek-R1 belong in Models |
 | 06 | **Models & Families** — `docs/models/` / `#models` / `domain-models` / fuchsia | DeepSeek · Microsoft MAI · Mistral · Meta Muse · Qwen · Kimi · GLM · MiniMax · Nemotron · Gemma · OpenAI GPT · TypeSafe Jev | one canonical page per model or closely related release series, integrating architecture, data/training recipe, systems, results, and evidence limits; families label lineage and variant relationships |
 | 07 | **Inference** — `docs/inference/` / `#inference` / `domain-inference` / blue | Inference Foundations · Inference Techniques · Inference Workloads | serving a trained model fast: the prefill/decode compute model, its optimizations, and serving workloads |
+| 08 | **Evaluation** — `docs/evaluation/` / `#evaluation` / `domain-evaluation` / rose | Foundations & Measurement · Models & Agents · Training & Practice | reusable evaluation design, graders and measurement, model/agent protocols, statistical comparisons, and evaluation-driven decisions across training and deployment |
 
 Rule of thumb: **Foundations = "why this formula is true, in isolation," Hardware = "the chip,"
 Transformer & Pretraining = "the model, assembled and trained," Systems & Scaling = "the cluster
 that trains it," RL = "reusable RL methods and execution," Models = "one named model and its
-family, architecture through training and results," Inference = "serving it fast."**
+family, architecture through training and results," Inference = "serving it fast,"
+Evaluation = "evidence that it works and that a change helped."**
 Framework walkthroughs and bounded training experiments remain under RL even when they use a
 particular model as a testbed. A walkthrough of how that model itself was developed belongs on
 its canonical Models page, not in a second architecture-only or recipe-only page.
+
+Evaluation owns reusable measurement protocols and evaluation-only walkthroughs, not every
+page that reports a score. Reward construction and optimization remain under RL; named-model
+results stay on canonical Models pages; serving performance mechanisms remain under Inference
+or Systems. Link those pages to Evaluation rather than duplicating their content or index cards.
 
 ### Model-centered pages and lineage
 
@@ -142,7 +149,7 @@ scaffolding a new one.
 
 ## Reminder — when the *structure* needs to change (ask, don't silently restructure)
 
-The 7-domain taxonomy is deliberate, and since the folders mirror it, changing the taxonomy now
+The 8-domain taxonomy is deliberate, and since the folders mirror it, changing the taxonomy now
 also **moves files on disk**. Adding a card is routine; changing the taxonomy is a **user
 decision** because it touches the folder layout, the hero nav pills, the accent-color CSS, the
 README, and this file. After placing a card, check these triggers and **surface any that fire to the user**

@@ -51,7 +51,7 @@ EOF
 ## High-level architecture
 
 - This repo is a **static learning site**, not an application with a build pipeline. The published artifact is the hand-authored HTML in `docs/`, served by GitHub Pages.
-- `docs/index.html` is the **canonical site map**. It is both the homepage and the complete inventory of learning pages, organized into seven top-level domains: `foundations`, `hardware`, `transformer`, `systems`, `rl`, `models`, and `inference`.
+- `docs/index.html` is the **canonical site map**. It is both the homepage and the complete inventory of learning pages, organized into eight top-level domains: `foundations`, `hardware`, `transformer`, `systems`, `rl`, `models`, `inference`, and `evaluation`.
 - Each page under `docs/<domain>/` is a **standalone HTML document** with inline CSS and inline JavaScript. There is no shared templating system, component framework, or asset pipeline. Math rendering is done with MathJax loaded directly in each page.
 - The homepage uses collapsible `<details class="domain">` sections with card grids for each subsection, plus a small script that opens the correct domain when the URL hash targets a section or card anchor.
 - `README.md` is the high-level map of the site and explains the domain taxonomy. Keep it aligned with meaningful taxonomy or page-organization changes.
@@ -61,6 +61,7 @@ EOF
 
 - The **folder under `docs/` is the page's domain**. Do not place content HTML directly in `docs/`; only `docs/index.html` should live there at the top level.
 - `docs/models/` owns model-centered pages, grouped by family in the index. Architecture, data/training recipe, systems choices, evaluation, and disclosure limits belong together on one canonical page per model or closely related release series. Generic mechanisms and framework/experiment walkthroughs remain in their component domains.
+- `docs/evaluation/` owns reusable measurement principles, model/agent evaluation protocols, and evaluation-only walkthroughs. Reward optimization stays under RL and named-model results under Models; cross-link rather than duplicate them.
 - Label family relationships explicitly: checkpoint initialization, teacher-data transfer, design reuse, and release succession are not interchangeable. Do not infer weight ancestry from a name or shared architecture.
 - Moved model URLs retain small `noindex` redirect pages that preserve query strings and fragments, with a canonical link and a visible fallback link. Preserve old section IDs in the destination; index only the canonical model page.
 - A new or moved page is not complete until **both** are updated:
@@ -73,7 +74,7 @@ EOF
 - Content pages should follow the established structure visible in existing pages such as `docs/foundations/swiglu.html`: sticky top nav, `nav-brand` home link to `../index.html`, hero block, prose sections, and inline styling/scripts kept inside the page.
 - Reuse existing card markup and tag styles from `docs/index.html`. Prefer existing `card-tag` classes; if a new tag color is needed, use inline `style` on the tag rather than introducing one-off CSS classes.
 - When a concept benefits from a visual, use the existing **self-contained canvas plot** pattern from `docs/foundations/swiglu.html`: inline CSS, inline vanilla JS, CSS-variable-driven colors, and no external charting library.
-- The seven-domain taxonomy is deliberate. If a topic does not clearly fit an existing domain or subsection, treat that as a repo-structure decision and surface it instead of silently inventing a new top-level bucket.
+- The eight-domain taxonomy is deliberate. If a topic does not clearly fit an existing domain or subsection, treat that as a repo-structure decision and surface it instead of silently inventing a new top-level bucket.
 - The most detailed repo-specific guidance for these workflows already lives in:
   - `.claude/skills/add-page/SKILL.md`
   - `.claude/skills/add-plot/SKILL.md`
