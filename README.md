@@ -25,7 +25,10 @@ The generic lifecycle stays under Transformer & Pretraining; named-model archite
 development recipes live together in Models.
 
 **Measure whether a change helped:** [Evaluation Foundations](docs/evaluation/evaluation-foundations.html)
+→ [Evaluating the Evaluator](docs/evaluation/grader-evaluation.html)
+→ [Evaluating Language Models](docs/evaluation/model-evaluation.html)
 → [Agent Evaluation](docs/evaluation/agent-evaluation.html)
+→ [Evaluation-Driven Training](docs/evaluation/evaluation-driven-training.html)
 → [A Paired Evaluation, End to End](docs/evaluation/practical-evaluation.html).
 Separate training reward from held-out evidence, compare systems at declared budgets, and
 reproduce the analysis on explicitly synthetic records before adapting it to real runs.
@@ -191,14 +194,18 @@ disaggregation, MoE serving and the expert coverage law); and workloads (offline
 ### 08 · Evaluation — [docs/evaluation/](docs/evaluation/)
 Evidence that model and agent changes produce the intended behavior, across training and
 deployment. **Foundations & Measurement:** task distributions, split boundaries, contamination,
-grader audits, paired uncertainty, and evaluation gates across pretraining, SFT and RL;
-an interactive plot separates an observed gain from its precision.
-**Models & Agents:** whole-system evaluation, end-state checks, policy constraints, resets,
-attempt accounting, matched budgets, and an interactive pass@k versus pass^k comparison.
-**Training & Practice:** a runnable standard-library paired analysis with manifest validation,
-task-cluster bootstrap, costs and a decision rule. Its records are explicitly synthetic, not a
-reported model result. Reward optimization remains under RL, named-model results under Models,
-and generic evaluation protocols live here.
+paired uncertainty, and a dedicated grader guide covering executable checks, human rubrics,
+LLM judges and reward models. Interactive plots separate an observed gain from its precision
+and show how prevalence changes the precision of accepted outputs.
+**Models & Agents:** language-model capability suites, likelihood versus generation, calibration
+and protocol comparability; whole-agent outcomes, policy constraints, resets and attempt
+accounting. Interactive comparisons expose task-mixture ranking reversals and pass@k versus pass^k.
+**Training & Practice:** evaluation-driven data/curriculum and checkpoint decisions across
+pretraining, SFT and RL, with proxy-divergence curves, selection bias and independent final gates;
+then a runnable standard-library paired analysis with manifest validation, task-cluster bootstrap,
+costs and a decision rule. All illustrative curves and example records are explicitly synthetic,
+not reported model results. Reward optimization remains under RL, named-model results under
+Models, and generic evaluation protocols live here.
 
 ## Publishing
 

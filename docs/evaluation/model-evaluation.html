@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Evaluate language models beyond leaderboard scores: held-out loss, capability suites, generation protocols, calibration, benchmark mixtures and compute-matched comparisons.">
+  <title>Evaluating Language Models — Capabilities and Comparability</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing:border-box; }
+    :root {
+      color-scheme:light; --bg:#fff; --surface:#f8f9fa; --text:#1a1a2e; --muted:#6b7280;
+      --border:#e8eaed; --accent:#be123c; --nav-bg:rgba(255,255,255,.94);
+      --fig-bg:#fff; --plot-grid:#eceef1; --plot-axis:#9ca3af; --plot-tick:#6b7280;
+      --plot-gray:#9ca3af; --plot-violet:#6d28d9; --plot-teal:#0d9488;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme:dark; --bg:#0f1115; --surface:#171b21; --text:#e5e7eb; --muted:#9aa1ab;
+        --border:#262b33; --accent:#fb7185; --nav-bg:rgba(15,17,21,.94);
+        --fig-bg:#14181e; --plot-grid:#232830; --plot-axis:#687280; --plot-tick:#9aa1ab;
+        --plot-gray:#848d97; --plot-violet:#a78bfa; --plot-teal:#2dd4bf;
+      }
+    }
+    body { margin:0; background:var(--bg); color:var(--text); font:16px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    nav { position:sticky; top:0; z-index:100; display:flex; align-items:center; gap:20px; height:52px; padding:0 24px; background:var(--nav-bg); backdrop-filter:blur(8px); border-bottom:1px solid var(--border); }
+    .nav-brand { display:inline-flex; align-items:center; gap:7px; color:var(--accent); font-size:.9rem; font-weight:600; text-decoration:none; white-space:nowrap; }
+    .nav-links { display:flex; gap:14px; overflow-x:auto; min-width:0; }
+    .nav-links a { color:var(--muted); font-size:.82rem; text-decoration:none; white-space:nowrap; }
+    a { color:var(--accent); text-underline-offset:3px; }
+    a:focus-visible, input:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+    .hero { padding:52px 24px 44px; text-align:center; color:#fff; background:linear-gradient(135deg,#4c0519,#9f1239,#be123c); }
+    .hero h1 { font-size:clamp(1.7rem,4vw,2.4rem); line-height:1.25; margin:12px 0; }
+    .hero p { max-width:650px; margin:auto; opacity:.9; }
+    .hero-pill { font-size:.78rem; text-transform:uppercase; letter-spacing:.06em; }
+    .page-wrap { max-width:880px; padding:32px 24px 64px; margin:auto; }
+    h2 { font-size:1.4rem; margin:42px 0 16px; padding-bottom:8px; border-bottom:1px solid var(--border); scroll-margin-top:72px; }
+    h3 { font-size:1.08rem; margin-top:26px; }
+    p { margin:14px 0; }
+    .route, .callout { padding:16px 20px; border:1px solid var(--border); border-radius:8px; background:var(--surface); }
+    .callout { border-left:4px solid var(--accent); }
+    .muted { color:var(--muted); font-size:.9rem; }
+    .table-wrap { overflow-x:auto; margin:20px 0; }
+    table { border-collapse:collapse; width:100%; font-size:.9rem; }
+    th, td { padding:12px; border:1px solid var(--border); text-align:left; vertical-align:top; }
+    th { background:var(--surface); }
+    code { font-size:.88em; background:var(--surface); padding:2px 4px; border-radius:4px; }
+    .equation { overflow-x:auto; padding:8px 0; }
+    .figure { background:var(--fig-bg); border:1px solid var(--border); border-radius:10px; padding:18px 16px 14px; margin:1.6em 0; box-shadow:0 1px 2px rgba(0,0,0,.03); }
+    .figure canvas { width:100%; height:300px; display:block; }
+    .legend { display:flex; flex-wrap:wrap; gap:8px 18px; justify-content:center; margin-top:12px; font-size:.82rem; color:var(--text); }
+    .legend-item { display:flex; align-items:center; gap:7px; white-space:nowrap; }
+    .lg { display:inline-block; width:22px; height:3px; border-radius:2px; background:var(--c); }
+    .lg.dash { background:repeating-linear-gradient(90deg,var(--plot-gray) 0 5px,transparent 5px 9px); }
+    .figure-caption { font-size:.85rem; color:var(--muted); line-height:1.6; margin:14px 4px 2px; }
+    .controls { display:flex; flex-wrap:wrap; align-items:center; gap:10px; font-size:.9rem; }
+    input[type="range"] { flex:1; min-width:140px; accent-color:var(--accent); }
+    output { display:block; font-size:.9rem; margin:10px 0; }
+    footer { border-top:1px solid var(--border); padding:24px; text-align:center; font-size:.85rem; color:var(--muted); }
+    @media (max-width:560px) { nav { padding:0 12px; gap:12px; } .page-wrap { padding:24px 16px 48px; } }
+  </style>
+</head>
+<body>
+<nav aria-label="Page navigation">
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes">
+    <svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+    Model Evaluation
+  </a>
+  <div class="nav-links"><a href="#loss">Loss</a><a href="#capabilities">Capabilities</a><a href="#protocol">Protocol</a><a href="#mixtures">Aggregation</a><a href="#report">Reporting</a></div>
+</nav>
+<header class="hero">
+  <span class="hero-pill">Evaluation · Models &amp; Agents</span>
+  <h1>Evaluating Language Models</h1>
+  <p>Choose a capability, make the protocol comparable, and keep a benchmark score narrower than the claim it supports.</p>
+</header>
+<main class="page-wrap">
+  <div class="route"><a href="evaluation-foundations.html">Foundations</a> →
+    <a href="grader-evaluation.html">Graders</a> → <strong>Models</strong> →
+    <a href="agent-evaluation.html">Agents</a> → <a href="evaluation-driven-training.html">Training</a> →
+    <a href="practical-evaluation.html">Worked comparison</a>.</div>
+
+  <h2 id="loss">1. Predicting held-out text and being useful are different tests</h2>
+  <p>Held-out negative log-likelihood measures how much probability a model assigns to reference
+    continuations. For \(N\) scored tokens, the average loss and perplexity are</p>
+  <div class="equation">\[
+    L=-\frac{1}{N}\sum_{t=1}^{N}\log p_\theta(x_t\mid x_{&lt;t}),\qquad
+    \mathrm{PPL}=\exp(L).
+  \]</div>
+  <p>This is useful for comparing pretraining checkpoints on a frozen text distribution.
+    It does not directly test whether a sampled answer is correct, an instruction is followed,
+    or a refusal is appropriate. Teacher-forced scoring supplies the reference prefix; free
+    generation instead conditions on the model's own previous outputs.</p>
+  <p>Compare loss by source and language, not just over one changing aggregate. Pin the text,
+    tokenizer, scored positions, context/window policy and document boundaries. Token-level
+    perplexities from different tokenizers are not directly comparable. For identical text
+    with \(B\) bytes, a common reporting unit is</p>
+  <div class="equation">\[
+    \mathrm{bits/byte}=\frac{-\sum_t\log p_\theta(x_t\mid x_{&lt;t})}{B\log 2}.
+  \]</div>
+  <p>Byte normalization fixes the reporting unit, not differences in available context,
+    preprocessing or scored content. See <a href="../foundations/perplexity.html">Perplexity</a>
+    for the derivation and sliding-window details. Keep downstream capability checks alongside loss.</p>
+
+  <h2 id="capabilities">2. Build a capability matrix, not a benchmark shopping list</h2>
+  <p>Start from the intended workload and include counterexamples to the claim you want to make.
+    Public suites provide useful reference points; private, provenance-tracked application
+    tasks test relevance. Neither replaces contamination controls or an independent final holdout.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Capability</th><th>What to measure</th><th>What a narrow score misses</th></tr></thead>
+    <tbody>
+      <tr><td>Knowledge and reasoning</td><td>Answer correctness across difficulty, domain and language; robust parsing, appropriate uncertainty and fixed reasoning budgets.</td><td>Multiple-choice recognition is not open-ended solving. A correct answer does not establish a faithful reasoning trace; a plausible trace does not establish correctness.</td></tr>
+      <tr><td>Code</td><td>Independent functional tests, edge cases and regression checks. <a href="https://arxiv.org/abs/2107.03374">HumanEval</a> is a function-completion example.</td><td>Passing a finite test suite is not complete correctness. Repository-level tasks with execution tools become <a href="agent-evaluation.html">agent-system evaluations</a>.</td></tr>
+      <tr><td>Instruction following</td><td>Check individual constraints and whole-prompt success. <a href="https://arxiv.org/abs/2311.07911">IFEval</a> illustrates objectively verifiable instructions.</td><td>Matching a word count or JSON schema does not establish truthfulness or overall usefulness. Distinguish mechanical constraints from semantic rubric criteria.</td></tr>
+      <tr><td>Long context</td><td>Vary context length, evidence position, distractors, number of relevant spans and required synthesis.</td><td>A large advertised window or a single-needle retrieval win does not establish robust use of that context. <a href="https://arxiv.org/abs/2307.03172">Lost in the Middle</a> motivates position-sensitive testing.</td></tr>
+      <tr><td>Multimodal understanding</td><td>Visual perception plus reasoning over charts, documents and other relevant media; preserve image resolution and preprocessing. <a href="https://arxiv.org/abs/2311.16502">MMMU</a> is one image-rich reference suite.</td><td>Text-only shortcuts can hide whether the image mattered. Use text-only ablations; one image benchmark does not establish audio/video competence.</td></tr>
+      <tr><td>Factuality and grounded answers</td><td>Claim-level correctness, support in supplied evidence, citation validity and answer completeness.</td><td>A supported quotation can omit the answer; a correct claim may be unsupported by the supplied sources. Retrieval quality and generation faithfulness need separate diagnosis.</td></tr>
+      <tr><td>Safety and robustness</td><td>Boundary violations, benign-request over-refusal, distribution shifts, paraphrases and adversarial conditions relevant to the application.</td><td>Average helpfulness does not certify safety; refusing everything is not good performance either. Report severity and slices rather than offsetting harmful outcomes with easy wins.</td></tr>
+    </tbody>
+  </table></div>
+  <p>For incomplete or subjective outcomes, use criterion-level human or audited model judges.
+    Evaluate the <a href="grader-evaluation.html">grader's errors</a>, not just its ability to
+    produce a score. Keep benchmark release/version and scoring variant attached to every result.</p>
+
+  <h2 id="protocol">3. Freeze how the model is asked and how the answer is scored</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Protocol choice</th><th>Why it can change the result</th></tr></thead>
+    <tbody>
+      <tr><td>Likelihood vs generation</td><td>Ranking answer strings by conditional log-probability is not the same experiment as generating an answer or a choice letter. Length normalization changes the ranking rule; state whether it is used.</td></tr>
+      <tr><td>Prompt and examples</td><td>System instructions, chat template, few-shot count, exemplar selection/order and answer format affect behavior. Never select examples using test answers.</td></tr>
+      <tr><td>Sampling and reasoning</td><td>Temperature, top-p, stop sequences, reasoning effort and maximum output affect success and cost. Greedy one-attempt accuracy, repeated-attempt average, majority vote and pass@k are different metrics.</td></tr>
+      <tr><td>Parsing and grading</td><td>Answer extraction, whitespace normalization, unit handling and ambiguous answers need a frozen rule. Do not silently re-prompt malformed outputs or revise the parser only for one model.</td></tr>
+      <tr><td>Runtime and interface</td><td>Record weights/API version, quantization, tokenizer, supported template and tool access. A moving API alias is not an immutable model identity.</td></tr>
+      <tr><td>Failures and repeats</td><td>Keep truncations, refusals, outages and missing attempts visible under a declared policy. Repeats improve estimation of stochastic behavior, not coverage of new tasks.</td></tr>
+    </tbody>
+  </table></div>
+  <p><strong>Fair does not always mean byte-identical prompts.</strong> Different packaged models
+    may require different supported chat templates. For a product comparison, use appropriate
+    interfaces under a declared common task and resource contract; label this a packaged-system
+    comparison. For a checkpoint ablation, keep the interface fixed to isolate the weight change.</p>
+  <p>Report matched-budget comparisons and quality–cost curves where feasible. Equal token caps
+    do not guarantee equal compute across tokenizers, architectures, hidden reasoning policies or
+    tool usage. Record actual usage and which resource was matched: attempts, tokens, latency,
+    monetary cost or measured compute. An oracle pass@k result does not measure a deployed
+    selector's accuracy; the distinction is derived in <a href="agent-evaluation.html#reliability">Agent Evaluation</a>.</p>
+
+  <h2 id="mixtures">4. An aggregate score silently chooses a task distribution</h2>
+  <p>Suppose two synthetic models have the following exact success probabilities under one
+    fixed protocol. These are teaching assumptions, not estimated benchmark results.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Task slice</th><th>Model A</th><th>Model B</th></tr></thead>
+    <tbody><tr><td>Routine</td><td>90%</td><td>80%</td></tr><tr><td>Challenging</td><td>40%</td><td>60%</td></tr></tbody>
+  </table></div>
+  <p>If the routine-task weight is \(w\), the aggregate scores are
+    \(S_A(w)=0.9w+0.4(1-w)\) and \(S_B(w)=0.8w+0.6(1-w)\).
+    Their difference is \(S_A-S_B=0.3w-0.2\), so the ranking flips at \(w=2/3\).</p>
+  <div class="figure">
+    <div class="controls"><label for="routine-weight">Routine-task weight (%)</label><input id="routine-weight" type="range" min="0" max="100" step="1" value="50"></div>
+    <output id="mixture-readout" for="routine-weight" aria-live="polite">50% routine tasks: A 65.0%, B 70.0%; B leads by 5.0 pp.</output>
+    <canvas id="plot-mixture" role="img" aria-label="Model A's aggregate score rises from 40 to 90 percent; model B's rises from 60 to 80 percent. They cross when routine tasks have two-thirds weight.">At 50% routine tasks, B leads 70% to 65%. At 90%, A leads 85% to 78%.</canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span>Model A</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-teal)"></span>Model B</span>
+      <span class="legend-item"><span class="lg dash"></span>Selected mixture</span>
+    </div>
+    <p class="figure-caption"><strong>The models did not change; the question did.</strong>
+      Horizontal: routine-task weight (%). Vertical: expected aggregate success (%).
+      The lines contain no sampling noise. Choose task weights before seeing model rankings;
+      uncertainty and contamination controls are still needed for measured scores.</p>
+  </div>
+  <p>A micro-average weights each example equally, so larger datasets dominate. A macro-average
+    weights categories equally, which answers a different question. Neither is automatically
+    the deployment distribution. Report per-slice results and the weighting rule; do not average
+    loss, accuracy and preference scores as if their scales were interchangeable.</p>
+
+  <h2 id="calibration">5. Accuracy does not tell you when to trust the answer</h2>
+  <p>For a declared binary event such as “this answer is correct,” let \(q_i\) be the reported
+    probability and \(y_i\) the outcome. The binary Brier score is
+    \(\frac{1}{n}\sum_i(q_i-y_i)^2\). Calibration asks whether answers assigned similar
+    probabilities succeed at about that rate; discrimination asks whether confidence ranks
+    correct answers above incorrect ones. These are different properties.</p>
+  <p>Use reliability diagrams with bin counts and uncertainty, and report a proper scoring rule
+    such as Brier score or log loss when meaningful probabilities are available. A single
+    expected calibration error depends on the binning and can hide poor slices. A generated
+    “90% confident” string or the probability of one answer token is not automatically a calibrated
+    probability of semantic correctness.</p>
+  <p>If the system may abstain, report both coverage and error among answered questions, plus
+    how abstentions are handled downstream. Higher accuracy after refusing the hardest half
+    of the workload is not the same service. Select confidence thresholds on development data.</p>
+
+  <h2 id="report">6. Make a model result interpretable and reusable</h2>
+  <p>A useful report identifies the candidate, task version/split, prompt and runtime contract,
+    scorer, budget, all-attempt accounting, primary comparison, paired uncertainty and important
+    slices. Include what is unavailable: undisclosed pretraining data, unknown contamination,
+    inaccessible reasoning-token counts or a vendor result that has not been reproduced.</p>
+  <div class="callout"><strong>Do not merge unlike evidence into a controlled comparison.</strong>
+    A vendor-reported score, an independently rerun score, and a reproduction under modified
+    settings are three evidence types. Preserve their provenance and protocol differences.
+    The <a href="../models/mai-thinking-1.html#evaluation">MAI-Thinking-1 case study</a> illustrates
+    reporting those limits without inventing missing experimental controls.</div>
+  <p>Use <a href="evaluation-driven-training.html">Evaluation-Driven Training</a> to turn a
+    development report into a checkpoint or data decision. Use the
+    <a href="practical-evaluation.html">worked comparison</a> for explicit paired accounting,
+    and keep the final holdout out of that selection loop.</p>
+
+  <h2 id="sources">Sources and scope</h2>
+  <ul>
+    <li><a href="https://arxiv.org/abs/2211.09110">HELM</a> — scenario coverage, multi-metric evaluation and standardized conditions.</li>
+    <li><a href="https://arxiv.org/abs/2107.03374">Evaluating Large Language Models Trained on Code</a> — functional evaluation and pass@k.</li>
+    <li><a href="https://arxiv.org/abs/2311.07911">IFEval</a> — verifiable instruction-following constraints.</li>
+    <li><a href="https://arxiv.org/abs/2307.03172">Lost in the Middle</a> — context position and task-dependent long-context use.</li>
+    <li><a href="https://arxiv.org/abs/2311.16502">MMMU</a> — image-rich, multidisciplinary perception and reasoning tasks, not universal multimodal coverage.</li>
+  </ul>
+  <p class="muted">The matrix is a design guide, not a current benchmark leaderboard. All mixture-plot probabilities are invented for teaching; no named-model performance is estimated here.</p>
+</main>
+<footer><a href="../index.html#evaluation">Evaluation</a> · <a href="agent-evaluation.html">Next: Agent Evaluation →</a></footer>
+<script>
+(function () {
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  function drawPlot(canvas, cfg) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr); canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, cssW, cssH);
+    const mL = 44, mR = 20, mT = 14, mB = 30;
+    const pw = cssW - mL - mR, ph = cssH - mT - mB;
+    const { xMin, xMax, yMin, yMax } = cfg;
+    const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
+    const Y = y => mT + (yMax - y) / (yMax - yMin) * ph;
+    ctx.font = '11px sans-serif'; ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--plot-grid'); ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(t => {
+      const px = X(t);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.fillText(String(t), px, mT + ph + 6);
+    });
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(t => {
+      const py = Y(t);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+      ctx.fillText(String(t), mL - 8, py);
+    });
+    ctx.strokeStyle = cssVar('--plot-axis'); ctx.lineWidth = 1.25;
+    if (yMin <= 0 && yMax >= 0) { const py = Y(0); ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke(); }
+    if (xMin <= 0 && xMax >= 0) { const px = X(0); ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke(); }
+    ctx.save(); ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    ctx.lineJoin = 'round';
+    cfg.series.forEach(s => {
+      ctx.beginPath(); ctx.lineWidth = s.width || 2;
+      ctx.strokeStyle = cssVar(s.color); ctx.setLineDash(s.dash || []);
+      for (let i = 0; i <= 260; i++) {
+        const x = xMin + (xMax - xMin) * i / 260;
+        i === 0 ? ctx.moveTo(X(x), Y(s.fn(x))) : ctx.lineTo(X(x), Y(s.fn(x)));
+      }
+      ctx.stroke();
+    });
+    ctx.strokeStyle = cssVar('--plot-gray'); ctx.lineWidth = 1.5; ctx.setLineDash([5, 4]);
+    ctx.beginPath(); ctx.moveTo(X(cfg.markX), mT); ctx.lineTo(X(cfg.markX), mT + ph); ctx.stroke();
+    ctx.setLineDash([]); ctx.restore();
+  }
+  const scoreA = w => 40 + 0.5 * w;
+  const scoreB = w => 60 + 0.2 * w;
+  const weight = document.getElementById('routine-weight');
+  const output = document.getElementById('mixture-readout');
+  const canvas = document.getElementById('plot-mixture');
+  function render() {
+    const w = Number(weight.value), a = scoreA(w), b = scoreB(w);
+    const gap = a - b;
+    const result = Math.abs(gap) < 1e-9 ? 'tie.' : (gap > 0 ? 'A' : 'B') + ' leads by ' + Math.abs(gap).toFixed(1) + ' pp.';
+    output.textContent = w + '% routine tasks: A ' + a.toFixed(1) + '%, B ' + b.toFixed(1) + '%; ' + result;
+    drawPlot(canvas, {
+      xMin:0, xMax:100, yMin:0, yMax:100, markX:w,
+      xTicks:[0, 20, 40, 60, 80, 100], yTicks:[0, 20, 40, 60, 80, 100],
+      series:[
+        { fn:scoreA, color:'--plot-violet', width:2.75 },
+        { fn:scoreB, color:'--plot-teal', width:2.75 }
+      ]
+    });
+  }
+  weight.addEventListener('input', render);
+  let raf;
+  window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(render); });
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq.addEventListener) mq.addEventListener('change', render);
+  render();
+})();
+</script>
+</body>
+</html>
