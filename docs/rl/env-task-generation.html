@@ -263,7 +263,7 @@
 <div class="hero">
   <span class="hero-pill">RL Environments · Task Supply</span>
   <h1>Task Generation, Curriculum &amp; Contamination</h1>
-  <p>Where the tasks come from: back-translating software history into verified tasks,
+  <p>Where the tasks come from: mining software history into executable tasks,
   replication training against reference implementations, fully synthetic tool worlds —
   and the two disciplines that keep a generated task supply usable: curriculum and
   contamination control.</p>
@@ -306,11 +306,46 @@
   problem.</p>
 
   <!-- ── §2 ─────────────────────────────────────── -->
-  <h2 id="mining">2. Mining Reality — Back-Translation from Software History</h2>
+  <h2 id="mining">2. Mining Reality — Human Issues and Synthetic Back-Translation</h2>
 
-  <p>The richest free source of verified tasks is version control. Every commit in every real
-  repository is a certificate: some change was needed, and this diff satisfied it. Generation
-  pipelines run that certificate backwards — <strong>back-translation</strong>:</p>
+  <p>Software history supplies candidate tasks and reference fixes, not automatic correctness
+  certificates. Two pipelines use it differently: preserve an existing human issue and its
+  tests, or synthesize the missing task description and tests from a code change. Both still
+  need an executable environment and checks that distinguish the broken and repaired states.</p>
+
+  <h3>SWE-Gym: turn human issues into executable tasks</h3>
+
+  <p><a href="https://arxiv.org/html/2412.21139v2#S3">SWE-Gym</a> extracts human-written
+  GitHub issues, repository snapshots, reference patches and associated tests using the
+  SWE-Bench collection pipeline. It does <strong>not</strong> generate issue descriptions
+  from diffs. <strong>SWE-Gym Raw contains 64,689 instances from 358 Python repositories</strong>,
+  but lacks prepared runtimes and execution-validated tests. The authors focused environment
+  construction on 11 of those repositories; after validation and filtering, the runnable
+  SWE-Gym release contains <strong>2,438 tasks across those 11 repositories</strong>. These
+  counts are not a validation pass rate over the entire raw pool.</p>
+
+  <ol>
+    <li><strong>Associate each instance with a codebase version.</strong> Recover version
+    metadata from repository files, tags or scripts, then organize setup version-by-version
+    to avoid redundant work.</li>
+    <li><strong>Reconstruct historical dependencies.</strong> Manually configure the runtime
+    from requirements, CI scripts and documentation at the issue's repository snapshot,
+    rather than assuming today's installation instructions work for older code.</li>
+    <li><strong>Validate by execution.</strong> Use SWE-Bench's validation script to check
+    that the human reference patch passes more unit tests than the original code; filter out
+    failed instances and release pre-built Docker images for the accepted tasks.</li>
+  </ol>
+
+  <p>The paper reports approximately <strong>200 human annotation hours, 10,000 CPU core
+  hours and 6 TB of images</strong> for this construction effort. The lesson is the gap
+  between a mined issue/patch record and a reproducible training environment: dependency
+  reconstruction and test validation are substantive work. Passing the collected tests is
+  evidence for those checks, not a proof of complete correctness.</p>
+
+  <h3>R2E-Gym / SWE-Gen: synthesize issues and tests from commits</h3>
+
+  <p>When the pipeline does not require an existing human issue or human-written tests,
+  <strong>back-translation</strong> supplies them from software history:</p>
 
   <ol>
     <li>Pick a commit from a real repo (a bug fix, a feature).</li>
@@ -321,15 +356,14 @@
     the post-commit code passes and the pre-commit code fails.</li>
   </ol>
 
-  <p>SWE-Gym (2024) proved the recipe with 2,438 human-issue tasks; <strong>R2E-Gym's
-  SWE-Gen</strong> (COLM 2025) removed the human-issue dependency entirely — synthesizing
+  <p><strong>R2E-Gym's SWE-Gen</strong> (COLM 2025) removes the human-issue dependency — synthesizing
   issues and tests directly from commits, no GitHub issue or human-written test required —
   yielding 8,100+ executable tasks. Scaled industrially, the same idea produced Prime
   Intellect's ~198k software tasks across 20+ languages, and <strong>Endless Terminals</strong>
   (Jan 2026) did the analogous thing for terminal tasks, procedurally generating them at scale
   rather than curating benchmarks.</p>
 
-  <p>The catch is verifier trust: machine-generated tests are weaker than human ones — they can
+  <p>The catch in both pipelines is verifier trust: inherited or generated tests can
   under-specify the fix or accidentally accept the broken state. R2E-Gym's answer is the
   <a href="verifier-reward-design.html#spectrum">hybrid verifier</a> — execution-based and
   execution-free checks voting — plus filtering the generated pool for tasks whose checks
@@ -454,7 +488,7 @@
     <div class="result-label">The mental model</div>
     <p style="margin:0;">Task generation is <strong>verifier generation</strong> — the three
     scalable sources are distinguished by where ground truth comes from: software history
-    (back-translation), a reference implementation (replication), or internal consistency
+    (human issues or synthetic back-translation), a reference implementation (replication), or internal consistency
     (synthetic worlds). Curriculum keeps sampled difficulty on the productive part of the
     pass-rate curve as the policy moves, and contamination control — provenance, repo-level
     splits, dynamic generation — keeps the eval meaning something after the gym ate the
@@ -465,7 +499,8 @@
   <h2>References</h2>
   <div class="table-wrap">
     <table>
-      <tr><td><a href="https://arxiv.org/abs/2504.07164">R2E-Gym / SWE-Gen (COLM 2025)</a> · <a href="https://arxiv.org/abs/2412.21139">SWE-Gym</a></td><td>Back-translation from commits; the §2 pipeline</td></tr>
+      <tr><td><a href="https://arxiv.org/html/2412.21139v2#S3">SWE-Gym (v2, §3)</a></td><td>Human-issue extraction, versioned dependency setup and execution validation; raw versus runnable task counts</td></tr>
+      <tr><td><a href="https://arxiv.org/abs/2504.07164">R2E-Gym / SWE-Gen (COLM 2025)</a></td><td>Synthetic issue/test back-translation from commits; the second §2 pipeline</td></tr>
       <tr><td><a href="https://arxiv.org/abs/2601.16443">Endless Terminals (2026)</a></td><td>Procedural terminal-task generation at scale</td></tr>
       <tr><td><a href="https://www.primeintellect.ai/blog/scaling-agentic-rl">Prime Intellect, "Scaling Agentic RL"</a></td><td>The 365k-task industrial version of §2</td></tr>
       <tr><td><a href="https://www.mechanize.work/blog/the-upcoming-gpt-3-moment-for-rl/">Mechanize, "The upcoming GPT-3 moment for RL"</a></td><td>Replication training, §3</td></tr>
