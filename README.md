@@ -159,6 +159,10 @@ through a GRPO update, introducing dashboard fields as they arise. Equations, PP
 details, and the source-pinned metric glossary are expandable references.
 Continue to PPO/GRPO training walkthroughs, then async RL and
 its monitoring, and reward pipelining.
+[Agentic RL Observability](docs/rl/agentic-rl-observability.html) connects metrics to individual
+episodes, verifier evidence, training samples and updates. It includes industry-backed tracing
+recipes, collection infrastructure, an interactive synthetic trace lab and an offline
+reward-to-advantage audit; backend deployment and GPU training are not execution-validated.
 
 ### 06 · Models & Families — [docs/models/](docs/models/)
 

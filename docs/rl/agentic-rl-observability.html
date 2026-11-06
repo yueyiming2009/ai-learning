@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Trace agentic RL from run metrics to model calls, tools, verifier evidence, training samples and updates. Industry-backed collection recipes and a synthetic trace diagnosis lab.">
+  <title>Agentic RL Observability — From Metrics to Trace Diagnosis</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #fff; --surface: #f8f9fa; --fig-bg: #fff; --border: #e8eaed;
+      --text: #1a1a2e; --muted: #6b7280; --accent: #0d9488;
+      --accent-light: #f0fdfa; --nav-bg: rgba(255,255,255,0.94);
+      --warn-bg: #fffbeb; --warn-fg: #92400e; --warn-border: #f59e0b;
+      --model: #6d28d9; --tool: #0d9488; --queue: #d97706; --other: #6b7280;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115; --surface: #171b21; --fig-bg: #171b21; --border: #343b46;
+        --text: #e5e7eb; --muted: #a7afbd; --accent: #2dd4bf;
+        --accent-light: #0c2420; --nav-bg: rgba(15,17,21,0.94);
+        --warn-bg: #241c0c; --warn-fg: #fbbf24; --warn-border: #b45309;
+        --model: #a78bfa; --tool: #2dd4bf; --queue: #fbbf24; --other: #9ca3af;
+      }
+    }
+    body { margin: 0; font: 16px/1.75 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+    a { color: var(--accent); text-underline-offset: 3px; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+    nav { position: sticky; top: 0; z-index: 100; display: flex; align-items: center; gap: 24px; height: 52px; padding: 0 24px; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
+    .nav-brand { display: inline-flex; align-items: center; gap: 7px; font-size: 0.9rem; font-weight: 600; white-space: nowrap; text-decoration: none; }
+    .nav-links { display: flex; flex: 1; gap: 14px; overflow-x: auto; min-width: 0; }
+    .nav-links a { font-size: 0.82rem; white-space: nowrap; text-decoration: none; color: var(--muted); }
+    .hero { background: linear-gradient(135deg, #064e3b, #065f46 55%, #0d9488); color: white; padding: 52px 24px; text-align: center; }
+    .hero h1 { font-size: clamp(1.7rem, 4vw, 2.4rem); line-height: 1.3; margin: 12px 0; }
+    .hero p { max-width: 760px; margin: auto; }
+    .hero-pill { display: inline-block; border: 1px solid rgba(255,255,255,0.35); border-radius: 100px; padding: 3px 12px; font-size: 0.78rem; text-transform: uppercase; }
+    .page-wrap { max-width: 980px; margin: auto; padding: 28px 24px 72px; }
+    h2 { margin-top: 48px; padding-bottom: 8px; border-bottom: 1px solid var(--border); font-size: 1.4rem; scroll-margin-top: 72px; }
+    h3 { margin-top: 28px; font-size: 1.08rem; scroll-margin-top: 72px; }
+    p, li, td { overflow-wrap: anywhere; }
+    li { margin: 8px 0; }
+    code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.88em; }
+    :not(pre) > code { background: var(--surface); padding: 2px 5px; border-radius: 4px; }
+    pre { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; overflow-x: auto; line-height: 1.55; }
+    pre code { font-size: 0.81rem; }
+    .note, .gate, .caution { padding: 16px 20px; margin: 24px 0; border-left: 4px solid var(--accent); border-radius: 0 8px 8px 0; background: var(--accent-light); }
+    .caution { border-color: var(--warn-border); background: var(--warn-bg); color: var(--warn-fg); }
+    .note p, .caution p { margin: 6px 0; }
+    .table-wrap { overflow-x: auto; margin: 20px 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.87rem; }
+    th, td { text-align: left; vertical-align: top; padding: 10px 12px; border: 1px solid var(--border); }
+    th { background: var(--surface); }
+    .muted { color: var(--muted); font-size: 0.88rem; }
+    details { margin: 22px 0; }
+    summary { cursor: pointer; font-weight: 600; }
+    .figure { background: var(--fig-bg); border: 1px solid var(--border); border-radius: 10px; padding: 18px 16px 14px; margin: 1.6em 0; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+    .figure canvas { width: 100%; height: 360px; display: block; }
+    .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; justify-content: center; margin-top: 12px; font-size: 0.82rem; color: var(--text); }
+    .legend-item { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .figure-caption { font-size: 0.85rem; color: var(--muted); line-height: 1.6; margin: 14px 4px 2px; }
+    label { font-weight: 600; }
+    select, button { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 5px; padding: 7px 10px; }
+    select { max-width: 100%; }
+    button { cursor: pointer; text-align: left; }
+    button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-light); }
+    #span-detail { white-space: pre-wrap; overflow-wrap: anywhere; }
+    @media (max-width: 600px) {
+      nav { padding: 0 12px; gap: 16px; }
+      .nav-brand { font-size: 0.78rem; }
+      .page-wrap { padding: 24px 16px 56px; }
+      th, td { padding: 8px; }
+      .figure { padding: 12px 8px; }
+    }
+  </style>
+</head>
+<body>
+<nav aria-label="Page navigation">
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes">
+    <svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+    Agentic RL Observability
+  </a>
+  <div class="nav-links">
+    <a href="#planes">Architecture</a><a href="#solutions">Solutions</a><a href="#identity">Identity</a>
+    <a href="#collect">Collection</a><a href="#infrastructure">Infrastructure</a>
+    <a href="#explorer">Trace lab</a><a href="#diagnose">Diagnosis</a><a href="#audit">Audit recipe</a>
+    <a href="#replay">Replay</a><a href="#gates">Acceptance gates</a><a href="#sources">Sources</a>
+  </div>
+</nav>
+<header class="hero">
+  <span class="hero-pill">Agentic RL &middot; Engineering Guide</span>
+  <h1>From Training Metrics to Trace Diagnosis</h1>
+  <p>Find the episode behind the curve, the event behind the episode, and the training sample
+  that actually reached the optimizer.</p>
+</header>
+<main class="page-wrap">
+  <div class="caution">
+    <strong>Evidence boundary &mdash; November 6, 2026.</strong>
+    <p>Based on official OpenTelemetry, Weave, MLflow, Langfuse, Phoenix, verl and Agent Lightning
+    sources. The local lab is synthetic, not a captured production incident or benchmark.
+    Backend integrations and GPU training have not been executed for this guide.
+    Custom <code>rl.*</code> fields and the deployment design below are recommendations,
+    not a cross-vendor standard. Use only reviewed, approved SDKs, images and destinations;
+    no plugin, integration, or external service is needed to explore this page.</p>
+  </div>
+  <p>This guide owns <strong>collection &rarr; inspection &rarr; diagnosis</strong>.
+  Read <a href="async-rl-monitoring.html">Async RL Monitoring</a> for optimizer statistics,
+  <a href="harnessed-agentic-rl.html#contract">Harnessed Agentic RL</a> for token contracts,
+  and <a href="practical-agentic-rl.html">Practical Agentic RL Training</a> for the experiment sequence.
+  A successful model API call is not a successful task; a successful task is not necessarily a
+  valid training sample; a valid sample is not proof of an applied update.</p>
+
+  <h2 id="planes">1. Three connected data planes, not one giant log</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Plane</th><th>Question</th><th>Record / retention contract</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Metrics</strong></td><td>Which run, step, task source or harness regressed?</td><td>Aggregated rewards, valid/invalid counts, queue age, latency histograms, throughput, KL and gradient statistics. Compute population counts before trace sampling.</td></tr>
+      <tr><td><strong>Diagnostic traces</strong></td><td>What happened during a particular attempt?</td><td>Model/tool/verifier spans, dependencies, errors, safe previews and artifact references. Can be sampled, bounded and redacted.</td></tr>
+      <tr><td><strong>Training ledger + artifacts</strong></td><td>What evidence generated this update?</td><td>Durable task/attempt manifest, exact sampled tokens, masks, behavior logprobs, rewards, group membership, admission decisions, sample hashes and update receipts. Complete for the admitted data, within the approved retention policy.</td></tr>
+    </tbody>
+  </table></div>
+  <pre><code>scheduler / harness / model gateway / tools / verifier / learner
+    | safe spans + context                 | authoritative training events
+    v                                      v
+local Collector -> gateway -> trace UI      durable ledger + artifact storage
+    |                                      |
+    +------- run / attempt / sample IDs ----+
+                       |
+           metrics dashboard -> cohort -> episode -> sample -> update</code></pre>
+  <p><strong>A sampled trace backend is not the training database.</strong> Export queues can lose
+  spans, UIs truncate payloads, and tail sampling deliberately biases the visible population.
+  Capture training-critical evidence durably before accepting a sample, independently of whether
+  its diagnostic trace survives. If mandatory evidence is missing, quarantine the sample under
+  an explicit policy; do not silently replace missing rewards or probabilities with zero.</p>
+  <p>Conversely, an unavailable trace UI need not stop learning if the authoritative ledger remains
+  healthy. Separate these failure policies. For long-running episodes, emit bounded operation spans
+  and durable lifecycle events rather than relying on one root span that exports only at completion.</p>
+
+  <h2 id="solutions">2. Industry building blocks: choose a path, not seven dashboards</h2>
+  <p>These are representative established solutions and public recipes, not a market-share ranking
+  or a claim that one product implements the whole RL contract.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Building block</th><th>Documented role</th><th>Where it fits / what remains yours</th></tr></thead>
+    <tbody>
+      <tr><td><a href="#src-verl">verl + W&amp;B Weave</a></td><td>Native rollout tracing; filter by step, sample index, rollout number and experiment. Weave models nested function executions as Calls and supports trace comparison.</td><td>Shortest path if training already uses W&amp;B. The scalar logger and rollout tracer are independent; join them explicitly and add external tool/verifier coverage.</td></tr>
+      <tr><td><a href="#src-mlflow">MLflow</a></td><td>Agent/LLM tracing, inspection, framework instrumentation and OpenTelemetry interoperability; also a native verl trace backend.</td><td>Useful with an existing MLflow deployment. Product capability is not adapter capability: the pinned verl guide warns about missing trace-to-run association. Verify that join in your deployed versions.</td></tr>
+      <tr><td><a href="#src-langfuse">Langfuse</a></td><td>Nested observations, sessions, latency/cost, scores and trace exploration; direct OTLP ingestion and self-hosting.</td><td>A dedicated agent-observability layer across runtimes. Map custom RL metadata to searchable attributes. It does not infer rollout groups, loss masks or gradient lineage from chat messages.</td></tr>
+      <tr><td><a href="#src-phoenix">Arize Phoenix + OpenInference</a></td><td>OpenTelemetry-based instrumentation, project/session organization and an agent trace inspection workflow.</td><td>A choice for an OpenInference-instrumented stack. Instrument your learner/verifier boundaries too; generic inference spans do not contain a complete RL sample.</td></tr>
+      <tr><td><a href="#src-otel">OpenTelemetry + Collector</a></td><td>Trace/span context, transport and collection infrastructure. GenAI agent conventions cover agent/model/tool operations.</td><td>Connect services and control export, buffering and sampling. Not a trace UI or a durable RL event store. GenAI conventions are still marked <em>Development</em> in the pinned source.</td></tr>
+      <tr><td><a href="#src-lightning">Agent Lightning v1.0</a></td><td>A rollout controller, model-proxy Gateway and trainer; the Gateway records model-request/reward events keyed to rollouts and attempts.</td><td>A training-data capture design, not just an APM backend. Its proxy captures exact IDs/logprobs; add sandbox/tool diagnostics outside that model boundary.</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note"><strong>Suggested starting points.</strong> Existing verl job: enable one native
+  backend first. Heterogeneous harnesses: use one approved OTLP/OpenInference-compatible trace backend
+  plus explicit RL metadata. Black-box harness training: a token-faithful gateway supplies the training
+  ledger while runtime instrumentation supplies tool and environment visibility.
+  Do not assume Weave, OpenInference, Langfuse and OTel GenAI attribute names are interchangeable.</div>
+
+  <h2 id="identity">3. Identity is the integration: a trace tree is not training lineage</h2>
+  <p>One episode may contain multiple attempts and subagents. One attempt may produce several
+  training samples after context compaction; one optimizer update consumes many samples.
+  Some samples may be used in multiple optimization epochs. Those are different relationships.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Object</th><th>Proposed join keys</th><th>Evidence to preserve</th></tr></thead>
+    <tbody>
+      <tr><td>Run / task</td><td><code>rl.run_id</code>, task-set version, task ID, split</td><td>Immutable run manifest: source/config revisions, harness, environment image, verifier, tokenizer and chat-template identities.</td></tr>
+      <tr><td>Rollout group</td><td><code>rl.group_id</code>, expected member IDs</td><td>Prompt identity, requested group size, attempted/valid/admitted membership and the actual reward normalization rule.</td></tr>
+      <tr><td>Episode / attempt</td><td><code>rl.rollout_id</code>, <code>rl.attempt_id</code></td><td>Terminal state, retry reason, task outcome, invalid classification and timeout budget. Keep invalid attempts in the manifest.</td></tr>
+      <tr><td>Operation</td><td>OTel trace/span IDs; model-call, tool-call, branch and agent IDs</td><td>Parent or span links, start/end timestamps, queue versus execution time, finish reason and structured errors.</td></tr>
+      <tr><td>Generation segment</td><td>Call ID, behavior policy version, token range</td><td>Exact prompt/response IDs, sampled-action logprobs, sampling settings and finish/truncation state. Versions may change within one episode.</td></tr>
+      <tr><td>Reward</td><td>Attempt ID, verifier version, reward event ID</td><td>Raw components, grading validity, transformations, persisted reward, delivery acknowledgement and artifact digest.</td></tr>
+      <tr><td>Training sample</td><td><code>rl.sample_id</code>, source call/event IDs, content digest</td><td>Selected branch, prefix/compaction decisions, masks, reward/advantage assignment, admission or rejection reason.</td></tr>
+      <tr><td>Update / checkpoint</td><td>Update ID, sample-use records, checkpoint digest</td><td>Learner version, epoch/minibatch, correction/filtering decisions and successful update/checkpoint receipt.</td></tr>
+    </tbody>
+  </table></div>
+  <p><code>rl.*</code> above is a proposed application namespace. Keep standard OTel fields such as
+  <code>service.name</code> and documented <code>gen_ai.operation.name</code> separate. Pin the
+  instrumentation and semantic-convention versions in the manifest, and test the backend's mapping
+  with one known trace before assuming that a custom attribute is indexed.</p>
+  <p><strong>Parent-child spans express execution nesting.</strong> Use links for fan-in, retries
+  with independent execution, or a learner batch consuming many episode traces. Keep the durable
+  many-to-many lineage table even if the UI cannot render span links. Do not parent an update under
+  one arbitrary rollout or keep a training-run span open for days.</p>
+  <p>Transport retries reuse the logical event's idempotency key but get distinct send-attempt records.
+  A new harness action after seeing a failure is a new action, even if its prompt is identical.
+  A new rollout attempt gets a new attempt ID. Deduplicate transport delivery, not legitimate exploration.
+  OTel context is correlation metadata, never an authorization credential.</p>
+
+  <h2 id="collect">4. Collection recipes: start with the boundary you control</h2>
+  <h3 id="verl-recipe">A. Existing verl agent loop: native traces first</h3>
+  <p>The <a href="#src-verl">source-pinned verl guide and implementation</a> support
+  <code>weave</code>, <code>mlflow</code> and <code>trackio</code>.
+  This is a <strong>configuration overlay for an already-working agentic recipe</strong>, not a
+  complete training launcher. Provision the approved backend and inject credentials through your
+  secret manager before enabling export.</p>
+  <pre><code class="language-yaml">actor_rollout_ref:
+  rollout:
+    mode: async
+    trace:
+      backend: weave
+      token2text: false
+      max_samples_per_step_per_worker: 2
+trainer:
+  project_name: agentic-rl
+  experiment_name: code-debug-preflight
+  logger: [console, wandb]</code></pre>
+  <p>The cap selects up to two unique samples <em>per worker per step</em>, with their GRPO rollouts.
+  With four workers and four rollouts per selected sample, the nominal ceiling is
+  <code>2 &times; 4 &times; 4 = 32</code> traced trajectories per step, not two globally.
+  Check actual worker assignment and membership in the exported data.
+  This is a diagnostic trace-volume knob, not a training-data filter.
+  <code>rollout.mode=async</code> enables the relevant rollout execution path; it does not by itself
+  mean the learner updates asynchronously.</p>
+  <ol>
+    <li>Run one approved preflight task. In Weave, filter on <code>experiment_name</code>,
+    <code>step</code>, <code>sample_index</code> and <code>rollout_n</code>. Inspect the agent-loop
+    operation and its per-turn model calls, then compare a successful and a failed sibling rollout.</li>
+    <li>For MLflow instead, use <code>backend: mlflow</code>, the approved
+    <code>MLFLOW_TRACKING_URI</code>, and optionally <code>logger: [console, mlflow]</code>.
+    The pinned recipe uses experiment-level Traces and a filter such as
+    <code>tags.step = '1'</code>. Verify run association rather than assuming it.</li>
+    <li>Inspect the pinned <code>rollout_trace_op</code>/<code>rollout_trace_attr</code> hooks
+    before adding custom operations. Built-in tracing covers instrumented functions, not every remote
+    service. Add correlation at the sandbox, verifier, sample-construction and learner boundaries.</li>
+  </ol>
+  <div class="caution"><strong><code>token2text: false</code> is not redaction.</strong> It disables
+  extra decoded-text fields; the adapter still captures function inputs/outputs and can retain token IDs.
+  Tokens can reconstruct sensitive text. Review captured payloads and restrict the destination before
+  turning tracing on; use synthetic tasks for the first export.</div>
+
+  <h3 id="otel-recipe">B. External harnesses and workers: propagate context explicitly</h3>
+  <p>Use reviewed automatic instrumentation where available, then fill missing boundaries. A local
+  context variable does not automatically cross a Ray task, process, queue or Kubernetes Job.
+  The following <a href="#src-propagation">OTel API pattern</a> is an integration sketch:
+  each process needs its own configured provider/exporter, and the queue/application functions are yours.
+  It intentionally propagates W3C trace context, not arbitrary baggage.</p>
+  <pre><code class="language-python" id="propagation-code">from opentelemetry import trace
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+
+tracer = trace.get_tracer("agentic-rl")
+propagator = TraceContextTextMapPropagator()
+
+def enqueue_verification(queue, run_id, attempt_id, artifact_ref):
+    with tracer.start_as_current_span("verifier.enqueue"):
+        carrier = {}
+        propagator.inject(carrier)
+        queue.put({
+            "trace_context": carrier,
+            "run_id": run_id, "attempt_id": attempt_id,
+            "artifact_ref": artifact_ref,
+        })
+
+def process_verification(job, verify, persist):
+    parent = propagator.extract(job["trace_context"])
+    with tracer.start_as_current_span(
+        "verifier.execute", context=parent,
+        attributes={"rl.run_id": job["run_id"], "rl.attempt_id": job["attempt_id"]},
+    ) as span:
+        result = verify(job["artifact_ref"])
+        receipt = persist(job["attempt_id"], result)
+        span.set_attribute("rl.reward_event_id", receipt.event_id)
+        return receipt</code></pre>
+  <p>Authenticate the worker and authorize artifact access independently. Strip trace context at
+  unapproved egress boundaries; never propagate secrets or prompts in baggage. Correlate structured
+  logs with trace/span and attempt IDs. Record queue timestamps and a separate queue-wait operation:
+  an enqueue span only measures the send, not the consumer's wait. Use monotonic time for durations
+  within a process; do not subtract unrelated hosts' monotonic clocks.</p>
+  <p>For a Langfuse destination, the official integration accepts <strong>OTLP/HTTP</strong> at
+  <code>/api/public/otel/v1/traces</code>; do not configure a gRPC exporter for that endpoint.
+  Its current v4 instructions require <code>x-langfuse-ingestion-version: 4</code> for real-time
+  ingestion and propagate filterable metadata to every relevant observation.
+  Obtain the region-specific base URL and auth from the approved deployment.
+  For Phoenix, its <code>phoenix.otel.register</code> wrapper configures a provider;
+  <code>auto_instrument=True</code> activates installed OpenInference instrumentors, not all libraries
+  by magic. Avoid initializing multiple competing global providers.
+  See <a href="#src-langfuse">Langfuse OTLP</a> and <a href="#src-phoenix">Phoenix setup</a>.</p>
+
+  <h3 id="gateway-recipe">C. Token-faithful training capture: observe at the model gateway</h3>
+  <p><a href="#src-lightning">Agent Lightning v1.0</a> supplies a concrete public design:
+  rollout/attempt-specific proxy URLs, append-only <code>model_request</code> and <code>reward</code>
+  events, and trainer-side conversion into samples. The gateway captures prompt IDs, sampled response
+  IDs and chosen-token logprobs; the controller owns execution lifecycle.</p>
+  <p>Use that separation when the harness is a binary or owns its own context management. A generic
+  chat tracer cannot recover exact sampled token IDs or the actual sampling distribution after the
+  fact. A model proxy cannot see every filesystem mutation or failed tool launch either.
+  Join gateway events to runtime/tool events, and inspect the
+  <a href="harnessed-agentic-rl.html#stitch">sample-stitching contract</a> rather than training on
+  a transcript downloaded from the UI.</p>
+
+  <h2 id="infrastructure">5. Operate the telemetry pipeline as a real service</h2>
+  <p><strong>Small preflight:</strong> one approved trace backend, explicit context propagation and
+  a complete local artifact/attempt ledger. <strong>Distributed training:</strong> node/pod-local
+  collection, a gateway tier, bounded queues and separate durable training storage. A Collector is
+  useful for OTLP traffic; it is not automatically in the path of a framework's native SDK exporter.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Layer</th><th>Concrete deployment responsibility</th><th>Failure to exercise</th></tr></thead>
+    <tbody>
+      <tr><td>SDK / local collector</td><td>Batch export, size limits, source-side safe-field allowlist, shutdown flush, measured CPU/latency overhead. Bind local receivers to loopback where possible.</td><td>A short-lived worker exits with queued spans; a process crashes before its root span closes.</td></tr>
+      <tr><td>Gateway collector</td><td>Authenticated/TLS ingress, memory limits, tenant routing, batch/retry and an exporter sending queue backed by <code>file_storage</code> on persistent storage where required.</td><td>Backend outage, full queue, expired retry window, disk exhaustion and collector restart.</td></tr>
+      <tr><td>Buffer / storage</td><td>Add a durable broker such as Kafka only when the outage budget justifies its complexity. Track retention and consumer lag. A Collector WAL improves resilience but is not exactly-once delivery.</td><td>Duplicates, out-of-order arrival, acknowledged-but-unindexed events and broker retention expiry.</td></tr>
+      <tr><td>Trace backend</td><td>Search indexes for safe cohort metadata, latency/cost views, artifact access checks, ingestion-lag monitoring and retention/deletion enforcement.</td><td>A trace appears incomplete because indexing is delayed, not because the agent skipped a step.</td></tr>
+      <tr><td>Training ledger</td><td>Idempotent event writes, expected-attempt manifest, immutable/versioned artifacts and an admission gate that requires complete evidence.</td><td>A trace exports successfully while the reward or training artifact fails to persist.</td></tr>
+    </tbody>
+  </table></div>
+  <p>The <a href="#src-collector">Collector resiliency guide</a> documents sending queues, WALs and
+  broker tiers, including their remaining loss modes. Watch queue size/capacity, failed exports,
+  dropped/refused spans and ingestion delay. Validate the final configuration with the approved
+  Collector binary's <code>validate --config=...</code> command; component names and availability
+  depend on the pinned distribution.</p>
+  <p>Langfuse's <a href="#src-langfuse">published self-hosted architecture</a> makes the operational
+  cost concrete: Web/API and Worker services, PostgreSQL for transactional data, ClickHouse for
+  observability data, Redis/Valkey for cache/jobs, and object storage for raw events/attachments.
+  Self-hosting is a data-control option, not “run one container and forget backups.”
+  Its raw-event storage does not automatically become your complete RL training ledger.</p>
+
+  <h3 id="sampling">Sampling without corrupting the learning story</h3>
+  <p>During a bounded synthetic preflight, retain all diagnostic traces. At scale, retain a random
+  baseline plus selected errors, slow traces, unusual rewards and new policy/harness versions.
+  Record the selection policy; record inclusion probabilities where known.
+  Population success rates and latency percentiles must come from the complete attempt ledger or
+  unsampled metrics, not the error-heavy trace explorer.</p>
+  <p><a href="#src-sampling">Head sampling cannot guarantee retention of later failures.</a>
+  Tail sampling cannot recover spans already dropped by an upstream sampler. It also needs
+  consistent routing of a trace's spans, enough memory and a decision window appropriate to the
+  workload. Hour-long episodes and delayed graders do not fit a casually chosen 30-second window:
+  use bounded linked traces and explicit completion events, and retain durable evidence outside
+  the sampling pipeline. Configure and test late-span handling.</p>
+  <p>Preserve <strong>the entire comparison group in the ledger</strong> even when the UI shows one
+  rollout. GRPO advantages depend on sibling rewards. Selecting only successful traces for inspection
+  is useful; selecting them as if they were the complete group changes the learning problem.
+  UI sampling and training admission are separate policies.</p>
+  <p><strong>Cost estimate:</strong> 2,000 spans/second at an illustrative 2 KiB per encoded span
+  produce about 4.1 MB/second, or 354 GB/day before compression, indexes and replicas.
+  A ten-minute outage needs about 2.46 GB of payload buffering, plus overhead.
+  Measure actual sizes; do not log full token arrays on every span. Use restricted artifact references
+  with bounded previews. Task/trace IDs belong in searchable events, not unbounded metric-label sets.</p>
+  <div class="caution"><strong>Redaction is not a training transform.</strong> Redact or omit sensitive
+  content in diagnostic views <em>before export</em>. Preserve authorized exact training artifacts in
+  a restricted store, or exclude the sample when policy forbids retention. Never redact token arrays
+  in place and then reuse the old logprobs. Enforce tenant ACLs on artifact dereference, avoid permanent
+  signed URLs in logs, and propagate deletion to derived datasets and backups under the retention policy.</div>
+
+  <h2 id="explorer">6. Trace lab: three failures that an average can hide</h2>
+  <p>Select a synthetic incident, then select an operation in the table to inspect its evidence.
+  The waterfall shows elapsed time and overlap; the table supplies parent/link relationships.
+  IDs are short display aliases, not valid OTLP wire IDs. A linked sample-construction operation
+  lives in a separate learner trace, followed by an update receipt. All times use one synthetic clock.</p>
+  <div class="figure">
+    <label for="trace-case">Incident </label>
+    <select id="trace-case">
+      <option value="reward">Verifier passed, training reward is zero</option>
+      <option value="latency">Slow episode, fast model calls</option>
+      <option value="mask">Valid reward, invalid loss mask</option>
+    </select>
+    <p id="trace-summary" aria-live="polite"></p>
+    <canvas id="trace-timeline" role="img" aria-label="Synthetic episode and linked sample timeline; the operation table provides the same timing data" aria-describedby="timeline-caption"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--model)"></span> Model</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--tool)"></span> Tool / verifier</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--queue)"></span> Queue / delivery</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--other)"></span> Lifecycle / learner</span>
+    </div>
+    <p class="figure-caption" id="timeline-caption"><strong>Duration is not additive.</strong>
+    Parent spans include child time, and parallel branches overlap. Locate the critical dependency;
+    do not sum all bars and call it episode latency. The selected bar is outlined.</p>
+    <div class="table-wrap"><table>
+      <caption>Operations and causal relationships — select an operation for its evidence</caption>
+      <thead><tr><th>Operation</th><th>Parent / links</th><th>Start &rarr; end (s)</th><th>Status</th></tr></thead>
+      <tbody id="span-rows"></tbody>
+    </table></div>
+    <h3>Selected operation</h3>
+    <pre id="span-detail" aria-live="polite"></pre>
+    <p id="trace-diagnosis"></p>
+    <noscript><p>The interactive inspector requires JavaScript. The three investigations below
+    explain the same cases; the standard-library audit reads the embedded fixture without a browser.</p></noscript>
+  </div>
+
+  <h2 id="diagnose">7. Diagnose the first broken boundary, then test the explanation</h2>
+  <p>Start from an anomalous <em>cohort</em>: fixed task source, harness/version, policy version and
+  budget. Preserve its denominator. Compare representative successes, failures and invalid attempts;
+  inspect a matched baseline where possible. One trace establishes what happened in that execution,
+  not the population prevalence or the causal effect of a proposed fix.</p>
+  <h3 id="reward-diagnosis">Case A: verifier success, reward-delivery failure</h3>
+  <p>The first trace's verifier records <code>raw_reward=1</code>. The reward delivery returns a 503,
+  no durable receipt exists, yet sample construction substitutes <code>reward=0</code> and admits it.
+  The model's answer is not the first broken boundary: <strong>reward persistence/admission is</strong>.
+  Missing score and valid zero score must be distinct states.</p>
+  <p>The synthetic group has verifier rewards <code>[1, 0, 1, 0]</code>. For an explicitly
+  <em>mean-centered, non-standardized</em> objective, the intended advantages are
+  <code>[0.5, -0.5, 0.5, -0.5]</code>. With the first score silently zero-filled, the batch sees
+  <code>[0, 0, 1, 0]</code> and computes <code>[-0.25, -0.25, 0.75, -0.25]</code>.
+  The successful first rollout now receives a negative advantage, and every sibling changes.
+  This is not the z-scored formula used by every GRPO implementation; log your actual reduction.</p>
+  <p><strong>Action:</strong> quarantine the affected group pending its declared completeness policy,
+  recover the reward from immutable verifier evidence or rerun only the verifier when valid,
+  persist with an idempotency key, rebuild the group, and verify admission no longer accepts missing
+  receipts. If an update already consumed it, identify impacted updates/checkpoints and use the run's
+  recovery policy; changing a trace in the UI does not undo a gradient.</p>
+
+  <h3 id="latency-diagnosis">Case B: slow episode, fast model</h3>
+  <p>The second episode takes 42 seconds. Its two model calls take 6 and 2 seconds.
+  The tool span takes 31 seconds, but its children separate <strong>30 seconds waiting for a sandbox
+  from 1 second executing</strong>. A parallel branch takes 11 seconds and finishes before the
+  sandbox becomes available. The fixture's scheduler evidence says no sandbox slot was available.</p>
+  <p><strong>Action:</strong> inspect sandbox pool occupancy, provisioning, quotas and queue age for
+  this cohort; compare against an otherwise matched healthy attempt. Test one capacity/admission change
+  and remeasure completed valid episodes per hour. Increasing model GPU capacity does not directly
+  remove this queue. Extra rollout concurrency can increase KV pressure and policy lag, so check both
+  before calling a throughput change an improvement.</p>
+
+  <h3 id="mask-diagnosis">Case C: healthy-looking task, invalid training sample</h3>
+  <p>The third verifier and reward delivery succeed. Its materialized toy sample has roles
+  <code>[assistant, tool, assistant]</code> but mask <code>[1, 1, 1]</code>.
+  In this policy-gradient recipe the tool token was not sampled by the policy; its mask must be zero.
+  Its missing behavior logprob is another admission failure, not a value to invent.
+  The sample builder nevertheless admits it. A pretty conversation view and positive reward miss
+  this bug completely.</p>
+  <p><strong>Action:</strong> stop admission, reconstruct from original call/token events and compare
+  the chosen branch, prefix boundaries, token alignment, behavior probabilities and mask.
+  Re-tokenizing the displayed transcript is not a repair. Replay sample construction and check the
+  expected artifact digest before resuming; then audit which updates consumed the invalid version.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Other symptom</th><th>Per-trace evidence to inspect</th><th>Do not confuse it with</th></tr></thead>
+    <tbody>
+      <tr><td>Reward improves; held-out success does not</td><td>Changed grader/components, test leakage, task/harness mixture, budgets and successful-trace selection. Regrade a matched cohort using independent outcome checks.</td><td>A confirmed model improvement merely because the training curve rose.</td></tr>
+      <tr><td>Large importance-ratio tail</td><td>Generation version per segment, learner version, actual sampling logprobs, context/token/mask identity and engine numerics.</td><td>Proof of staleness alone; token reconstruction errors and train–inference mismatch can look similar.</td></tr>
+      <tr><td>Agent loops or loses context</td><td>Repeated tool failures, observations available at each decision, compaction boundaries, branch handoffs and budget exhaustion.</td><td>Direct access to the model's internal reasoning; observable actions support hypotheses, not mind-reading.</td></tr>
+      <tr><td>Missing spans</td><td>Expected-attempt ledger, sampling decision, worker termination, export drops and indexing lag.</td><td>Proof that the operation never happened.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2 id="audit">8. Reproduce the reward-to-advantage audit offline</h2>
+  <p>This page embeds the same synthetic evidence used by the inspector. From a repository checkout,
+  run the following <strong>standard-library-only</strong> command. It reads the HTML as data;
+  it does not execute its JavaScript, call a provider, install a package, or run training.
+  Keep the expected-member manifest when adapting this to real ledger exports.</p>
+  <pre><code class="language-bash" id="audit-code">python3 - docs/rl/agentic-rl-observability.html &lt;&lt;'PY'
+import json
+import sys
+from html.parser import HTMLParser
+from pathlib import Path
+
+class FixtureParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.capture = False
+        self.parts = []
+
+    def handle_starttag(self, tag, attrs):
+        self.capture = tag == "script" and dict(attrs).get("id") == "trace-fixtures"
+
+    def handle_endtag(self, tag):
+        if tag == "script":
+            self.capture = False
+
+    def handle_data(self, text):
+        if self.capture:
+            self.parts.append(text)
+
+parser = FixtureParser()
+parser.feed(Path(sys.argv[1]).read_text())
+data = json.loads("".join(parser.parts))
+assert data["schema_version"] == 1
+case = next(c for c in data["cases"] if c["id"] == "reward")
+spans = {s["id"]: s for s in case["spans"]}
+assert len(spans) == len(case["spans"]), "duplicate span ID"
+verifier = spans["verify"]["evidence"]
+delivery = spans["deliver"]["evidence"]
+sample = spans["sample"]["evidence"]
+update = spans["update"]["evidence"]
+assert verifier["valid"] and verifier["raw_reward"] == 1
+assert not delivery["persisted"] and delivery["receipt_id"] is None
+assert sample["admitted"] and sample["reward"] == 0
+assert sample["sample_id"] in update["sample_ids"]
+assert update["optimizer_applied"] and update["receipt_id"]
+
+group = data["group"]
+rows = {r["rollout_id"]: r for r in group["members"]}
+expected = group["expected_rollouts"]
+assert len(set(expected)) == len(expected), "duplicate manifest member"
+assert len(rows) == len(group["members"]), "duplicate observed member"
+assert set(rows) == set(expected), "missing or unexpected member"
+assert rows[case["rollout_id"]]["materialized_reward"] == sample["reward"]
+assert group["reward_transform"] == "identity"
+assert group["advantage_rule"] == "mean_center_only"
+
+def centered(values):
+    mean = sum(values) / len(values)
+    return [round(v - mean, 2) for v in values]
+
+raw = [rows[key]["verifier_reward"] for key in expected]
+used = [rows[key]["materialized_reward"] for key in expected]
+print("BOUNDARY FAILURE: missing reward receipt was admitted as zero")
+print("verifier rewards:", raw)
+print("materialized rewards:", used)
+print("intended advantages:", centered(raw))
+print("materialized advantages:", centered(used))
+assert centered(raw) == [0.5, -0.5, 0.5, -0.5]
+assert centered(used) == [-0.25, -0.25, 0.75, -0.25]
+print("ACTION: quarantine/recover the group; identify affected updates")
+PY</code></pre>
+  <p>The assertions deliberately confirm an injected bad state and its consequence.
+  They are not a production validator accepting such data. A real admission validator should
+  <em>reject</em> missing reward receipts, invalid grading, non-finite trainable logprobs,
+  inconsistent token/mask lengths, unexpected group membership and unresolved lineage.
+  Keep raw reward, transformed reward and learner advantage as separate fields.</p>
+
+  <h2 id="replay">9. Replay has three different meanings</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Replay</th><th>Inputs</th><th>Claim it can support</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Regrade evidence</strong></td><td>Retained patch/output/environment evidence plus pinned verifier and grading configuration.</td><td>Whether the same evidence receives the same verdict, or how a changed grader scores it. Version new results; never overwrite the historical reward.</td></tr>
+      <tr><td><strong>Rebuild samples</strong></td><td>Immutable model-call events, exact token data, stitching/mask rules, branch selection and group records.</td><td>Whether the materialized training sample and advantages can be regenerated. Compare hashes and arrays; this is the most controlled replay boundary.</td></tr>
+      <tr><td><strong>Re-execute the agent</strong></td><td>Task snapshot, harness/tools, image, model/sampling settings and permitted external state.</td><td>Behavior under a recreated environment, not guaranteed reproduction of the original trajectory. Seeds alone do not control remote services, GPU nondeterminism or concurrent state.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Record whether tools are stubbed, sandboxed or live. Do not replay state-changing tools against
+  production accounts. A new execution gets a new attempt ID and a link to the original.
+  A changed verifier or sample builder creates a new artifact version. Replay is not an implicit
+  authorization to re-enroll data in training.</p>
+  <p>Promote confirmed incidents into a small regression corpus: missing reward receipt, tool timeout,
+  intentional retry, subagent branch, compaction boundary, mixed policy versions and malformed masks.
+  Preserve the independent task-success checks in
+  <a href="../evaluation/agent-evaluation.html#protocol">Agent Evaluation</a>; a trace classifier
+  or LLM judge should propose a failure category with cited events, not replace verifiable outcomes.</p>
+
+  <h2 id="gates">10. Acceptance gates before scaling collection</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Gate</th><th>Evidence required</th></tr></thead>
+    <tbody>
+      <tr><td>One complete episode</td><td>Dashboard cohort resolves to attempt, model/tool/verifier operations, durable reward, materialized sample and update receipt. Join errors are explicit, not empty UI panels.</td></tr>
+      <tr><td>Group integrity</td><td>All expected attempts are accounted for; invalid and excluded attempts have reasons. Show raw rewards, admitted membership, normalization and sample-use records.</td></tr>
+      <tr><td>Failure injection</td><td>Drop a reward acknowledgement, kill a worker, interrupt the backend and duplicate a transport message. No silent sample admission, denominator shrinkage or duplicate training use.</td></tr>
+      <tr><td>Replay</td><td>Regrading and sample rebuilding pass on retained authorized fixtures; nondeterministic re-execution is labeled separately.</td></tr>
+      <tr><td>Telemetry health</td><td>Measure overhead against tracing disabled, queue/disk limits, dropped spans, freshness and costs at expected load. Test shutdown flush and long-episode/late-span behavior.</td></tr>
+      <tr><td>Access and retention</td><td>Synthetic secret/redaction probes, cross-tenant access checks, approved export destinations, artifact ACLs and deletion propagation. Never use real credentials as probes.</td></tr>
+    </tbody>
+  </table></div>
+  <div class="gate"><strong>Done means an engineer can explain one update from retained evidence.</strong>
+  Not just “the dashboard has lines,” but which attempts contributed, what the agent and environment
+  did, how the verifier scored them, which tokens carried loss, and why those samples were admitted.</div>
+
+  <h2 id="sources">Sources and version boundaries</h2>
+  <p class="muted">Official sources inspected November 6, 2026. Commit links pin the exact inspected
+  framework and convention documents; hosted product documentation can change. No throughput,
+  integration compatibility or deployment availability was independently benchmarked.</p>
+  <ol>
+    <li id="src-verl"><strong>verl</strong> at <code>b17218ba58a6</code>:
+    <a href="https://github.com/verl-project/verl/blob/b17218ba58a6fbcdfb0de32772e3c2a79f88529d/docs/advance/rollout_trace.rst">rollout tracing recipe</a>
+    and <a href="https://github.com/verl-project/verl/blob/b17218ba58a6fbcdfb0de32772e3c2a79f88529d/verl/utils/rollout_trace.py">adapter implementation</a>.
+    Config keys, supported backends, metadata and captured payloads.</li>
+    <li id="src-weave"><strong>W&amp;B Weave:</strong>
+    <a href="https://docs.wandb.ai/weave/guides/tracking/tracing">Ops, Calls, Traces and Threads</a>.
+    Function executions, nesting and session grouping; verl's recipe supplies the RL integration.</li>
+    <li id="src-mlflow"><strong>MLflow:</strong>
+    <a href="https://mlflow.org/docs/latest/genai/tracing/">LLM and agent tracing</a>.
+    Product-level inspection and OTel support; do not generalize a pinned adapter limitation to the product.</li>
+    <li id="src-langfuse"><strong>Langfuse:</strong>
+    <a href="https://langfuse.com/docs/observability/overview">observability overview</a>,
+    <a href="https://langfuse.com/integrations/native/opentelemetry">OTLP ingestion and attribute mapping</a>,
+    <a href="https://langfuse.com/self-hosting">self-hosted infrastructure</a>.
+    Transport, v4 ingestion header, propagation and storage components.</li>
+    <li id="src-phoenix"><strong>Arize Phoenix:</strong>
+    <a href="https://arize.com/docs/phoenix/tracing/how-to-tracing/setup-tracing">tracing setup</a>
+    and <a href="https://arize.com/docs/phoenix/tracing/how-to-tracing/setup-tracing/setup-using-phoenix-otel">Phoenix OTEL configuration</a>.
+    Provider registration, installed instrumentors, sessions and export flushing.</li>
+    <li id="src-otel"><strong>OpenTelemetry GenAI</strong> at <code>e6658f14c9d9</code>:
+    <a href="https://github.com/open-telemetry/semantic-conventions-genai/blob/e6658f14c9d9ea0760825f029cb82e7673f48fab/docs/gen-ai/gen-ai-agent-spans.md">agent/framework semantic conventions</a>.
+    Development-status conventions, not a finalized RL schema.</li>
+    <li id="src-propagation"><strong>OpenTelemetry:</strong>
+    <a href="https://opentelemetry.io/docs/languages/python/propagation/">Python context propagation</a>.
+    W3C injection/extraction across process boundaries.</li>
+    <li id="src-collector"><strong>OpenTelemetry Collector:</strong>
+    <a href="https://opentelemetry.io/docs/collector/configuration/">configuration and validation</a>,
+    <a href="https://opentelemetry.io/docs/collector/resiliency/">resiliency</a>.
+    Queue/WAL/broker patterns, monitoring and remaining data-loss modes.</li>
+    <li id="src-sampling"><strong>OpenTelemetry:</strong>
+    <a href="https://opentelemetry.io/docs/concepts/sampling/">head and tail sampling</a>.
+    Selection trade-offs and operational costs; the RL ledger separation is this guide's design recommendation.</li>
+    <li id="src-lightning"><strong>Agent Lightning v1.0:</strong>
+    <a href="https://microsoft.github.io/agent-lightning/stable/05-basics/">rollouts, events, model proxy and trainer</a>.
+    The v1.0 Gateway design is distinct from older SDK/decorator-based integration descriptions.</li>
+  </ol>
+</main>
+<script type="application/json" id="trace-fixtures">
+{
+  "schema_version": 1,
+  "run_id": "synthetic-run",
+  "group": {
+    "id": "g7", "reward_transform": "identity", "advantage_rule": "mean_center_only",
+    "expected_rollouts": ["r1", "r2", "r3", "r4"],
+    "members": [
+      {"rollout_id": "r1", "verifier_reward": 1, "materialized_reward": 0},
+      {"rollout_id": "r2", "verifier_reward": 0, "materialized_reward": 0},
+      {"rollout_id": "r3", "verifier_reward": 1, "materialized_reward": 1},
+      {"rollout_id": "r4", "verifier_reward": 0, "materialized_reward": 0}
+    ]
+  },
+  "cases": [
+    {
+      "id": "reward", "rollout_id": "r1",
+      "summary": "Task passed, but the reward was not persisted. A buggy admission path trains on a substituted zero.",
+      "diagnosis": "First broken boundary: reward delivery, followed by admission accepting missing evidence. Inspect deliver and sample; recover the complete group before recomputing advantages.",
+      "spans": [
+        {"id":"attempt","trace":"episode-A","parent":null,"links":[],"name":"attempt","kind":"other","start":0,"end":10,"status":"completed","evidence":{"attempt_id":"a1","task_outcome":"passed","behavior_version":41}},
+        {"id":"model","trace":"episode-A","parent":"attempt","links":[],"name":"model.generate","kind":"model","start":1,"end":5,"status":"ok","evidence":{"call_id":"c1","finish_reason":"tool_call","behavior_version":41}},
+        {"id":"tool","trace":"episode-A","parent":"attempt","links":[],"name":"tool.apply_patch","kind":"tool","start":5,"end":7,"status":"ok","evidence":{"tool_call_id":"t1","artifact_ref":"fixture://patch-a"}},
+        {"id":"verify","trace":"episode-A","parent":"attempt","links":[],"name":"verifier.execute","kind":"tool","start":7,"end":9,"status":"ok","evidence":{"valid":true,"raw_reward":1,"verifier_version":"v3","tests_passed":true}},
+        {"id":"deliver","trace":"episode-A","parent":"attempt","links":[],"name":"reward.deliver","kind":"queue","start":9,"end":10,"status":"error","evidence":{"http_status":503,"persisted":false,"receipt_id":null,"event_id":"reward-a1"}},
+        {"id":"sample","trace":"learner-A","parent":null,"links":["deliver"],"name":"sample.construct","kind":"other","start":11,"end":11.2,"status":"completed","evidence":{"sample_id":"s1","reward":0,"fallback":"missing_to_zero","admitted":true,"update_id":"u44","group_id":"g7"}},
+        {"id":"update","trace":"learner-A","parent":null,"links":["sample"],"name":"learner.update","kind":"other","start":11.2,"end":12.5,"status":"ok","evidence":{"update_id":"u44","sample_ids":["s1","s2","s3","s4"],"optimizer_applied":true,"receipt_id":"update-u44","policy_version_before":43,"policy_version_after":44}}
+      ]
+    },
+    {
+      "id": "latency", "rollout_id": "r5",
+      "summary": "Episode latency is 42 s. The tool waits 30 s for a sandbox, executes for 1 s, and outlasts the parallel branch.",
+      "diagnosis": "Critical wait: sandbox.queue. The parallel branch ends at 18 s, before the queued tool starts at 37 s. Inspect capacity evidence before changing model or GPU settings.",
+      "spans": [
+        {"id":"attempt","trace":"episode-B","parent":null,"links":[],"name":"attempt","kind":"other","start":0,"end":42,"status":"completed","evidence":{"attempt_id":"a5","task_outcome":"passed"}},
+        {"id":"model1","trace":"episode-B","parent":"attempt","links":[],"name":"model.plan","kind":"model","start":1,"end":7,"status":"ok","evidence":{"behavior_version":41,"output_tokens":120}},
+        {"id":"tool","trace":"episode-B","parent":"attempt","links":[],"name":"tool.run_tests","kind":"tool","start":7,"end":38,"status":"ok","evidence":{"queue_seconds":30,"execution_seconds":1}},
+        {"id":"queue","trace":"episode-B","parent":"tool","links":[],"name":"sandbox.queue","kind":"queue","start":7,"end":37,"status":"waiting","evidence":{"reason":"no_available_slot","pool":"code-sandboxes","source":"synthetic scheduler receipt"}},
+        {"id":"execute","trace":"episode-B","parent":"tool","links":[],"name":"sandbox.execute","kind":"tool","start":37,"end":38,"status":"ok","evidence":{"exit_code":0}},
+        {"id":"branch","trace":"episode-B","parent":"attempt","links":[],"name":"parallel.review","kind":"other","start":7,"end":18,"status":"ok","evidence":{"branch_id":"review","joined_before_next_model_call":true}},
+        {"id":"model2","trace":"episode-B","parent":"attempt","links":["branch","tool"],"name":"model.finish","kind":"model","start":38,"end":40,"status":"ok","evidence":{"behavior_version":41}},
+        {"id":"verify","trace":"episode-B","parent":"attempt","links":[],"name":"verifier.execute","kind":"tool","start":40,"end":41,"status":"ok","evidence":{"valid":true,"raw_reward":1}},
+        {"id":"deliver","trace":"episode-B","parent":"attempt","links":[],"name":"reward.deliver","kind":"queue","start":41,"end":42,"status":"ok","evidence":{"persisted":true,"receipt_id":"receipt-b"}},
+        {"id":"sample","trace":"learner-B","parent":null,"links":["deliver"],"name":"sample.construct","kind":"other","start":42,"end":43,"status":"ok","evidence":{"sample_id":"s5","admitted":true,"update_id":"u45"}},
+        {"id":"update","trace":"learner-B","parent":null,"links":["sample"],"name":"learner.update","kind":"other","start":43,"end":44,"status":"ok","evidence":{"update_id":"u45","sample_ids":["s5"],"optimizer_applied":true,"receipt_id":"update-u45","policy_version_before":44,"policy_version_after":45}}
+      ]
+    },
+    {
+      "id": "mask", "rollout_id": "r6",
+      "summary": "Task outcome and reward delivery look healthy. The sample incorrectly trains on a token supplied by a tool.",
+      "diagnosis": "First broken boundary: sample construction. In sample evidence, the middle token has role tool but loss_mask=1. Quarantine, rebuild from raw events and locate affected updates.",
+      "spans": [
+        {"id":"attempt","trace":"episode-C","parent":null,"links":[],"name":"attempt","kind":"other","start":0,"end":9,"status":"completed","evidence":{"attempt_id":"a6","task_outcome":"passed"}},
+        {"id":"model1","trace":"episode-C","parent":"attempt","links":[],"name":"model.plan","kind":"model","start":0,"end":3,"status":"ok","evidence":{"call_id":"c6","behavior_version":42}},
+        {"id":"tool","trace":"episode-C","parent":"attempt","links":[],"name":"tool.lookup","kind":"tool","start":3,"end":4,"status":"ok","evidence":{"tool_call_id":"t6"}},
+        {"id":"model2","trace":"episode-C","parent":"attempt","links":[],"name":"model.finish","kind":"model","start":4,"end":7,"status":"ok","evidence":{"call_id":"c7","behavior_version":42}},
+        {"id":"verify","trace":"episode-C","parent":"attempt","links":[],"name":"verifier.execute","kind":"tool","start":7,"end":8,"status":"ok","evidence":{"valid":true,"raw_reward":1}},
+        {"id":"deliver","trace":"episode-C","parent":"attempt","links":[],"name":"reward.deliver","kind":"queue","start":8,"end":9,"status":"ok","evidence":{"persisted":true,"receipt_id":"receipt-c"}},
+        {"id":"sample","trace":"learner-C","parent":null,"links":["model1","tool","model2","deliver"],"name":"sample.construct","kind":"other","start":10,"end":10.2,"status":"completed","evidence":{"sample_id":"s6","reward":1,"token_ids":[101,202,303],"roles":["assistant","tool","assistant"],"behavior_logprobs":[-0.8,null,-0.4],"loss_mask":[1,1,1],"expected_mask":[1,0,1],"admitted":true,"update_id":"u46"}},
+        {"id":"update","trace":"learner-C","parent":null,"links":["sample"],"name":"learner.update","kind":"other","start":10.2,"end":11,"status":"ok","evidence":{"update_id":"u46","sample_ids":["s6"],"optimizer_applied":true,"receipt_id":"update-u46","policy_version_before":45,"policy_version_after":46,"warning":"fixture models a missing-logprob zero-fill bug; a real gate must reject this sample"}}
+      ]
+    }
+  ]
+}
+</script>
+<script>
+(() => {
+  const fixtures = JSON.parse(document.getElementById('trace-fixtures').textContent);
+  const selector = document.getElementById('trace-case');
+  const canvas = document.getElementById('trace-timeline');
+  const rows = document.getElementById('span-rows');
+  const detail = document.getElementById('span-detail');
+  let current = fixtures.cases[0];
+  let selected = 'sample';
+  let frame = 0;
+
+  function drawTimeline() {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const width = canvas.getBoundingClientRect().width;
+    if (!width) return;
+    const height = current.spans.length * 32 + 48;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.style.height = height + 'px';
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const css = getComputedStyle(document.documentElement);
+    const color = key => css.getPropertyValue('--' + key).trim();
+    const left = width < 500 ? 82 : 100;
+    const right = width - 18;
+    const top = 14;
+    const bottom = height - 34;
+    const end = Math.max(...current.spans.map(span => span.end));
+    const x = t => left + (t / end) * (right - left);
+    ctx.clearRect(0, 0, width, height);
+    ctx.font = '12px system-ui, sans-serif';
+    for (let i = 0; i <= 4; i++) {
+      const t = end * i / 4;
+      ctx.strokeStyle = i === 0 ? color('muted') : color('border');
+      ctx.beginPath();
+      ctx.moveTo(x(t), top);
+      ctx.lineTo(x(t), bottom);
+      ctx.stroke();
+      ctx.fillStyle = color('muted');
+      ctx.textAlign = i === 4 ? 'right' : 'center';
+      ctx.fillText(t.toFixed(1) + 's', x(t), bottom + 21);
+    }
+    current.spans.forEach((span, i) => {
+      const y = top + i * 32;
+      ctx.fillStyle = color('text');
+      ctx.textAlign = 'right';
+      ctx.fillText(span.id, left - 8, y + 15);
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(left, top, right - left, bottom - top);
+      ctx.clip();
+      ctx.fillStyle = color(span.kind);
+      ctx.fillRect(x(span.start), y + 3, Math.max(2, x(span.end) - x(span.start)), 18);
+      if (span.id === selected) {
+        ctx.strokeStyle = color('text');
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x(span.start), y + 1, Math.max(3, x(span.end) - x(span.start)), 22);
+      }
+      ctx.restore();
+    });
+  }
+
+  function selectSpan(id) {
+    selected = id;
+    const span = current.spans.find(item => item.id === id);
+    detail.textContent = JSON.stringify({
+      run_id: fixtures.run_id, rollout_id: current.rollout_id,
+      trace_alias: span.trace, operation: span.name,
+      duration_seconds: Number((span.end - span.start).toFixed(2)),
+      evidence: span.evidence
+    }, null, 2);
+    rows.querySelectorAll('button').forEach(button => {
+      button.setAttribute('aria-pressed', String(button.dataset.spanId === id));
+    });
+    drawTimeline();
+  }
+
+  function renderCase() {
+    current = fixtures.cases.find(item => item.id === selector.value);
+    document.getElementById('trace-summary').textContent = current.summary;
+    document.getElementById('trace-diagnosis').textContent = current.diagnosis;
+    rows.replaceChildren();
+    current.spans.forEach(span => {
+      const row = document.createElement('tr');
+      const nameCell = document.createElement('td');
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.spanId = span.id;
+      button.textContent = span.id + ': ' + span.name;
+      button.setAttribute('aria-controls', 'span-detail');
+      button.addEventListener('click', () => selectSpan(span.id));
+      nameCell.appendChild(button);
+      row.appendChild(nameCell);
+      const relationships = (span.parent || 'root') +
+        (span.links.length ? '; links: ' + span.links.join(', ') : '');
+      [relationships, span.start + ' → ' + span.end, span.status].forEach(value => {
+        const cell = document.createElement('td');
+        cell.textContent = value;
+        row.appendChild(cell);
+      });
+      rows.appendChild(row);
+    });
+    selectSpan(current.id === 'latency' ? 'queue' : 'sample');
+  }
+
+  function scheduleDraw() {
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(drawTimeline);
+  }
+  selector.addEventListener('change', renderCase);
+  window.addEventListener('resize', scheduleDraw);
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', scheduleDraw);
+  renderCase();
+})();
+</script>
+</body>
+</html>
