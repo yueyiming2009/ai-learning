@@ -540,8 +540,9 @@
   <!-- ════════════════════════ WHY < 100% ════════════════════════ -->
   <h2 id="gap">7 · Why nobody hits 100%</h2>
   <p>
-    MFU charges <em>all</em> wall-clock time against a peak that only the biggest matmuls can touch. Every second
-    spent anywhere else is pure MFU loss. The budget leaks in a fixed set of places:
+    MFU charges <em>all</em> wall-clock time within the chosen measurement window against a peak that only
+    the biggest matmuls can touch. Declare whether that window covers steady-state steps or the full run,
+    including interruptions. Within it, time spent elsewhere lowers MFU. The budget leaks in a fixed set of places:
   </p>
   <div class="table-wrap">
     <table>
@@ -583,6 +584,48 @@
     lot of work. Compare MFU across same-generation hardware; compare tokens/s/GPU (or cost/token) across
     generations.
   </div>
+
+  <h3 id="mai-accounting">Quality per FLOP, time to quality, MFU, and goodput are different</h3>
+  <p>
+    <a href="https://microsoft.ai/news/frontier-pre-training-at-microsoft-ai/" style="color:var(--accent);">Microsoft's MAI-Base-2 account</a>
+    uses quality-matched compute and time to guide model–infrastructure co-design. A candidate that
+    reaches the same evaluation loss with fewer FLOPs can still take longer on today's runtime.
+    That is a reason to improve the implementation, not evidence that the FLOP saving has already
+    become a wall-clock speedup.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Quantity</th><th>What it answers</th><th>Required accounting</th></tr></thead>
+      <tbody>
+        <tr><td>Quality-matched FLOPs</td><td>How much computation reaches the same evaluation loss?</td><td>Same target and evaluation protocol; label fitted estimates versus measured runs and state the ratio direction.</td></tr>
+        <tr><td>Quality-matched wall time</td><td>How long does reaching that target take?</td><td>Hardware/allocation, runtime, and timing window; FLOP savings alone do not determine elapsed time.</td></tr>
+        <tr><td>MFU</td><td>How fast are counted model FLOPs executed relative to the hardware peak?</td><td>Model FLOP definition, dtype/peak, device count, and elapsed-time window; not a measure of model quality.</td></tr>
+        <tr><td>Goodput</td><td>What fraction of run time makes training progress?</td><td>Progress definition and treatment of interruptions or lost work; not GPU arithmetic utilization.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    Microsoft reports <strong>16K GB200 GPUs for 38 days</strong>, <strong>21% average MFU</strong>
+    normalized to <strong>2.5 PFLOPS per GPU at BF16</strong>, and <strong>89% goodput</strong>.
+    The MFU numerator excludes rematerialization and optimizer FLOPs. Its separate
+    <a href="moe-parallelism.html#dropless" style="color:var(--accent);">24% → 35% MoE-layer MFU</a>
+    improvement is not the whole-run statistic. These numbers describe distinct scopes and cannot
+    be substituted for one another.
+  </p>
+  <div class="note">
+    <strong>Do not automatically multiply MFU by goodput.</strong> That conversion is justified
+    only if the MFU timing window excludes non-progress time, the goodput factor supplies exactly
+    that missing time fraction, and the counted FLOPs align with the same progress definition.
+    If MFU already uses end-to-end elapsed time, multiplying discounts interruptions twice.
+    The article reports the two percentages without enough timing detail to justify that conversion.
+  </div>
+  <p>
+    Likewise, the reported <strong>4.2–12.3× FLOPs efficiency</strong> versus DeepSeek-V4-Pro-Base
+    comes from separate held-out bits-per-byte scaling fits that estimate MAI's compute to match
+    the reference loss. The final Base-2 point is included in those fits. It is not a measured
+    wall-clock speedup, an equal-compute head-to-head run, or a downstream capability multiplier.
+    See <a href="../models/mai-base-2.html#evidence" style="color:var(--accent);">the case study's evidence table</a>.
+  </p>
 
   <!-- ════════════════════════ SUMMARY ════════════════════════ -->
   <h2 id="summary">8 · Summary</h2>

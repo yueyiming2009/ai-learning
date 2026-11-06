@@ -708,6 +708,31 @@ optimizer.step()</code></pre>
     Source: Qwen Team, <a href="https://github.com/QwenLM/Qwen3.8-Flash-Next/blob/main/tech_report.pdf" style="color:inherit;">"On the Design of Qwen3.8-Next Architecture"</a> (Aug 2026), §3.3.
   </div>
 
+  <h3 id="activation-gradient-clipping">Clip activation gradients, then trace the outliers</h3>
+  <p>
+    Global parameter-gradient clipping rescales the already aggregated batch gradient: a few
+    outliers can shrink the contribution of every well-behaved example too.
+    <a href="https://microsoft.ai/news/frontier-pre-training-at-microsoft-ai/" style="color:var(--accent);">Microsoft's MAI-Base-2 account</a>
+    describes a more targeted intervention: clip the <strong>gradients with respect to activations</strong>
+    at selected network locations during backward. This changes the backward signal before it
+    propagates further; it is not clipping the forward activations, nor another name for
+    <code>clip_grad_norm_</code> on the final parameter gradients.
+  </p>
+  <p>
+    The clipping events also provide a data-debugging loop: identify affected examples, inspect
+    their content, trace them through preprocessing, and fix the defect upstream. Microsoft's
+    example was a code sample with a truncated license header, which exposed a preprocessing bug.
+    Clipping is a signal for inspection, not proof that every affected sample is bad data.
+  </p>
+  <div class="note">
+    <strong>Disclosure and attribution limits.</strong> The article does not specify the exact
+    clipping sites, thresholds, or clipping granularity; it is not a reproducible drop-in recipe.
+    The Base-1 versus Base-2 gradient-norm comparison changes both the optimizer and clipping, so
+    that plot alone does not isolate clipping's contribution. Separate reported experiments show
+    a benefit that grows with scale. See the <a href="../models/mai-base-2.html#clipping" style="color:inherit;">model case study</a>
+    for the evidence boundary.
+  </div>
+
   <!-- ════════════════════════ SCHEDULE ════════════════════════ -->
   <h2 id="schedule">6. The learning-rate schedule — warmup → cosine</h2>
   <h3>Warmup</h3>
@@ -903,7 +928,7 @@ optimizer = torch.optim.AdamW([
   <h3>Muon is a hybrid: it does not replace AdamW everywhere</h3>
   <p>
     Orthogonalization only makes sense for a 2-D parameter that <em>has</em> singular-value structure. So a
-    real training run runs <strong>Muon on the hidden weight matrices and AdamW on everything else</strong>:
+    common hybrid recipe uses <strong>Muon on hidden weight matrices and AdamW on the remaining parameters</strong>:
   </p>
   <div class="table-wrap">
     <table>
@@ -926,7 +951,7 @@ optimizer = torch.optim.AdamW([
       <tr><td>Expert <code>fc1</code>/<code>fc2</code>, routed <em>and</em> shared</td><td><strong>Muon</strong></td></tr>
       <tr><td>n-gram embedding key/value projections</td><td><strong>Muon</strong></td></tr>
       <tr><td>Input embeddings, output head</td><td>AdamW</td><td>As above — per-token rows, a lookup rather than a transform</td></tr>
-      <tr><td>MoE router</td><td>AdamW</td><td>Muon amplifies early-training fluctuations and destabilizes the router (later in training it is stable but gains nothing). Each output dimension is one expert's score and the dimensions are largely independent — there is no shared linear structure for orthogonalization to exploit</td></tr>
+      <tr><td>MoE router</td><td>AdamW</td><td>In Qwen's experiments, Muon amplifies early-training fluctuations (later it is stable but gains nothing). The report motivates the exclusion with the largely independent per-expert scores; this is a recipe-specific finding, not a universal router rule</td></tr>
       <tr><td>Gated Residual low-rank projections</td><td>AdamW</td><td>Very elongated shape; AdamW simply performs better</td></tr>
       <tr><td>Output gates (attention output gate, GDN \(z\) projection)</td><td>AdamW</td><td>Ablations found AdamW on par with or slightly better than Muon</td></tr>
       <tr><td>GDN decay and beta projections</td><td>AdamW</td><td>One scalar per head — these are vectors in disguise, and orthogonalization is not meaningful on a vector</td></tr>
@@ -934,11 +959,15 @@ optimizer = torch.optim.AdamW([
     </table>
   </div>
   <p>
-    One rule generates the whole table. \(O_t = UV^\top\) is the steepest-descent direction when step
+    A useful interpretation of Qwen's assignment: \(O_t = UV^\top\) is the steepest-descent direction when step
     length is measured in the <em>spectral</em> norm — the norm that governs how a linear map stretches its
-    inputs — so the update is only the "right" one for a tensor that <em>is</em> a linear map from one
-    activation space to another. <strong>Orthogonalize what is genuinely a linear map</strong>; hand
-    everything else (lookups, per-expert scores, per-head scalars, gates) to AdamW.
+    inputs. That motivates orthogonalizing linear maps, but does not prove which assignment optimizes
+    training quality. Qwen leaves lookups, per-expert scores, per-head scalars, and gates outside Muon.
+    <strong>Validate exclusions per recipe.</strong> Microsoft's
+    <a href="https://microsoft.ai/news/frontier-pre-training-at-microsoft-ai/" style="color:var(--accent);">MAI-Base-2 description</a>
+    explicitly includes replicated MoE router weights receiving Newton–Schulz updates. Router
+    exclusion therefore cannot be a universal requirement; the two reports do not establish which
+    assignment would win under the other's training setup.
   </p>
   <div class="note">
     Muon's step size has a different natural scale than Adam's (its update is semi-orthogonal, so
@@ -994,6 +1023,37 @@ optimizer = torch.optim.AdamW([
     rather than arithmetic — so the whole step is captured in a <a href="../systems/cuda-graphs.html"><strong>CUDA graph</strong></a>.
   </p>
 
+  <h3 id="muon-mai">MAI-Base-2: temporarily own whole momentum matrices</h3>
+  <p>
+    Canzona emphasizes matrix-aware assignment and reconstruction across Megatron's layouts.
+    Microsoft's <a href="https://microsoft.ai/news/frontier-pre-training-at-microsoft-ai/" style="color:var(--accent);">Base-2 implementation</a>
+    describes the complementary problem of reconstructing momentum sharded by ZeRO over the
+    data-parallel dimension. Newton–Schulz needs a full matrix even when persistent optimizer
+    storage is sharded:
+  </p>
+  <ol>
+    <li>Update the local momentum shard in <strong>FP32</strong>, then cast it to BF16.</li>
+    <li>Batch parameters of the same shape into an <strong>all-to-all</strong>, giving each GPU
+      ownership of a subset of full momentum matrices.</li>
+    <li>Orthogonalize those matrices locally with a symmetry-aware Newton–Schulz kernel.</li>
+    <li>Use a second all-to-all to return updates to the original shards; cast back to FP32 and
+      apply them to the weights.</li>
+  </ol>
+  <p>
+    Prefetching multiple batches overlaps communication and computation. Cached resharding metadata
+    removes repeated indexing work, particularly for thousands of same-shaped MoE parameters.
+    For selected replicated weights, including routers, the first exchange is skipped; an
+    all-gather after Newton–Schulz assembles the replicated updates instead. BF16 is the
+    communication/orthogonalization path here, not a claim that persistent momentum updates are BF16.
+  </p>
+  <div class="note">
+    <strong>Measured versus estimated.</strong> Microsoft reports <strong>165 ms, or 2.1% of the
+    average iteration</strong>, for Muon on 16K GPUs. Its communication-bottlenecked theoretical
+    estimate is <strong>55 ms</strong>, not achieved timing. Stragglers, dispatch overhead, load
+    imbalance, and resharding copies/allocations explain the reported gap; this is not a
+    head-to-head benchmark against Canzona. See <a href="../models/mai-base-2.html#muon" style="color:inherit;">the model case</a>.
+  </div>
+
   <h3>Why it matters</h3>
   <ul>
     <li><strong>Speed records.</strong> Muon set a string of wall-clock records on Keller Jordan's
@@ -1044,7 +1104,7 @@ optimizer = torch.optim.AdamW([
     </div>
     <div class="summary-card">
       <div class="summary-card-label">Muon in production</div>
-      <p>Orthogonalize only true linear maps (router, gates, per-head scalars stay on AdamW); split fused qkv/fc1 per operator; 8 NS steps for stability; balance DP ranks by NS FLOPs, not elements. Under 4× LR stress: zero spikes with a gated residual.</p>
+      <p>Assignments are recipe-specific: Qwen keeps routers on AdamW; MAI includes router NS updates. Reconstruct full matrices from shards and balance NS work, not just elements. Communication, kernel launches, and state precision matter.</p>
     </div>
   </div>
   <p style="font-size:0.88rem; color: var(--muted);">

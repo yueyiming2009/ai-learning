@@ -429,6 +429,42 @@
     buffering excess tokens rather than stalling the pipeline.
   </p>
 
+  <h3 id="dropless">Dropless execution with bounded memory</h3>
+  <p>
+    Capacity need not mean dropping tokens or allocating for the worst possible imbalance.
+    <a href="https://microsoft.ai/news/frontier-pre-training-at-microsoft-ai/">Microsoft's MAI-Base-2 implementation</a>
+    groups the experts on each EP rank and gives each expert a fixed token capacity. An overloaded
+    expert can borrow unused capacity from others in its group; tokens still left over are processed
+    in additional <strong>dispatch → compute → collect</strong> rounds. Backward uses a similar
+    multi-round schedule with fine-grained recomputation per expert group.
+  </p>
+  <div class="note">
+    <strong>Bound memory, not execution time.</strong> More capacity consumes more memory; less
+    capacity can require more rounds and scheduling/communication overhead. All routed tokens are
+    processed, but a skewed load can still take longer. Microsoft configures capacity for one round
+    in steady state; the extra rounds handle the tail without growing the expert buffers.
+  </div>
+  <ul>
+    <li><strong>Pipeline groups and rounds.</strong> Dispatch and collect overlap expert compute,
+      except the first dispatch and last collect. In the reported forward schedule, weight
+      quantization and shared-expert work overlap the exposed communication. In backward, input
+      dispatch overlaps same-layer recomputation and gradient collect overlaps weight-gradient
+      computation, hiding all expert communication in that implementation.</li>
+    <li><strong>Amortize fine-grained experts.</strong> Grouped GEMMs and communication reduce
+      launch overhead and tails. GPU-resident routing metadata and GPU-initiated all-to-all avoid
+      host/device synchronization; symmetric-memory NVLink exchange avoids staging copies and
+      reduces HBM contention with concurrent GEMMs.</li>
+    <li><strong>Batch the balancing reductions.</strong> Combine load-balancing losses across
+      layers into one batched reduction instead of a separate all-reduce per layer.</li>
+  </ul>
+  <p>
+    Together these changes raised reported <strong>MoE-layer MFU from 24% to 35%</strong>, making
+    MoE in every layer preferable in wall-clock time, not just FLOPs. This is a layer-level
+    measurement, not the full run's MFU, and overlap is schedule-dependent rather than guaranteed
+    by EP itself. See <a href="../models/mai-base-2.html#codesign">the model–systems co-design case</a>
+    and <a href="mfu.html#mai-accounting">the distinct efficiency denominators</a>.
+  </p>
+
   <h3>Practical EP ceiling</h3>
   <p>
     Each expert must receive at least one token on average per step; otherwise some ranks compute nothing

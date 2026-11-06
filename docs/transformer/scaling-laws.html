@@ -478,6 +478,26 @@
 
   <p>More recent work (Lovelace et al., 2026) adds an explicit overfitting penalty of the form \(P\cdot R_D^{\delta}\cdot (N/U_D)^{\kappa}\), capturing a key asymmetry: <strong>larger models are more sensitive to data repetition</strong> — they memorize the repeated set faster, so the safe number of epochs <em>shrinks</em> as the model grows. Under data constraints, "just make the model bigger" backfires sooner than the fresh-data law suggests.</p>
 
+  <h3 id="source-scaling">Source scaling: match repetition across the ladder</h3>
+  <p>
+    A small proxy run can still be misleading even at fixed tokens per active parameter
+    (\(\mathrm{TPP}=D/N_\text{active}\)): if it samples from the full production corpus, it sees fewer
+    repeats than the large run. Microsoft's <a href="https://microsoft.ai/news/frontier-pre-training-at-microsoft-ai/" style="color:var(--accent);">MAI-Base-2 account</a>
+    instead scales each source's <em>unique sample pool</em> with the training horizon. With source
+    proportions held fixed, reducing both the token budget and each source pool to one tenth preserves
+    that source's repetition count. Their example: a source visited eight times in a 50T-token run is
+    still visited eight times in a 5T-token proxy, using one tenth of its unique samples.
+  </p>
+  <div class="read">
+    <div class="read-label">Control the data regime, not just the compute budget</div>
+    <p>Fixed TPP plus source scaling keeps unique data per active parameter fixed across rungs.
+      It makes small-scale regularization and architecture choices face the production repetition
+      regime, rather than favoring under-regularized candidates that overfit only at large scale.
+      This is an experimental control, not a way to make repeated tokens as valuable as fresh ones.
+      See the <a href="../models/mai-base-2.html#scaling" style="color:var(--accent);">model case study</a>
+      for the complete ladder-to-production narrative.</p>
+  </div>
+
   <h2 id="fitting">6. How these laws get mis-fit</h2>
   <p>The cautionary half of the story: fitting a scaling law is itself error-prone, and small methodological choices move the extrapolated optimum. Besiroglu et al. (2024), replicating Chinchilla's third (parametric) method, traced concrete problems:</p>
   <ul>
@@ -527,6 +547,35 @@
     <strong>Back to §6.</strong> This is the mis-fitting problem wearing different clothes. The optimal \(\eta\) and \(B\) depend on the architecture and the optimizer, so comparing two architectures — or two optimizers, or two schedules — under <em>shared</em> hyperparameters is structurally unfair: the incumbent runs at its tuned point while the challenger runs at someone else's. The same recipe that made Qwen3.5 competitive left the new stack \(7.8\times10^{-3}\) in loss and four benchmark points on the table. A fair comparison refits the hyperparameter law per candidate, then compares — exactly the discipline §6 demands of the compute law.
   </div>
 
+  <h3 id="mai-hyperparams">MAI-Base-2: sweep the coupled LR–decay coordinates</h3>
+  <p>
+    Microsoft's <a href="https://microsoft.ai/news/frontier-pre-training-at-microsoft-ai/" style="color:var(--accent);">pre-training experiments</a>
+    found that good configurations occupy a narrow diagonal band in
+    \((\log LR,\log WD)\). They swept \((\log LR,\log(LR\times WD))\) instead, spending more trials on
+    the sensitive product rather than off that band. For several model sizes and TPP budgets, they
+    fitted a two-dimensional quadratic to evaluation scores, extracted its optimum, and then fitted
+    the optima as functions of scale and training steps.
+  </p>
+  <div class="result">
+    <div class="result-label">Reported MAI-Base-2 fits — recipe-specific, not defaults</div>
+    \[
+      LR^* WD^* = \frac{17.04}{S}, \qquad
+      \log LR^* = -1.51 + 0.175\log\mathrm{TPP} - 0.573\log S
+    \]
+    \[
+      \mathrm{Dropout} = \operatorname{sigmoid}\!\left(0.526(\log N_\text{active}-27.2)\right)
+    \]
+  </div>
+  <p>
+    Here \(S\) is the number of optimizer steps and \(N_\text{active}\) the active parameter count.
+    The inverse-step product makes the decoupled weight-decay timescale \(1/(LR\times WD)\) a fixed
+    fraction of the training horizon. Microsoft validated the small-scale fits at an intermediate
+    scale before using them for Base-2. The coefficients, LR law, and dropout law describe that
+    recipe; they are not universal prescriptions for other architectures, optimizers, or data
+    regimes. Combine the coordinate choice with <a href="#source-scaling" style="color:var(--accent);">repetition-matched proxies</a>
+    and refit, rather than copying the constants.
+  </p>
+
   <h2 id="summary">7. Summary</h2>
   <div class="summary-grid">
     <div class="summary-card">
@@ -547,7 +596,7 @@
     </div>
     <div class="summary-card">
       <div class="summary-card-label">Data-constrained</div>
-      <p>Effective data \(D'\) saturates with repeats; big models overfit repeats sooner</p>
+      <p>Effective data \(D'\) saturates with repeats; source-scaled proxies preserve per-source repetition at fixed tokens per active parameter</p>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">Caveat</div>
@@ -581,6 +630,7 @@
     <li><a href="https://arxiv.org/abs/2404.10102" style="color:var(--accent);">Besiroglu et al. (2024) — Chinchilla Scaling: A Replication Attempt</a></li>
     <li><a href="https://arxiv.org/abs/2303.13506" style="color:var(--accent);">Michaud et al. (2023) — The Quantization Model of Neural Scaling</a></li>
     <li><a href="https://github.com/QwenLM/Qwen3.8-Flash-Next/blob/main/tech_report.pdf" style="color:var(--accent);">Qwen Team (Aug 2026) — On the Design of Qwen3.8-Next Architecture</a> — §3.2, the refitted hyperparameter law and the batch-warmup re-test (§6.5).</li>
+    <li><a href="https://microsoft.ai/news/frontier-pre-training-at-microsoft-ai/" style="color:var(--accent);">Microsoft AI (Oct 15, 2026) — Frontier Pre-training at Microsoft AI</a> — source-scaled ladders and coupled LR/weight-decay fitting; <a href="../models/mai-base-2.html#scaling" style="color:var(--accent);">MAI-Base-2 case study</a>.</li>
     <li>Pearce &amp; Song (2024) — Reconciling Kaplan and Chinchilla scaling laws · Sharma &amp; Kaplan (2020) — scaling from data-manifold dimension · Lovelace et al. (2026) — repetition overfitting penalty <em>(see the survey for links)</em></li>
   </ul>
 
