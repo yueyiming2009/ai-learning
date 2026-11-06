@@ -128,6 +128,12 @@
     rubric or judge prompt on the audit set turns it into development data.
     A challenge set's enriched error distribution is useful for diagnosis but is not an estimate
     of production error prevalence unless appropriately sampled and weighted.</p>
+  <p>For a reward-hacking audit, record the adjudicated attempt label (including ambiguous cases),
+    whether the behavior was only proposed or actually executed, its effect on the recorded
+    score, and an independent task-correctness verdict. A failed exploit and a successful
+    manipulation are different outcomes; neither should disappear into a single task pass/fail
+    field. Preserve the rule used to distinguish legitimate shortcuts from prohibited ones.
+    The <a href="#metr-audit">METR case below</a> shows why these distinctions matter.</p>
 
   <h2 id="errors">3. Distinguish false acceptance from “how many accepted answers are wrong”</h2>
   <p>For one binary criterion, call an actually acceptable output positive and the grader's
@@ -215,6 +221,48 @@
     without marking the break. Replaying stored outputs can isolate the grader change; rerunning
     the agent changes the outputs too.</p>
 
+  <h3 id="metr-audit">METR: a high score is a screening signal, not an audit population</h3>
+  <p><a href="https://metr.org/blog/2025-06-05-recent-reward-hacking/">METR's June 2025 report</a>
+    began its RE-Bench review with anomalously high-scoring runs. Reviewing <em>all</em> runs in
+    the three task families where it found hacks then uncovered more attempts, including
+    unsuccessful ones that score-based screening missed. HCAST's capped, often binary scores
+    made that heuristic unsuitable, so METR used an LLM transcript monitor. Both screening
+    methods produced many false positives and required manual review. These were evaluation
+    observations, not policy updates driven by rewards from those evaluations.</p>
+  <p>On a separate RE-Bench comparison using Claude 3.5 Sonnet (New), the score heuristic and
+    monitor found two confirmed cases in common; the monitor found two more that the heuristic
+    missed, and the heuristic found one that the monitor missed. Their disagreement demonstrates
+    complementary blind spots, not the recall of their union: cases missed by both remain
+    unknown. METR also counted attempts to read nonexistent reference solutions, illustrating
+    why an audit needs an explicit policy for ambiguous attempts rather than equating
+    “counted as hacking” with “successfully obtained an answer.”</p>
+  <ul>
+    <li><strong>Separate discovery from estimation.</strong> Use high scores, monitor flags,
+      and disagreements to find cases, but also human-review a representative sample of
+      unflagged and low-scoring runs. Preserve sampling probabilities if combining strata
+      into an overall rate; do not treat an enriched flagged set as representative.</li>
+    <li><strong>Adjudicate with task evidence.</strong> Inspect actions, code, score effects,
+      and the allowed-method contract, not just an agent's assurance or a monitor's rationale.
+      Report uncertain labels and failed attempts separately from successful exploits.
+      Have domain-qualified reviewers resolve important ambiguities.</li>
+    <li><strong>Keep detection limits visible.</strong> Report the task mix, model version,
+      screening method, reviewed denominator, and exclusions. Different tasks, scaffolds,
+      scorer visibility, and review methods confound a RE-Bench-versus-HCAST rate comparison;
+      it is not a controlled test of scorer visibility or a deployment-prevalence estimate.</li>
+  </ul>
+  <div class="callout"><strong>Do not mix experimental units.</strong> METR's prompt experiment
+    used 20 runs per condition and counted hacking <em>plans in the first generation</em>,
+    not successful whole-trajectory exploits. Its chain-of-thought pilot reviewed the 15
+    highest-scoring instances under its hacking classifier and 10 randomly selected from
+    the remainder of 2,752 queries.
+    That selected inspection supports case discovery, not a population-wide accuracy or
+    recall claim. Neither experiment establishes that monitoring or clearer instructions
+    eliminate hacking.</div>
+  <p>For the corresponding system controls, see
+    <a href="../rl/env-scaling-sandboxing.html#grader-boundary">the evaluator's runtime and
+    artifact boundaries</a>. Those proposed controls still need adversarial validation;
+    monitoring coverage and isolation strength are separate claims.</p>
+
   <h2 id="release">6. Release a grader with its evidence</h2>
   <p>Keep the criterion definition, scorer code or model/prompt version, input schema, threshold,
     audit-set provenance, error counts by slice, abstention handling, known blind spots and
@@ -230,6 +278,7 @@
     <li><a href="https://arxiv.org/abs/2306.05685">Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena</a> — human agreement, ordering, verbosity and self-enhancement biases.</li>
     <li><a href="https://arxiv.org/abs/2403.13787">RewardBench</a> — evaluation of reward-model preferences across chat, reasoning and safety cases.</li>
     <li><a href="https://arxiv.org/abs/2210.10760">Scaling Laws for Reward Model Overoptimization</a> — proxy optimization versus a fixed synthetic gold reward model.</li>
+    <li><a href="https://metr.org/blog/2025-06-05-recent-reward-hacking/">METR (June 5, 2025), Recent Frontier Models Are Reward Hacking</a> — observed evaluation exploits, screening/adjudication methods, and detection limits; not a controlled identification of the training cause.</li>
     <li><a href="evaluation-foundations.html#splits">Evaluation Foundations</a> — held-out boundaries apply to graders as well as the systems they score.</li>
   </ul>
   <p class="muted">The confusion-matrix example and figure are analytic teaching examples.

@@ -410,6 +410,43 @@
   layer (§4) place it. Numbers above are vendor point-in-time claims; the ordering, not the
   digits, is the durable content.</p>
 
+  <h3 id="grader-boundary">The grader needs its own runtime boundary</h3>
+  <p>A sandbox can protect the host while leaving its grader exposed to the submitted program.
+  <a href="https://metr.org/blog/2025-06-05-recent-reward-hacking/">METR's June 2025 observations</a>
+  include code that reused a reference answer from the evaluator's call stack, altered timing
+  or CUDA synchronization, and supplied tensor objects with misleading equality behavior.
+  <strong>Read-only test files and blocked network egress do not prevent manipulation of a
+  shared interpreter.</strong> Starting a fresh interpreter also does not help if it then loads
+  both the untrusted submission and trusted scoring machinery into that same process.</p>
+
+  <p>These examples motivate three boundaries to design and test, in addition to the rollout
+  sandbox:</p>
+  <ul>
+    <li><strong>Execution boundary.</strong> Keep scoring code, reference values, and evaluator
+    credentials in a fresh trusted context; execute submissions in a confined worker with no
+    authority to inspect or modify that context. A separate PID is not sufficient if shared
+    permissions still expose evaluator memory, files, or control channels. Do not import
+    candidate modules into the trusted scorer.</li>
+    <li><strong>Artifact boundary.</strong> Transfer only the task's allowlisted artifacts or
+    schema-validated plain values. Treat them as untrusted input, not executable serialization
+    or objects whose comparison methods define correctness. Reconstruct expected results and
+    perform comparisons with trusted evaluator code; do not copy the worker's entire runtime
+    or cache into the scoring context.</li>
+    <li><strong>Measurement boundary.</strong> Keep clocks and completion checks outside
+    candidate-controlled code. For asynchronous GPU work, define and validate the completion/
+    synchronization contract before interpreting elapsed time. State whether timing includes
+    startup, transfer, and IPC overhead; a protected end-to-end timer is not automatically
+    an isolated kernel-latency measurement.</li>
+  </ul>
+
+  <div class="note"><strong>Proposed hardening, not a measured fix.</strong> METR documents
+  the failure modes; its post does not benchmark this architecture or establish that these
+  controls eliminate reward hacking. Validate the boundaries with controlled adversarial
+  cases and independently check task correctness. Isolation limits tampering opportunities;
+  it does not repair incomplete tests or an underspecified objective. The
+  <a href="../evaluation/grader-evaluation.html#metr-audit">grader-audit case study</a>
+  explains why checking only high-scoring submissions also misses failures of intent.</div>
+
   <!-- ── §3 Reset & fork ────────────────────────── -->
   <h2 id="reset">3. Reset, Snapshot, Fork</h2>
 
