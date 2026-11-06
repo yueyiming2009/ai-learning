@@ -397,14 +397,53 @@
   \[
     p_i = \frac{e^{z_i - m}}{\sum_j e^{z_j - m}}
   \]
-  <p>This is mathematically identical to the original (the \(e^{-m}\) factors cancel), but the largest exponent is now \(0\), keeping all values in \((0,\, 1]\).</p>
+  <p>This is mathematically identical to the original (the \(e^{-m}\) factors cancel), but the largest exponent is now \(0\), keeping exponentials at most \(1\). Small exponentials can still underflow, and avoiding overflow does not guarantee accurate small losses or gradients.</p>
 
   <div class="note">
-    PyTorch's <code>F.cross_entropy</code> and JAX's <code>optax.softmax_cross_entropy</code> both apply this shift internally. You rarely need to implement it by hand, but understanding it is important for writing numerically stable custom kernels.
+    PyTorch's <code>F.cross_entropy</code> and JAX's <code>optax.softmax_cross_entropy</code> use max-shifted formulations. Keep the distinction between an exact mathematical identity, an overflow-safe evaluation, and an accurate floating-point backward pass: these are different guarantees.
   </div>
 
+  <h3 id="softmax-collapse">Softmax Collapse: a representable gradient lost near one</h3>
+  <p><a href="https://arxiv.org/html/2610.31642v3#S2" style="color:var(--accent);">A Fix for Softmax and Cross-Entropy (v3, §2)</a> explains a failure that survives max subtraction. For a dominant true class \(k\), define the total non-target exponential mass relative to that class:</p>
+  \[
+    R = \sum_{j\ne k} e^{z_j-z_k} \ll 1,\qquad
+    p_k = \frac{1}{1+R},\qquad
+    L = \log(1+R).
+  \]
+  <p>Floating-point addition can round \(1+R\) to exactly \(1\), even while \(R\) itself remains representable. The usual loss then becomes zero, and computing the target gradient as \(p_k-1\) returns zero too. Meanwhile the non-target gradients \(p_j\) remain positive: this is <strong>Softmax Collapse</strong>, not exponent underflow or a change to the cross-entropy objective.</p>
+  <div class="step">
+    <div class="step-label">Two-class example</div>
+    <p>For fp32 logits \([20,0]\) with target \(k=0\), \(R=e^{-20}\approx 2.06\times10^{-9}\). Forming \(1+R\) in fp32 rounds it to \(1\), so direct evaluation gives \(L=0\) and gradients approximately \([0,\,2.06\times10^{-9}]\). The accurate loss is about \(2.06\times10^{-9}\), with gradients approximately \([-2.06\times10^{-9},\,2.06\times10^{-9}]\). Higher precision delays this rounding cliff; it does not remove the underlying issue.</p>
+  </div>
+
+  <h3 id="collapse-fix">Preserve the small term in both forward and backward</h3>
+  <p>For finite logits and \(V\geq2\), exclude the target from log-sum-exp and use a numerically stable softplus:</p>
+  \[
+    a = \operatorname{LSE}_{j\ne k}(z_j-z_k),\qquad
+    L = \operatorname{softplus}(a)
+      = \log(1+e^a).
+  \]
+  <p>This is the same loss, not a surrogate. When the target dominates, \(a=\log R\) is negative; evaluate the small loss with <code>log1p</code>, rather than first rounding \(1+R\). For general logits, use a stable log-sum-exp / softplus implementation, not a naive <code>log(1 + exp(a))</code> or an unshifted sum that can overflow when the target is wrong.</p>
+  <div class="result">
+    <div class="result-label">Hard-target gradient without subtracting from one</div>
+    \[
+      g_j = e^{z_j-z_k-L}\quad(j\ne k),\qquad
+      g_k = -\sum_{j\ne k}g_j
+          = -\frac{R}{1+R}.
+    \]
+  </div>
+  <p>The sum form keeps the small target gradient instead of recovering it by subtracting \(1\) from a rounded probability. A fused/custom backward must preserve this evaluation order; a corrected forward paired with the old <code>p_target - 1</code> backward can still fail. The paper's implementation makes the excluded slot constant so autodiff accumulates the target gradient through the non-target logit differences.</p>
+  <div class="note">
+    <strong>Invariant:</strong> cross entropy is unchanged by a common logit shift, so \(\sum_i g_i=0\). Check this within numerical tolerance, along with individual gradient accuracy against a higher-precision reference; a zero sum alone is not sufficient. This applies to CE with respect to its input logits, not necessarily after adding z-loss or differentiating through soft-capping. The reformulation avoids premature cancellation, not eventual exponent underflow.
+  </div>
+
+  <h3 id="softmax-cancellation">Softmax Cancellation: nearly matching teacher and student</h3>
+  <p>For a fixed teacher distribution \(\mathbf q=\operatorname{softmax}(\mathbf z_T)\) and student \(\mathbf p=\operatorname{softmax}(\mathbf z_S)\), the exact student gradient is \(\mathbf p-\mathbf q\). When the logits nearly match, independently rounding the two probability vectors before subtracting them can destroy the small residual. Different softmax and log-softmax-backward evaluation paths can even leave a nonzero gradient at identical logits; this is not inevitable when both paths produce bitwise-identical probabilities.</p>
+  <p><a href="https://arxiv.org/html/2610.31642v3#S3" style="color:var(--accent);">The paper's soft-target fix (§3)</a> takes teacher <em>logits</em>, computes the residual from \(\mathbf z_S-\mathbf z_T\) in log space with <code>log1p</code>/<code>expm1</code>, and supplies a dedicated backward with safeguards. The hard-target fix alone does not solve this second problem. Check identical-logit zero gradients and near-identical-logit accuracy; the CE value at equality is the teacher's entropy, not generally zero.</p>
+  <p style="color:var(--muted);font-size:0.9rem;"><strong>Source and scope:</strong> <a href="https://arxiv.org/abs/2610.31642" style="color:var(--accent);">A Fix for Softmax and Cross-Entropy</a>, v3 (October 29, 2026), §§1–3. These are numerical-evaluation caveats, not evidence that every framework version, dtype path, or fused kernel has the same behavior; check the actual implementation before attributing a training failure to either bug.</p>
+
   <h2 id="backward">3. Backward Pass</h2>
-  <p>We want \(\partial L / \partial z_i\) for each logit. The derivation goes through the Jacobian of softmax.</p>
+  <p>We want \(\partial L / \partial z_i\) for each logit. The derivation goes through the Jacobian of softmax in exact arithmetic; the <a href="#softmax-collapse" style="color:var(--accent);">evaluation order matters in floating point</a>.</p>
 
   <div class="step">
     <div class="step-label">Step A — Softmax Jacobian</div>
@@ -465,10 +504,10 @@
     This simplicity is not a coincidence. Cross entropy is the natural loss for softmax because they are conjugate in the exponential family — the log in the loss exactly cancels the exp in the softmax, leaving a linear residual.
   </div>
 
-  <p>In code, both passes collapse to a line each — the stable forward is a single library call, and the gradient is just the softmax with \(1\) subtracted at the true class:</p>
+  <p>The standard library call and a textbook gradient evaluation are below. The manual <code>p - y</code> calculation illustrates the identity, but is subject to <a href="#softmax-collapse" style="color:var(--accent);">Softmax Collapse</a>; it is not the cancellation-resistant backward above.</p>
 <pre><code>import torch.nn.functional as F
 
-loss = F.cross_entropy(logits, targets)   # stable -z_k + logsumexp(z), averaged over N
+loss = F.cross_entropy(logits, targets)   # library CE, averaged over N
 
 # gradient dL/dz is the p - y residual:
 grad = F.softmax(logits, dim=-1)          # p
@@ -495,8 +534,8 @@ grad /= N                                 # average, matching the loss
     In language modelling the sequence dimension is typically folded into the batch, so the effective \(N\) is \(\text{batch} \times \text{sequence length}\). The same formula applies without modification.
   </div>
 
-  <h2 id="code">5. Reference Implementation</h2>
-  <p>Everything above collapses into a few lines of NumPy — no framework, so each step maps directly onto the math. The forward uses the stable \(-z_k + \log\sum_j e^{z_j}\) form from §1–§2, and the backward is the \((P - Y)/N\) residual from §3–§4. Shapes: <code>Z</code> is \((N, V)\) logits and <code>k</code> is the length-\(N\) vector of true-class indices.</p>
+  <h2 id="code">5. Textbook Reference Implementation</h2>
+  <p>This NumPy baseline maps the exact-arithmetic derivation onto code. Max subtraction prevents exponential overflow, but this implementation still has the cancellation limitations in §2: it does <em>not</em> implement the target-excluded fix. Shapes: <code>Z</code> is \((N, V)\) logits and <code>k</code> is the length-\(N\) vector of true-class indices.</p>
   <pre><code>import numpy as np
 
 def softmax(Z):
@@ -506,7 +545,7 @@ def softmax(Z):
     return E / E.sum(axis=1, keepdims=True)          # P, shape (N, V)
 
 def cross_entropy(Z, k):
-    # forward — §1: L = mean(-z_k + logSumExp(z)), computed the stable way
+    # max-shifted baseline; small losses can still round to zero
     N = Z.shape[0]
     m = Z.max(axis=1, keepdims=True)                 # stability shift
     logsumexp = m[:, 0] + np.log(np.exp(Z - m).sum(axis=1))
@@ -520,7 +559,7 @@ def cross_entropy_grad(Z, k):
     P[np.arange(N), k] -= 1                          # subtract one-hot Y at true class
     return P / N                                     # shape (N, V)</code></pre>
   <div class="note">
-    The gradient needs no autograd and no Jacobian: run <code>softmax</code>, subtract 1 at each true class, divide by \(N\). A finite-difference check against <code>cross_entropy</code> agrees to ~1e-10 — the analytic \(\mathbf{p} - \mathbf{y}\) is exact, not an approximation. (PyTorch's one-line equivalent, <code>F.cross_entropy</code>, is in §3.)
+    The analytic \(\mathbf{p}-\mathbf{y}\) identity is exact; its floating-point evaluation is not. Finite-difference checks on ordinary logits do not establish accuracy for tiny gradients, especially if the forward loss already rounds to zero. Use a higher-precision reference plus large-margin cases and the <a href="#collapse-fix" style="color:var(--accent);">zero-sum invariant</a>. (PyTorch's one-line interface, <code>F.cross_entropy</code>, is in §3.)
   </div>
 
   <h2 id="extensions">6. Practical Extensions</h2>
@@ -664,8 +703,8 @@ token_acc = correct.sum() / mask.sum()            # diagnostic only, no grad
       <p>\(dZ = \tfrac{1}{N}(P - Y)\)</p>
     </div>
     <div class="summary-card">
-      <div class="summary-card-label">Stable forward</div>
-      <p>Subtract \(m = \max_j z_j\) before exp</p>
+      <div class="summary-card-label">Overflow vs. cancellation</div>
+      <p>Max subtraction prevents overflow; small losses and gradients need the <a href="#collapse-fix" style="color:var(--accent);">target-excluded formulation</a>.</p>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">Why it's clean</div>
