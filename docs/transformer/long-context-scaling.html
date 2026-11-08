@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Long-context adaptation: YaRN frequency bands and attention gain, SSMax length-dependent selection, LeRoPE learned frequencies, training stages, runtime budgets, and evaluation gates.">
+  <title>Long-Context Scaling — Positions, Attention, and Training</title>
+  <link rel="canonical" href="https://yueyiming2009.github.io/ai-learning/transformer/long-context-scaling.html">
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <script>
+    MathJax = {tex: {inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']]},
+      options: {skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre']}};
+  </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #fff; --surface: #f8f9fa; --border: #e8eaed; --text: #1a1a2e;
+      --muted: #6b7280; --accent: #6d28d9; --accent-light: #f5f3ff;
+      --nav-bg: rgba(255,255,255,0.94);
+      --plot-grid: #e5e7eb; --plot-axis: #9ca3af;
+      --plot-main: #6d28d9; --plot-other: #0d9488; --plot-reference: #d97706;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115; --surface: #171b21; --border: #262b33; --text: #e5e7eb;
+        --muted: #9aa1ab; --accent: #a78bfa; --accent-light: #1c1630;
+        --nav-bg: rgba(15,17,21,0.94);
+        --plot-grid: #303641; --plot-axis: #687385;
+        --plot-main: #a78bfa; --plot-other: #2dd4bf; --plot-reference: #fbbf24;
+      }
+    }
+    body { margin: 0; font: 16px/1.75 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); }
+    a { color: var(--accent); text-underline-offset: 3px; }
+    a:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+    nav { position: sticky; top: 0; z-index: 100; display: flex; align-items: center; gap: 20px; height: 52px; padding: 0 24px; background: var(--nav-bg); border-bottom: 1px solid var(--border); }
+    .nav-brand { display: inline-flex; align-items: center; gap: 7px; font-size: 0.9rem; font-weight: 600; white-space: nowrap; text-decoration: none; }
+    .nav-links { display: flex; flex: 1; gap: 14px; min-width: 0; overflow-x: auto; }
+    .nav-links a { font-size: 0.82rem; white-space: nowrap; text-decoration: none; color: var(--muted); }
+    .hero { background: linear-gradient(135deg, #312e81, #7c3aed); color: white; padding: 48px 24px; text-align: center; }
+    .hero h1 { font-size: clamp(1.6rem, 4vw, 2.4rem); line-height: 1.3; margin: 12px 0; }
+    .hero p { max-width: 750px; margin: 0 auto; }
+    .page-wrap { max-width: 940px; margin: 0 auto; padding: 32px 24px 64px; }
+    h2, h3, [id] { scroll-margin-top: 72px; }
+    h2 { margin-top: 40px; border-bottom: 1px solid var(--border); padding-bottom: 8px; font-size: 1.4rem; }
+    h3 { margin-top: 26px; font-size: 1.08rem; }
+    p, li, td { overflow-wrap: anywhere; }
+    li { margin: 8px 0; }
+    code { font: 0.88em ui-monospace, SFMono-Regular, Consolas, monospace; }
+    p code, li code, td code { background: var(--surface); padding: 2px 5px; border-radius: 4px; }
+    pre { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; line-height: 1.5; }
+    .note { padding: 16px 20px; margin: 20px 0; border-left: 4px solid var(--accent); background: var(--accent-light); }
+    .table-wrap, .equation { overflow-x: auto; margin: 20px 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { text-align: left; vertical-align: top; padding: 10px 12px; border: 1px solid var(--border); }
+    th { background: var(--surface); }
+    .muted, .figure-caption { color: var(--muted); font-size: 0.9rem; }
+    .figure { padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+    .figure canvas { width: 100%; height: 300px; display: block; }
+    .legend, .controls { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; font-size: 0.85rem; }
+    .legend-item { display: inline-flex; align-items: center; gap: 6px; }
+    .lg { display: inline-block; width: 18px; height: 3px; background: var(--c); }
+    .controls input { width: 130px; accent-color: var(--accent); }
+    .controls select { color: var(--text); background: var(--bg); border: 1px solid var(--border); padding: 5px; }
+    output { display: block; margin: 12px 0; font-size: 0.9rem; }
+    footer { border-top: 1px solid var(--border); padding: 24px; text-align: center; color: var(--muted); font-size: 0.85rem; }
+    @media (max-width: 600px) {
+      nav { padding: 0 12px; gap: 14px; }
+      .page-wrap { padding: 24px 16px 48px; }
+      th, td { padding: 8px; }
+    }
+  </style>
+</head>
+<body>
+<nav aria-label="Page navigation">
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes">
+    <svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+    Long Context
+  </a>
+  <div class="nav-links">
+    <a href="../index.html#transformer-training">Training</a><a href="#map">The problem</a>
+    <a href="#yarn">YaRN</a><a href="#ssmax">SSMax</a><a href="#lerope">LeRoPE</a>
+    <a href="#adaptation">Adaptation</a><a href="#evidence">Evidence</a><a href="#sources">Sources</a>
+  </div>
+</nav>
+<header class="hero">
+  <h1>Long-Context Scaling</h1>
+  <p>Make a model use longer inputs, not merely accept them: positional adaptation,
+    attention calibration, continued training, runtime budgets, and evidence.</p>
+</header>
+<main class="page-wrap">
+  <aside class="note">
+    <strong>Scope:</strong> this guide owns long-context adaptation choices.
+    <a href="../foundations/rope-gradient.html">RoPE</a> owns rotation/gradient derivations,
+    <a href="attention.html">attention</a> owns Q/K/V and softmax mechanics, and the linked
+    systems pages own execution. YaRN receives the most depth because of documented
+    deployment use; SSMax is a practical complementary idea, while LeRoPE is a focused
+    emerging technique. This is an editorial priority, not a usage survey.
+  </aside>
+
+  <h2 id="map">1. Four different problems hide behind “long context”</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Question</th><th scope="col">Relevant mechanisms</th><th scope="col">What they do not establish</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Can positions beyond training remain useful?</th><td>RoPE frequency adaptation: YaRN, learned frequencies.</td><td>Changing a maximum-length field does not prove meaningful positional generalization.</td></tr>
+        <tr><th scope="row">Can attention select useful evidence among more candidates?</th><td>Attention calibration: YaRN's gain, SSMax-style length scaling.</td><td>A sharper distribution can amplify the wrong match.</td></tr>
+        <tr><th scope="row">Can the job fit and run at the target length?</th><td><a href="mla.html">MLA</a>, <a href="cross-layer-kv-sharing.html">KV sharing</a>, <a href="sparse-attention.html">sparse attention</a>, <a href="../systems/sequence-parallelism.html">context/sequence parallelism</a>.</td><td>Memory savings do not prove quality preservation; position scaling does not remove cache growth.</td></tr>
+        <tr><th scope="row">Can the model solve tasks across that context?</th><td>Representative long-context training and <a href="../evaluation/model-evaluation.html">held-out evaluations</a>.</td><td>A successful needle lookup or low loss is not evidence of reliable multi-document reasoning.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <pre><code>accept a long tensor
+    != retrieve evidence from arbitrary positions
+    != combine distant evidence correctly
+    != meet a serving latency and memory budget</code></pre>
+
+  <h2 id="yarn">2. YaRN: preserve local detail while extending the positional range</h2>
+  <p><strong>YaRN</strong> means <em>Yet another RoPE extensioN method</em>.
+    It combines frequency-dependent interpolation with attention-temperature calibration.
+    It is not simply a larger RoPE base or a uniform division of all frequencies.</p>
+
+  <h3 id="interpolation">Start with a 4K-to-32K example</h3>
+  <p>RoPE rotates coordinate pair \(i\) at angle \(p\theta_i\), where \(p\) is token
+    position. To extend \(L_0=4096\) to \(L_1=32768\), set \(s=L_1/L_0=8\).
+    Uniform position interpolation uses \(p/s\), equivalently \(\theta_i/s\).
+    Position 32768 then reaches the angle previously reached at 4096.</p>
+  <pre><code>Original:       angle = position * frequency
+Uniform PI:     angle = position * (frequency / 8)
+
+No tokens are removed or merged.
+Every band's positional difference between neighbors is reduced eightfold.</code></pre>
+  <p>That uniform change also slows high-frequency bands that distinguish nearby positions.
+    YaRN instead preserves those bands while interpolating the slowly rotating bands
+    whose newly encountered phases can be out of distribution.</p>
+
+  <h3 id="yarn-bands">Use wavelengths to choose which bands to change</h3>
+  <p>A band's wavelength is \(2\pi/\theta_i\). Its number of rotations over the original
+    context is \(r_i=L_0\theta_i/(2\pi)\). The original paper's interpolation blends:</p>
+  <div class="equation">\[
+    \theta_i'=\gamma_i\theta_i+(1-\gamma_i)\theta_i/s,\qquad
+    \gamma_i=\operatorname{clip}\left(\frac{r_i-\alpha}{\beta-\alpha},0,1\right).
+  \]</div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Band</th><th scope="col">Policy</th><th scope="col">Intuition</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Fast: many rotations during original training</th><td>\(\gamma=1\): keep the frequency.</td><td>Preserve fine local positional variation.</td></tr>
+        <tr><th scope="row">Slow: little rotation during original training</th><td>\(\gamma=0\): divide by \(s\).</td><td>Avoid moving too far beyond the previously encountered phase range.</td></tr>
+        <tr><th scope="row">Intermediate</th><td>Blend the two policies.</td><td>Avoid a hard discontinuity between bands.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>The paper uses \(\alpha=1,\beta=32\) in its Llama experiments. These are counts of
+    rotations used to define the transition, not token windows. A band has no hard
+    “cannot attend beyond this distance” cutoff.</p>
+  <div class="figure">
+    <div class="controls">
+      <label for="yarn-factor">Extension factor
+        <select id="yarn-factor"><option>1</option><option>2</option><option>4</option><option selected>8</option><option>16</option></select>
+      </label>
+    </div>
+    <output id="yarn-result" aria-live="polite"></output>
+    <canvas id="plot-yarn" aria-label="Frequency multiplier versus rotary pair index for original RoPE, uniform position interpolation, and the paper's YaRN rotation-count blend"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-reference)"></span>Original RoPE</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-other)"></span>Uniform interpolation</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-main)"></span>YaRN bandwise blend</span>
+    </div>
+    <p class="figure-caption"><strong>Keep the fast bands; slow the slow bands.</strong>
+      X: rotary pair index, fast to slow. Y: new/original frequency. Illustrative 64 rotary
+      dimensions, base 10000, original length 4096, transition at 1 and 32 rotations.
+      The plot uses the paper's rotation-count ramp; library implementations may interpolate
+      over frequency indices instead. It is not a checkpoint configuration generator.</p>
+    <noscript><p>At factor 8, uniform interpolation multiplies every frequency by 0.125;
+      the YaRN blend ranges from 1 for fast bands to 0.125 for slow bands.</p></noscript>
+  </div>
+
+  <h3 id="yarn-temperature">YaRN also calibrates attention sharpness</h3>
+  <p>Frequency interpolation is only one part of YaRN. The original Llama-family recipe
+    multiplies both rotary queries and keys by \(m=1+0.1\ln s\), producing an attention
+    logit gain \(m^2\) in its full-RoPE formulation. At \(s=8\), \(m\approx1.208\)
+    and the gain is approximately 1.46. This is an empirically fitted calibration,
+    not a universal optimum.</p>
+  <pre><code>scores = attention_gain * (Q_rotated @ K_rotated.T) / sqrt(key_dim)
+probabilities = softmax(masked_scores)</code></pre>
+  <p>Both Q and K must use the same frequency schedule. For partial RoPE or
+    <a href="mla.html#rope">decoupled-RoPE MLA</a>, scaling only rotary coordinates
+    is not necessarily a uniform scale on the complete score. Match the model's
+    implementation; do not blindly apply a second gain on top of an existing one.</p>
+
+  <h3 id="yarn-code">Numerical reference, then an actual model recipe</h3>
+  <p>This dependency-free Python function illustrates the paper's band blend and original
+    gain rule. It does not replace a framework's model-specific YaRN implementation.</p>
+  <pre><code class="language-python" id="yarn-code-example">import math
+
+
+def yarn_schedule(rotary_dim, base, original_length, factor,
+                  slow_turns=1.0, fast_turns=32.0):
+    if rotary_dim &lt;= 0 or rotary_dim % 2:
+        raise ValueError("rotary_dim must be positive and even")
+    if base &lt;= 1 or original_length &lt;= 0 or factor &lt; 1:
+        raise ValueError("invalid base, original length, or extension factor")
+    if not 0 &lt;= slow_turns &lt; fast_turns:
+        raise ValueError("invalid transition")
+
+    original = [base ** (-2 * i / rotary_dim)
+                for i in range(rotary_dim // 2)]
+    adapted = []
+    for frequency in original:
+        turns = original_length * frequency / (2 * math.pi)
+        keep = min(1.0, max(0.0, (turns - slow_turns)
+                           / (fast_turns - slow_turns)))
+        adapted.append(frequency * (keep + (1 - keep) / factor))
+    attention_gain = (1 + 0.1 * math.log(factor)) ** 2
+    return adapted, attention_gain
+
+
+frequencies, gain = yarn_schedule(64, 10000, 4096, 8)
+assert len(frequencies) == 32
+print(f"Illustrative full-RoPE logit gain: {gain:.3f}")</code></pre>
+  <p>For deployment, prefer a <strong>verified checkpoint-specific recipe</strong>.
+    For example, <a href="https://huggingface.co/Qwen/Qwen3-8B#processing-long-texts">Qwen3-8B's
+    model card</a> documents a native 32,768-token window and validated use up to 131,072
+    with this configuration:</p>
+  <pre><code class="language-json" id="qwen-yarn-config">{
+  "rope_scaling": {
+    "rope_type": "yarn",
+    "factor": 4.0,
+    "original_max_position_embeddings": 32768
+  }
+}</code></pre>
+  <p>That is not a universal recipe for other models. The same card cautions that static
+    YaRN can degrade short-input performance and recommends enabling it only when needed.
+    Input <em>plus output</em> must fit the serving budget. Library version, original-length
+    semantics, partial rotary dimensions, and model-specific gain settings matter.</p>
+  <div class="note"><strong>Do not silently change the rotation schedule underneath cached keys.</strong>
+    If dynamic scaling changes frequencies as context grows, previously rotated keys and
+    new queries must remain consistent. Use an implementation that manages this lifecycle;
+    changing the factor without updating cache semantics is not sufficient.</div>
+
+  <h2 id="ssmax">3. SSMax: attention selection as the candidate set grows</h2>
+  <p><strong>Scalable-Softmax</strong> addresses a different issue. For one useful key with
+    score advantage \(\Delta\) and \(n-1\) equally scored distractors,
+    its ordinary-softmax probability is \(1/[1+(n-1)e^{-\Delta}]\).
+    At fixed \(\Delta=5\), this falls from 22.5% for 512 keys to 0.45% for 32,768 keys.
+    This fixed-score construction illustrates dilution; it is not a theorem that
+    every trained head must flatten as context grows.</p>
+  <p>The basic proposal uses <code>softmax(s * log(n) * scores)</code>. With positive
+    scaling, score differences can grow with the number of competitors. This neither
+    identifies the correct key nor resolves ties: sharpening can amplify an incorrect
+    top-scoring distractor.</p>
+  <div class="figure">
+    <div class="controls">
+      <label for="ssmax-gap">Score advantage
+        <input id="ssmax-gap" type="range" min="1" max="8" step="0.5" value="5">
+      </label>
+      <label for="ssmax-scale">Scale s
+        <input id="ssmax-scale" type="range" min="0" max="0.5" step="0.05" value="0.25">
+      </label>
+    </div>
+    <output id="ssmax-result" aria-live="polite"></output>
+    <canvas id="plot-ssmax" aria-label="Probability of one higher-scoring key versus log2 key count, comparing ordinary softmax with illustrative logarithmic score scaling"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-other)"></span>Ordinary softmax</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-main)"></span>SSMax, no bias</span>
+    </div>
+    <p class="figure-caption"><strong>More candidates change the normalization problem.</strong>
+      X: log2(key count), from 512 to 131,072. Y: probability of one higher-scoring key.
+      Every distractor has score zero; the selected key has the adjustable advantage.
+      This is a toy probability calculation, not accuracy or a learned model's attention.
+      The controls include regimes where scaling does not prevent dilution.</p>
+    <noscript><p>With score advantage 5 and s=0.25 at 32,768 keys:
+      ordinary softmax gives 0.45%; the illustrative scaled distribution gives 93.08%.</p></noscript>
+  </div>
+  <h3 id="ssmax-variants">Separate the paper, the variant, and the deployment stage</h3>
+  <p>The paper also studies a layer/head-specific affine gain
+    <code>a * log(n) + b</code>. Mistral's released implementation applies that form to Q,
+    using <code>n = position_ids + 1</code>. Scaling Q is equivalent to scaling the QK
+    logits, so a conventional softmax kernel can remain in place. The ordinary
+    <code>1 / sqrt(key_dim)</code> factor remains: dimension scaling and length scaling
+    solve different problems.</p>
+  <pre><code>gain = a[head] * log(position + 1) + b[head]
+Q_scaled = gain * Q
+scores = Q_scaled @ K.T / sqrt(key_dim)
+probabilities = softmax(masked_scores)</code></pre>
+  <p>The bias is inside the <em>multiplicative gain</em>; adding an identical bias to
+    all logits would cancel in softmax. For dense unpadded causal attention, position plus
+    one matches prefix length. For windows, packed sequences, or sparse selection,
+    it need not equal the number of attended keys. Neither the appropriate length
+    definition nor a learned head's gain can be inferred from a maximum-context setting.</p>
+  <pre><code class="language-python" id="ssmax-code-example">import math
+
+
+def scaled_softmax(scores, n, a, b=0.0):
+    # Numerical reference: pass only valid, unmasked scores.
+    # Choose n explicitly; position-based variants may not use len(scores).
+    if not scores or n &lt; 1:
+        raise ValueError("need valid scores and a positive length")
+    gain = a * math.log(n) + b
+    logits = [gain * score for score in scores]
+    peak = max(logits)
+    weights = [math.exp(logit - peak) for logit in logits]
+    total = sum(weights)
+    return [weight / total for weight in weights]
+
+
+example = scaled_softmax([5.0] + [0.0] * 511, n=512, a=0.25)
+assert math.isclose(sum(example), 1.0)
+print(f"Toy selected-key probability: {example[0]:.2%}")</code></pre>
+  <p>The original paper reports benefits from pretraining with SSMax, but this is not
+    evidence of widespread use from step one in named frontier models.
+    <a href="https://ai.meta.com/blog/llama-4-multimodal-intelligence/">Meta explicitly describes
+    Llama 4 Scout's cited SSMax-related temperature scaling as inference-time</a>.
+    That is important adoption evidence, not proof of an identical pretraining recipe.</p>
+
+  <h2 id="lerope">4. LeRoPE: learn the frequency correction</h2>
+  <p><strong>LeRoPE</strong> learns a scalar for each rotary frequency:
+    <code>learned_frequency[i] = base_frequency[i] * exp(alpha[i])</code>.
+    Zero initialization preserves the starting schedule. The base can be ordinary RoPE
+    or an adapted schedule such as YaRN; YaRN is not a prerequisite.</p>
+  <p>The same learned frequencies rotate Q and K, preserving RoPE's relative-offset
+    structure. Increasing a frequency shortens its wavelength; adapting to longer context
+    does not mean every band must rotate more slowly. Frequencies are learned model
+    parameters, not predicted separately for each input.</p>
+  <p>The <a href="https://arxiv.org/abs/2607.10134">original paper</a> shares one learned
+    scalar per band across layers and heads: 32 scalars for its 64 rotary dimensions.
+    Its from-scratch 52M-to-2.5B ladder reports that the largest RoPE baseline requires
+    approximately 3.4% more compute to match LeRoPE's loss. The reported ladder uses
+    single-seed runs; it is promising evidence, not a universal improvement guarantee.</p>
+  <div class="note"><strong>Training versus frozen inference:</strong> training requires
+    learnable parameters and a gradient path through frequency construction and sin/cos.
+    The paper excludes these parameters from weight decay and clips their gradients separately.
+    Mistral's published inference implementation instead stores the learned multipliers
+    as a buffer and computes rotary tables under <code>no_grad</code>; copying it unchanged
+    does not train the frequencies.</div>
+  <p>Its low parameter cost and Mistral's use justify tracking it, but broader named-model
+    adoption is less established in the sources checked here. Start with a controlled
+    comparison against a strong fixed schedule, not an assumption that learning more
+    positional parameters must help. LeRoPE changes rotary geometry; SSMax changes
+    selection sharpness and can also be used in NoPE layers.</p>
+
+  <h2 id="adaptation">5. A practical long-context adaptation sequence</h2>
+  <ol>
+    <li><strong>Define the target.</strong> Specify input/output length, required tasks,
+      evidence locations, and resource constraints. “Supports 128K” needs a quality and
+      execution definition, not just a tensor-shape limit.</li>
+    <li><strong>Inventory the checkpoint contract.</strong> Record original context,
+      rotary dimensions, frequency/gain configuration, layer types, cache sharing, and
+      packing/position-reset policy. Use the existing model recipe before inventing a new one.</li>
+    <li><strong>Choose what changes.</strong> YaRN is an established first candidate for
+      eligible RoPE models. SSMax and LeRoPE are separate interventions; ablate them and
+      preserve a baseline rather than attributing a combined gain to either one.</li>
+    <li><strong>Adapt on representative data when needed.</strong> Continue training on
+      useful long examples while checking short-context retention. Long padding or a
+      configuration toggle alone does not teach distant evidence use. The amount of
+      training is model/task-dependent; follow the <a href="model-training-lifecycle.html#mid-training">mid-training handoff</a>.</li>
+    <li><strong>Qualify quality and runtime independently.</strong> Sweep lengths and
+      evidence positions, then measure memory, prefill latency, decode throughput and
+      concurrency under the intended serving setup.</li>
+  </ol>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Evaluation</th><th scope="col">What it can reveal</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Loss by position and length</th><td>Positional distribution shift, including regressions on short inputs.</td></tr>
+        <tr><th scope="row">Retrieval with distractors and multiple evidence locations</th><td>Whether information remains accessible, including middle-of-context weaknesses.</td></tr>
+        <tr><th scope="row">Tasks requiring several distant facts</th><td>Whether the model can combine evidence, not just find a single string.</td></tr>
+        <tr><th scope="row">Length-bucketed end-to-end workloads</th><td>Generation behavior, output truncation, quality/cost tradeoffs and actual serving limits.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>For ordinary full attention, the attention part of prefill grows quadratically with
+    length and persistent KV storage grows linearly per producer. YaRN/LeRoPE/SSMax
+    do not change those counts. Consult <a href="../inference/inference-compute-model.html">prefill/decode</a>,
+    <a href="../inference/flash-attention.html">FlashAttention</a>,
+    <a href="../inference/kv-cache.html">KV memory</a>, and
+    <a href="../systems/sequence-parallelism.html">context parallelism</a> for execution;
+    <a href="sparse-attention.html">DSA</a> and <a href="cross-layer-kv-sharing.html">cache-sharing
+    architectures</a> change different parts of the problem.</p>
+
+  <h2 id="evidence">6. Adoption is not the same as a training-stage claim</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Evidence</th><th scope="col">What is established</th><th scope="col">Do not infer</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Qwen3-8B YaRN recipe</th><td>Documented deployment configuration and validation beyond the native context.</td><td>Every Qwen checkpoint uses the same factor or needs no adaptation.</td></tr>
+        <tr><th scope="row">DeepSeek-V3 configuration</th><td>Released <a href="https://huggingface.co/deepseek-ai/DeepSeek-V3/blob/main/config.json">YaRN settings</a>, including model-specific scaling fields.</td><td>A configuration file alone establishes the full training timeline.</td></tr>
+        <tr><th scope="row">SSMax and LeRoPE research papers</th><td>Both study regular pretraining; LeRoPE is not restricted to model surgery.</td><td>Small research-model results prove benefits at all frontier scales.</td></tr>
+        <tr><th scope="row">Llama 4 Scout</th><td>Meta identifies SSMax-related inference-time attention scaling.</td><td>The same mechanism was enabled throughout pretraining.</td></tr>
+        <tr><th scope="row">Mistral Large 4</th><td>The report describes LeRoPE and SSMax during continued training after attention surgery, improving downstream results over fixed YaRN at similar loss.</td><td>Both were present from the start, or the combined comparison isolates each one's contribution.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Mistral's converted layers illustrate why positional flexibility and selection
+    calibration belong in the same adaptation discussion, but its results are not a
+    universal recipe. See the <a href="../models/mistral-large-4.html">model page</a> and
+    <a href="https://huggingface.co/mistralai/Mistral-Large-4-1T-A52B/resolve/main/assets/technical_report.pdf#page=6">report §3.2</a>
+    for the checkpoint-specific evidence.</p>
+
+  <h2 id="sources">Sources and scope</h2>
+  <p>Reviewed November 8, 2026:
+    <a href="https://arxiv.org/abs/2309.00071">YaRN</a>, §§3–4;
+    <a href="https://arxiv.org/abs/2501.19399">Scalable-Softmax</a>, §2 and pretraining experiments;
+    <a href="https://arxiv.org/abs/2607.10134">LeRoPE</a>, §§3–4;
+    <a href="https://huggingface.co/Qwen/Qwen3-8B#processing-long-texts">Qwen3-8B model card</a>;
+    <a href="https://ai.meta.com/blog/llama-4-multimodal-intelligence/">Meta's Llama 4 announcement</a>;
+    and the <a href="https://github.com/huggingface/transformers/blob/ca8c871ede62b521a75a2ddfc5e1968ac9c8e097/src/transformers/models/mistral_large4/modeling_mistral_large4.py">pinned Mistral inference implementation</a>.
+    Numerical examples and plots are illustrative calculations, not model training,
+    serving benchmarks, or an exhaustive adoption census.</p>
+</main>
+<footer><a href="../foundations/rope-gradient.html">RoPE foundations</a> ·
+  <a href="attention.html">Attention</a> · <a href="../index.html#transformer-training">Training</a></footer>
+<script>
+(function () {
+  const $ = id => document.getElementById(id);
+  const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  function yarnRatio(index, factor) {
+    const frequency = 10000 ** (-2 * index / 64);
+    const turns = 4096 * frequency / (2 * Math.PI);
+    const keep = Math.max(0, Math.min(1, (turns - 1) / 31));
+    return keep + (1 - keep) / factor;
+  }
+  function selectedProbability(n, gap, gain) {
+    return 1 / (1 + (n - 1) * Math.exp(-gain * gap));
+  }
+  function drawPlot(canvas, cfg) {
+    const w=canvas.clientWidth,h=canvas.clientHeight,dpr=window.devicePixelRatio || 1;
+    if(!w || !h)return;
+    canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);
+    const c=canvas.getContext('2d');if(!c)return;
+    c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,w,h);
+    const left=46,right=14,top=14,bottom=30,pw=w-left-right,ph=h-top-bottom;
+    const X=x=>left+(x-cfg.xMin)/(cfg.xMax-cfg.xMin)*pw;
+    const Y=y=>top+(cfg.yMax-y)/(cfg.yMax-cfg.yMin)*ph;
+    c.font='11px sans-serif';c.lineWidth=1;c.fillStyle=css('--muted');c.strokeStyle=css('--plot-grid');
+    c.textAlign='center';c.textBaseline='top';
+    cfg.xTicks.forEach(t=>{c.beginPath();c.moveTo(X(t),top);c.lineTo(X(t),top+ph);c.stroke();c.fillText(String(t),X(t),top+ph+6);});
+    c.textAlign='right';c.textBaseline='middle';
+    cfg.yTicks.forEach(t=>{c.beginPath();c.moveTo(left,Y(t));c.lineTo(left+pw,Y(t));c.stroke();c.fillText(t.toFixed(2),left-6,Y(t));});
+    c.strokeStyle=css('--plot-axis');c.beginPath();c.moveTo(left,top);c.lineTo(left,top+ph);c.lineTo(left+pw,top+ph);c.stroke();
+    c.save();c.beginPath();c.rect(left,top,pw,ph);c.clip();
+    cfg.series.forEach(series=>{
+      c.beginPath();c.strokeStyle=css(series.color);c.lineWidth=2.5;c.setLineDash(series.dash || []);
+      for(let i=0;i<=260;i++){
+        const x=cfg.xMin+(cfg.xMax-cfg.xMin)*i/260,y=series.fn(x);
+        if(i===0)c.moveTo(X(x),Y(y));else c.lineTo(X(x),Y(y));
+      }
+      c.stroke();
+    });
+    c.restore();
+  }
+  function render() {
+    const factor=Number($('yarn-factor').value);
+    const gain=(1+0.1*Math.log(factor))**2;
+    $('yarn-result').textContent=`4,096 to ${(4096*factor).toLocaleString('en-US')} tokens: factor ${factor}; slow-band multiplier ${(1/factor).toFixed(3)}; illustrative full-RoPE logit gain ${gain.toFixed(3)}.`;
+    drawPlot($('plot-yarn'),{xMin:0,xMax:31,yMin:0,yMax:1.05,
+      xTicks:[0,8,16,24,31],yTicks:[0,0.25,0.5,0.75,1],
+      series:[{color:'--plot-reference',fn:()=>1,dash:[4,3]},
+        {color:'--plot-other',fn:()=>1/factor},
+        {color:'--plot-main',fn:x=>yarnRatio(x,factor)}]});
+    const gap=Number($('ssmax-gap').value),scale=Number($('ssmax-scale').value),n=32768;
+    const plain=selectedProbability(n,gap,1),scaled=selectedProbability(n,gap,scale*Math.log(n));
+    $('ssmax-result').textContent=`Gap ${gap}, s=${scale.toFixed(2)}: at 32,768 keys, ordinary ${(100*plain).toFixed(2)}%; SSMax ${(100*scaled).toFixed(2)}%. Toy probabilities, not accuracy.`;
+    drawPlot($('plot-ssmax'),{xMin:9,xMax:17,yMin:0,yMax:1,
+      xTicks:[9,11,13,15,17],yTicks:[0,0.25,0.5,0.75,1],
+      series:[{color:'--plot-other',fn:x=>selectedProbability(2**x,gap,1)},
+        {color:'--plot-main',fn:x=>selectedProbability(2**x,gap,scale*Math.log(2**x))}]});
+  }
+  $('yarn-factor').addEventListener('change',render);
+  $('ssmax-gap').addEventListener('input',render);
+  $('ssmax-scale').addEventListener('input',render);
+  let resizeFrame;
+  window.addEventListener('resize',()=>{cancelAnimationFrame(resizeFrame);resizeFrame=requestAnimationFrame(render);});
+  const scheme=window.matchMedia('(prefers-color-scheme: dark)');
+  if(scheme.addEventListener)scheme.addEventListener('change',render);
+  render();
+})();
+</script>
+</body>
+</html>

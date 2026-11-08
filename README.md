@@ -100,6 +100,9 @@ generative objective: masked/uniform-token corruption, same-position denoising, 
 cross-entropy, and blockwise sampling, with an interactive generation-order comparison.
 The [training lifecycle](docs/transformer/model-training-lifecycle.html) connects these
 mechanisms across stages; named-model case studies are grouped in Models & Families below.
+[Long-context scaling](docs/transformer/long-context-scaling.html) owns the adaptation path:
+YaRN, SSMax and LeRoPE, checkpoint-specific recipes, training-stage evidence, and separate
+quality/runtime gates. RoPE and attention derivations remain on their existing pages.
 
 ### 04 · Systems & Scaling — [docs/systems/](docs/systems/), [triton/](triton/)
 The engineering substrate that trains it across many devices, built bottom-up — MFU, the PyTorch
