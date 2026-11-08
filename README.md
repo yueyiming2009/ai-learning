@@ -88,6 +88,10 @@ Nemotron, MAI-Base-1, and Muse Spark Open.
 **Sequence Mixing & Memory:** linear attention, Mamba & SSMs
 (discretization → selection → the Mamba-2 duality), Gated DeltaNet, KDA,
 sparse attention (the lightning indexer), hybrid attention stacks, and conditional memory.
+[CLA & YOCO](docs/transformer/cross-layer-kv-sharing.html) explains cross-layer cache ownership,
+producer/reader code, and YOCO's upper-stage prefill shortcut; the
+[MLA walkthrough](docs/transformer/mla.html#implementation) compares expanded and absorbed
+attention without conflating latent compression with cross-layer sharing.
 **Training:** the next-token objective and single-device loop, multi-token prediction
 (parallel heads vs. DeepSeek-V3's sequential MTP modules, and the free draft head that falls out),
 and the neural scaling laws that size the run (Kaplan vs. Chinchilla, the compute-optimal frontier).

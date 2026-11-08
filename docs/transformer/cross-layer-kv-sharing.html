@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="CLA and YOCO from cache ownership to Q/K/V code: shared activations, causal cross-attention, upper-stage prefill, gradient flow, and MLA latent-sharing boundaries.">
+  <title>CLA &amp; YOCO — Cross-Layer KV Sharing</title>
+  <link rel="canonical" href="https://yueyiming2009.github.io/ai-learning/transformer/cross-layer-kv-sharing.html">
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <script>
+    MathJax = {tex: {inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']]},
+      options: {skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre']}};
+  </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #fff; --surface: #f8f9fa; --border: #e8eaed; --text: #1a1a2e;
+      --muted: #6b7280; --accent: #6d28d9; --accent-light: #f5f3ff;
+      --nav-bg: rgba(255,255,255,0.94);
+      --plot-grid: #e5e7eb; --plot-axis: #9ca3af;
+      --plot-full: #6d28d9; --plot-cla: #d97706; --plot-yoco: #0d9488;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115; --surface: #171b21; --border: #262b33; --text: #e5e7eb;
+        --muted: #9aa1ab; --accent: #a78bfa; --accent-light: #1c1630;
+        --nav-bg: rgba(15,17,21,0.94);
+        --plot-grid: #303641; --plot-axis: #687385;
+        --plot-full: #a78bfa; --plot-cla: #fbbf24; --plot-yoco: #2dd4bf;
+      }
+    }
+    body { margin: 0; font: 16px/1.75 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); }
+    a { color: var(--accent); text-underline-offset: 3px; }
+    a:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+    nav { position: sticky; top: 0; z-index: 100; display: flex; align-items: center; gap: 20px; height: 52px; padding: 0 24px; background: var(--nav-bg); border-bottom: 1px solid var(--border); }
+    .nav-brand { display: inline-flex; align-items: center; gap: 7px; font-size: 0.9rem; font-weight: 600; white-space: nowrap; text-decoration: none; }
+    .nav-links { display: flex; flex: 1; gap: 14px; min-width: 0; overflow-x: auto; }
+    .nav-links a { font-size: 0.82rem; white-space: nowrap; text-decoration: none; color: var(--muted); }
+    .hero { background: linear-gradient(135deg, #4c1d95, #6d28d9); color: white; padding: 48px 24px; text-align: center; }
+    .hero h1 { font-size: clamp(1.6rem, 4vw, 2.4rem); line-height: 1.3; margin: 12px 0; }
+    .hero p { max-width: 760px; margin: 0 auto; }
+    .page-wrap { max-width: 940px; margin: 0 auto; padding: 32px 24px 64px; }
+    h2, h3, [id] { scroll-margin-top: 72px; }
+    h2 { margin-top: 40px; border-bottom: 1px solid var(--border); padding-bottom: 8px; font-size: 1.4rem; }
+    h3 { margin-top: 26px; font-size: 1.08rem; }
+    p, li, td { overflow-wrap: anywhere; }
+    li { margin: 8px 0; }
+    code { font: 0.88em ui-monospace, SFMono-Regular, Consolas, monospace; }
+    p code, li code, td code { background: var(--surface); padding: 2px 5px; border-radius: 4px; }
+    pre { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; line-height: 1.5; }
+    .note { padding: 16px 20px; margin: 20px 0; border-left: 4px solid var(--accent); background: var(--accent-light); }
+    .table-wrap, .equation { overflow-x: auto; margin: 20px 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { text-align: left; vertical-align: top; padding: 10px 12px; border: 1px solid var(--border); }
+    th { background: var(--surface); }
+    caption, .muted { color: var(--muted); font-size: 0.9rem; }
+    caption { text-align: left; margin-bottom: 8px; }
+    .figure { padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+    .figure canvas { width: 100%; height: 300px; display: block; }
+    .legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 0.85rem; }
+    .legend-item { display: inline-flex; align-items: center; gap: 6px; }
+    .lg { display: inline-block; width: 18px; height: 3px; background: var(--c); }
+    .figure-caption { color: var(--muted); font-size: 0.9rem; }
+    .controls { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; font-size: 0.9rem; }
+    .controls input { width: 140px; accent-color: var(--accent); }
+    .controls select { color: var(--text); background: var(--bg); border: 1px solid var(--border); padding: 5px; }
+    output { display: block; margin: 12px 0; font-size: 0.9rem; }
+    footer { border-top: 1px solid var(--border); padding: 24px; text-align: center; color: var(--muted); font-size: 0.85rem; }
+    @media (max-width: 600px) {
+      nav { padding: 0 12px; gap: 14px; }
+      .page-wrap { padding: 24px 16px 48px; }
+      th, td { padding: 8px; }
+    }
+  </style>
+</head>
+<body>
+<nav aria-label="Page navigation">
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes">
+    <svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+    CLA &amp; YOCO
+  </a>
+  <div class="nav-links">
+    <a href="../index.html#transformer-sequence-mixing">Sequence Mixing &amp; Memory</a>
+    <a href="#semantics">Semantics</a><a href="#cla">CLA</a><a href="#code">Code</a>
+    <a href="#yoco">YOCO</a><a href="#prefill">Prefill</a><a href="#cache">Cache budget</a>
+    <a href="#practice">Practice</a><a href="#latent-sharing">MLA boundary</a><a href="#sources">Sources</a>
+  </div>
+</nav>
+<header class="hero">
+  <h1>CLA &amp; YOCO — Cross-Layer KV Sharing</h1>
+  <p>Every layer can ask a new question without writing a new copy of the history.
+    Follow cache ownership through projections, scoring, softmax, and output,
+    then see why YOCO changes which prompt positions need upper-layer computation.</p>
+</header>
+<main class="page-wrap">
+  <aside class="note">
+    <strong>Reading path:</strong> <a href="attention.html">ordinary attention</a> →
+    <a href="../inference/kv-cache.html">KV caching</a> → this guide.
+    <a href="mla.html">MLA</a> compresses each stored position; CLA/YOCO reduce the
+    number of distinct layer memories. These are architectural choices requiring
+    appropriate training, not transparent switches for any existing checkpoint.
+  </aside>
+
+  <h2 id="semantics">1. Separate the reader from the memory producer</h2>
+  <p>In ordinary attention, the same block input supplies Q, K, and V. With cross-layer
+    sharing, a consumer makes Q from its <em>current</em> hidden states but reads K/V
+    produced earlier in the network. Scores, softmax probabilities, output projections,
+    residual states, and FFNs remain specific to the consumer.</p>
+  <pre><code>Ordinary:
+  block A: Q_A, K_A, V_A from input_A
+  block B: Q_B, K_B, V_B from input_B
+
+Classical CLA:
+  block A: produce K_A/V_A; Q_A reads that memory
+  block B: Q_B from input_B reads the SAME K_A/V_A
+
+Pure YOCO:
+  lower self-decoder -> one global K/V bank
+  upper block 0: fresh Q -> shared bank
+  upper block 1: fresh Q -> shared bank
+  ...</code></pre>
+  <p><strong>Sharing activations is not tying projection weights.</strong> Applying
+    the same matrix to two different layer inputs generally produces different K/V.
+    Sharing the actual produced tensors is what removes the duplicate cache.</p>
+
+  <h2 id="cla">2. CLA: a different query, the same historical representation</h2>
+  <p>For a consumer at layer \(l\) using a producer \(s(l)\), classical CLA computes:</p>
+  <div class="equation">\[
+    Q_l=\operatorname{Norm}(X_l)W^Q_l,\quad
+    A_l=\operatorname{softmax}\left(
+      Q_lK_{s(l)}^\top/\sqrt{d_k}+\mathrm{mask}\right),\quad
+    Y_l=\operatorname{ConcatHeads}(A_lV_{s(l)})W^O_l.
+  \]</div>
+  <p>The layer then applies its normal residual and FFN path.
+    A two-layer sharing group stores one K/V history, but <strong>both attention reads
+    still run</strong>. The consumer may reread the same cache from device memory;
+    a twofold cache-capacity reduction is not automatically a twofold latency reduction.
+    Nor can a later query recover information that the shared memory failed to encode.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Step</th><th scope="col">Shape</th><th scope="col">Owner</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Q projection and head split</th><td><code>[B,H,T,d]</code></td><td>Current consumer</td></tr>
+        <tr><th scope="row">K and V</th><td><code>[B,H,S,d]</code></td><td>Earlier producer in this MHA example</td></tr>
+        <tr><th scope="row">QK scores, mask, softmax over S</th><td><code>[B,H,T,S]</code></td><td>Recomputed by each consumer</td></tr>
+        <tr><th scope="row">Weighted V, head concatenation, W<sub>O</sub></th><td><code>[B,T,D]</code></td><td>Current consumer</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p><code>T</code> and <code>S</code> need not match: one decoding query can read an
+    entire prefix. This guide uses equal Q/KV head counts; CLA can also compose with GQA/MQA.</p>
+
+  <h2 id="code">3. One block implementation for producers and consumers</h2>
+  <p>Copy the following Python blocks in order. They are small, dependency-light
+    <strong>PyTorch reference examples</strong>, not paper checkpoints or serving kernels.
+    They use ordinary MHA, LayerNorm and a GELU FFN, omitting RoPE, dropout, GQA,
+    padding and quantization. The examples below run in CPU float64; mixed-precision
+    implementations need their own accumulation and normalization policy.</p>
+  <pre><code class="language-python" id="sharing-core">import math
+import torch
+from torch import nn
+
+
+def split_heads(x, heads):
+    batch, length, dim = x.shape
+    return x.reshape(batch, length, heads, dim // heads).transpose(1, 2)
+
+
+def visible_positions(query_pos, key_pos, window=None):
+    allowed = key_pos[None, :] &lt;= query_pos[:, None]
+    if window is not None:
+        allowed = allowed &amp; (
+            key_pos[None, :] &gt; query_pos[:, None] - window
+        )
+    return allowed
+
+
+class Block(nn.Module):
+    def __init__(self, dim, heads, owns_kv):
+        super().__init__()
+        assert dim % heads == 0
+        self.heads, self.head_dim = heads, dim // heads
+        self.norm1, self.norm2 = nn.LayerNorm(dim), nn.LayerNorm(dim)
+        self.q = nn.Linear(dim, dim, bias=False)
+        self.k = nn.Linear(dim, dim, bias=False) if owns_kv else None
+        self.v = nn.Linear(dim, dim, bias=False) if owns_kv else None
+        self.out = nn.Linear(dim, dim, bias=False)
+        self.ffn = nn.Sequential(
+            nn.Linear(dim, 4 * dim), nn.GELU(), nn.Linear(4 * dim, dim)
+        )
+
+    def forward(self, x, query_pos, kv=None, key_pos=None, window=None):
+        z = self.norm1(x)
+        q = split_heads(self.q(z), self.heads)
+        if self.k is not None:
+            if kv is not None:
+                raise ValueError("Producer must build its own K/V")
+            kv = (split_heads(self.k(z), self.heads),
+                  split_heads(self.v(z), self.heads))
+            key_pos = query_pos
+        elif kv is None or key_pos is None:
+            raise ValueError("Consumer needs shared K/V and their positions")
+
+        k, v = kv
+        scores = (q @ k.transpose(-2, -1)) / math.sqrt(self.head_dim)
+        allowed = visible_positions(query_pos, key_pos, window)
+        scores = scores.masked_fill(~allowed[None, None], -torch.inf)
+        probabilities = scores.softmax(dim=-1)
+        context = probabilities @ v
+        merged = context.transpose(1, 2).reshape(x.shape)
+        x = x + self.out(merged)
+        return x + self.ffn(self.norm2(x)), kv</code></pre>
+  <p>PyTorch stores linear weights as <code>[out_features,in_features]</code>.
+    No projection is shared accidentally: the consumer has its own Q and output weights,
+    but no K/V producer weights. Every query must have at least one valid key;
+    packed or padded requests need additional masking beyond this example.</p>
+  <pre><code class="language-python" id="cla-example">torch.manual_seed(7)
+producer = Block(dim=12, heads=3, owns_kv=True).double()
+consumer = Block(dim=12, heads=3, owns_kv=False).double()
+x = torch.randn(2, 6, 12, dtype=torch.float64)
+positions = torch.arange(x.shape[1])
+
+h, bank = producer(x, positions)
+y, reused_bank = consumer(h, positions, kv=bank, key_pos=positions)
+assert reused_bank[0] is bank[0]  # Same activation tensor, not a clone.</code></pre>
+  <p>This evaluates all sequence positions, with causal masking. It does not yet append
+    a persistent inference cache. During training, keep <code>bank</code> connected to
+    autograd: consumer gradients must reach the producer as well.</p>
+
+  <h2 id="yoco">4. YOCO: a lower writer stack and an upper reader stack</h2>
+  <p>Pure YOCO uses a causal <strong>self-decoder</strong> with bounded-size
+    local/recurrent state, followed by a <strong>cross-decoder</strong> that reads a
+    shared global bank. The paper supports sliding-window attention or gated retention
+    in the lower stage. Here we use sliding windows.</p>
+  <pre><code>input embeddings
+    |
+    v
+lower local block 0 -> lower local block 1 -> H_mid
+                                              |
+                             memory normalization + K/V projections
+                                              |
+                                              v
+                                      ONE global bank
+                                              |
+H_mid -> upper reader 0 -> upper reader 1 -> output
+             |                  |
+             +-- read bank -----+
+
+Each upper reader keeps its own Q, scores, softmax, W_out, residuals and FFN.</code></pre>
+  <p>The global bank is newly projected from the <em>output of the lower stack</em>;
+    it is not simply the internal attention cache of its last block.
+    Both stages remain causal. “Cross-attention” means the query and memory originate
+    in different network stages, not that there is a separate bidirectional input encoder.</p>
+
+  <h3 id="prefill">Why the upper stage can skip most prompt positions</h3>
+  <p>To predict the first continuation token, only the last prompt position needs final
+    logits. In a normal transformer, earlier prompt positions must still populate every
+    upper layer's K/V. Pure YOCO's upper layers have no such histories to produce:
+    all of their memory already comes from the lower stage.</p>
+  <p>Thus, process the entire prompt through the lower stage, build the global bank,
+    and send just the final prompt position through the upper stage. Each upper block
+    reads the full causal bank. This is equivalent to taking the last output of the
+    full forward pass when the upper FFNs/norms are per-position and stochastic effects
+    are disabled. Training or scoring every prompt position still needs all outputs.</p>
+  <pre><code class="language-python" id="yoco-example">class ToyYOCO(nn.Module):
+    def __init__(self, dim=12, heads=3, window=3):
+        super().__init__()
+        self.heads, self.window = heads, window
+        self.lower = nn.ModuleList([
+            Block(dim, heads, owns_kv=True) for _ in range(2)
+        ])
+        self.memory_norm = nn.LayerNorm(dim)
+        self.memory_k = nn.Linear(dim, dim, bias=False)
+        self.memory_v = nn.Linear(dim, dim, bias=False)
+        self.upper = nn.ModuleList([
+            Block(dim, heads, owns_kv=False) for _ in range(2)
+        ])
+        self.final_norm = nn.LayerNorm(dim)
+        self.lm_head = nn.Linear(dim, 32, bias=False)
+
+    def forward(self, x, last_only=False):
+        positions = torch.arange(x.shape[1], device=x.device)
+        h = x
+        for block in self.lower:
+            h, _ = block(h, positions, window=self.window)
+
+        z = self.memory_norm(h)
+        bank = (split_heads(self.memory_k(z), self.heads),
+                split_heads(self.memory_v(z), self.heads))
+        queries = h[:, -1:] if last_only else h
+        query_pos = positions[-1:] if last_only else positions
+        for block in self.upper:
+            queries, _ = block(
+                queries, query_pos, kv=bank, key_pos=positions
+            )
+        return self.lm_head(self.final_norm(queries))
+
+
+model = ToyYOCO().double().eval()
+with torch.no_grad():
+    full = model(x)
+    last = model(x, last_only=True)
+    torch.testing.assert_close(last, full[:, -1:], rtol=1e-9, atol=1e-10)
+
+    # Future tokens must not affect earlier outputs.
+    changed = x.clone()
+    changed[:, 3:] += 10 * torch.randn_like(changed[:, 3:])
+    torch.testing.assert_close(
+        model(changed)[:, :3], full[:, :3], rtol=1e-9, atol=1e-10
+    )
+print("YOCO last-position and causal outputs agree.")</code></pre>
+  <div class="note"><strong>Semantics, not peak memory:</strong> the lower blocks above
+    materialize dense score tensors and full-sequence K/V, then mask them. A local mask alone
+    does not implement a bounded-memory kernel. Production serving needs window-aware
+    attention, bounded local caches, and one growing global bank.</div>
+
+  <h2 id="cache">5. What memory is actually saved?</h2>
+  <p>For equal KV widths and precision, let \(c=2BH_{\rm KV}d_{\rm head}b\) be
+    bytes per stored token position per bank. With \(L\) total layers, sharing factor
+    \(g\), \(L_s\) lower YOCO layers and window \(W\):</p>
+  <div class="equation">\[
+    M_{\rm full}=cLT,\qquad
+    M_{\rm CLA}=c\lceil L/g\rceil T,\qquad
+    M_{\rm YOCO}=c\left[T+L_s\min(T,W)\right].
+  \]</div>
+  <p>“Once” means one <strong>global</strong> bank, not zero lower-stage state and not
+    a bank that never changes. Every new token adds one global entry and updates the
+    lower local caches. Recurrent self-decoders have a different fixed-state term.</p>
+  <div class="figure">
+    <div class="controls">
+      <label for="sharing-context">Context exponent
+        <input id="sharing-context" type="range" min="10" max="16" value="15">
+      </label>
+      <label for="sharing-window">Local window
+        <select id="sharing-window"><option>128</option><option selected>512</option><option>2048</option></select>
+      </label>
+    </div>
+    <output id="sharing-result" aria-live="polite"></output>
+    <canvas id="plot-sharing" aria-label="KV cache GiB versus context length for full per-layer caches, paired CLA, and pure YOCO with a sliding-window self-decoder"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-full)"></span>Full per-layer KV</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-cla)"></span>CLA, pairs</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-yoco)"></span>Pure YOCO</span>
+    </div>
+    <p class="figure-caption"><strong>CLA reduces the number of growing banks; YOCO leaves one.</strong>
+      Illustrative 24-layer architecture, 12 lower YOCO layers, one request, four KV heads,
+      128 values/head for each of K and V, two bytes/value. X: context in Ki tokens;
+      Y: cache payload in GiB. Excludes weights, allocator/paging overhead and temporary
+      tensors; not a matched-quality comparison or a Mistral memory estimate.</p>
+    <noscript><p>At 32,768 tokens and window 512: full KV 1.500 GiB; paired CLA 0.750 GiB;
+      pure YOCO 0.074 GiB under these assumptions.</p></noscript>
+  </div>
+
+  <h2 id="practice">6. Make the ownership contract explicit</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Boundary</th><th scope="col">Implementation requirement</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Decode</th><td>Run the new token through lower blocks using their local state; create and append one new global K/V entry; let every upper block read it. Do not append once per reader.</td></tr>
+        <tr><th scope="row">Storage</th><td>Consumers reference the producer's bank. Use preallocated/paged global storage and ring buffers for windows rather than repeatedly copying a growing prefix.</td></tr>
+        <tr><th scope="row">Positions</th><td>Use absolute query/key positions and per-request validity masks. Apply any rotary positional encoding consistently; do not rotate a shared cached key again at each reader.</td></tr>
+        <tr><th scope="row">Eviction</th><td>Keep entries until every consumer is done. In chunked prefill, an early query can need positions older than the final query's window; trim only after the required reads.</td></tr>
+        <tr><th scope="row">Training</th><td>Retain the producer graph so gradients from all readers accumulate into it. Inference caches and deliberate truncated backpropagation are different policies, not reasons to detach ordinary training activations.</td></tr>
+        <tr><th scope="row">Pipeline parallelism</th><td>Colocate sharing layers or transfer the shared activations across stages. Cache capacity saved does not eliminate communication or cache reads.</td></tr>
+        <tr><th scope="row">Checks</th><td>Compare full versus chunked/token decoding, future-token perturbations, last-position YOCO prefill, producer gradients, and physical cache ownership. Define tolerances for the chosen dtype/backend.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="latent-sharing">7. Classical K/V sharing is not MLA latent sharing</h2>
+  <pre><code>Classical CLA / pure YOCO:
+    producer -> K_shared, V_shared
+    reader A: Q_A reads the same K_shared/V_shared
+    reader B: Q_B reads the same K_shared/V_shared
+
+MLA latent sharing:
+    producer -> C_shared
+    reader A: own Q_A and own K/V expansion of C_shared
+    reader B: own Q_B and own K/V expansion of C_shared</code></pre>
+  <p>In the latter case the expanded K/V can differ across readers even though the
+    persistent latent is identical. This is the boundary between the examples above and
+    <a href="../models/mistral-large-4.html#attention-path">Mistral's released implementation</a>.
+    Both readers remain limited by what the source encoded into the shared latent.</p>
+  <p>Mistral's original architecture interleaved local and global layers and shared the
+    first-half anchor with selected upper global layers; it was not pure YOCO.
+    Its later surgery removed sliding-window restrictions and CLA, but retained limited
+    YOCO-style sharing. Therefore the simple last-position-only upper-stage shortcut
+    is <strong>not</strong> a drop-in optimization for that hybrid. Its independent
+    upper-layer histories impose additional dependencies.</p>
+  <p>For a related distinction, ragged attention changes which positions a layer may read
+    (for example, three local layers per global layer); it does not by itself share a bank.
+    <a href="mla.html#implementation">MLA's code walkthrough</a> owns latent compression
+    and absorbed execution; <a href="hybrid-attention.html">hybrid attention</a> covers
+    mixed sequence-mixer stacks.</p>
+
+  <h2 id="sources">Sources and evidence boundaries</h2>
+  <p>Reviewed November 8, 2026.
+    <a href="https://arxiv.org/abs/2405.12981">Cross-Layer Attention</a>, §§2–3,
+    establishes activation sharing and its measured memory/accuracy trade-offs at 1B/3B scales.
+    <a href="https://arxiv.org/abs/2405.05254">You Only Cache Once</a>, §§2–3,
+    defines the self-/cross-decoder and early-exit prefill.
+    <a href="https://huggingface.co/mistralai/Mistral-Large-4-1T-A52B/resolve/main/assets/technical_report.pdf#page=4">Mistral Large 4, §3</a>
+    describes the hybrid and its conversion. These results do not establish universal
+    quality preservation or permit changing a trained model's cache topology without adaptation.</p>
+  <p class="muted">Code and the memory figure are educational examples, not implementations
+    of the papers' full recipes, checkpoint reproductions, or throughput measurements.</p>
+</main>
+<footer><a href="mla.html">MLA</a> · <a href="../index.html#transformer-sequence-mixing">Sequence Mixing &amp; Memory</a></footer>
+<script>
+(function () {
+  const context = document.getElementById('sharing-context');
+  const windowSize = document.getElementById('sharing-window');
+  const result = document.getElementById('sharing-result');
+  const canvas = document.getElementById('plot-sharing');
+  const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  function cacheGiB(tokens, window) {
+    const bytesPerBankToken = 2 * 4 * 128 * 2;
+    return [24 * tokens, 12 * tokens, tokens + 12 * Math.min(tokens, window)]
+      .map(entries => entries * bytesPerBankToken / 2**30);
+  }
+  function drawPlot(canvas, cfg) {
+    const w=canvas.clientWidth, h=canvas.clientHeight, dpr=window.devicePixelRatio || 1;
+    if (!w || !h) return;
+    canvas.width=Math.round(w*dpr); canvas.height=Math.round(h*dpr);
+    const c=canvas.getContext('2d');
+    if (!c) return;
+    c.setTransform(dpr,0,0,dpr,0,0); c.clearRect(0,0,w,h);
+    const left=44, right=12, top=14, bottom=30, pw=w-left-right, ph=h-top-bottom;
+    const X=x=>left+(x-cfg.xMin)/(cfg.xMax-cfg.xMin)*pw;
+    const Y=y=>top+(cfg.yMax-y)/(cfg.yMax-cfg.yMin)*ph;
+    c.font='11px sans-serif'; c.lineWidth=1; c.fillStyle=css('--muted');
+    c.strokeStyle=css('--plot-grid'); c.textAlign='center'; c.textBaseline='top';
+    cfg.xTicks.forEach(t=>{c.beginPath();c.moveTo(X(t),top);c.lineTo(X(t),top+ph);c.stroke();c.fillText(String(t),X(t),top+ph+6);});
+    c.textAlign='right';c.textBaseline='middle';
+    cfg.yTicks.forEach(t=>{c.beginPath();c.moveTo(left,Y(t));c.lineTo(left+pw,Y(t));c.stroke();c.fillText(t.toFixed(2),left-6,Y(t));});
+    c.strokeStyle=css('--plot-axis');c.beginPath();c.moveTo(left,top);c.lineTo(left,top+ph);c.lineTo(left+pw,top+ph);c.stroke();
+    c.save();c.beginPath();c.rect(left,top,pw,ph);c.clip();
+    cfg.series.forEach(series=>{
+      c.beginPath();c.strokeStyle=css(series.color);c.lineWidth=2.5;
+      for(let i=0;i<=260;i++){
+        const x=cfg.xMin+(cfg.xMax-cfg.xMin)*i/260, y=series.fn(x);
+        if(i===0)c.moveTo(X(x),Y(y));else c.lineTo(X(x),Y(y));
+      }
+      c.stroke();
+    });
+    c.setLineDash([3,3]);c.strokeStyle=css('--plot-axis');c.beginPath();
+    c.moveTo(X(cfg.selected),top);c.lineTo(X(cfg.selected),top+ph);c.stroke();c.restore();
+  }
+  function render() {
+    const tokens=2**Number(context.value), window=Number(windowSize.value);
+    const values=cacheGiB(tokens,window);
+    result.textContent=`${tokens.toLocaleString('en-US')} tokens, window ${window}: full KV ${values[0].toFixed(3)} GiB; CLA pairs ${values[1].toFixed(3)} GiB; pure YOCO ${values[2].toFixed(3)} GiB. Cache payload only.`;
+    drawPlot(canvas,{xMin:0,xMax:64,yMin:0,yMax:3,
+      xTicks:[0,16,32,48,64],yTicks:[0,0.75,1.5,2.25,3],selected:tokens/1024,
+      series:['--plot-full','--plot-cla','--plot-yoco'].map((color,i)=>({
+        color,fn:x=>cacheGiB(x*1024,window)[i]
+      }))});
+  }
+  context.addEventListener('input',render);windowSize.addEventListener('change',render);
+  let resizeFrame;
+  window.addEventListener('resize',()=>{cancelAnimationFrame(resizeFrame);resizeFrame=requestAnimationFrame(render);});
+  const scheme=window.matchMedia('(prefers-color-scheme: dark)');
+  if(scheme.addEventListener)scheme.addEventListener('change',render);
+  render();
+})();
+</script>
+</body>
+</html>

@@ -173,6 +173,7 @@
     <a href="#arithmetic">Cache math</a>
     <a href="#quality">Quality</a>
     <a href="#tradeoff">The real trade-off</a>
+    <a href="#implementation">Code walkthrough</a>
     <a href="#summary">Summary</a>
   </div>
   <a class="nav-back" href="../index.html">Home</a>
@@ -181,13 +182,13 @@
 <div class="hero">
   <span class="hero-pill">Transformer · Architecture</span>
   <h1>Multi-head Latent Attention</h1>
-  <p>Every other way of shrinking the KV cache removes heads and pays for it in quality. MLA instead caches one low-rank latent per token and folds the reconstruction into the weights it was already going to multiply — so the cache lands near the MQA floor while the model stays at full head count.</p>
+  <p>Cache a low-rank representation instead of expanded keys and values. Follow the compression, positional encoding, and absorbed attention algebra into a small PyTorch example, while separating persistent cache savings from kernel and model-quality tradeoffs.</p>
 </div>
 
 <div class="page-wrap">
 
 <p>
-  MLA was introduced in <a href="https://arxiv.org/abs/2405.04434">DeepSeek-V2</a> (2024) and carried forward unchanged in structure through V3 and R1. It answers the question the <a href="../inference/kv-cache.html">KV cache</a> page ends on: the cache is what caps concurrency, GQA and MQA shrink it by deleting KV heads, and deleting KV heads costs accuracy. MLA gets the memory win without the deletion.
+  MLA was introduced in <a href="https://arxiv.org/abs/2405.04434">DeepSeek-V2</a> (2024) and retained by V3 and R1. Where GQA/MQA share KV heads, MLA constrains the rank of the KV representation while retaining distinct head projections. Both are architectural tradeoffs, not universally lossless compression. Start with <a href="../inference/kv-cache.html">KV cache</a>, or jump to the <a href="#implementation">projection-to-output code</a>. <a href="cross-layer-kv-sharing.html">CLA and YOCO</a> address a different axis: how many layers own a distinct cache.
 </p>
 
 <div class="spec-grid">
@@ -230,7 +231,7 @@
 <h2 id="compress">2 · Low-rank joint compression</h2>
 
 <p>
-  The observation is that \(k_t\) and \(v_t\) are both linear functions of the same hidden state \(h_t\), and together they span far less than the \(2 n_h d_h\) dimensions they occupy. So project \(h_t\) once into a shared latent and reconstruct both from it:
+  MLA parameterizes keys and values through a shared low-rank bottleneck. This is a constraint learned during training, not a guarantee that an arbitrary pretrained MHA layer can be compressed without error. Project \(h_t\) into a latent and derive both content keys and values from it:
 </p>
 
 <div class="result">
@@ -252,14 +253,21 @@
 </p>
 
 <p>
-  Queries get the same treatment, \(c^Q_t = W^{DQ}h_t \in \mathbb{R}^{d'_c}\) with \(q^C_t = W^{UQ}c^Q_t\), but for an unrelated reason: queries are never cached, so this buys nothing at inference. It cuts <em>activation</em> memory during training, where every position's queries are live at once.
+  DeepSeek-V2 also factorizes queries: \(c^Q_t = W^{DQ}h_t\), then \(q^C_t = W^{UQ}c^Q_t\).
+  Query compression can reduce training activation memory and changes projection cost, but does not
+  reduce the persistent KV cache: queries are not stored there. It is optional, not the definition
+  of MLA; V2-Lite and <a href="../models/mistral-large-4.html#attention-path">Mistral Large 4</a>
+  use direct query projections.
 </p>
 
 <!-- ═══════════════════════════════════════════ ABSORPTION -->
-<h2 id="absorb">3 · Absorption — the up-projection never runs</h2>
+<h2 id="absorb">3 · Absorption — avoid expanding every cached position</h2>
 
 <p>
-  Compression alone would be a poor trade: you would save memory and then pay to reconstruct \(2 n_h d_h\) numbers per cached token on every decode step. It is free instead, because the up-projections are constant matrices sitting next to other constant matrices.
+  A reference implementation can expand cached latents into per-head keys and values on each
+  decode step. An absorbed implementation avoids those large expanded history tensors by
+  reassociating linear operations. This is an algebraic equivalence for the same trained MLA
+  weights, not a claim that the resulting computation or kernel implementation is free.
 </p>
 
 <p>Take the pre-softmax score between query \(t\) and cached position \(j\), for head \(i\):</p>
@@ -278,13 +286,17 @@
 </p>
 
 <div class="step">
-  <div class="step-label">What a decode step actually touches</div>
-  <p style="margin-top:0">Read \(c^{KV}_j \in \mathbb{R}^{512}\) for each cached position. Score against the absorbed query. Weight and sum the same vectors. Apply one output matrix. <strong>K and V are never materialized at any point.</strong></p>
+  <div class="step-label">What the absorbed content path touches</div>
+  <p style="margin-top:0">Score against cached \(c^{KV}_j \in \mathbb{R}^{512}\), then form a separately weighted latent sum for each head. Map those head-specific sums to the output. <strong>Expanded content K/V history need not be materialized on this path.</strong> The rotary key channel remains separate.</p>
   <p style="margin-bottom:0">In the paper's words: <em>"since \(W^{UK}\) can be absorbed into \(W^Q\), and \(W^{UV}\) can be absorbed into \(W^O\), we even do not need to compute keys and values out for attention."</em></p>
 </div>
 
 <div class="note">
-  Absorption is a <em>decode-time</em> rewrite. During prefill and training you have many positions in flight at once, so it is cheaper to materialize \(K\) and \(V\) once per chunk and run an ordinary \(d_h = 128\) FlashAttention kernel over them. Real implementations carry both paths and switch on phase — DeepSeek-V2 notes MLA is "optimized based on an improved version of FlashAttention-2." See <a href="../inference/inference-compute-model.html">Prefill &amp; Decode</a> for why the two phases want opposite things.
+  Absorption is particularly useful at decode. Prefill/training kernels may instead expand
+  K/V per chunk and exploit narrower per-head attention dimensions; backend, shapes, and hardware
+  determine the faster path. The identity itself holds in either phase. Precomputed folded
+  weights are valid only while their source weights stay fixed; training or adapter updates
+  must preserve gradients and refresh any derived weights. See <a href="../inference/inference-compute-model.html">Prefill &amp; Decode</a>.
 </div>
 
 <!-- ═══════════════════════════════════════════ ROPE -->
@@ -303,7 +315,10 @@
 </div>
 
 <p>
-  A position-dependent matrix now sits <em>between</em> \(W^{UQ}\) and \(W^{UK}\), and matrix multiplication does not commute — so there is no fixed product to precompute. The absorption dies, and with it the whole scheme: you would have to re-expand and re-rotate keys for every prefix token at every decode step, which is worse than not compressing at all.
+  A position-dependent matrix now sits <em>between</em> \(W^{UQ}\) and \(W^{UK}\), so there is
+  no single fixed product to precompute in general. One could still reconstruct and rotate
+  keys from compressed history, or store expanded rotated keys, but would lose the simple
+  absorbed path or its cache savings. Decoupled RoPE avoids that conflict.
 </p>
 
 <p>
@@ -433,18 +448,24 @@
 </div>
 
 <p>
-  MLA wins 7 of 8 comparisons — the exception is C-Eval at the small scale (51.6 → 50.9) — on <strong>14%</strong> of the cache at 16B and <strong>4%</strong> at 250B. And the margin <em>grows</em> with scale, which is the opposite of what a lossy compression should do.
+  MLA wins 7 of these 8 comparisons — the exception is C-Eval at the small scale
+  (51.6 → 50.9) — on <strong>14%</strong> of the cache at 16B and <strong>4%</strong> at 250B.
+  These trained-model ablations support this recipe at these scales; they do not prove
+  lossless conversion of arbitrary attention weights or unchanged quality on every workload.
 </p>
 
 <p>
-  Why would constraining rank help? The honest answer is that the paper reports the result without a mechanism. Two plausible readings: the low-rank bottleneck is a regularizer on an attention layer that has more capacity than it uses, and the query-side compression changes what the optimizer sees. Either way, the practical claim is the weaker and safer one — the compression is not paid for in accuracy.
+  Why would constraining rank help? Regularization and changed optimization dynamics are
+  possible explanations, not established mechanisms. The narrow claim is that MLA matched
+  or improved most of the reported evaluations while using much less cache.
 </p>
 
 <!-- ═══════════════════════════════════════════ TRADEOFF -->
 <h2 id="tradeoff">7 · The real trade-off</h2>
 
 <p>
-  It is tempting to say MLA's cost is "the up-projection at attention time." §3 shows it isn't — absorbed, there is no up-projection. The cost shows up somewhere less obvious.
+  The absorbed path avoids expanding K/V at every cached position. It still transforms
+  queries and weighted latent outputs, and may perform more attention arithmetic per head.
 </p>
 
 <p>
@@ -454,13 +475,16 @@
 <div class="compare">
   <div class="compare-label">Absorbed MLA vs MHA at decode, per layer per cached token</div>
   <ul style="margin:0">
-    <li><strong>HBM traffic:</strong> 576 elements read, versus 32,768 — a <strong>56.9× reduction</strong>.</li>
-    <li><strong>Attention FLOPs:</strong> \(n_h \times 576\) MACs for scores instead of \(n_h \times 128\) — roughly <strong>4.5× more</strong>.</li>
+    <li><strong>Unique cache payload:</strong> 576 elements versus 32,768 — <strong>56.9× smaller</strong> under this MHA comparison. Actual HBM transactions depend on tiling, reuse, and precision.</li>
+    <li><strong>Score arithmetic:</strong> \(n_h \times 576\) MACs versus \(n_h \times 128\) — <strong>4.5×</strong> for this score-only baseline. Including value aggregation gives \(n_h(576+512)\) versus \(n_h(128+128)\), or 4.25×; projections and positional baselines change the full accounting.</li>
   </ul>
 </div>
 
 <p>
-  That is not a bad deal; it is an <em>excellent</em> one, for a specific reason. Decode is memory-bandwidth-bound — the GPU is starved for bytes, not for math (see <a href="../inference/inference-compute-model.html">Prefill &amp; Decode</a>). Trading a 4.5× rise in FLOPs for a 56.9× fall in bytes moves attention decisively up the roofline: arithmetic intensity rises by more than an order of magnitude, into the regime where the hardware is actually being used.
+  In a bandwidth-bound decode workload, a smaller cache can buy enough memory-traffic
+  relief to justify extra arithmetic. That is a roofline argument, not a universal speedup:
+  compare the <a href="../inference/inference-compute-model.html">actual phase and batch regime</a>
+  and measure kernel traffic, latency, and throughput separately.
 </p>
 
 <p>
@@ -468,7 +492,10 @@
 </p>
 
 <div class="note">
-  The one genuine cost is <strong>implementation complexity</strong>. A correct MLA stack needs the absorbed decode path, the unabsorbed prefill path, weight-absorption at load time, and a kernel that handles a 576-wide effective head with a 64-wide rotary tail. This is why MLA stayed a DeepSeek-family architecture for a long time while GQA — four lines of change — went everywhere.
+  <strong>Correctness does not require the fastest kernel.</strong> Expanded attention is a
+  valid reference path; efficient serving can add absorbed or other MLA-aware kernels.
+  Different phases need not use the same path. Projection cost, temporary memory, numerical
+  behavior, and implementation complexity belong in the comparison.
 </div>
 
 <!-- ═══════════════════════════════════════════ CONFIG -->
@@ -495,7 +522,11 @@
 </p>
 
 <p>
-  One more consequence of the decoupled design: when extending context 4K → 128K, YaRN is applied <strong>only to \(k^R_t\)</strong>. It is the sole carrier of position, so it is the only thing that needs rescaling — the content latent is untouched. 1000 steps at 32K sequence length was enough to pass needle-in-a-haystack at 128K.
+  When extending context, YaRN changes the positional scheme on the rotary branch:
+  <strong>rotary queries and rotary keys must use consistent scaled frequencies</strong>.
+  The content latent is not rotated. It is incorrect to change only the key's frequency
+  schedule while leaving the query's unchanged. DeepSeek-V2 reports a 32K-sequence
+  context-extension phase followed by evaluation at 128K.
 </p>
 
 <p>
@@ -509,8 +540,113 @@
   (<code>kv_lora_rank 256</code>), Mistral's first MLA model.
 </p>
 
+<h2 id="implementation">9 · From projections to an absorbed attention path</h2>
+<p>Use row-vector code notation here: <code>x @ W</code>. This transposes the storage
+  convention of the column-vector equations above; PyTorch <code>nn.Linear</code> itself
+  stores <code>[out_features, in_features]</code>. Let <code>B</code> be batch size,
+  <code>S</code> cached positions, <code>T</code> query positions, <code>H</code> heads,
+  <code>r</code> latent width, and <code>d</code>/<code>v</code> key/value head widths.</p>
+<pre><code>normalized hidden states [B,S,D]
+    -> down-projection + latent normalization -> C [B,S,r]  (cache)
+
+current normalized states [B,T,D]
+    -> Q projection -> Q [B,H,T,d]
+
+reference path:
+    C -> per-head K [B,H,S,d], V [B,H,S,v]
+    Q @ K^T -> mask -> softmax over S -> weighted V
+    concatenate heads -> output projection -> [B,T,D]
+
+absorbed path:
+    Q -> latent-space query [B,H,T,r]
+    query @ C^T -> same mask/scale/softmax -> weighted C
+    per-head value/output mapping -> sum heads -> [B,T,D]</code></pre>
+<p>Each head gets its <em>own</em> probability distribution and latent sum. Sharing the
+  stored latent does not mean averaging the heads together before attention.
+  The output expression below splits the usual concatenated output matrix into one
+  <code>[v,D]</code> block per head and sums their contributions.</p>
+
+<h3 id="reference-code">Two equivalent functions, one set of weights</h3>
+<p>This self-contained PyTorch example uses tiny CPU float64 tensors and the
+  <strong>content-only, no-RoPE</strong> path. It omits residuals, FFNs, query compression,
+  dropout, padding, quantization, and optimized kernels. It demonstrates algebra,
+  not a pretrained model or a performance result.</p>
+<pre><code class="language-python" id="mla-code">import math
+import torch
+
+
+def probabilities(scores, allowed, key_dim):
+    scores = scores / math.sqrt(key_dim)
+    scores = scores.masked_fill(~allowed[None, None], -torch.inf)
+    return scores.softmax(dim=-1)
+
+
+def expanded_attention(q, c, wk, wv, wo, allowed):
+    k = torch.einsum("bsr,hrd-&gt;bhsd", c, wk)
+    v = torch.einsum("bsr,hrv-&gt;bhsv", c, wv)
+    scores = q @ k.transpose(-2, -1)
+    p = probabilities(scores, allowed, q.shape[-1])
+    context = p @ v
+    return torch.einsum("bhtv,hvo-&gt;bto", context, wo)
+
+
+def absorbed_attention(q, c, wk, wv, wo, allowed):
+    q_latent = torch.einsum("bhtd,hrd-&gt;bhtr", q, wk)
+    scores = q_latent @ c[:, None].transpose(-2, -1)
+    # Keep the ORIGINAL key dimension in the scale, not latent width r.
+    p = probabilities(scores, allowed, q.shape[-1])
+    latent_sum = p @ c[:, None]
+    value_to_output = torch.einsum("hrv,hvo-&gt;hro", wv, wo)
+    return torch.einsum("bhtr,hro-&gt;bto", latent_sum, value_to_output)
+
+
+torch.manual_seed(7)
+B, S, D, H, d, r, v = 2, 6, 12, 3, 4, 5, 4
+def weights(*shape):
+    return torch.randn(*shape, dtype=torch.float64) * 0.2
+
+x = weights(B, S, D)  # Stand-in for normalized hidden states.
+c = x @ weights(D, r)
+c = c * torch.rsqrt(c.square().mean(dim=-1, keepdim=True) + 1e-6)
+q = (x @ weights(D, H * d)).reshape(B, S, H, d).transpose(1, 2)
+wk, wv, wo = weights(H, r, d), weights(H, r, v), weights(H, v, D)
+
+positions = torch.arange(S)
+allowed = positions[None, :] &lt;= positions[:, None]
+reference = expanded_attention(q, c, wk, wv, wo, allowed)
+absorbed = absorbed_attention(q, c, wk, wv, wo, allowed)
+torch.testing.assert_close(reference, absorbed, rtol=1e-9, atol=1e-10)
+
+# One decode query can read all cached positions, including its own.
+last = absorbed_attention(q[:, :, -1:], c, wk, wv, wo, allowed[-1:])
+torch.testing.assert_close(last, reference[:, -1:], rtol=1e-9, atol=1e-10)
+print("Expanded and absorbed outputs agree.")</code></pre>
+<p>The code moves the key expansion onto the query side and the value expansion after the
+  weighted latent sum. A fixed-weight inference engine may fold the remaining query/output
+  matrices ahead of time; the example computes the product in the graph so it remains
+  differentiable if its inputs require gradients.</p>
+
+<h3 id="implementation-boundaries">Add positional encoding and a real cache deliberately</h3>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Concern</th><th scope="col">Required distinction</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">Decoupled RoPE</th><td>Add the rotary query/key dot product to the content score before scaling and softmax. Use the same positional-frequency schedule on both branches and the original combined key dimension in the scale, not the absorbed latent dimension.</td></tr>
+      <tr><th scope="row">Persistent versus temporary</th><td>Keep the latent and required rotary key in the cache. Expanded K/V and attention scores in the reference code are temporary workspaces; dense scoring still uses O(TS) space.</td></tr>
+      <tr><th scope="row">Incremental decoding</th><td>Project only new tokens into new cache entries, append once per producer, and track absolute positions. A one-row query mask is not the top-left row of an unrelated square causal mask.</td></tr>
+      <tr><th scope="row">Chunked prefill</th><td>Build masks from query/key positions, not just tensor lengths. Pad or pack requests with explicit per-request boundaries; the toy example assumes no padding.</td></tr>
+      <tr><th scope="row">Updates</th><td>Never reuse stale folded weights across learner or adapter updates. During training keep the producer/consumer graph connected; inference-only detached caches are a separate policy.</td></tr>
+      <tr><th scope="row">Variants</th><td>Mistral uses direct Q projection and consumer-specific KV expansion when sharing latents. Query compression and cross-layer sharing are independent of MLA's core KV bottleneck.</td></tr>
+    </tbody>
+  </table>
+</div>
+<p>Source: <a href="https://arxiv.org/abs/2405.04434">DeepSeek-V2, §2.1</a>.
+  Compare the <a href="../models/mistral-large-4.html#attention-path">released Mistral tensor path</a>
+  and <a href="cross-layer-kv-sharing.html#latent-sharing">latent sharing versus shared K/V</a>.
+  The snippet is an educational reference, not a drop-in backend.</p>
+
 <!-- ═══════════════════════════════════════════ SUMMARY -->
-<h2 id="summary">9 · Summary</h2>
+<h2 id="summary">10 · Summary</h2>
 
 <div class="summary-grid">
   <div class="summary-card">
@@ -518,8 +654,8 @@
     <p>Cache one shared low-rank latent \(c^{KV}_t \in \mathbb{R}^{d_c}\) instead of K and V. Heads stay distinct; the <em>rank</em> is constrained, not the head count.</p>
   </div>
   <div class="summary-card">
-    <div class="summary-card-label">Why it's free</div>
-    <p>\(W^{UK}\) absorbs into the query projection, \(W^{UV}\) into \(W^O\). At decode, K and V are never materialized.</p>
+    <div class="summary-card-label">Absorbed execution</div>
+    <p>Reassociate key expansion with the query and value expansion with the output. The absorbed path avoids expanded content K/V history, not all computation or temporary storage.</p>
   </div>
   <div class="summary-card">
     <div class="summary-card-label">The RoPE obstruction</div>
@@ -535,7 +671,7 @@
   </div>
   <div class="summary-card">
     <div class="summary-card-label">The actual cost</div>
-    <p>~4.5× attention FLOPs for 56.9× less HBM traffic — a good trade precisely because decode is bandwidth-bound. Plus real kernel complexity.</p>
+    <p>Smaller persistent cache can trade for wider latent-space attention. Measure achieved traffic and arithmetic under the actual phase, kernel, and precision instead of treating footprint ratios as speedups.</p>
   </div>
 </div>
 
@@ -545,6 +681,9 @@
   <strong>Next:</strong> <a href="../inference/inference-compute-model.html">Prefill &amp; Decode →</a> — the roofline argument that makes trading FLOPs for bytes the right direction.
   <br><br>
   <strong>Sibling:</strong> <a href="linear-attention.html">Linear Attention →</a> — the other way to escape a cache that grows with \(T\): make the state fixed-size instead of small.
+  <br><br>
+  <strong>Another axis:</strong> <a href="cross-layer-kv-sharing.html">CLA &amp; YOCO →</a>
+  — reuse memory across layers rather than only compressing each stored position.
 </div>
 
 </div>
