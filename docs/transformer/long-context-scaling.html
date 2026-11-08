@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light dark">
-  <meta name="description" content="Long-context adaptation: YaRN frequency bands and attention gain, SSMax length-dependent selection, LeRoPE learned frequencies, training stages, runtime budgets, and evaluation gates.">
+  <meta name="description" content="Long-context adaptation from data mixtures and instruction tuning to YaRN, LongRoPE, SSMax and LeRoPE: two deployment/training routes, LongLoRA, bottleneck choices, and usable-context evaluation.">
   <title>Long-Context Scaling — Positions, Attention, and Training</title>
   <link rel="canonical" href="https://yueyiming2009.github.io/ai-learning/transformer/long-context-scaling.html">
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
@@ -84,23 +84,27 @@
   </a>
   <div class="nav-links">
     <a href="../index.html#transformer-training">Training</a><a href="#map">The problem</a>
-    <a href="#yarn">YaRN</a><a href="#ssmax">SSMax</a><a href="#lerope">LeRoPE</a>
-    <a href="#adaptation">Adaptation</a><a href="#evidence">Evidence</a><a href="#sources">Sources</a>
+    <a href="#adaptation">Adaptation routes</a><a href="#training-data">Data &amp; training</a>
+    <a href="#yarn">Position methods</a><a href="#ssmax">SSMax</a><a href="#lerope">LeRoPE</a>
+    <a href="#efficiency">Bottlenecks</a><a href="#evaluation">Usable context</a>
+    <a href="#evidence">Evidence</a><a href="#sources">Sources</a>
   </div>
 </nav>
 <header class="hero">
   <h1>Long-Context Scaling</h1>
-  <p>Make a model use longer inputs, not merely accept them: positional adaptation,
-    attention calibration, continued training, runtime budgets, and evidence.</p>
+  <p>Make a model use longer inputs, not merely accept them: choose a validated recipe
+    or an adaptation route, build useful long-context data, and qualify both capability
+    and execution cost.</p>
 </header>
 <main class="page-wrap">
   <aside class="note">
     <strong>Scope:</strong> this guide owns long-context adaptation choices.
     <a href="../foundations/rope-gradient.html">RoPE</a> owns rotation/gradient derivations,
     <a href="attention.html">attention</a> owns Q/K/V and softmax mechanics, and the linked
-    systems pages own execution. YaRN receives the most depth because of documented
-    deployment use; SSMax is a practical complementary idea, while LeRoPE is a focused
-    emerging technique. This is an editorial priority, not a usage survey.
+    systems pages own execution. Data design and usable-context evaluation are core
+    requirements. Among positional methods, YaRN receives the most depth because of
+    documented deployment use; SSMax is a practical complementary idea, while LeRoPE
+    is a focused emerging technique. This is an editorial priority, not a usage survey.
   </aside>
 
   <h2 id="map">1. Four different problems hide behind “long context”</h2>
@@ -120,7 +124,123 @@
     != combine distant evidence correctly
     != meet a serving latency and memory budget</code></pre>
 
-  <h2 id="yarn">2. YaRN: preserve local detail while extending the positional range</h2>
+  <h2 id="adaptation">2. Choose a deployment route or a training route</h2>
+  <p>First audit the checkpoint and target workload: native and previously validated
+    lengths, input/output token budgets, rotary dimensions, frequency/gain settings,
+    attention/cache layout, and document-boundary policy. A model that already meets
+    the target may need no new training. A recipe validated on another checkpoint
+    is a candidate, not an inherited guarantee.</p>
+  <figure aria-labelledby="adaptation-flow-caption">
+    <pre><code>Checkpoint audit + workload definition
+    |
+    +-- Native context or validated extension recipe
+    |       -> configure positions, cache and serving limits consistently
+    |       -> run quality AND runtime evaluation
+    |
+    +-- Adaptation required
+            -> choose positional recipe and controlled baseline
+            -> long/short continued training when needed
+            -> long-input instruction tuning when needed
+            -> run quality AND runtime evaluation
+
+If either route fails: diagnose the failure before adding more techniques.</code></pre>
+    <figcaption class="muted" id="adaptation-flow-caption">A decision workflow, not a
+      mandatory sequence for every model. Training, inference-only extrapolation, and
+      architecture conversion have different costs and evidence requirements.</figcaption>
+  </figure>
+
+  <h3 id="training-data">Data design: length and domain are separate knobs</h3>
+  <p><a href="https://arxiv.org/html/2402.10171v1#S3">Data Engineering for Scaling Language
+    Models to 128K Context</a> separates the domain mixture from the length distribution.
+    Globally selecting the longest documents can silently increase books or code while
+    reducing other domains. Its LLaMA-2 experiments favor retaining the domain mixture
+    while upsampling long documents <em>within each source</em>; book-heavy improvements
+    did not reliably transfer to other domains.</p>
+  <pre><code>Choose the intended domain mixture.
+Within each domain, adjust the document-length distribution.
+Track realized domain shares, lengths, and tokens after packing.
+Evaluate both long-context behavior and short-context retention.</code></pre>
+  <p>Declare whether mixture weights count documents, examples, or tokens: preserving
+    one does not automatically preserve the others. Also distinguish <strong>long
+    sequences from long dependencies</strong>. Packing unrelated short documents into
+    a large tensor can improve utilization without creating a task that needs information
+    from opposite ends of that tensor. Prefer relevant natural structure and tasks that
+    actually require distant evidence; padding is not a substitute.</p>
+  <p class="muted">Evidence boundary: the paper studies LLaMA-2 7B/13B with a particular
+    data mixture and RoPE-base adjustment, evaluates retrieval and book QA, and reports
+    retrieval differences even at similar validation loss. Its token budgets and hardware
+    results are not universal adaptation requirements or proof of arbitrary long-context reasoning.</p>
+
+  <h3 id="training-stages">Continued pretraining and long-input SFT teach different things</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Stage</th><th scope="col">Training signal</th><th scope="col">What to verify</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Continued pretraining</th><td>Model representative long text under the selected positional/attention recipe, retaining suitable short-context data.</td><td>Loss by domain/position, retrieval and distant-evidence tasks, plus short-context regressions.</td></tr>
+        <tr><th scope="row">Long-input instruction tuning</th><td>Answer a request requiring the long input: QA, synthesis, code understanding, or summarization. Usually train on response tokens, not the prompt.</td><td>Following the request, grounding the answer, combining evidence, and retaining ordinary short-input behavior.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p><a href="https://arxiv.org/html/2401.18058v1#S4">LongAlign</a> first extends its
+    base models, then compares instruction-tuning data and training strategies.
+    In those experiments, context extension alone did not supply the same long-input
+    instruction-following performance as diverse long-instruction SFT mixed with short
+    instructions. This motivates separate stage gates, not a claim that every already
+    aligned long-context checkpoint requires another SFT run.</p>
+  <p><a href="https://arxiv.org/html/2502.20082v1#S3.SS3">LongRoPE2's mixed-window training</a>
+    is more specific than simply replaying short text: short segments use original RoPE
+    with cross-document attention blocked, while long segments use rescaled RoPE.
+    Its inference policy selects the corresponding short/long schedule. If adopting
+    that recipe, preserve the routing and cache contract; do not silently switch
+    frequency schedules underneath already-rotated keys.</p>
+  <p>A progressive length curriculum is another candidate when direct extension is
+    unstable or costly. Neither a fixed number of stages nor a fixed short/long ratio
+    follows from these papers for a new model. Compare a staged recipe against the
+    simplest viable baseline at declared data and compute budgets.</p>
+
+  <h3 id="packing-loss">Packing is an execution choice, not a free objective change</h3>
+  <p>LongAlign uses packing or length-sorted batches to reduce idle work from uneven
+    lengths. Independent SFT examples in a pack use block-diagonal attention so one
+    example cannot read another's answer. Continued-pretraining recipes can choose a
+    different document-boundary policy; record the mask and position-reset semantics
+    rather than treating all concatenation as equivalent.</p>
+  <p>Decide whether the objective averages over target tokens or over examples.
+    LongAlign's equal-example objective is
+    \(\mathcal L=M^{-1}\sum_{i=1}^{M}L_i/N_i\), where \(L_i\) is summed loss over
+    \(N_i&gt;0\) target tokens. Averaging pack means can produce a different objective:
+    if one pack holds example A and another holds equal-target-length examples B/C,
+    equal pack weights give A one half of the total weight and B/C one quarter each,
+    rather than one third each. Mask prompts, handle empty targets, and aggregate
+    numerators/denominators consistently across ranks and accumulation steps.</p>
+  <p>Equal-example weighting is the paper's choice, not the only valid objective.
+    The general rule is to avoid changing sample weights accidentally when changing
+    packing or batching. Source:
+    <a href="https://arxiv.org/html/2401.18058v1#S3.SS3">LongAlign §3.3</a>;
+    stage handoffs: <a href="model-training-lifecycle.html#mid-training">mid-training</a>
+    and <a href="model-training-lifecycle.html#post-training">post-training</a>.</p>
+
+  <h2 id="yarn">3. Positional adaptation: YaRN and alternatives</h2>
+  <h3 id="position-methods">Compare what is changed and how it is selected</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Method</th><th scope="col">Main change</th><th scope="col">Selection and adaptation</th></tr></thead>
+      <tbody>
+        <tr><th scope="row"><a href="https://arxiv.org/abs/2306.15595">Position Interpolation</a></th><td>Divide positions, equivalently all rotary frequencies, by one extension factor.</td><td>A prescribed uniform mapping; the original recipe adapts the pretrained weights with longer-context fine-tuning.</td></tr>
+        <tr><th scope="row">Base / NTK-aware scaling family</th><td>Adjust the RoPE base so different bands change by different amounts.</td><td>Rules and fixed/dynamic variants differ. A larger base is not identical to YaRN or a general extrapolation guarantee.</td></tr>
+        <tr><th scope="row">YaRN</th><td>Blend frequency-band interpolation and attention calibration.</td><td>Prescribed schedule with checkpoint-specific settings; validated inference recipes and continued-training uses both exist.</td></tr>
+        <tr><th scope="row"><a href="https://arxiv.org/abs/2402.13753">LongRoPE</a></th><td>Search nonuniform rescaling rather than rely only on a fixed formula.</td><td>Perplexity-guided evolutionary search, with progressive extension and short-context readjustment in the reported recipe.</td></tr>
+        <tr><th scope="row"><a href="https://arxiv.org/html/2502.20082v1#S3">LongRoPE2</a></th><td>Search scaling and the frequency-band transition using needle-answer perplexity.</td><td>Then adapt model weights with mixed short/original-RoPE and long/rescaled-RoPE training.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>LongRoPE2 scores the reference needle-answer tokens of controlled long-dependency examples,
+    rather than letting easy background tokens dominate whole-document perplexity.
+    That changes the search objective, not the need for held-out task evaluation.
+    Its experiments on Phi3-mini-3.8B and LLaMA3-8B support the combined recipe at those
+    scales; “near-lossless” is not a universal guarantee. Unlike
+    <a href="#lerope">LeRoPE's gradient-learned frequencies</a>, these are search-selected
+    schedules followed by weight adaptation.</p>
+
   <p><strong>YaRN</strong> means <em>Yet another RoPE extensioN method</em>.
     It combines frequency-dependent interpolation with attention-temperature calibration.
     It is not simply a larger RoPE base or a uniform division of all frequencies.</p>
@@ -244,7 +364,7 @@ print(f"Illustrative full-RoPE logit gain: {gain:.3f}")</code></pre>
     new queries must remain consistent. Use an implementation that manages this lifecycle;
     changing the factor without updating cache semantics is not sufficient.</div>
 
-  <h2 id="ssmax">3. SSMax: attention selection as the candidate set grows</h2>
+  <h2 id="ssmax">4. SSMax: attention selection as the candidate set grows</h2>
   <p><strong>Scalable-Softmax</strong> addresses a different issue. For one useful key with
     score advantage \(\Delta\) and \(n-1\) equally scored distractors,
     its ordinary-softmax probability is \(1/[1+(n-1)e^{-\Delta}]\).
@@ -319,7 +439,7 @@ print(f"Toy selected-key probability: {example[0]:.2%}")</code></pre>
     Llama 4 Scout's cited SSMax-related temperature scaling as inference-time</a>.
     That is important adoption evidence, not proof of an identical pretraining recipe.</p>
 
-  <h2 id="lerope">4. LeRoPE: learn the frequency correction</h2>
+  <h2 id="lerope">5. LeRoPE: learn the frequency correction</h2>
   <p><strong>LeRoPE</strong> learns a scalar for each rotary frequency:
     <code>learned_frequency[i] = base_frequency[i] * exp(alpha[i])</code>.
     Zero initialization preserves the starting schedule. The base can be ordinary RoPE
@@ -345,46 +465,91 @@ print(f"Toy selected-key probability: {example[0]:.2%}")</code></pre>
     positional parameters must help. LeRoPE changes rotary geometry; SSMax changes
     selection sharpness and can also be used in NoPE layers.</p>
 
-  <h2 id="adaptation">5. A practical long-context adaptation sequence</h2>
-  <ol>
-    <li><strong>Define the target.</strong> Specify input/output length, required tasks,
-      evidence locations, and resource constraints. “Supports 128K” needs a quality and
-      execution definition, not just a tensor-shape limit.</li>
-    <li><strong>Inventory the checkpoint contract.</strong> Record original context,
-      rotary dimensions, frequency/gain configuration, layer types, cache sharing, and
-      packing/position-reset policy. Use the existing model recipe before inventing a new one.</li>
-    <li><strong>Choose what changes.</strong> YaRN is an established first candidate for
-      eligible RoPE models. SSMax and LeRoPE are separate interventions; ablate them and
-      preserve a baseline rather than attributing a combined gain to either one.</li>
-    <li><strong>Adapt on representative data when needed.</strong> Continue training on
-      useful long examples while checking short-context retention. Long padding or a
-      configuration toggle alone does not teach distant evidence use. The amount of
-      training is model/task-dependent; follow the <a href="model-training-lifecycle.html#mid-training">mid-training handoff</a>.</li>
-    <li><strong>Qualify quality and runtime independently.</strong> Sweep lengths and
-      evidence positions, then measure memory, prefill latency, decode throughput and
-      concurrency under the intended serving setup.</li>
-  </ol>
+  <h2 id="efficiency">6. Choose the intervention from the bottleneck</h2>
   <div class="table-wrap">
     <table>
-      <thead><tr><th scope="col">Evaluation</th><th scope="col">What it can reveal</th></tr></thead>
+      <thead><tr><th scope="col">Observed problem</th><th scope="col">Candidate path</th><th scope="col">Boundary to preserve</th></tr></thead>
       <tbody>
-        <tr><th scope="row">Loss by position and length</th><td>Positional distribution shift, including regressions on short inputs.</td></tr>
-        <tr><th scope="row">Retrieval with distractors and multiple evidence locations</th><td>Whether information remains accessible, including middle-of-context weaknesses.</td></tr>
-        <tr><th scope="row">Tasks requiring several distant facts</th><td>Whether the model can combine evidence, not just find a single string.</td></tr>
-        <tr><th scope="row">Length-bucketed end-to-end workloads</th><td>Generation behavior, output truncation, quality/cost tradeoffs and actual serving limits.</td></tr>
+        <tr><th scope="row">Quality collapses at new lengths</th><td>Audit positions, masks, gains and cache consistency; compare a validated positional recipe and adaptation data.</td><td>A RoPE change is not the first explanation for every long-input failure.</td></tr>
+        <tr><th scope="row">Evidence is present, but not used correctly</th><td>Probe position/distractor sensitivity; improve long-dependency data or long-input supervision.</td><td>More GPU memory alone does not teach retrieval or synthesis.</td></tr>
+        <tr><th scope="row">Full-attention prefill is too memory/IO intensive</th><td><a href="../inference/flash-attention.html">FlashAttention</a> and <a href="../systems/sequence-parallelism.html">context parallelism</a>, including ring-style execution where appropriate.</td><td>Exact-attention kernels avoid a materialized score matrix; they do not remove its quadratic pairwise arithmetic. Distributed execution introduces communication.</td></tr>
+        <tr><th scope="row">Persistent cache or attention work is too large</th><td><a href="mla.html">MLA</a>, <a href="cross-layer-kv-sharing.html">CLA/YOCO</a>, <a href="sparse-attention.html">sparse attention</a>, or <a href="hybrid-attention.html">hybrid mixers</a>.</td><td>Architectural changes alter representations or access patterns and need compatible training and evaluation. They are not generic inference switches.</td></tr>
+        <tr><th scope="row">Adaptation itself is unaffordable</th><td>Profile packing, recomputation and parallelism; consider the <a href="#longlora">LongLoRA recipe</a> where applicable.</td><td>Lower training cost does not establish lower serving cost or equal task quality.</td></tr>
+        <tr><th scope="row">Most supplied material is irrelevant</th><td>Retrieval, reranking, selective loading, or context compression.</td><td>These select or transform the input rather than extend native context; missing evidence and compression loss become separate failure modes.</td></tr>
       </tbody>
     </table>
   </div>
   <p>For ordinary full attention, the attention part of prefill grows quadratically with
     length and persistent KV storage grows linearly per producer. YaRN/LeRoPE/SSMax
-    do not change those counts. Consult <a href="../inference/inference-compute-model.html">prefill/decode</a>,
-    <a href="../inference/flash-attention.html">FlashAttention</a>,
-    <a href="../inference/kv-cache.html">KV memory</a>, and
-    <a href="../systems/sequence-parallelism.html">context parallelism</a> for execution;
-    <a href="sparse-attention.html">DSA</a> and <a href="cross-layer-kv-sharing.html">cache-sharing
-    architectures</a> change different parts of the problem.</p>
+    do not change those counts. The <a href="../inference/inference-compute-model.html">prefill/decode</a>
+    and <a href="../inference/kv-cache.html">KV-memory</a> pages own the execution models.
+    Hardware, achieved kernel efficiency, communication overlap and concurrency determine
+    real wall time; do not turn an asymptotic formula into a universal speedup claim.</p>
 
-  <h2 id="evidence">6. Adoption is not the same as a training-stage claim</h2>
+  <h3 id="longlora">LongLoRA: an adaptation-efficiency recipe, not just LoRA</h3>
+  <p><a href="https://arxiv.org/html/2309.12307v3#S3">LongLoRA</a> combines low-rank
+    adaptation with trainable embedding and normalization parameters and shifted sparse
+    attention during fine-tuning. Half the heads shift local group boundaries to permit
+    information exchange across groups; masking must prevent unintended future leakage.
+    The reported inference path returns to ordinary full attention.</p>
+  <p>Its ablations distinguish sparse training attention from the parameter-update policy:
+    increasing ordinary LoRA rank did not close the tested perplexity gap as effectively
+    as allowing embeddings and norms to train. This supports the combined Llama2-era
+    recipe, not a guarantee that every architecture can train sparsely and serve densely.
+    Evaluate retrieval and synthesis as well as loss, and budget full-attention inference
+    separately. No framework implementation or benchmark is reproduced here.</p>
+
+  <h3 id="retrieval-alternative">Retrieval and compression change the input contract</h3>
+  <p>When only a small fraction of a corpus matters, selecting evidence can be preferable
+    to sending the entire corpus. Measure whether the selector retained the needed facts
+    separately from whether the reader used them. Include an oracle-evidence comparison
+    where possible. Summaries can lose exact details or cross-document dependencies;
+    a larger native window can help only if the task and model benefit from the extra
+    material. <a href="https://arxiv.org/html/2307.03172v3#S5">Lost in the Middle's
+    retriever-reader study</a> shows why more retrieved documents need not produce
+    proportional answer-quality gains.</p>
+
+  <h2 id="evaluation">7. Qualify usable context, not only accepted length</h2>
+  <p><a href="https://arxiv.org/html/2307.03172v3#S2">Lost in the Middle</a> holds
+    questions and answer-bearing evidence fixed while varying document position or
+    adding distractors. Its studied models often performed worse with evidence in
+    the middle. This is motivation for position-sensitive checks, not a claim that
+    every current model has an identical U-shaped curve.</p>
+  <p><a href="https://arxiv.org/html/2404.06654v3#S3">RULER</a> expands beyond a single
+    needle to harder retrieval, multi-hop variable tracking, aggregation, and QA with
+    distractors. Models that pass simple retrieval can still fail those tasks as length
+    or complexity increases. RULER's published effective-length threshold is a
+    benchmark-specific convention, not a universal service acceptance criterion.</p>
+  <div class="note"><strong>Name collision:</strong> this is the RULER
+    <em>long-context benchmark</em>, not OpenPipe ART's RULER relative reward judge
+    discussed in the <a href="../rl/verifier-reward-design.html">verifier guide</a>.</div>
+  <pre><code>context length x evidence position x distractor difficulty
+               x number of required facts x task type
+
+Report quality by slice, short-context retention, and runtime separately.</code></pre>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Axis or gate</th><th scope="col">Controlled comparison</th><th scope="col">Evidence to retain</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Length</th><td>Compare native, intermediate and target lengths; change irrelevant context without changing the answer.</td><td>Actual tokenizer counts, requested output budget, truncation policy, loss and task scores by length.</td></tr>
+        <tr><th scope="row">Evidence position</th><td>Relocate answer-bearing material across beginning, middle and end when the task's semantics permit it.</td><td>Paired examples, per-position scores and the worst-position gap, not just the mean.</td></tr>
+        <tr><th scope="row">Distractors</th><td>Move from easy noise to plausible competing facts or keys.</td><td>Wrong-match rates and sensitivity to evidence/noise ratio.</td></tr>
+        <tr><th scope="row">Required facts</th><td>Increase needles, hops, or items to aggregate while retaining a defined answer.</td><td>Missing-item and incorrect-composition errors; enough output budget to avoid confusing truncation with reasoning failure.</td></tr>
+        <tr><th scope="row">Task family</th><td>Pair synthetic probes with held-out document QA, code, summarization or other intended workloads.</td><td>Task-specific scores and evidence use; no inference from one retrieval test to all long-context behavior.</td></tr>
+        <tr><th scope="row">Short-context retention</th><td>Run the same short-input suite before and after adaptation under the intended serving schedule.</td><td>Regressions by task/domain and declared retention criteria.</td></tr>
+        <tr><th scope="row">Runtime</th><td>Profile the intended hardware, precision, kernel and concurrency for each length bucket.</td><td>Peak memory, prefill latency, decode throughput, failures and end-to-end cost, independently of quality scores.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Freeze templates, tokenizer/position policy, decoding settings, evaluator and output
+    budgets for a comparison; keep tuning/search examples separate from held-out tests.
+    Declare quality floors and runtime limits before selecting a winning recipe.
+    Report slice-level uncertainty and failures rather than hiding them in an aggregate
+    score. Claim usable length only for the tested task distribution and resource envelope.
+    General methodology remains in the <a href="../evaluation/model-evaluation.html#protocol">model
+    evaluation protocol</a> and <a href="../evaluation/model-evaluation.html#report">reporting guide</a>.</p>
+
+  <h2 id="evidence">8. Adoption is not the same as a training-stage claim</h2>
   <div class="table-wrap">
     <table>
       <thead><tr><th scope="col">Evidence</th><th scope="col">What is established</th><th scope="col">Do not infer</th></tr></thead>
@@ -394,6 +559,8 @@ print(f"Toy selected-key probability: {example[0]:.2%}")</code></pre>
         <tr><th scope="row">SSMax and LeRoPE research papers</th><td>Both study regular pretraining; LeRoPE is not restricted to model surgery.</td><td>Small research-model results prove benefits at all frontier scales.</td></tr>
         <tr><th scope="row">Llama 4 Scout</th><td>Meta identifies SSMax-related inference-time attention scaling.</td><td>The same mechanism was enabled throughout pretraining.</td></tr>
         <tr><th scope="row">Mistral Large 4</th><td>The report describes LeRoPE and SSMax during continued training after attention surgery, improving downstream results over fixed YaRN at similar loss.</td><td>Both were present from the start, or the combined comparison isolates each one's contribution.</td></tr>
+        <tr><th scope="row">Data Engineering and LongAlign</th><td>Controlled data-mixture and SFT comparisons motivate domain/length separation, long-instruction supervision, and explicit packing objectives.</td><td>Their token budgets, dataset sizes, or training order are universal requirements.</td></tr>
+        <tr><th scope="row">LongRoPE2 and LongLoRA</th><td>Specific search/training or efficiency recipes evaluated on named base models and tasks.</td><td>“Near-lossless” or lower training cost guarantees unchanged quality or faster inference for another model.</td></tr>
       </tbody>
     </table>
   </div>
@@ -413,6 +580,15 @@ print(f"Toy selected-key probability: {example[0]:.2%}")</code></pre>
     and the <a href="https://github.com/huggingface/transformers/blob/ca8c871ede62b521a75a2ddfc5e1968ac9c8e097/src/transformers/models/mistral_large4/modeling_mistral_large4.py">pinned Mistral inference implementation</a>.
     Numerical examples and plots are illustrative calculations, not model training,
     serving benchmarks, or an exhaustive adoption census.</p>
+  <p>Additional adaptation and evaluation sources, with methods/experiments reviewed:
+    <a href="https://arxiv.org/html/2402.10171v1#S3">Data Engineering</a>, §§3–5;
+    <a href="https://arxiv.org/html/2401.18058v1#S3">LongAlign</a>, §§3–4;
+    <a href="https://arxiv.org/html/2502.20082v1#S3">LongRoPE2</a>, §§2.3–4;
+    <a href="https://arxiv.org/html/2309.12307v3#S3">LongLoRA</a>, §§3–4;
+    <a href="https://arxiv.org/html/2404.06654v3#S3">RULER</a>, §§3–5;
+    and <a href="https://arxiv.org/html/2307.03172v3#S2">Lost in the Middle</a>, §§2–5.
+    These papers motivate the workflow; their historical leaderboard results are not
+    presented as a ranking of current models.</p>
 </main>
 <footer><a href="../foundations/rope-gradient.html">RoPE foundations</a> ·
   <a href="attention.html">Attention</a> · <a href="../index.html#transformer-training">Training</a></footer>
