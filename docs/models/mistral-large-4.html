@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light dark">
-  <meta name="description" content="Mistral Large 4 (Le Chonk): sparse MLA and MoE architecture, multimodal training, asynchronous RL, the preview-to-open-weight transition, DSpark serving, and license/evaluation boundaries.">
+  <meta name="description" content="Mistral Large 4 (Le Chonk): sparse MLA and MoE architecture, granularity-four experts, EP-local balancing, report-backed pretraining, asynchronous RL, and DSpark serving.">
   <title>Mistral Large 4 (Le Chonk) — Architecture, Training &amp; Open Weights</title>
   <link rel="canonical" href="https://yueyiming2009.github.io/ai-learning/models/mistral-large-4.html">
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
@@ -102,6 +102,7 @@
   </a>
   <div class="nav-links">
     <a href="#identity">Identity</a><a href="#architecture">Architecture</a><a href="#training">Training</a>
+    <a href="#moe-training">MoE training choices</a>
     <a href="#attention-path">Attention path</a><a href="#expert-path">Experts</a><a href="#cache-budget">Memory math</a>
     <a href="#serving">Serving</a><a href="#evaluation">Evaluation</a><a href="#license">License</a><a href="#sources">Sources</a>
   </div>
@@ -121,8 +122,11 @@
       <a href="#training">Training progression</a> &middot; <a href="#cache-budget">Memory budgets</a> &middot;
       <a href="#evaluation">Evidence</a></p>
     <p><strong>Coverage:</strong> released configuration plus a pinned Transformers implementation,
-      checked November 1, 2026. Tensor paths and analytical budgets below are source-grounded;
-      original training internals remain distinct from the public execution implementation.</p>
+      checked November 1, 2026; the
+      <a href="https://huggingface.co/mistralai/Mistral-Large-4-1T-A52B/resolve/main/assets/technical_report.pdf">official technical report</a>
+      adds pretraining and MoE-system evidence reviewed November 7.
+      Reported training choices remain distinct from the public execution implementation
+      and the analytical budgets below.</p>
   </aside>
 
   <h2 id="identity">1. Preview, released weights, and parameter accounting</h2>
@@ -235,7 +239,12 @@
     experts touch 452.985M matrix parameters for one token, plus 113.246M for the shared expert.
     Their forward matrix work is about <strong>1.132 GFLOPs/token/layer</strong>, excluding
     attention, routing, activation, and normalization. Layer 1 instead uses a dense FFN with
-    intermediate width 24,576.</p>
+    intermediate width 24,576. The ratio \(24576/6144=4\) explains the reported
+    <strong>expert granularity of four</strong>: each expert's intermediate width is one
+    quarter of that reference FFN, not one quarter of the model hidden width.
+    The 128 experts are independent networks, not four fixed slices of one matrix.
+    See the <a href="../transformer/moe-routing.html#granularity">shape and stored-versus-active
+    parameter example</a>; the shared expert adds work beyond the routed top-four budget.</p>
   <p>This is <strong>not <a href="../transformer/latent-moe.html">Latent MoE</a></strong>:
     there is no shared 6144 → narrower-expert-width → 6144 pair surrounding these experts.
     Contrast <a href="muse-spark-open.html#latent-experts">Muse's 8192 → 4096 routed path</a>.
@@ -246,9 +255,9 @@
 
   <h2 id="training">3. The reported training progression</h2>
   <ol class="flow" aria-label="Reported Mistral Large 4 development sequence">
-    <li><strong>1. Train a multimodal foundation</strong>Mistral reports training from scratch
-      on 3,800 Grace Blackwell GPUs in its European datacenters, with multilingual data spanning
-      more than 160 languages.</li>
+    <li><strong>1. Train a multimodal foundation</strong>The technical report specifies
+      3,840 GB200 GPUs near Paris and 45 days of pretraining. The announcements describe
+      multilingual data spanning more than 160 languages.</li>
     <li><strong>2. Supervised fine-tuning and RL</strong>The preview account attributes gains
       to both SFT and RL. Tasks cover scientific reasoning, chat, factuality, safety, and
       long-horizon tool use, sharing composable environment and verification interfaces.</li>
@@ -258,6 +267,50 @@
       and high reasoning effort. The released package includes a speculative draft head and
       an additional official NVFP4 variant.</li>
   </ol>
+  <p><strong>Pretraining evidence from §§2.2–2.3:</strong> a two-phase curriculum allocates
+    65% to broad coverage and 35% to a higher-quality, more STEM-focused mixture.
+    The second phase raises the code share from 16.9% to 39% and sequence length from
+    4K to 40K. The report specifies AdamW with
+    \((\beta_1,\beta_2)=(0.975,0.975)\), rather than leaving the optimizer entirely undisclosed.</p>
+  <p><strong>Hardware and execution:</strong> the report names fine-grained FP8 training,
+    a larger NVLink domain for wide EP, NVLink-C2C to Grace for activation offload, ZeRO-2,
+    selective recomputation, kernel fusion, and compute/communication overlap. It also names
+    SM margin to reduce cross-stream contention, asynchronous data/checkpoint/metrics work,
+    and monitoring for CPU stalls, non-finite values, and NFS slowdowns.
+    These are reported mechanisms, not a complete set of launch parameters.</p>
+  <div class="note"><strong>Why ZeRO-2, not ZeRO-3?</strong> §2.3 names ZeRO-2 but gives
+    no direct comparison or decision rationale. Avoiding repeated parameter gathers when
+    working weights already fit is a general
+    <a href="../systems/deepspeed.html#ladder">memory/communication trade-off</a>, not a
+    confirmed Mistral explanation. <a href="../systems/yolo.html#moe">MAI's YOLO account</a>
+    separately documents activation offload enabling ZeRO-2; do not transfer that finding
+    to Mistral as fact.</div>
+
+  <h3 id="moe-training">Granularity and balancing are model–systems choices</h3>
+  <p><strong>Why granularity four?</strong> In Mistral's comparison, increasing granularity
+    to eight reduced the FLOPs needed to match perplexity by about 4.3%, with reported
+    uncertainty of 0.5 percentage points, but incurred approximately 5% training slowdown.
+    That motivated granularity four. The report does not attribute the slowdown among
+    individual kernels or communication stages: fewer quality-matched FLOPs are not
+    automatically less wall-clock time.</p>
+  <p><strong>Balance the executing EP group, not only the global batch.</strong>
+    Mistral aggregates statistics over the tokens handled by each EP group and balances
+    expert inbound tokens. Its comparisons favored this choice when trading off imbalance
+    and validation perplexity; the coefficient was tuned against load, perplexity, and
+    downstream evaluations. Changing partitioning also changes this objective's statistics,
+    so small-scale experiments must preserve or explicitly study that difference.</p>
+  <p>Mechanics:
+    <a href="../transformer/moe-routing.html#balance-scope">why opposing local imbalances
+    can disappear in global counts</a> and
+    <a href="../systems/moe-parallelism.html#ep-groups">EP group → rank → local expert group</a>.
+    MAI-style local capacity borrowing is a separate scheduling mechanism; the Mistral
+    balancing disclosure does not establish that it uses MAI's runtime design.</p>
+  <p class="muted">Source:
+    <a href="https://huggingface.co/mistralai/Mistral-Large-4-1T-A52B/resolve/main/assets/technical_report.pdf#page=2">technical report, §§2.2–2.3, pp. 2–3</a>.
+    Compare <a href="../systems/mfu.html#mai-accounting">quality per FLOP versus time to quality</a>
+    without equating different models' measurements.</p>
+
+  <h3 id="post-training">Post-training runtime reported in the announcements</h3>
   <p><strong>What the runtime contributes:</strong> an autoscaling actor fleet collects tens of
     thousands of rollouts concurrently while training runs asynchronously. Shared sandboxes,
     search, and APIs support multiple task types; verifiers combine tests, reward models,
@@ -268,9 +321,11 @@
     low-staleness/off-policy controls, but does not specify enough to reconstruct token
     provenance, the exact objective, or freshness thresholds. Do not substitute another
     framework's defaults for those missing details.</p>
-  <div class="note"><strong>Disclosure limit:</strong> the exact corpus/token budget, complete
-    stage schedule, optimizer settings, loss modifications, and checkpoint handoffs are not
-    established by these sources. A reported SFT → RL progression is not a reproducible launch recipe.</div>
+  <div class="note"><strong>Evidence boundary:</strong> the report adds concrete pretraining
+    disclosures beyond the launch announcements. This page summarizes selected sections, not
+    every post-training method in the report. The reported mechanisms and the public inference
+    implementation do not by themselves constitute a reproducible training launch recipe;
+    undisclosed settings must not be filled with another framework's defaults.</div>
   <p class="muted">Sources: <a href="https://mistral.ai/news/mistral-large-4/">preview account</a>
     and <a href="https://mistral.ai/news/mistral-large-4-oss/">weights release</a>.
     Mechanics: <a href="../rl/async-rl.html">async RL</a>,
@@ -369,6 +424,11 @@
     hosted-model commercialization.</p>
 
   <h2 id="sources">Sources and evidence boundary</h2>
+  <p>Added November 7, 2026:
+    <a href="https://huggingface.co/mistralai/Mistral-Large-4-1T-A52B/resolve/main/assets/technical_report.pdf">Mistral Large 4 technical report</a>,
+    particularly §§2.2–2.3 for pretraining data, hardware, AdamW, expert granularity,
+    and EP-group balancing. Treat the report as primary evidence for those claims;
+    distinguish its measured comparisons from the linked general explanations.</p>
   <p>Checked November 1, 2026: Mistral's
     <a href="https://mistral.ai/news/mistral-large-4/">preview announcement</a>,
     <a href="https://mistral.ai/news/mistral-large-4-oss/">release announcement</a>,

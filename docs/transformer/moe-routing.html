@@ -219,8 +219,10 @@
     <a href="#gradients">Gradient flow</a>
     <a href="#imbalance">Load imbalance</a>
     <a href="#aux-loss">Auxiliary loss</a>
+    <a href="#balance-scope">EP-local balance</a>
     <a href="#vs-heads">vs MHA heads</a>
     <a href="#routing-schemes">Routing schemes</a>
+    <a href="#granularity">Expert granularity</a>
     <a href="#stability">Stability in RL</a>
     <a href="#summary">Summary</a>
   </div>
@@ -501,14 +503,17 @@ def moe_forward(x, W_gate, experts, K=2):
 
   <h3>The two terms</h3>
   <p>
-    For a batch of \(T\) tokens, define two per-expert quantities:
+    For a specified population of \(T\) tokens, define two per-expert quantities.
+    The population might be one sequence, one EP group's tokens, or the global batch;
+    <a href="#balance-scope">that scope is a separate choice</a> from which load metric is balanced.
   </p>
 
   <div class="step">
     <div class="step-label">f<sub>i</sub> — expert load fraction (discrete)</div>
     <p style="margin:0; font-size:.92rem">
       \(\displaystyle f_i = \frac{1}{T} \sum_{t=1}^{T} \mathbf{1}[i \in \mathcal{S}_t]\)
-      — the fraction of tokens that were routed to expert \(i\).
+      — the fraction of tokens that were routed to expert \(i\), before any capacity dropping.
+      For top-\(K\), \(\sum_i f_i=K\); this is not normalized by the number of assignments.
       Computed with a hard indicator: non-differentiable. Treated as a constant in backprop.
     </p>
   </div>
@@ -538,15 +543,17 @@ def moe_forward(x, W_gate, experts, K=2):
     \(p_{t,i}\) for all tokens, pushing the router to send fewer tokens to expert \(i\).
   </p>
   <p>
-    At perfectly uniform routing, \(f_i = 1/E\) and \(P_i = 1/E\) for all \(i\), giving:
+    At perfectly uniform top-\(K\) routing, \(f_i = K/E\) and \(P_i = 1/E\) for all \(i\), giving:
   </p>
   <div class="eq-block">
-    \[\mathcal{L}_\text{aux} = \alpha \cdot E \cdot E \cdot \frac{1}{E} \cdot \frac{1}{E} = \alpha\]
+    \[\mathcal{L}_\text{aux} = \alpha \cdot E \cdot E \cdot \frac{K}{E} \cdot \frac{1}{E} = \alpha K\]
   </div>
   <p>
-    Any deviation from uniform routing increases \(\mathcal{L}_\text{aux}\) above \(\alpha\), providing
-    a gradient that pushes back toward balance. The \(E\) prefactor normalizes the loss so that the
-    minimum value is always \(\alpha\) regardless of the number of experts.
+    The familiar \(\alpha\) baseline is the top-1 case. Implementations that instead divide
+    assignment counts by \(TK\) obtain an \(\alpha\) baseline for any \(K\); compare coefficients
+    only after checking normalization. The product is a routing surrogate, not an exact variance:
+    uniform routing gives this reference value, but not every nonuniform pair of hard loads and
+    soft probabilities has a larger loss.
   </p>
 
   <div class="note">
@@ -555,12 +562,62 @@ def moe_forward(x, W_gate, experts, K=2):
     correction, then use the soft probabilities to perform the correction differentiably.
   </div>
 
+  <h3 id="balance-scope">Which tokens count? Global batch versus EP-group balance</h3>
+  <p>
+    An <a href="../systems/moe-parallelism.html#ep-groups">EP group</a> is the set of workers
+    that exchange tokens for a distributed expert pool. If several groups process different
+    data with replicas of that pool, aggregating their routing counts can hide local stragglers.
+    This top-1 example has 100 tokens in each group and one equal-cost expert per GPU:
+  </p>
+  <div class="table-wrap">
+    <table>
+      <caption>Illustrative inbound assignments, not a measured Mistral routing distribution.</caption>
+      <thead><tr><th scope="col">Scope</th><th scope="col">Expert 1</th><th scope="col">Expert 2</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">EP group A</th><td>90</td><td>10</td></tr>
+        <tr><th scope="row">EP group B</th><td>10</td><td>90</td></tr>
+        <tr><th scope="row">Global batch</th><td>100</td><td>100</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    Global counts are balanced, but each group waits for a GPU doing 90 assignments instead of
+    the balanced 50. For group \(g\), compute \(f_{g,i}\) and \(P_{g,i}\) from its own \(T_g\)
+    tokens. A token-weighted example using the surrogate above is:
+  </p>
+  <div class="eq-block">
+    \[
+      \mathcal L_{\mathrm{EP}} =
+      \sum_g \frac{T_g}{\sum_h T_h}
+      \left(\alpha E\sum_i f_{g,i}P_{g,i}\right).
+    \]
+  </div>
+  <p>
+    Computing each group's product before averaging is different from first averaging counts
+    and probabilities globally. This equation illustrates the scope distinction; it is
+    <strong>not a disclosed implementation of Mistral's exact loss or normalization</strong>.
+    Nor does group-local balance require every sequence to use all experts uniformly.
+  </p>
+  <p>
+    <a href="../models/mistral-large-4.html#moe-training">Mistral Large 4</a> reports balancing
+    <strong>expert inbound tokens within each EP group</strong>, rather than the global batch.
+    This couples the objective to partitioning: changing the group size or which tokens it
+    handles changes the statistics even at the same coefficient. The report tunes the
+    coefficient against load imbalance, perplexity, and downstream evaluations.
+    The <a href="../systems/moe-parallelism.html#dropless">MAI local expert groups</a> are a
+    different mechanism: a scheduling/buffer policy that handles imbalance, not this loss scope.
+  </p>
+  <p class="muted">Source:
+    <a href="https://huggingface.co/mistralai/Mistral-Large-4-1T-A52B/resolve/main/assets/technical_report.pdf#page=3">Mistral Large 4 technical report, §2.3</a>.</p>
+
   <h3>Beyond one level — balancing the hardware, not just the experts</h3>
   <p>
     \(\mathcal{L}_\text{aux}\) as written balances <em>experts</em>. That is a statement about the model.
     Once experts are sharded across GPUs, what actually stalls the step is imbalance between
-    <em>devices</em> and between their <em>message volumes</em> — and perfectly balanced experts can
-    still leave one GPU hot if the router happens to favour the experts that live on it.
+    <em>devices</em> and between their <em>message volumes</em>. Several moderately hot experts
+    colocated on one GPU can produce a large rank-level imbalance. Exactly equal loads on
+    equal-cost experts with equal placement would also balance compute; real workloads need
+    not meet those assumptions.
   </p>
   <p>
     DeepSeek-V2 keeps the \(\sum f \cdot P\) form and instantiates it three times, at three granularities.
@@ -740,45 +797,58 @@ def moe_forward(x, W_gate, experts, K=2):
     pattern for Expert Parallelism.
   </p>
 
-  <h3>Expert granularity — the axis that isn't \(K\)</h3>
+  <h3 id="granularity">Expert granularity — expert size is not expert count</h3>
   <p>
-    Everything above treats \(E\) and \(K\) as given and asks how to route. There is a prior question:
-    how <em>big</em> should an expert be? Early MoE layers made each expert a full-width FFN and set
-    \(K = 1\) or \(2\). DeepSeekMoE (and DeepSeek-V2 at scale) changes the answer — split each expert
-    into \(m\) narrower ones and raise \(K\) to \(mK\). Activated parameters are unchanged, and so is
-    total parameter count; only the granularity moves.
+    Keep four quantities separate: hidden width \(D\), expert intermediate width \(D_e\),
+    pool size \(E\), and selected experts \(K\). Relative to a reference FFN intermediate
+    width \(D_{\mathrm{ff}}\), granularity \(g=D_{\mathrm{ff}}/D_e\) says how narrow
+    <em>each expert</em> is. It does not say how many experts exist.
   </p>
-  <p>
-    What that buys is combinatorial. The set of expert <em>combinations</em> a token can be assigned is
-    \(\binom{E}{K}\), and splitting grows it violently:
-  </p>
-
-  <div class="result">
-    <div class="result-label">Reachable expert combinations at fixed activated params</div>
+  <div class="eq-block">
     \[
-      \binom{16}{2} = 120
-      \qquad \longrightarrow \qquad
-      \binom{160}{6} \approx 2.1 \times 10^{10}
+      D_{\mathrm{ff}}=4D,\quad g=4
+      \quad\Longrightarrow\quad D_e=D,\quad
+      W^{\mathrm{up}}_i\in\mathbb R^{D\times D}.
     \]
-    <div style="font-size:0.85rem;color:var(--muted);margin-top:6px">
-      Left: 16 full-width experts, top-2. Right: DeepSeek-V2 — 160 experts of FFN width 1536, top-6.
-      Same FLOPs per token, eight orders of magnitude more distinct assignments.
-    </div>
   </div>
-
   <p>
-    The argument for why that matters is about <em>specialization</em>. A wide expert asked to serve
-    many unrelated token populations must learn a blend of all of them; a narrow expert can commit to
-    one, and the router composes six of them per token instead of picking one blend off the shelf.
-    Granularity is therefore a lever on how sharply experts can specialize — independent of \(K\),
-    independent of total size, and not visible anywhere in the gating math of §2–§3.
+    There can still be 128 independent copies of that matrix, each learned separately.
+    They are <strong>not just four slices of one fixed dense matrix</strong>.
+    With row-vector inputs, the routed path looks like this:
+  </p>
+  <pre><code>Pool: E0, E1, ..., E127 -- independent expert weights
+One token x [1,D] selects, for example, E3, E17, E62, E109
+  x -> E3   -> [1,D]
+  x -> E17  -> [1,D]  -- weighted sum --> y [1,D]
+  x -> E62  -> [1,D]
+  x -> E109 -> [1,D]</code></pre>
+  <div class="table-wrap">
+    <table>
+      <caption>Up-projection weights only; equal-budget coarse/fine architectural examples.</caption>
+      <thead><tr><th scope="col">Design</th><th scope="col">Each W<sub>up</sub></th><th scope="col">Stored parameters</th><th scope="col">Active per token</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Dense reference</th><td>\([D,4D]\)</td><td>\(4D^2\)</td><td>\(4D^2\)</td></tr>
+        <tr><th scope="row">32 coarse experts, top-1</th><td>\([D,4D]\)</td><td>\(128D^2\)</td><td>\(4D^2\)</td></tr>
+        <tr><th scope="row">128 fine experts, top-4</th><td>\([D,D]\)</td><td>\(128D^2\)</td><td>\(4D^2\)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    This stores 32 times the dense reference's up-projection parameters while doing the same
+    up-projection matrix arithmetic per token. For <a href="../foundations/swiglu.html">SwiGLU</a>,
+    add the gate and down matrices: an expert has approximately \(3DD_e\) parameters.
+    The table excludes the router and any always-on shared experts.
+    <a href="../models/mistral-large-4.html#expert-path">Mistral Large 4</a> has \(D=D_e=6144\),
+    four of 128 routed experts, and an additional shared expert.
   </p>
   <p>
-    It is not free. Six selected experts instead of two means the token's targets span more GPUs, so
-    the AlltoAll fan-out grows — which is exactly why fine-grained MoE arrived together with
-    <em>device-limited routing</em> (cap each token's experts to at most \(M\) devices) rather than
-    before it. Fine granularity is a routing idea that only ships with a communication fix attached.
-    The trend has continued: later models run 8-of-256 and beyond.
+    In the <a href="https://arxiv.org/abs/2401.06066">DeepSeekMoE</a> equal-budget construction,
+    \(E\to gE\), \(K\to gK\), and \(D_e\to D_e/g\): stored and activated expert matrix
+    parameters stay fixed, but the router can compose more combinations of smaller specialists.
+    That construction couples the knobs to preserve budgets; granularity and \(K\) are not synonyms.
+    Smaller GEMMs, routing overhead, and greater dispatch fan-out can offset a modeling gain.
+    Mistral's <a href="../models/mistral-large-4.html#moe-training">granularity-four versus eight
+    experiment</a> illustrates why quality per FLOP and quality per wall-clock time differ.
   </p>
 
   <h3 id="shared-experts">Shared experts</h3>

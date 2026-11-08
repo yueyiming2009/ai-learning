@@ -186,7 +186,9 @@
     <a href="#moe-basics">MoE basics</a>
     <a href="#dispatch">AlltoAll dispatch</a>
     <a href="#ep">Expert Parallelism</a>
+    <a href="#ep-groups">Groups &amp; ranks</a>
     <a href="#ep-tradeoffs">EP tradeoffs</a>
+    <a href="#dropless">Local expert groups</a>
     <a href="#tp-in-moe">TP in MoE</a>
     <a href="#dp">DP interaction</a>
     <a href="#worked">Worked example</a>
@@ -200,7 +202,7 @@
 <div class="hero">
   <span class="hero-pill">Systems · Parallelism</span>
   <h1>MoE Parallelism — EP, TP, and Throughput Tradeoffs</h1>
-  <p>Mixture-of-Experts models replace the dense FFN with a data-dependent expert dispatch, demanding a new parallelism axis. This page derives the AlltoAll cost model, the arithmetic-intensity argument for Expert Parallelism over TP on FFN weights, and how to reason about TP × EP × DP degrees for throughput.</p>
+  <p>How distributed expert pools exchange tokens: EP groups versus local expert groups, logical payload versus network traffic, and the memory, load-balance, and topology tradeoffs behind an EP plan.</p>
 </div>
 
 <div class="page-wrap">
@@ -219,7 +221,8 @@
   <h2 id="moe-basics">1 · How MoE changes the compute picture</h2>
   <p>
     A standard transformer FFN is a dense two-projection block: every token passes through the same
-    \(W_\text{up}[D, 4D]\) and \(W_\text{down}[4D, D]\). All \(4D^2\) parameters are active for every token.
+    \(W_\text{up}[D, 4D]\) and \(W_\text{down}[4D, D]\). All \(8D^2\) parameters are active for every token.
+    The table uses this two-projection convention; a gated SwiGLU FFN has a third matrix.
   </p>
   <p>
     A Mixture-of-Experts FFN replaces this with \(E\) independent expert FFNs plus a learned <em>router</em>.
@@ -247,14 +250,18 @@
   </p>
   <div class="result">
     <div class="result-label">The MoE constraint</div>
-    Expert weights scale as \(O(E)\). They must either be replicated across GPUs (memory-prohibitive at large \(E\)) or <em>sharded across a new parallelism axis</em> — Expert Parallelism.
+    Expert weights scale as \(O(E)\). EP distributes whole experts in the baseline below;
+    TP and parameter sharding can also distribute their weights. See
+    <a href="../transformer/moe-routing.html#granularity">expert granularity</a> for why
+    hundreds of narrow experts can have dense-like active arithmetic.
   </div>
 
   <!-- ════════════════════════ DISPATCH ════════════════════════ -->
   <h2 id="dispatch">2 · AlltoAll dispatch — the cost model</h2>
   <p>
-    In a dense model with TP, each GPU applies the same FFN to its local tokens and reduces partial sums with
-    an AllReduce. In MoE, each token must reach the GPU that holds its assigned experts. This requires a
+    In a conventional dense TP FFN, GPUs apply different weight shards to the same token
+    population and reduce partial outputs. In MoE, each token must reach the GPU that holds
+    its assigned experts. This requires a
     <em>data-dependent routing</em> communication step.
   </p>
 
@@ -262,7 +269,9 @@
   <div class="step">
     <div class="step-label">Dispatch (before expert compute)</div>
     <p style="margin:0; font-size:.92rem">
-      Each rank holds \(B_\text{local}\) tokens. The router assigns each token to \(K\) experts. An AlltoAll
+      Let \(B\) be the total number of input tokens in one EP group's dispatch, not a sequence
+      batch size. With equal input partitioning, each rank starts with \(B_\text{local}=B/EP\)
+      tokens. The router assigns each token to \(K\) experts. An AlltoAll
       redistributes tokens to the ranks that hold their target experts. Each rank receives the tokens
       assigned to its experts and sends away tokens bound for other ranks.
     </p>
@@ -270,7 +279,8 @@
   <div class="step">
     <div class="step-label">Expert compute (local)</div>
     <p style="margin:0; font-size:.92rem">
-      Each rank runs its \(E/EP\) expert FFNs on the dispatched tokens. Fully local — no communication.
+      Each rank runs its \(E/EP\) expert FFNs on the dispatched tokens. Computation is local
+      in the baseline with whole experts per GPU; expert TP adds its own collectives.
     </p>
   </div>
   <div class="step">
@@ -288,40 +298,45 @@
     partial sums must be added together.
   </p>
   <p>
-    Expert dispatch is a <em>permutation</em>, not a reduction: each token goes to exactly one expert
-    (per selection), is processed there, and comes back. There are no partial sums to accumulate across
-    ranks at dispatch time. AlltoAll is exactly the right primitive — it is a full-to-full exchange where
-    each rank sends a distinct chunk to each other rank.
+    Expert dispatch is a replication-and-permutation, not a reduction: each token produces
+    \(K\) assignments, each targeting one expert. AlltoAll exchanges the destination-specific
+    chunks. Combine returns the expert results and reduces them with the routing weights;
+    implementations can fuse or deduplicate parts of these exchanges.
   </p>
 
   <div class="result">
-    <div class="result-label">AlltoAll dispatch volume per MoE layer</div>
+    <div class="result-label">Logical activation payload, across one EP group</div>
     \[
-      V_\text{dispatch} = B \times K \times D \text{ values} \quad (= 2BKD \text{ bytes in bf16})
+      V_\text{dispatch}=BKDb,\qquad V_\text{dispatch+combine}=2BKDb
     \]
-    where \(B\) = tokens in this batch (not sequences), \(K\) = top-K, \(D\) = hidden dim. Same for combine.
-    <br>Total per-layer: <strong>\(2 \times 2BKD\) bytes</strong> (one AlltoAll each way).
+    Here \(b\) is bytes per activation value, \(K\) is top-K, and \(D\) is hidden width.
+    BF16 uses \(b=2\). This counts one full-width vector per assignment, including local
+    assignments; it excludes metadata, padding, and backward traffic.
   </div>
 
   <p>
-    Compare this to the TP AllReduce for a dense FFN of the same \(D\): volume per AllReduce =
-    \(2BTD\) bytes (for \(T\) tokens in the sequence). They differ in the token count: the AlltoAll
-    sends \(BK\) tokens (total dispatched per layer) vs. the AllReduce's \(BT\) tokens. At \(K \ll T\)
-    the AlltoAll is cheaper; but \(K\) is typically 2 while \(T\) can be 4096+, so the AlltoAll is
-    often over an order of magnitude smaller in volume.
+    <strong>Logical payload is not wire traffic.</strong> If a fraction \(r\) of assignments
+    leaves its origin rank, average dispatch bytes sent per rank are
+    \(rBKDb/EP\), assuming balanced input and routing and no deduplication.
+    For uniformly placed experts, the expected off-rank fraction is \(r=1-1/EP\).
+    Inter-node traffic needs the fraction crossing a <em>node</em>, not merely a rank.
+    Skew, shared destinations, hierarchical dispatch, and padding alter actual traffic.
   </p>
   <div class="note">
-    The AlltoAll payload is independent of \(E\) and \(EP\). Adding more experts or more EP ranks does
-    not change the total bytes moved — it only changes how many ranks participate in the exchange.
-    (A permutation's total data volume equals the number of elements being permuted.)
+    Compare collectives with the same token-count and traffic convention. For a TP
+    AllReduce on \(B\) token vectors, the tensor payload per rank is \(BDb\).
+    A ring on \(p\) ranks sends \(2(p-1)BDb/p\) bytes per rank, with a matching receive
+    volume; other algorithms have different cost models. If \(B\) already counts tokens,
+    do not multiply it by sequence length again. There is no general
+    “\(K\ll\text{sequence length}\), therefore AlltoAll is cheaper” rule.
   </div>
 
   <h3>Fan-out — the term the volume formula misses</h3>
   <p>
     Bytes are not the whole cost. What the payload formula hides is <em>how many distinct peers</em> each
-    token's copy must reach: a token routed to \(K\) experts scattered across \(K\) different nodes
-    generates \(K\) separate inter-node messages, each with its own latency and its own place in the
-    slowest-link calculation. Total volume is unchanged; wall-clock is not.
+    token's copy must reach. A token routed to experts on \(K\) different nodes has \(K\)
+    destinations, though dispatchers batch many tokens into messages. Logical assignment
+    payload alone does not capture fan-out, message sizes, or the slowest-link time.
   </p>
   <p>
     This is a mild issue at \(K = 2\) and a serious one for fine-grained MoE, where \(K = 6\) or 8 is normal
@@ -343,9 +358,11 @@
 
   <p>
     The effect is to decouple communication fan-out from routing multiplicity: you can keep raising \(K\)
-    for specialization without the message count following it. It also gives a hard bound to build on —
-    each device sends at most \(MT\) hidden states — which is what the <em>communication balance loss</em>
-    on the routing page then complements from the receiving side.
+    for specialization while capping destinations per token. If dispatch deduplicates tokens
+    per destination device, at most \(M B_\text{local}\) distinct token-device vectors are
+    needed from one origin rank. Without that optimization, multiple assignments can still
+    send duplicate vectors. The <em>communication balance loss</em> complements this sending-side
+    constraint by discouraging overloaded receivers.
   </p>
 
   <!-- ════════════════════════ EP ════════════════════════ -->
@@ -353,7 +370,37 @@
   <p>
     Expert Parallelism assigns each EP rank a disjoint subset of the \(E\) experts: rank \(r\) holds
     experts \([r \times E/EP,\ (r+1) \times E/EP)\). The expert weights for those experts live only on
-    that rank — no replication, no TP sharding within them (in the baseline configuration).
+    that rank within this group — no expert TP in the baseline. Another data-parallel
+    replica may hold a copy of the same expert pool.
+  </p>
+
+  <h3 id="ep-groups">EP group, EP rank, and local expert group are different</h3>
+  <p>
+    An <strong>EP group</strong> is a communication group of worker processes that jointly
+    hold an expert pool and exchange its tokens. An <strong>EP rank</strong> is one
+    member of that group, usually one GPU process. With eight experts and two ranks:
+  </p>
+  <pre><code>EP communication group: {GPU 0, GPU 1}
+|
++-- EP rank 0 / GPU 0 owns E0-E3
+|   +-- Local expert group A: {E0, E1}
+|   +-- Local expert group B: {E2, E3}
+|
++-- EP rank 1 / GPU 1 owns E4-E7
+    +-- Local expert group C: {E4, E5}
+    +-- Local expert group D: {E6, E7}</code></pre>
+  <p>
+    The local groups A-D illustrate MAI-style scheduling inside a rank; they are
+    <strong>not additional EP process groups</strong>. A token on GPU 0 selecting E6
+    travels within the EP group to GPU 1; group D schedules E6's work.
+    The exact group sizes here are illustrative, not MAI's disclosed configuration.
+  </p>
+  <p>
+    EP membership is chosen by software, not defined by node boundaries. A group can
+    fit within one node, span nodes inside a rack-scale NVLink domain, or cross the
+    scale-out network. A <a href="../hardware/gpu-generations.html#nvl72">larger NVLink
+    domain</a> permits wider EP on the fast fabric; it does not prescribe an EP degree
+    or turn remote memory into local HBM.
   </p>
 
   <div class="compare">
@@ -361,12 +408,12 @@
     <div class="compare-grid">
       <div>
         <div class="compare-col-label">TP within expert FFN</div>
-        <p style="margin:.3em 0; font-size:.92rem">Each GPU holds half of each expert's weight matrix. After every expert GEMM, an AllReduce sums partial outputs. With \(E\) experts active: \(E\) AllReduces per layer.</p>
-        <p style="margin:.3em 0; font-size:.92rem">The expert GEMMs at training batch sizes are <em>memory-bandwidth-bound</em> (few tokens per expert → low arithmetic intensity). TP adds communication without improving the memory bottleneck — the arithmetic intensity of the GEMM doesn't increase, but AllReduce latency is added on the critical path.</p>
+        <p style="margin:.3em 0; font-size:.92rem">Each expert's matrices are split across a TP group. Column-parallel up/gate projections can feed a row-parallel down projection, followed by reduction of partial outputs. Implementations can batch expert communication; one AllReduce per expert GEMM is not a requirement.</p>
+        <p style="margin:.3em 0; font-size:.92rem">TP saves weight memory and can accelerate sufficiently large GEMMs, but pays for collectives. Small token counts per expert can make launch, weight-bandwidth, and communication costs dominate. Measure the actual expert shapes instead of assuming all training GEMMs are memory-bound.</p>
       </div>
       <div>
         <div class="compare-col-label">EP — shard the experts, move the tokens</div>
-        <p style="margin:.3em 0; font-size:.92rem">Each GPU holds \(E/EP\) complete expert weight matrices. Expert GEMMs are fully local. Only two AlltoAll operations per layer (dispatch + combine), total volume \(4BKD\) bytes — independent of \(E\).</p>
+        <p style="margin:.3em 0; font-size:.92rem">Each GPU holds \(E/EP\) complete experts in the baseline. A forward dispatch and combine have logical payload \(2BKDb\) across the group. Actual wire traffic depends on placement and the dispatcher; pipelined schedules may use multiple rounds.</p>
         <p style="margin:.3em 0; font-size:.92rem">EP keeps expert weights local and moves the <em>tokens</em> instead. Tokens are small (\(D\) floats each); weight matrices are large (\(D \times D_e\)). Moving small things to large things is cheaper than moving large things.</p>
       </div>
     </div>
@@ -374,7 +421,9 @@
 
   <div class="result">
     <div class="result-label">The EP principle</div>
-    At the batch sizes typical in training, expert FFNs are memory-bandwidth-bound. TP on expert weights adds AllReduce communication without improving arithmetic intensity. EP avoids this by keeping each expert local and routing tokens via AlltoAll — whose volume is proportional to tokens, not parameters.
+    EP assigns different experts to different workers and moves token activations to them.
+    TP splits each expert's matrices. They solve different placement problems and can be
+    combined; their benefit depends on resident state, token counts, kernel efficiency, and topology.
   </div>
 
   <!-- ════════════════════════ EP TRADEOFFS ════════════════════════ -->
@@ -388,7 +437,7 @@
   <div class="result">
     \[
       \text{expert weights per rank} = \frac{E}{EP} \times 2 \times D \times D_e \times 2 \text{ bytes}
-      = \frac{64}{EP} \times 2 \times 2048 \times 1024 \times 2 \approx \frac{512 \text{ MB}}{EP}
+      = \frac{64}{EP} \times 2 \times 2048 \times 1024 \times 2 = \frac{512 \text{ MiB}}{EP}
     \]
   </div>
   <p>
@@ -397,36 +446,36 @@
     at reasonable dimensions.
   </p>
 
-  <h3>Communication volume stays constant</h3>
+  <h3>Fixed logical payload does not imply fixed network cost</h3>
   <p>
-    Unlike TP (where AllReduce volume scales with the tensor being reduced), the AlltoAll dispatch volume
-    \(2BKD\) is independent of EP degree. It's a permutation of a fixed number of tokens — more EP ranks
-    just means smaller chunks per rank, not more total bytes. The alltoall <em>latency</em> may increase
-    slightly (more ranks in the collective) but bandwidth is unaffected.
+    At fixed group-wide \(B,K,D,b\), logical dispatch payload \(BKDb\) does not depend on
+    the number of experts or ranks. Increasing EP can nevertheless change the remote fraction,
+    message sizes, fan-out, contention, and achieved bandwidth. Holding tokens <em>per rank</em>
+    fixed instead grows group-wide \(B\), so even logical payload grows.
   </p>
 
-  <h3>Load imbalance is the EP ceiling</h3>
+  <h3>Load imbalance can expose stragglers</h3>
   <p>
-    The one cost that grows with EP is the exposure of expert load imbalance. If all EP ranks had exactly
-    \(BK/EP\) tokens dispatched to them, all expert GEMMs would finish simultaneously. In practice, the
-    router assigns tokens non-uniformly: one expert might receive \(2\times\) the average. All EP ranks
-    must wait for the slowest one to finish before the combine AlltoAll can proceed.
+    Under equal expert costs and hardware, \(BK/EP\) assignments per rank is the balanced
+    target. Skewed expert loads can create a slow rank. A bulk-synchronous dispatch/compute/combine
+    schedule exposes that straggler; chunked schedules may overlap some work but do not erase it.
   </p>
   <div class="result">
     <div class="result-label">Load imbalance effect on throughput</div>
     \[
-      \text{effective throughput} = \frac{1}{\lambda} \times \text{balanced throughput},
+      \text{expert-compute throughput} \approx \frac{1}{\lambda} \times \text{balanced throughput},
       \quad \lambda = \frac{\max_r(\text{tokens dispatched to rank } r)}{\text{avg tokens per rank}}
     \]
-    A 2× load spike (\(\lambda = 2\)) halves expert-layer throughput. More EP ranks → smaller denominator
-    → higher relative variance → larger expected \(\lambda\).
+    This is a linear-work, compute-only approximation, not an end-to-end law.
+    Different expert shapes, communication, and kernel efficiencies change the result.
   </div>
 
   <p>
-    Training uses an <em>auxiliary load-balancing loss</em> that penalizes routers for concentrating
-    tokens on a few experts. This typically keeps \(\lambda \le 1.3\) in practice. Some implementations
-    also cap the number of tokens a single expert can receive (<em>expert capacity</em>), dropping or
-    buffering excess tokens rather than stalling the pipeline.
+    An auxiliary loss can discourage hot experts, but gives no universal bound on \(\lambda\).
+    Its <a href="../transformer/moe-routing.html#balance-scope">aggregation scope matters</a>:
+    globally balanced counts can hide opposite imbalances in separate EP groups.
+    Mistral balances expert inbound tokens over each EP group. A runtime capacity policy
+    is separate: it decides how to execute or drop assignments after routing.
   </p>
 
   <h3 id="dropless">Dropless execution with bounded memory</h3>
@@ -444,6 +493,14 @@
     processed, but a skewed load can still take longer. Microsoft configures capacity for one round
     in steady state; the extra rounds handle the tail without growing the expert buffers.
   </div>
+  <p>
+    In local group A above, suppose E0 and E1 each have nominal capacity 100 assignments
+    per round. Loads of 150 and 50 fit the pooled capacity of 200 by borrowing E1's unused
+    slots. <strong>E0 still computes its 150 assignments using E0's weights</strong>;
+    this is buffer borrowing, not rerouting tokens to E1. Loads of 250 and 50 exceed the
+    pooled capacity and require additional rounds. Counts refer to token-expert assignments,
+    so a top-\(K\) token can contribute more than one assignment.
+  </p>
   <ul>
     <li><strong>Pipeline groups and rounds.</strong> Dispatch and collect overlap expert compute,
       except the first dispatch and last collect. In the reported forward schedule, weight
@@ -465,38 +522,50 @@
     and <a href="mfu.html#mai-accounting">the distinct efficiency denominators</a>.
   </p>
 
-  <h3>Practical EP ceiling</h3>
+  <h3 id="ep-sizing">Size EP from assignments and placement, not \(E/K\)</h3>
   <p>
-    Each expert must receive at least one token on average per step; otherwise some ranks compute nothing
-    and the dispatch overhead isn't amortized. This gives:
+    For \(B\) group-wide tokens and top-\(K\) routing, uniform routing gives:
   </p>
   <div class="result">
     \[
-      EP_\text{max} \le \frac{B \times K}{1} = BK \quad \text{(one token per expert per step on average)}
+      \mathbb E[\text{assignments per expert}]=\frac{BK}{E},
+      \qquad
+      \mathbb E[\text{assignments per rank}]=\frac{BK}{EP}.
     \]
-    In practice: \(EP \le E/K\) ensures each rank handles at least \(E/(EP) \ge K\) experts, giving a
-    meaningful local workload.
+    These are averages, not occupancy guarantees.
   </div>
+  <p>
+    For \(B=8192,E=128,K=4,EP=128\), each rank holds one whole expert and receives
+    256 assignments on average. This is valid even though \(EP&gt;E/K=32\).
+    With whole, unreplicated experts, \(EP\le E\) avoids ranks with no assigned experts;
+    equal placement also needs an appropriate divisibility plan. Whether it is fast depends
+    on the actual distribution, expert shapes, and fabric. Expert TP or replication changes
+    the placement constraints.
+  </p>
 
   <!-- ════════════════════════ TP IN MOE ════════════════════════ -->
   <h2 id="tp-in-moe">5 · Where TP applies in MoE models</h2>
   <p>
-    TP remains the right axis for the <em>attention</em> layers, which are dense. The argument from
+    TP can shard the dense <em>attention</em> layers. The argument from
     <a href="tensor-parallelism.html">Tensor Parallelism</a> carries over unchanged: QKV projections and
     output projections are split column/row-parallel across the TP group (NVLink), and multi-head attention
-    is split across heads. Two AllReduces per layer, volume \(2BTD\).
+    is split across heads. In the conventional column/row-parallel pattern, the forward
+    attention output projection needs one reduction; backward introduces another.
+    SP and alternative schedules change the collective pattern.
   </p>
   <p>
-    For the <em>expert FFN</em> layers: EP replaces TP as the sharding axis. The two approaches use separate
-    process groups — the TP group contains the GPUs within one node; the EP group contains one GPU
-    (or one TP sub-group) per node.
+    Expert TP and EP can coexist. Each collective's process group contains actual processes,
+    not another process group as a single rank. In an orthogonal mesh, hold the TP coordinate
+    fixed to identify EP peers, and hold the EP coordinate fixed to identify expert-TP peers.
+    Other frameworks fold the axes differently. Neither axis is inherently intra-node or
+    inter-node; the layout must specify membership and topology.
   </p>
 
   <div class="note">
-    TP-within-expert is possible: shard each expert's weight matrix column/row-parallel across the TP
-    group, adding an AllReduce after each expert GEMM. This is only beneficial when a single expert is
-    large enough to be compute-bound at high batch size — rare in standard MoE configurations
-    (\(D_e \approx D/4\)). In practice, use EP for experts and TP for attention.
+    Expert TP can be useful for memory capacity or large GEMMs, but its extra communication
+    can hurt small expert batches. \(D_e\) is model-specific: granularity four relative to
+    a \(4D\) dense FFN means \(D_e=D\), not \(D/4\). See the
+    <a href="../transformer/moe-routing.html#granularity">shape example</a>.
   </div>
 
   <h3>The counterexample: a 236B model with no TP at all</h3>
@@ -507,44 +576,46 @@
     recomputed rather than stored.
   </p>
   <p>
-    The reasoning is worth extracting, because it generalizes. TP buys memory relief and pays for it with
-    two AllReduces per layer on the critical path. What makes that trade good is a large <em>activated</em>
-    parameter count that will not otherwise fit. A sparse model inverts the premise: only 21B parameters
-    are activated per token, so the per-layer working set is small, and selective recomputation covers
-    the remaining activation pressure. With the memory problem solved more cheaply elsewhere, TP is
-    left contributing nothing but communication — so it was dropped.
+    The general trade-off is memory and computation saved versus additional collectives.
+    DeepSeek-V2 activates 21B parameters per token, but resident memory still includes all
+    locally assigned experts, not only the selected ones. EP/PP placement and selective
+    recomputation can make the state fit without TP. Once it fits, TP must justify its
+    communication through an actual step-time improvement; sparsity alone does not prove that it will.
   </p>
   <div class="compare">
     <div class="compare-label">When to suspect you don't need TP</div>
     <ul style="margin:0">
-      <li>Activated (not total) parameters per token are small relative to device memory.</li>
+      <li>Resident weights after EP/PP placement, optimizer state, and peak activations fit without TP; active parameters alone are not a memory budget.</li>
       <li>EP is already sharding the bulk of the weights — in a fine-grained MoE the experts <em>are</em> the model.</li>
       <li>Recomputation is acceptable: you are trading FLOPs for memory more cheaply than TP trades bandwidth for it.</li>
       <li>Pipeline depth is available and the schedule is good enough to keep the bubble small (DeepSeek-V2 used a zero-bubble schedule — see <a href="pipeline-parallelism.html">Pipeline Parallelism</a>).</li>
     </ul>
   </div>
 
-  <h3>Shared experts as free overlap</h3>
+  <h3>Shared experts as an overlap opportunity</h3>
   <p>
     One more structural detail: architectures with <em>shared</em> always-on experts get a natural
-    latency hiding opportunity. Shared experts run for every token, so they need no dispatch and no
-    combine — their input is already resident on the rank that holds the token. That makes their FLOPs
-    the ideal thing to schedule <em>during</em> the routed experts' AlltoAll, which is exactly what
-    DeepSeek-V2 does. It is the rare overlap that requires no restructuring: the work was already local.
+    latency-hiding opportunity. If shared experts are replicated on token-origin ranks, their
+    forward computation needs no EP dispatch and can overlap routed-expert communication.
+    Sharded shared experts may still need TP collectives. This is
+    <a href="../transformer/latent-moe.html#shared-cost">not free compute</a>:
+    overlap depends on dependencies, placement, and available GPU resources.
   </p>
 
   <!-- ════════════════════════ DP ════════════════════════ -->
   <h2 id="dp">6 · Data Parallelism interaction</h2>
   <p>
-    DP is orthogonal to both TP and EP. Each DP replica runs an independent forward and backward pass on
-    a different micro-batch, then synchronizes gradients. For MoE:
+    In the explicit Cartesian layout below, DP replicates the TP × EP configuration.
+    Each replica processes a different micro-batch and synchronizes gradients with peers
+    owning the same parameter shard. Frameworks may instead fold axes or use different
+    replication groups for dense and expert parameters. For the explicit layout:
   </p>
   <ul>
     <li>
       <strong>Expert weight gradients</strong> accumulate from the tokens dispatched to each expert. Since
       each DP replica has different tokens, their expert gradients differ and must be reduced across DP.
-      The reduction (ReduceScatter with ZeRO-3) is identical to the dense case — expert weights are just
-      parameters, and all-parameter gradient sync applies uniformly.
+      Reductions must use the corresponding expert-data-parallel group, not mix gradients
+      from different expert IDs. Dense and expert parameters need not have identical groups.
     </li>
     <li>
       <strong>AlltoAll dispatch</strong> happens within each DP replica's EP group independently. The EP
@@ -560,92 +631,100 @@
   </ul>
   <div class="result">
     \[
-      \text{global batch} = B_\text{local} \times DP \quad \Rightarrow \quad
-      \text{throughput scales linearly with DP until communication dominates}
+      \text{tokens per optimizer step} =
+      B \times DP \times \text{gradient-accumulation steps}.
     \]
   </div>
+  <p>\(B\) counts distinct tokens per replica, not TP copies or top-\(K\) assignments.
+    Scaling the batch does not guarantee linear throughput or unchanged optimization.</p>
 
   <!-- ════════════════════════ WORKED EXAMPLE ════════════════════════ -->
-  <h2 id="worked">7 · Worked example — TP=2, EP=2, DP=2 on 8 GPUs</h2>
+  <h2 id="worked">7 · Worked example — EP=4, expert DP=2 on 8 GPUs</h2>
   <p>
-    The <a href="../rl/slime-miles-walkthrough.html">slime/Miles PPO walkthrough</a> uses this configuration for a
-    30B MoE model with 64 experts, top-2 routing, \(D = 2048\), on 2 nodes × 4 GPUs/node. Here we derive
-    <em>why</em> those degrees were chosen.
+    This is an illustrative placement, not a verified framework launch recipe:
+    two nodes with four GPUs each, \(E=64\), \(K=2\), \(D=2048\), and no TP or PP.
+    Each node contains a complete expert pool, with 16 whole experts per GPU.
+    Each group processes \(B=8192\) distinct tokens, initially 2048 per GPU.
   </p>
 
-  <h3>Step 1 — TP for attention (NVLink, intra-node)</h3>
-  <p>
-    TP must stay within one NVLink island. Each node has 4 GPUs. We want TP to cover attention
-    efficiently. TP=2 is chosen (not TP=4) to keep the AllReduce payload small and leave room for the EP
-    axis within the node:
-  </p>
-  <pre><code>Node 0: GPU 0, GPU 1  ← TP group 0 (NVLink, AllReduce for attention)
-         GPU 2, GPU 3  ← TP group 1
-Node 1: GPU 4, GPU 5  ← TP group 2
-         GPU 6, GPU 7  ← TP group 3</code></pre>
+  <h3>Step 1 — EP groups exchange tokens within each node</h3>
+  <pre><code>Node 0 / EP group A: {GPU 0, GPU 1, GPU 2, GPU 3}
+                      E0-15  E16-31 E32-47 E48-63
+Node 1 / EP group B: {GPU 4, GPU 5, GPU 6, GPU 7}
+                      E0-15  E16-31 E32-47 E48-63</code></pre>
+  <p>Assume each node's GPUs share NVLink. Dispatch/combine stays inside that domain.
+    A rank number is relative to its process group: GPU 4 is EP rank 0 in group B.</p>
 
-  <h3>Step 2 — EP for experts (InfiniBand, inter-node)</h3>
+  <h3>Step 2 — corresponding experts synchronize across replicas</h3>
+  <pre><code>Expert-data-parallel groups:
+  {GPU 0, GPU 4}: replicas of E0-15
+  {GPU 1, GPU 5}: replicas of E16-31
+  {GPU 2, GPU 6}: replicas of E32-47
+  {GPU 3, GPU 7}: replicas of E48-63</code></pre>
   <p>
-    EP=2 across the two nodes. Each EP rank is one TP group: GPU 0+1 (node 0) vs. GPU 4+5 (node 1).
-    Each EP rank holds \(64/2 = 32\) experts.
-  </p>
-  <pre><code>EP group A: TP group 0  (GPUs 0,1, node 0) ↔ TP group 2  (GPUs 4,5, node 1)
-EP group B: TP group 1  (GPUs 2,3, node 0) ↔ TP group 3  (GPUs 6,7, node 1)</code></pre>
-  <p>
-    The AlltoAll for expert dispatch crosses InfiniBand (node 0 ↔ node 1). With \(B = 8192\) tokens,
-    \(K = 2\), \(D = 2048\), bf16: AlltoAll volume per GPU ≈ \(8192 \times 2 \times 2048 \times 2 / 2 \approx 32\) MB.
-    (Half the tokens go to the remote EP rank; the other half stay local.)
+    Expert gradients synchronize across nodes between matching owners, not between different
+    experts in an EP group. Dense attention weights are replicated on all eight GPUs here;
+    because every GPU starts with different tokens, their gradients synchronize across all
+    eight. This illustrates why dense DP and expert DP need not have the same size.
   </p>
 
-  <h3>Step 3 — DP fills remaining replicas</h3>
+  <h3>Step 3 — count assignments and transmitted bytes separately</h3>
   <p>
-    With TP=2 and EP=2, each EP group uses 2 GPUs per node × 2 nodes = 4 GPUs. We have 8 GPUs total,
-    so DP=2 replicates the whole (TP=2, EP=2) configuration twice:
+    Each group produces \(BK=16384\) assignments: 256 per expert and 4096 per rank on
+    average. With uniform routing and BF16, logical dispatch payload is
+    \(8192\times2\times2048\times2=64\) MiB across the group.
+    Three quarters of assignments are off-rank, giving 48 MiB sent across the group,
+    or <strong>12 MiB sent per GPU</strong>. Each GPU also receives 12 MiB on average;
+    do not add sent and received bytes unless reporting bidirectional endpoint traffic.
   </p>
-  <pre><code>DP rank 0: EP group A  (GPUs 0,1,4,5)
-DP rank 1: EP group B  (GPUs 2,3,6,7)</code></pre>
 
   <h3>Per-layer communication breakdown</h3>
   <div class="table-wrap">
     <table>
       <thead>
         <tr>
-          <th>Operation</th><th>Primitive</th><th>Volume / GPU</th><th>Fabric</th>
+          <th>Operation</th><th>Scope</th><th>Sent bytes / GPU</th><th>Fabric</th>
         </tr>
       </thead>
       <tbody>
         <tr>
           <td>Attention (fwd)</td>
-          <td>2× AllReduce (TP)</td>
-          <td>\(2 \times 2 \times BT \times D\) bf16 ≈ 2× 34 MB</td>
-          <td>NVLink</td>
+          <td>Local; TP=1</td>
+          <td>No TP collective</td>
+          <td>None</td>
         </tr>
         <tr>
           <td>Expert dispatch (fwd)</td>
-          <td>AlltoAll (EP)</td>
-          <td>≈ 32 MB (half tokens cross node)</td>
-          <td>InfiniBand</td>
+          <td>EP group A or B</td>
+          <td>12 MiB average</td>
+          <td>NVLink</td>
         </tr>
         <tr>
           <td>Expert combine (fwd)</td>
-          <td>AlltoAll (EP)</td>
-          <td>≈ 32 MB</td>
-          <td>InfiniBand</td>
+          <td>EP group A or B</td>
+          <td>12 MiB average, uncombined assignment outputs</td>
+          <td>NVLink</td>
         </tr>
         <tr>
-          <td>Gradient sync (bwd)</td>
-          <td>ReduceScatter + AllGather (DP)</td>
-          <td>Proportional to expert weight size</td>
-          <td>InfiniBand</td>
+          <td>Expert gradient sync</td>
+          <td>Matching expert owners</td>
+          <td>Depends on gradient size, dtype, and sharding policy</td>
+          <td>Scale-out network</td>
+        </tr>
+        <tr>
+          <td>Dense gradient sync</td>
+          <td>All eight ranks</td>
+          <td>Depends on gradient size and collective algorithm</td>
+          <td>NVLink + scale-out network</td>
         </tr>
       </tbody>
     </table>
   </div>
 
   <p>
-    The TP AllReduce uses NVLink (fast, low latency, on the critical path). The EP AlltoAll uses
-    InfiniBand (slower, but its volume — \(\approx 32\) MB at these settings — is small relative to
-    expert GEMM time at this batch size, so it stays mostly hidden).
+    These activation counts exclude metadata, padding, destination deduplication, and backward
+    dispatch/combine. They are analytical averages, not a throughput or overlap measurement.
+    Both replicas together process 16384 distinct tokens per micro-step.
   </p>
 
   <!-- ════════════════════════ CEILING ════════════════════════ -->
@@ -661,44 +740,49 @@ DP rank 1: EP group B  (GPUs 2,3,6,7)</code></pre>
       \text{FLOPs/token (MoE)} = 6 \times N_\text{activated} + 12 \times L \times D \times T
     \]
     \[
-      N_\text{activated} = N_\text{attn} + \frac{K}{E} \times N_\text{FFN}
+      N_\text{activated} = N_\text{dense} + N_\text{shared} + \frac{K}{E}N_\text{routed}
     \]
-    where \(N_\text{attn}\) = attention parameter count (dense, replicated), \(N_\text{FFN}\) = total expert FFN params.
+    \(N_\text{routed}\) counts equal-sized routed experts; dense and shared weights are always
+    active in this approximation. Here \(L,D,T\) are layer count, hidden width, and sequence
+    length for the full-attention FLOP term. Sparse attention requires its own accounting.
   </div>
 
   <h3>When AlltoAll is on the critical path</h3>
   <p>
-    The expert compute and the AlltoAll dispatch happen sequentially (dispatch must complete before expert
-    GEMMs begin). The effective throughput depends on which is slower.
+    In a bulk-synchronous forward, dispatch, expert computation, and combine add to step time.
+    A token's computation needs its input, but that does not prevent pipelining different
+    expert groups or chunks, as in <a href="#dropless">MAI's schedule</a>.
   </p>
   <p>
-    Define:
+    A simplified balanced, whole-expert, two-projection forward model uses:
   </p>
   <ul>
-    <li>\(\tau_\text{GEMM}\) = time for expert GEMMs on one EP rank = \(\frac{(B/EP) \times K \times 4 \times D \times D_e}{\text{FLOP/s}_\text{device}}\)</li>
-    <li>\(\tau_\text{A2A}\) = AlltoAll latency = \(\frac{2 \times (B/EP) \times K \times D \times 2}{\text{IB bandwidth}}\)</li>
+    <li>\(\tau_\text{GEMM}\approx 4(B/EP)KDD_e/F_\text{eff}\), where \(F_\text{eff}\) is achieved expert-matrix FLOP/s.</li>
+    <li>\(\tau_\text{dispatch}\approx\ell+r(B/EP)KDb/W_\text{eff}\), where \(\ell\) is exchange startup/scheduling cost and \(W_\text{eff}\) is effective one-way bandwidth.</li>
+    <li>Combine has a similar payload in this uncombined-assignment model; SwiGLU changes the GEMM coefficient from 4 to 6.</li>
   </ul>
   <p>
-    When \(\tau_\text{A2A} > \tau_\text{GEMM}\), the AlltoAll is on the critical path and EP is the throughput bottleneck. Setting \(\tau_\text{A2A} = \tau_\text{GEMM}\) gives the <strong>cross-over batch size</strong>:
+    If startup is ignored and achieved rates are treated as constants, the bandwidth-only
+    ratio for dispatch plus combine is:
   </p>
   <div class="result">
     \[
-      B^* = \frac{2 \times \text{FLOP/s}_\text{device} \times D_e}{\text{IB bandwidth} \times 2}
-      = \frac{\text{FLOP/s}_\text{device} \times D_e}{\text{IB bandwidth}}
+      \frac{\tau_\text{dispatch}+\tau_\text{combine}}{\tau_\text{GEMM}}
+      \approx \frac{rbF_\text{eff}}{2D_eW_\text{eff}}.
     \]
-    Below \(B^*\) tokens per EP rank: AlltoAll dominates. Above \(B^*\): expert GEMMs dominate.
+    \(B\) cancels. This model does not yield a universal crossover batch size.
   </div>
   <p>
-    For an H100 at 1 PFLOP/s (bf16 dense), IB at 50 GB/s, \(D_e = 1024\):
-    \(B^* \approx 1{,}000{,}000 \times 1024 / 50{,}000{,}000{,}000 \approx 20{,}000\) tokens per EP rank.
-    At training batch sizes of 8,192 tokens per rank, most MoE training runs sit <em>below</em> \(B^*\) —
-    the AlltoAll is the bottleneck, not the expert GEMMs. This is why expert GEMMs are memory-bandwidth-bound
-    and why TP (which adds more AllReduce communication) makes things worse.
+    Real batch-size effects come from startup, expert load distribution, GEMM shapes,
+    weight-memory traffic, and changing achieved bandwidth. Increasing batch size can
+    amortize overhead and improve arithmetic intensity, but the crossover must be measured
+    or modeled with those terms. A communication bottleneck does not prove that the GEMMs
+    themselves are memory-bandwidth-bound.
   </p>
   <div class="note">
-    The cross-over batch size \(B^*\) grows with \(D_e\) and device FLOP/s. As models get larger experts
-    or are run at larger batch sizes, compute becomes the bottleneck. But for standard MoE configurations
-    in RL fine-tuning (small rollout batches), AlltoAll latency is almost always the binding constraint.
+    Profile the slowest rank and the exposed critical path, not just aggregate bytes.
+    Compare peak memory, tokens per expert, dispatch/combine durations, achieved GEMM throughput,
+    and overlap under the intended topology and capacity policy.
   </div>
 
   <!-- ════════════════════════ FRAMEWORKS ════════════════════════ -->
@@ -715,7 +799,7 @@ DP rank 1: EP group B  (GPUs 2,3,6,7)</code></pre>
     <div class="compare-grid">
       <div>
         <div class="compare-col-label">Megatron-LM / Megatron-Core</div>
-        <p style="margin:.3em 0; font-size:.92rem">EP is a first-class mesh axis: <code>EP × TP × DP × PP</code> configured together, grouped-GEMM expert execution, token dispatch built into the MoE layer, expert-aware distributed checkpointing. The TP-intra-node / EP-across-TP-groups layout of §7 is the shipped default, not an integration project.</p>
+        <p style="margin:.3em 0; font-size:.92rem">The stack manages EP process groups, grouped-GEMM expert execution, token dispatch, and expert-aware distributed checkpointing. Attention TP, expert TP, EP, and expert DP degrees must be read from the actual configuration; §7 is an illustration, not a universal shipped layout.</p>
       </div>
       <div>
         <div class="compare-col-label">FSDP / FSDP2</div>
@@ -750,19 +834,19 @@ DP rank 1: EP group B  (GPUs 2,3,6,7)</code></pre>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">AlltoAll dispatch</div>
-      <p>Permute tokens to the ranks holding their experts, compute locally, permute back. Volume = \(2BKD\) bytes per AlltoAll — independent of \(E\) and \(EP\). Not a reduction.</p>
+      <p>Replicate/permutate assignments, compute, return and combine. Logical payload is \(BKDb\) each way across the group; remote fraction, topology, and dispatcher determine wire traffic.</p>
     </div>
     <div class="summary-card">
-      <div class="summary-card-label">Why EP, not TP</div>
-      <p>Expert GEMMs are memory-bandwidth-bound at training batch sizes (low arithmetic intensity). TP adds AllReduce comm without fixing the bottleneck. EP keeps experts local and moves the smaller tokens.</p>
+      <div class="summary-card-label">EP versus expert TP</div>
+      <p>EP distributes experts; TP splits their matrices. They can coexist. Evaluate resident state, token counts, kernel efficiency, and communication rather than assuming a universal bottleneck.</p>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">EP tradeoffs</div>
-      <p>More EP → less weight memory per GPU. AlltoAll volume unchanged. Load imbalance (\(\lambda\)) is the ceiling: throughput ≤ \(1/\lambda\) of balanced. Use auxiliary loss to keep \(\lambda \le 1.3\).</p>
+      <p>More EP reduces local expert storage but can increase fan-out and expose skew. Expected assignments are \(BK/E\) per expert and \(BK/EP\) per rank; \(EP\le E/K\) is not a general requirement.</p>
     </div>
     <div class="summary-card">
-      <div class="summary-card-label">TP in MoE</div>
-      <p>TP still handles dense attention layers (unchanged from the dense case). For experts: EP, not TP. TP-within-expert only if a single expert exceeds NVLink capacity — rare.</p>
+      <div class="summary-card-label">Two meanings of group</div>
+      <p>An EP group contains workers exchanging tokens. MAI local expert groups contain experts on one worker sharing a bounded execution budget. Capacity borrowing does not change expert identity.</p>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">Framework support</div>
@@ -770,13 +854,14 @@ DP rank 1: EP group B  (GPUs 2,3,6,7)</code></pre>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">Throughput ceiling</div>
-      <p>MoE FLOPs use activated params. Cross-over batch size \(B^* = \text{FLOP/s} \times D_e / \text{IB BW}\). Below \(B^*\): AlltoAll-bound. Most training runs fall here.</p>
+      <p>Model FLOPs use activated parameters, including shared experts. Memory uses resident state. In the constant-rate bandwidth-only model, batch size cancels; startup, kernel efficiency, skew, and overlap determine real crossovers.</p>
     </div>
   </div>
 
   <div class="xref">
-    See the <a href="../rl/slime-miles-walkthrough.html">PPO in slime/Miles →</a> for the concrete per-layer
-    AlltoAll volumes from this (TP=2, EP=2, DP=2) configuration on a 30B MoE model, and
+    See <a href="../transformer/moe-routing.html#balance-scope">EP-local balancing →</a> for
+    the training objective, <a href="../models/mistral-large-4.html#moe-training">Mistral's reported choices →</a>,
+    and
     <a href="mfu.html">MFU →</a> for how to plug activated params into the global throughput formula.
   </div>
 
