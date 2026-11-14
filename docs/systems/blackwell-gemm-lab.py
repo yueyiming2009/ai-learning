@@ -1,4 +1,4 @@
-"""Source-pinned SM100 BF16 GEMM lab; requires a reviewed CUTLASS checkout."""
+"""Source-pinned SM100/SM103 BF16 GEMM lab; requires a reviewed CUTLASS checkout."""
 
 import argparse
 import hashlib
@@ -64,6 +64,17 @@ def load_reference(source):
     return module.DenseGemmKernel
 
 
+def target_for_capability(capability: tuple[int, int]) -> str:
+    if capability == (10, 0):
+        return "sm_100a"
+    if capability == (10, 3):
+        return "sm_103a"
+    raise RuntimeError(
+        f"Unsupported compute capability {capability}: this lab targets "
+        "SM100 (B200/GB200) and SM103 (B300/GB300), not consumer Blackwell or other GPUs"
+    )
+
+
 def time_batch(torch, operation, iterations):
     start = torch.cuda.Event(enable_timing=True)
     end = torch.cuda.Event(enable_timing=True)
@@ -89,10 +100,11 @@ def main():
     from cutlass.cute.runtime import from_dlpack
 
     if not torch.cuda.is_available():
-        raise RuntimeError("This lab requires a CUDA-enabled environment and an SM100 GPU")
+        raise RuntimeError("This lab requires a CUDA-enabled environment and an SM100/SM103 GPU")
     device = torch.cuda.current_device()
-    if torch.cuda.get_device_capability(device) != (10, 0):
-        raise RuntimeError("This bounded lab targets SM100 (B200/GB200), not SM103 or SM120")
+    capability = torch.cuda.get_device_capability(device)
+    gpu_arch = target_for_capability(capability)
+    print(f"Selected compute capability {capability}; CuTe compilation target {gpu_arch}")
     torch_device = torch.device("cuda", device)
 
     DenseGemmKernel = load_reference(source)
@@ -137,7 +149,10 @@ def main():
         return cute.where(x > 0, x, cute.full_like(x, 0))
 
     compile_start = time.perf_counter()
-    compiled = cute.compile(gemm, *views, stream, relu if args.relu else identity)
+    compiled = cute.compile(
+        gemm, *views, stream, relu if args.relu else identity,
+        options=f"--gpu-arch={gpu_arch}",
+    )
     compile_ms = (time.perf_counter() - compile_start) * 1000
 
     def launch():
@@ -169,7 +184,8 @@ def main():
         "torch_cuda": torch.version.cuda,
         "pytorch_blas_preference": str(torch.backends.cuda.preferred_blas_library()),
         "gpu": torch.cuda.get_device_name(device),
-        "compute_capability": list(torch.cuda.get_device_capability(device)),
+        "compute_capability": list(capability),
+        "compilation_target": gpu_arch,
         "shape_mnk": [args.m, args.n, args.k],
         "strides_a_b_c": [list(tensor.stride()) for tensor in (a, b, c)],
         "pattern": args.pattern,

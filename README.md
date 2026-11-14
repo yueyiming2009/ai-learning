@@ -131,9 +131,11 @@ report-only design evidence; no controlled head-to-head YOLO benchmark is disclo
 cross-language runtime boundary, with Python/C++ CPU lessons, DLPack tensor ownership,
 GPU stream contracts, and an interactive call-overhead model.
 [A Blackwell GEMM, End to End](docs/systems/blackwell-gemm-lab.html) bridges the kernel model
-to a source-pinned CuTe DSL BF16 runner, TMA/barrier/TMEM source trace, correctness and
-sanitizer gates, same-work benchmarking, Nsight capture, and 1-/2-CTA tuning. It includes an
-analytical cost plot and explicitly requires GPU execution validation before any performance claim.
+to a source-pinned CuTe DSL BF16 runner for B200/GB200 and B300/GB300, native SM100/SM103
+target selection, TMA/barrier/TMEM source trace, correctness and sanitizer gates, benchmarking,
+Nsight capture, and 1-/2-CTA tuning. It separates Ultra FP4/SFU changes from the shared BF16
+pipeline, includes an analytical cost plot, and requires GPU execution validation before any
+performance claim.
 
 ### 05 · Reinforcement Learning — [docs/rl/](docs/rl/), [rl/](rl/)
 From first-principles RL theory to LLM post-training and the systems that run it.

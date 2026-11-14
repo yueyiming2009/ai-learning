@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light dark">
-  <title>Blackwell GEMM Lab — CuTe DSL, Correctness, Profiling &amp; Tuning</title>
+  <title>Blackwell GEMM Lab — B200/B300, CuTe DSL, Profiling &amp; Tuning</title>
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
   <script>
     MathJax = {
@@ -84,26 +84,26 @@
   <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Blackwell GEMM Lab</a>
   <div class="nav-links">
     <a href="../index.html#systems-kernel-programming">↑ Kernel Programming</a>
-    <a href="#setup">Setup</a><a href="#runner">Run</a><a href="#pipeline">Pipeline</a>
+    <a href="#setup">Setup</a><a href="#targets">SM100/SM103</a><a href="#runner">Run</a><a href="#pipeline">Pipeline</a>
     <a href="#correctness">Correctness</a><a href="#benchmark">Benchmark</a>
     <a href="#profiling">Profile</a><a href="#tuning">Tune</a>
   </div>
 </nav>
 <div class="hero">
-  <span class="hero-pill">Systems · CuTe DSL · B200 / GB200</span>
+  <span class="hero-pill">Systems · CuTe DSL · B200 / GB200 · B300 / GB300</span>
   <h1>A Blackwell GEMM, End to End</h1>
-  <p>A source-pinned BF16 experiment: build the tensor views, compile a real tcgen05 kernel, follow TMA and TMEM through its pipeline, check the answer, compare with PyTorch's library GEMM, and tune from evidence.</p>
+  <p>A source-pinned BF16 experiment for SM100 and SM103: select the native target, build the tensor views, compile a real tcgen05 kernel, follow TMA and TMEM through its pipeline, check the answer, and tune from evidence.</p>
 </div>
 <main class="page-wrap">
   <div class="xref"><strong>Read first:</strong> <a href="cute-dsl.html">CuTe DSL layouts and partitions</a> and <a href="blackwell-kernels.html">the Blackwell kernel model</a>. This lab is the executable bridge, not another architecture overview. Keep <a href="cublas.html">cuBLAS</a> as the baseline and <a href="cuda.html#barriers">CUDA synchronization</a> as the vocabulary.</div>
-  <div class="note"><strong>Evidence boundary:</strong> the runner and source trace target NVIDIA CUTLASS <strong>v4.8.1</strong>, commit <code>2c85f497547eb441f0fe80bfb0fb2e6f9add1719</code>. APIs and control flow were checked against that source; this page does <strong>not</strong> claim execution on a Blackwell GPU or measured performance. The browser plot below is an analytical model. You must pass the GPU gates before treating a configuration as working or fast.</div>
+  <div class="note"><strong>Evidence boundary:</strong> the runner and source trace target NVIDIA CUTLASS <strong>v4.8.1</strong>, commit <code>2c85f497547eb441f0fe80bfb0fb2e6f9add1719</code>. APIs, shared BF16 MMA support, and SM100/SM103 target selection were checked against source; this page does <strong>not</strong> claim GPU execution on B200/GB200 or B300/GB300, or measured performance. The browser plot below is an analytical model. Pass the GPU gates independently on each architecture before treating a configuration as working or fast.</div>
 
   <h2 id="setup">1 · Start with a bounded, reviewed environment</h2>
   <p>The first experiment is deliberately narrow: one GPU, one batch, BF16 inputs/output, FP32 accumulation, and \(C=AB\). The optional ReLU is an elementwise epilogue, not a residual/bias fusion. The implementation is NVIDIA's <a href="https://github.com/NVIDIA/cutlass/blob/2c85f497547eb441f0fe80bfb0fb2e6f9add1719/examples/python/CuTeDSL/cute/blackwell/kernel/dense_gemm/dense_gemm.py">complete DenseGemmKernel</a>; the <a href="blackwell-gemm-lab.py" download>downloadable lab runner</a> owns tensor setup, verification, timing, and profiling. It imports the reviewed kernel rather than duplicating its implementation.</p>
   <div class="table-wrap"><table>
     <thead><tr><th>Gate</th><th>Required for this lab</th></tr></thead>
     <tbody>
-      <tr><td>Hardware</td><td>An SM100 data-center GPU: B200/GB200, compute capability <code>(10,0)</code>. The runner rejects SM103/B300 and SM120/RTX Blackwell; a family name is not an instruction-compatibility check.</td></tr>
+      <tr><td>Hardware</td><td>SM100 B200/GB200, compute capability <code>(10,0)</code>, or SM103 B300/GB300, <code>(10,3)</code>. The runner selects <code>sm_100a</code> or <code>sm_103a</code> explicitly. It rejects SM120/RTX Blackwell and other capabilities; a family name is not an instruction-compatibility check.</td></tr>
       <tr><td>Runtime</td><td>An approved Linux environment, Python 3.10–3.14, CUDA-enabled PyTorch, CUDA Python bindings, and <code>nvidia-cutlass-dsl[cu13]==4.8.1</code>. Use a CUDA 13.x driver/toolchain combination supported by the pinned <a href="https://github.com/NVIDIA/cutlass/blob/2c85f497547eb441f0fe80bfb0fb2e6f9add1719/media/docs/pythonDSL/quick_start.rst">quick start</a> (the release documents CUDA 13.4). This is not a macOS/CPU exercise.</td></tr>
       <tr><td>Source</td><td>A reviewed CUTLASS checkout at the pinned commit. Its <a href="https://github.com/NVIDIA/cutlass/blob/2c85f497547eb441f0fe80bfb0fb2e6f9add1719/python/CuTeDSL/requirements-cu13.txt">cu13 manifest</a> pins the DSL wheel to 4.8.1. The runner checks that installed version and the kernel file's SHA-256 before importing the reference.</td></tr>
       <tr><td>Developer tools</td><td>Approved Compute Sanitizer and Nsight Compute/Systems. SASS inspection additionally needs a compatible <code>nvdisasm</code>; an older CUDA disassembler may not understand the wheel's cubin.</td></tr>
@@ -113,12 +113,39 @@
 <pre><code>export CUTLASS_ROOT=/path/to/reviewed/cutlass
 git -C "$CUTLASS_ROOT" rev-parse HEAD
 nvidia-smi
+nvidia-smi --query-gpu=name,compute_cap --format=csv
 python -m pip show nvidia-cutlass-dsl torch cuda-bindings
 
 # Save the linked runner locally as blackwell-gemm-lab.py, inspect it, then:
 python blackwell-gemm-lab.py --help
 python blackwell-gemm-lab.py --cutlass-root "$CUTLASS_ROOT"</code></pre>
   <p>The default problem is \(1024^3\), with a 128×128 logical MMA tiler, a 1×1 CTA cluster, and TMA output stores. Keep the reported GPU, driver, source pin, DSL/PyTorch versions, shapes, strides, stage counts, and compile mode with every result. Missing packages, mismatched source, unsupported hardware, and invalid shapes raise errors; there is no CPU or alternative-kernel fallback.</p>
+
+  <h3 id="targets">Native targets: B300 and GB300 are SM103, not SM100</h3>
+  <p>The <a href="https://developer.nvidia.com/cuda/gpus">NVIDIA compute-capability table</a> maps B200/GB200 to 10.0 and B300/GB300 to 10.3. The same BF16 reference kernel uses shared Blackwell MMA, TMA, and TMEM machinery on these two architectures. The pinned <a href="https://github.com/NVIDIA/cutlass/blob/2c85f497547eb441f0fe80bfb0fb2e6f9add1719/python/CuTeDSL/cutlass/cute/nvgpu/tcgen05/mma.py">CuTe MMA implementation</a> admits the SM100 family, including SM103; its source name is not a B200-only hardware restriction.</p>
+<pre><code>capability = torch.cuda.get_device_capability(device)
+gpu_arch = target_for_capability(capability)
+# (10,0) -> "sm_100a"; (10,3) -> "sm_103a"; all other values raise.
+compiled = cute.compile(
+    gemm, *views, stream, epilogue_op,
+    options=f"--gpu-arch={gpu_arch}",
+)</code></pre>
+  <p>This is per-device JIT compilation, not a promise that one architecture-specific cubin runs on both GPUs. NVIDIA's <a href="https://docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/compute-capabilities.html#feature-set-compiler-targets">compiler-target rules</a> distinguish exact-capability <code>a</code> targets from shared-family <code>f</code> targets: <code>sm_100a</code> artifacts are not automatically SM103-compatible. A supported <code>sm_100f</code> target can cover common family features, but not every SM103-specific enhancement. This runner deliberately compiles for the installed device's native <code>a</code> target and records it as <code>compilation_target</code>. Do not force <code>CUTE_DSL_ARCH=sm_100a</code> in a B300 environment or reuse B200 architecture-specific artifacts.</p>
+  <p><strong>On B300/GB300, use the same commands below.</strong> No new dtype, shape, or CTA-pair flag is required for this BF16 lab. Startup should report <code>(10,3)</code> and <code>sm_103a</code>; on B200/GB200 it should report <code>(10,0)</code> and <code>sm_100a</code>. An old wheel, unsupported compiler target, or failed source check is a blocker to resolve, not a reason to remove the guard. Run the numerical, tail, sanitizer, generated-code, and timing gates on the actual device.</p>
+
+  <h3 id="b300-differences">What changes on Blackwell Ultra?</h3>
+  <p>The <a href="https://developer.nvidia.com/blog/inside-nvidia-blackwell-ultra-the-chip-powering-the-ai-factory-era/">NVIDIA Blackwell Ultra architecture description</a> separates common kernel machinery from new performance capabilities:</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Area</th><th>B300/GB300 implication</th></tr></thead>
+    <tbody>
+      <tr><td>BF16 pipeline</td><td>Single-thread-issued <code>tcgen05</code>, TMA staging, 256 KiB TMEM per SM, barriers, and CTA pairs remain the model. The advertised 1.5× uplift is dense NVFP4 compute, not a blanket BF16 GEMM speedup.</td></tr>
+      <tr><td>FP4 Ultra</td><td>Higher-throughput FP4 paths have SM103-specific MMA operations and operand/staging requirements. Use the <a href="https://github.com/NVIDIA/cutlass/blob/2c85f497547eb441f0fe80bfb0fb2e6f9add1719/examples/python/CuTeDSL/cute/blackwell/kernel/blockscaled_gemm/sm103_dense_blockscaled_gemm_persistent.py">SM103 FP4 reference</a> for that separate experiment. Merely changing the target in this BF16 runner does not exercise FP4 Ultra.</td></tr>
+      <tr><td>Attention / SFU</td><td>NVIDIA reports doubled SFU throughput for key attention instructions. The <a href="../inference/flash-attention.html#fa4">B200 softmax bottleneck analysis</a> is not a B300 measurement; recompute/profile the balance before adopting FMA-emulated exponentials or the same warp-role split.</td></tr>
+      <tr><td>HBM</td><td>Capacity reaches up to 288 GB, with around 8 TB/s bandwidth; capacity and available SM count vary by SKU. More model/batch headroom does not imply 1.5× memory bandwidth. Keep the actual working set and cache regime with each timing.</td></tr>
+      <tr><td>B300 versus GB300</td><td>Both GPUs are SM103. Their <a href="../hardware/gpu-generations.html#b300-vs-gb300">x86/HGX versus Grace-system packaging</a> changes the host/coherent-memory and interconnect environment, not the target chosen for this device-resident GEMM. Record the platform for host-launch and transfer comparisons.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Start with identical BF16 correctness inputs on each architecture, then tune independently. Match actual matrix shapes, dtype, epilogue, power/clock conditions, and timing regime rather than inferring speedup from a GPU name or peak FP4 figure.</p>
 
   <h2 id="runner">2 · The host contract: B has two different views</h2>
   <p>PyTorch writes \(A[M,K]B[K,N]\). This CuTe kernel expects <code>A[M,K,L]</code>, <code>B[N,K,L]</code>, and <code>C[M,N,L]</code>. Both refer to the <em>same mathematical multiply</em>: \(C_{mnl}=\sum_k A_{mkl}B_{nkl}\). B's view changes its coordinate convention, not the weights or the GEMM equation.</p>
@@ -143,7 +170,9 @@ stream = cuda.CUstream(torch.cuda.current_stream().cuda_stream)</code></pre>
 )
 if not gemm.can_implement(*views):
     raise ValueError("Unsupported configuration")
-compiled = cute.compile(gemm, *views, stream, lambda x: x)
+compiled = cute.compile(
+    gemm, *views, stream, lambda x: x, options=f"--gpu-arch={gpu_arch}"
+)
 compiled(*views, stream)</code></pre>
   <p>The runner uses the PyTorch current stream for <em>both</em> implementations and their CUDA events. Compilation is outside timing. Launching queues GPU work; stream ordering is not a host completion guarantee, so correctness checks and profiling boundaries explicitly synchronize. This is inference-only code: no autograd or backward registration.</p>
 
@@ -168,7 +197,9 @@ compiled(*views, stream)</code></pre>
 <pre><code>def relu(x):
     return cute.where(x &gt; 0, x, cute.full_like(x, 0))
 
-compiled = cute.compile(gemm, *views, stream, relu)
+compiled = cute.compile(
+    gemm, *views, stream, relu, options=f"--gpu-arch={gpu_arch}"
+)
 # Runtime arguments do not include the compile-time epilogue callback.
 compiled(*views, stream)</code></pre>
   <p><code>--relu</code> selects this already-wired experiment. Importantly, this pinned reference calls the callback <strong>after conversion to the output dtype</strong>. For the finite BF16 values used here, the reference is <code>relu(BF16(FP32_AB))</code>. It is not a general FP32 residual+bias+activation epilogue, and it does not define a NaN/Inf contract. Adding scalars, bias tensors, or reductions requires changing the reference's signature, partitioned loads, predicates, and possibly staging; an elementwise lambda alone does not supply those duties.</p>
@@ -193,14 +224,14 @@ python blackwell-gemm-lab.py --cutlass-root "$CUTLASS_ROOT" \
 
 # This MUST fail before launch: N is not a legal 16-byte BF16 stride.
 python blackwell-gemm-lab.py --cutlass-root "$CUTLASS_ROOT" --n 513</code></pre>
-  <p>The reference's TMA output path supports boundary tiles, while its direct register-store path has <strong>no output predication</strong>. The runner rejects <code>--direct-store</code> unless M and N completely cover each 128×tile-N CTA output tile. This is a supported-example constraint, not evidence that all CuTe kernels handle tails automatically. Repeat the partial-tile gate for every 2-CTA configuration you plan to use.</p>
+  <p>The reference's TMA output path supports boundary tiles, while its direct register-store path has <strong>no output predication</strong>. The runner rejects <code>--direct-store</code> unless M and N completely cover each 128×tile-N CTA output tile. This is a supported-example constraint, not evidence that all CuTe kernels handle tails automatically. Repeat the partial-tile gate for every 2-CTA configuration you plan to use, independently on SM100 and SM103.</p>
 <pre><code>compute-sanitizer --tool memcheck --error-exitcode 1 \
   python blackwell-gemm-lab.py --cutlass-root "$CUTLASS_ROOT" \
   --m 1032 --n 520 --k 264
 
 compute-sanitizer --tool synccheck --error-exitcode 1 \
   python blackwell-gemm-lab.py --cutlass-root "$CUTLASS_ROOT"</code></pre>
-  <p>Use a tool release that understands SM100 and the generated instructions. Numerical success plus a clean sanitizer run is stronger evidence than either alone; it still does not prove an asynchronous protocol correct. Tool coverage for TMA/TMEM and races is version-dependent. Diagnose unsupported-instruction/tool errors instead of suppressing them, and inspect the pipeline invariants when a kernel hangs.</p>
+  <p>Use a tool release that understands the installed GPU, including SM103 on B300/GB300, and the generated instructions. Numerical success plus a clean sanitizer run is stronger evidence than either alone; it still does not prove an asynchronous protocol correct. Tool coverage for TMA/TMEM and races is version-dependent. Diagnose unsupported-instruction/tool errors instead of suppressing them, and inspect the pipeline invariants when a kernel hangs.</p>
 
   <h2 id="benchmark">5 · Compare the same work, outside compilation</h2>
   <p>The baseline is CUDA <code>torch.mm</code> on the same BF16 A/B storage with a preallocated BF16 output, dispatched through PyTorch's BLAS backend. The runner reports the backend preference; inspect the actual kernels in a profile rather than assuming a particular cuBLASLt algorithm. With <code>--relu</code>, the baseline includes a separate in-place ReLU kernel; the CuTe callback is fused. This is then a fused-vs-unfused comparison, not GEMM-only throughput.</p>
@@ -248,7 +279,7 @@ python blackwell-gemm-lab.py --cutlass-root "$CUTLASS_ROOT" \
       <span class="legend-item"><span class="lg dash"></span> Launch floor</span>
       <span class="legend-item"><span class="lg" style="--c:var(--plot-bound);"></span> Maximum of bounds</span>
     </div>
-    <p class="figure-caption" id="model-caption"><strong>Different shapes justify different experiments.</strong> Horizontal axis: reduction depth K; vertical axis: model time in µs. Rates are illustrative inputs, not B200 specifications or measured utilization. This optimistic model omits tile reloads, shared-memory bandwidth, barriers, TMEM limits, occupancy, and epilogue costs; hot-cache timing has a different traffic model. Use it to form a profiling hypothesis, never to claim kernel performance.</p>
+    <p class="figure-caption" id="model-caption"><strong>Different shapes justify different experiments.</strong> Horizontal axis: reduction depth K; vertical axis: model time in µs. Rates are illustrative inputs, not B200/B300 specifications or measured utilization; do not apply FP4 Ultra's 1.5× headline to this BF16 curve. This optimistic model omits tile reloads, shared-memory bandwidth, barriers, TMEM limits, occupancy, and epilogue costs; hot-cache timing has a different traffic model. Use it to form a profiling hypothesis, never to claim kernel performance.</p>
     <noscript><p>The equations give the same model without JavaScript; take the largest of the three bounds at each K.</p></noscript>
   </div>
 
@@ -283,7 +314,7 @@ CUTE_DSL_DUMP_DIR=blackwell-artifacts \
 grep -nE '\.target|tcgen05|mbarrier|cp\.async' blackwell-artifacts/*.ptx
 # Inspect a specific dumped cubin, using a compatible approved nvdisasm:
 # nvdisasm -g blackwell-artifacts/EXACT_FILE.cubin</code></pre>
-  <p>Confirm a compatible SM100 target and <code>tcgen05</code> operations in PTX, then trace MMA issue/completion, TMEM load/wait, and output stores. PTX logical instruction counts do not predict SASS issue cost. The pinned <a href="https://github.com/NVIDIA/cutlass/blob/2c85f497547eb441f0fe80bfb0fb2e6f9add1719/media/docs/pythonDSL/guides/debugging.rst">debugging guide</a> documents these dump variables, <code>CUTE_DSL_DEBUG=1</code>, and optional compiler diagnostics. Debug settings can alter the JIT cache key and generated code: return to normal settings for final timing.</p>
+  <p>Match the dumped PTX target to the runner's <code>compilation_target</code>: <code>sm_100a</code> on B200/GB200 or <code>sm_103a</code> on B300/GB300. Confirm <code>tcgen05</code> operations, then trace MMA issue/completion, TMEM load/wait, and output stores. Finding only a B200 architecture-specific image is not a B300 validation pass. PTX logical instruction counts do not predict SASS issue cost. The pinned <a href="https://github.com/NVIDIA/cutlass/blob/2c85f497547eb441f0fe80bfb0fb2e6f9add1719/media/docs/pythonDSL/guides/debugging.rst">debugging guide</a> documents these dump variables, <code>CUTE_DSL_DEBUG=1</code>, and optional compiler diagnostics. Debug settings can alter the JIT cache key and generated code: return to normal settings for final timing.</p>
 
   <h2 id="tuning">7 · Change one supported configuration at a time</h2>
 <pre><code># Same problem and timing regime; each candidate checks correctness first.
@@ -300,13 +331,13 @@ python blackwell-gemm-lab.py --cutlass-root "$CUTLASS_ROOT" \
 python blackwell-gemm-lab.py --cutlass-root "$CUTLASS_ROOT" \
   --m 4096 --n 4096 --k 4096 --tile-n 128 --direct-store</code></pre>
   <p>A larger N tile increases reuse but also accumulator footprint, output staging, and often register pressure. <code>--two-cta</code> changes <em>both</em> the MMA tiler to (256,N) and the cluster to (2,1); each CTA still owns 128×N output values. Keeping only the old cluster while enabling a pair violates the source's constraints. Two CTAs cooperate through an architecture-specific protocol; this is not simply doubling block count.</p>
-  <p>Record candidate, GPU/versions, shape, actual A/B stages and TMEM columns, correctness/error values, timing samples, and the profiler evidence that motivated it. Recheck the winner on different K values and the partial-tile gate, not only the square shape used for tuning. Close candidates need repeated runs under matched clocks, power limits, and competing workload; do not declare a win from one noisy median.</p>
+  <p>Record candidate, GPU/versions, <code>compilation_target</code>, shape, actual A/B stages and TMEM columns, correctness/error values, timing samples, and the profiler evidence that motivated it. Recheck the winner on different K values and the partial-tile gate, not only the square shape used for tuning. Retune after moving from B200/GB200 to B300/GB300; do not inherit the old winner without evidence. Close candidates need repeated runs under matched clocks, power limits, and competing workload; do not declare a win from one noisy median.</p>
   <div class="note"><strong>Completion gate:</strong> a configuration is ready only after its declared input/layout domain passes numerical checks and applicable sanitizer checks, its generated target/instructions are inspected, and its speed is measured against the same-work baseline under a declared timing regime. Until those GPU checks are recorded, this remains a source-verified lab, not an execution-validated performance claim.</div>
 
   <h2 id="next">8 · Where to extend the kernel</h2>
   <p><strong>Persistent/warp-specialized GEMM:</strong> start from the pinned <a href="https://github.com/NVIDIA/cutlass/blob/2c85f497547eb441f0fe80bfb0fb2e6f9add1719/examples/python/CuTeDSL/cute/blackwell/kernel/dense_gemm/dense_gemm_persistent.py">persistent source</a> after the baseline protocol is understood. Scheduler state, warp roles, and overlapping output lifetimes require a different kernel; the runner does not pretend to expose them as a stage-count knob.</p>
-  <p><strong>Block-scaled operands:</strong> use the separate <a href="https://github.com/NVIDIA/cutlass/blob/2c85f497547eb441f0fe80bfb0fb2e6f9add1719/examples/python/CuTeDSL/cute/blackwell/kernel/blockscaled_gemm/dense_blockscaled_gemm_persistent.py">block-scaled reference</a>. Add packed payloads, scale tensors with prescribed layouts, scale staging/TMEM budget, and a reference computed from the <em>quantized-and-dequantized</em> inputs. Replacing BF16 with an FP4 dtype in this lab does not establish those contracts. Read <a href="blackwell-kernels.html#block-scaled">block-scaled MMA</a> and <a href="../inference/inference-quantization.html">quantization</a> before porting the experiment.</p>
-  <p><strong>Attention:</strong> <a href="../inference/flash-attention.html#fa4">FlashAttention-4</a> adds two matmuls, online-softmax/correction work, different dominant resources, and more overlapping crews. The reusable lesson is the experiment loop: declare the contract → preserve ownership and completion → prove the answer → profile → change one hypothesis.</p>
+  <p><strong>Block-scaled operands:</strong> use the separate <a href="https://github.com/NVIDIA/cutlass/blob/2c85f497547eb441f0fe80bfb0fb2e6f9add1719/examples/python/CuTeDSL/cute/blackwell/kernel/blockscaled_gemm/dense_blockscaled_gemm_persistent.py">SM100 block-scaled reference</a> or the experimental <a href="https://github.com/NVIDIA/cutlass/blob/2c85f497547eb441f0fe80bfb0fb2e6f9add1719/examples/python/CuTeDSL/cute/blackwell/kernel/blockscaled_gemm/sm103_dense_blockscaled_gemm_persistent.py">SM103 FP4 Ultra reference</a> for B300/GB300. Add packed payloads, scale tensors with prescribed layouts, scale staging/TMEM budget, and a reference computed from the <em>quantized-and-dequantized</em> inputs. These are different experiments with different constraints; replacing BF16 with an FP4 dtype or relabeling the target does not establish those contracts. Read <a href="blackwell-kernels.html#block-scaled">block-scaled MMA</a> and <a href="../inference/inference-quantization.html">quantization</a> before porting the experiment.</p>
+  <p><strong>Attention:</strong> <a href="../inference/flash-attention.html#fa4">FlashAttention-4</a> adds two matmuls, online-softmax/correction work, different dominant resources, and more overlapping crews. Its B200 bottleneck discussion needs the <a href="#b300-differences">Ultra SFU caveat</a> on B300/GB300. The reusable lesson is the experiment loop: declare the contract → preserve ownership and completion → prove the answer → profile → change one hypothesis.</p>
 </main>
 <footer>Personal ML notes · <a href="blackwell-gemm-lab.py" download>Download the reviewed-source runner</a> · <a href="https://github.com/yueyiming2009/ai-learning">source on GitHub</a></footer>
 <script>
