@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Blackwell GEMM Lab — CuTe DSL, Correctness, Profiling &amp; Tuning</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #ffffff; --surface: #f8f9fa; --border: #e8eaed;
+      --text: #1a1a2e; --muted: #6b7280; --accent: #be123c;
+      --accent-light: #ffe4e6; --nav-bg: rgba(255,255,255,0.92);
+      --code-bg: #1e1b4b; --code-text: #e2e8f0; --icode-bg: #f1f5f9;
+      --warning-bg: #fffbeb; --warning-border: #f59e0b;
+      --plot-compute: #be123c; --plot-memory: #0d9488;
+      --plot-floor: #9ca3af; --plot-bound: #d97706;
+      --plot-grid: #e8eaed; --plot-tick: #6b7280; --plot-axis: #9ca3af;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115; --surface: #171b21; --border: #262b33;
+        --text: #e5e7eb; --muted: #9aa1ab; --accent: #fb7185;
+        --accent-light: #2b141a; --nav-bg: rgba(15,17,21,0.9);
+        --code-bg: #221f3d; --icode-bg: #1c2531;
+        --warning-bg: #251c0b; --warning-border: #b45309;
+        --plot-compute: #fb7185; --plot-memory: #2dd4bf; --plot-bound: #fbbf24;
+        --plot-grid: #262b33; --plot-tick: #9aa1ab; --plot-axis: #6b7280;
+      }
+    }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); line-height: 1.75; }
+    nav { position: sticky; top: 0; z-index: 100; display: flex; align-items: center; gap: 20px; height: 52px; padding: 0 24px; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
+    .nav-brand { display: inline-flex; align-items: center; gap: 7px; font-size: 0.9rem; font-weight: 600; text-decoration: none; white-space: nowrap; }
+    .nav-links { display: flex; overflow-x: auto; gap: 16px; }
+    .nav-links a { font-size: 0.82rem; white-space: nowrap; text-decoration: none; color: var(--muted); }
+    a { color: var(--accent); }
+    .hero { padding: 52px 24px 44px; text-align: center; background: linear-gradient(135deg, #881337, #be123c); color: #ffffff; }
+    .hero h1 { margin: 8px 0; font-size: clamp(1.7rem, 4vw, 2.4rem); }
+    .hero p { max-width: 710px; margin: 0 auto; opacity: 0.9; }
+    .hero-pill { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .page-wrap { max-width: 900px; margin: 0 auto; padding: 40px 24px 72px; }
+    h2 { scroll-margin-top: 72px; font-size: 1.25rem; margin-top: 2.5em; padding-bottom: 8px; border-bottom: 2px solid var(--border); }
+    h3 { scroll-margin-top: 72px; font-size: 1rem; margin-top: 1.6em; }
+    p { margin: 0.75em 0; }
+    li { margin-bottom: 0.4em; }
+    code { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
+    p code, li code, td code { background: var(--icode-bg); color: var(--accent); padding: 1px 5px; border-radius: 4px; font-size: 0.88em; }
+    pre { padding: 18px 20px; background: var(--code-bg); color: var(--code-text); border-radius: 10px; overflow-x: auto; font-size: 0.82rem; line-height: 1.6; }
+    .note, .xref { border-radius: 0 8px 8px 0; padding: 14px 18px; margin: 1.3em 0; }
+    .note { background: var(--warning-bg); border-left: 3px solid var(--warning-border); }
+    .xref { background: var(--accent-light); border-left: 3px solid var(--accent); }
+    .table-wrap { overflow-x: auto; margin: 1.2em 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { padding: 10px 13px; border: 1px solid var(--border); text-align: left; vertical-align: top; }
+    th { background: var(--surface); }
+    .figure { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 18px 16px 14px; margin: 1.6em 0; }
+    .figure canvas { width: 100%; height: 300px; display: block; }
+    .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; justify-content: center; margin-top: 12px; font-size: 0.82rem; }
+    .legend-item { display: flex; align-items: center; gap: 7px; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, var(--plot-floor) 0 5px, transparent 5px 9px); }
+    .figure-caption { font-size: 0.85rem; color: var(--muted); line-height: 1.6; margin: 14px 4px 2px; }
+    .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 18px; font-size: 0.85rem; }
+    .controls label { display: flex; flex-direction: column; gap: 4px; }
+    .controls select, .controls input { width: 100%; }
+    .controls select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 5px; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    footer { padding: 24px; text-align: center; border-top: 1px solid var(--border); font-size: 0.82rem; color: var(--muted); }
+    @media (max-width: 640px) { nav { padding: 0 12px; gap: 12px; } .page-wrap { padding: 28px 16px 56px; } }
+  </style>
+</head>
+<body>
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Blackwell GEMM Lab</a>
+  <div class="nav-links">
+    <a href="../index.html#systems-kernel-programming">↑ Kernel Programming</a>
+    <a href="#setup">Setup</a><a href="#runner">Run</a><a href="#pipeline">Pipeline</a>
+    <a href="#correctness">Correctness</a><a href="#benchmark">Benchmark</a>
+    <a href="#profiling">Profile</a><a href="#tuning">Tune</a>
+  </div>
+</nav>
+<div class="hero">
+  <span class="hero-pill">Systems · CuTe DSL · B200 / GB200</span>
+  <h1>A Blackwell GEMM, End to End</h1>
+  <p>A source-pinned BF16 experiment: build the tensor views, compile a real tcgen05 kernel, follow TMA and TMEM through its pipeline, check the answer, compare with PyTorch's library GEMM, and tune from evidence.</p>
+</div>
+<main class="page-wrap">
+  <div class="xref"><strong>Read first:</strong> <a href="cute-dsl.html">CuTe DSL layouts and partitions</a> and <a href="blackwell-kernels.html">the Blackwell kernel model</a>. This lab is the executable bridge, not another architecture overview. Keep <a href="cublas.html">cuBLAS</a> as the baseline and <a href="cuda.html#barriers">CUDA synchronization</a> as the vocabulary.</div>
+  <div class="note"><strong>Evidence boundary:</strong> the runner and source trace target NVIDIA CUTLASS <strong>v4.8.1</strong>, commit <code>2c85f497547eb441f0fe80bfb0fb2e6f9add1719</code>. APIs and control flow were checked against that source; this page does <strong>not</strong> claim execution on a Blackwell GPU or measured performance. The browser plot below is an analytical model. You must pass the GPU gates before treating a configuration as working or fast.</div>
+
+  <h2 id="setup">1 · Start with a bounded, reviewed environment</h2>
+  <p>The first experiment is deliberately narrow: one GPU, one batch, BF16 inputs/output, FP32 accumulation, and \(C=AB\). The optional ReLU is an elementwise epilogue, not a residual/bias fusion. The implementation is NVIDIA's <a href="https://github.com/NVIDIA/cutlass/blob/2c85f497547eb441f0fe80bfb0fb2e6f9add1719/examples/python/CuTeDSL/cute/blackwell/kernel/dense_gemm/dense_gemm.py">complete DenseGemmKernel</a>; the <a href="blackwell-gemm-lab.py" download>downloadable lab runner</a> owns tensor setup, verification, timing, and profiling. It imports the reviewed kernel rather than duplicating its implementation.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Gate</th><th>Required for this lab</th></tr></thead>
+    <tbody>
+      <tr><td>Hardware</td><td>An SM100 data-center GPU: B200/GB200, compute capability <code>(10,0)</code>. The runner rejects SM103/B300 and SM120/RTX Blackwell; a family name is not an instruction-compatibility check.</td></tr>
+      <tr><td>Runtime</td><td>An approved Linux environment, Python 3.10–3.14, CUDA-enabled PyTorch, CUDA Python bindings, and <code>nvidia-cutlass-dsl[cu13]==4.8.1</code>. Use a CUDA 13.x driver/toolchain combination supported by the pinned <a href="https://github.com/NVIDIA/cutlass/blob/2c85f497547eb441f0fe80bfb0fb2e6f9add1719/media/docs/pythonDSL/quick_start.rst">quick start</a> (the release documents CUDA 13.4). This is not a macOS/CPU exercise.</td></tr>
+      <tr><td>Source</td><td>A reviewed CUTLASS checkout at the pinned commit. Its <a href="https://github.com/NVIDIA/cutlass/blob/2c85f497547eb441f0fe80bfb0fb2e6f9add1719/python/CuTeDSL/requirements-cu13.txt">cu13 manifest</a> pins the DSL wheel to 4.8.1. The runner checks that installed version and the kernel file's SHA-256 before importing the reference.</td></tr>
+      <tr><td>Developer tools</td><td>Approved Compute Sanitizer and Nsight Compute/Systems. SASS inspection additionally needs a compatible <code>nvdisasm</code>; an older CUDA disassembler may not understand the wheel's cubin.</td></tr>
+    </tbody>
+  </table></div>
+  <p><strong>No bootstrap script:</strong> obtain dependencies and the checkout through your approved environment workflow; review their provenance before running anything. Neither the runner nor this page downloads, installs, or executes a remote setup script. A checksum detects source drift; it is not a substitute for reviewing the checkout and installed dependencies.</p>
+<pre><code>export CUTLASS_ROOT=/path/to/reviewed/cutlass
+git -C "$CUTLASS_ROOT" rev-parse HEAD
+nvidia-smi
+python -m pip show nvidia-cutlass-dsl torch cuda-bindings
+
+# Save the linked runner locally as blackwell-gemm-lab.py, inspect it, then:
+python blackwell-gemm-lab.py --help
+python blackwell-gemm-lab.py --cutlass-root "$CUTLASS_ROOT"</code></pre>
+  <p>The default problem is \(1024^3\), with a 128×128 logical MMA tiler, a 1×1 CTA cluster, and TMA output stores. Keep the reported GPU, driver, source pin, DSL/PyTorch versions, shapes, strides, stage counts, and compile mode with every result. Missing packages, mismatched source, unsupported hardware, and invalid shapes raise errors; there is no CPU or alternative-kernel fallback.</p>
+
+  <h2 id="runner">2 · The host contract: B has two different views</h2>
+  <p>PyTorch writes \(A[M,K]B[K,N]\). This CuTe kernel expects <code>A[M,K,L]</code>, <code>B[N,K,L]</code>, and <code>C[M,N,L]</code>. Both refer to the <em>same mathematical multiply</em>: \(C_{mnl}=\sum_k A_{mkl}B_{nkl}\). B's view changes its coordinate convention, not the weights or the GEMM equation.</p>
+<pre><code># Excerpt from the downloadable runner; L = 1.
+a_storage = torch.randn((1, M, K), device=device, dtype=torch.bfloat16)
+b_storage = torch.randn((1, K, N), device=device, dtype=torch.bfloat16)
+c_storage = torch.full((1, M, N), float("nan"),
+                       device=device, dtype=torch.bfloat16)
+
+a = a_storage.permute(1, 2, 0)  # (M,K,1), strides (K,1,M*K)
+b = b_storage.permute(2, 1, 0)  # (N,K,1), strides (1,N,K*N)
+c = c_storage.permute(1, 2, 0)  # (M,N,1), strides (N,1,M*N)
+views = tuple(from_dlpack(t, assumed_align=16) for t in (a, b, c))
+stream = cuda.CUstream(torch.cuda.current_stream().cuda_stream)</code></pre>
+  <p>DLPack conversion is a zero-copy view. The BF16 contiguous dimensions N/K must be multiples of 8 so the packed rows retain 16-byte alignment; <code>assumed_align=16</code> is a promise about real addresses, not a request to fix them. A sliced/offset tensor needs its own alignment checks. These static views specialize the compiled experiment to its shape/layout. Keep the storage, views, and stream alive until all launches finish.</p>
+<pre><code>gemm = DenseGemmKernel(
+    acc_dtype=cutlass.Float32,
+    use_2cta_instrs=False,
+    mma_tiler_mn=(128, 128),
+    cluster_shape_mn=(1, 1),
+    use_tma_store=True,
+)
+if not gemm.can_implement(*views):
+    raise ValueError("Unsupported configuration")
+compiled = cute.compile(gemm, *views, stream, lambda x: x)
+compiled(*views, stream)</code></pre>
+  <p>The runner uses the PyTorch current stream for <em>both</em> implementations and their CUDA events. Compilation is outside timing. Launching queues GPU work; stream ordering is not a host completion guarantee, so correctness checks and profiling boundaries explicitly synchronize. This is inference-only code: no autograd or backward registration.</p>
+
+  <h2 id="pipeline">3 · Trace the actual kernel, not a hypothetical skeleton</h2>
+  <p>Open the <a href="https://github.com/NVIDIA/cutlass/blob/2c85f497547eb441f0fe80bfb0fb2e6f9add1719/examples/python/CuTeDSL/cute/blackwell/kernel/dense_gemm/dense_gemm.py#L217-L454">pinned host setup</a>, then walk through these device stages. All names below are source navigation landmarks, <strong>not standalone pseudocode presented as a runnable kernel</strong>.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Stage / source</th><th>What to inspect</th><th>Invariant to preserve</th></tr></thead>
+    <tbody>
+      <tr><td><a href="https://github.com/NVIDIA/cutlass/blob/2c85f497547eb441f0fe80bfb0fb2e6f9add1719/examples/python/CuTeDSL/cute/blackwell/kernel/dense_gemm/dense_gemm.py#L217-L322">Shapes and staging</a></td><td><code>make_trivial_tiled_mma</code>, staged/swizzled A/B SMEM layouts, and <code>make_tiled_tma_atom_A/B</code>. BF16's K=16 instruction is tiled four times: the mainloop stage advances K by 64.</td><td>A/B descriptors, strides, major modes, and SMEM swizzles must match the MMA's operand layouts. Changing a tile is not just changing loop bounds.</td></tr>
+      <tr><td><a href="https://github.com/NVIDIA/cutlass/blob/2c85f497547eb441f0fe80bfb0fb2e6f9add1719/examples/python/CuTeDSL/cute/blackwell/kernel/dense_gemm/dense_gemm.py#L527-L574">Initialize pipelines</a></td><td><code>PipelineTmaUmma</code> owns the A/B stage handoff; <code>PipelineUmmaAsync</code> owns accumulator completion. TMA transaction counts describe the actual A+B bytes.</td><td>Initialize barriers before asynchronous producers use them. Preserve participant counts, stage indices, and phase progression.</td></tr>
+      <tr><td><a href="https://github.com/NVIDIA/cutlass/blob/2c85f497547eb441f0fe80bfb0fb2e6f9add1719/examples/python/CuTeDSL/cute/blackwell/kernel/dense_gemm/dense_gemm.py#L687-L700">Allocate TMEM</a></td><td><code>TmemAllocator.allocate</code> → <code>wait_for_alloc</code> → <code>retrieve_ptr</code>, then the accumulator tensor uses that pointer.</td><td>A shared pointer slot is not a ready allocation. All required participants wait before using it; release the allocation only after readers finish.</td></tr>
+      <tr><td><a href="https://github.com/NVIDIA/cutlass/blob/2c85f497547eb441f0fe80bfb0fb2e6f9add1719/examples/python/CuTeDSL/cute/blackwell/kernel/dense_gemm/dense_gemm.py#L713-L799">TMA → UMMA</a></td><td>The producer acquires a free stage, queues A/B <code>cute.copy</code> with its TMA barrier, and the leader waits before <code>cute.gemm</code>. The first K block initializes the accumulator; later blocks enable <code>tcgen05.Field.ACCUMULATE</code>.</td><td>Release the A/B stage through the UMMA completion protocol, not when issue returns. Reset accumulation for a new output tile; do not reset it on every K slice.</td></tr>
+      <tr><td><a href="https://github.com/NVIDIA/cutlass/blob/2c85f497547eb441f0fe80bfb0fb2e6f9add1719/examples/python/CuTeDSL/cute/blackwell/kernel/dense_gemm/dense_gemm.py#L806-L838">Wait for the result</a></td><td><code>acc_pipeline.consumer_wait</code> gates the epilogue. <code>relinquish_alloc_permit</code> releases the allocation lock, <em>not</em> the live TMEM buffer.</td><td>Submitting or committing MMAs is not waiting for them. Releasing an allocation permit is not permission to overwrite its data.</td></tr>
+      <tr><td><a href="https://github.com/NVIDIA/cutlass/blob/2c85f497547eb441f0fe80bfb0fb2e6f9add1719/examples/python/CuTeDSL/cute/blackwell/kernel/dense_gemm/dense_gemm.py#L940-L1049">Drain and store</a></td><td>A TMEM copy atom partitions registers, then the TMA path converts, applies the elementwise callback, rearranges to SMEM, fences the async proxy, and queues output stores. <code>PipelineTmaStore</code> protects staging reuse.</td><td>TMEM loads, output-layout exchange, and TMA stores have distinct completion/visibility requirements. Inspect generated load/wait instructions; do not add arbitrary CTA barriers as a substitute.</td></tr>
+      <tr><td><a href="https://github.com/NVIDIA/cutlass/blob/2c85f497547eb441f0fe80bfb0fb2e6f9add1719/examples/python/CuTeDSL/cute/blackwell/kernel/dense_gemm/dense_gemm.py#L829-L838">Finish</a></td><td>The CTA synchronizes before <code>tmem.free</code>; the A/B producer tail drains pending stage obligations.</td><td>No consumer may retain a TMEM load obligation after free. Output staging must remain valid while an asynchronous store reads it.</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note"><strong>This baseline is not the full warp-specialized persistent design.</strong> It has 128 threads per CTA, one accumulator stage, and warp 0 drives the TMA/MMA control loop. All threads participate in the epilogue. There is no two-output TMEM ping-pong or separate persistent scheduler warp here. Learn this protocol first; use the linked <a href="blackwell-kernels.html#kernel-shape">architecture diagram</a> and NVIDIA's persistent variants as the next step, not as a claim about this source.</div>
+  <p>For the default 128×128 FP32 accumulator, the simple full-row storage footprint is \(128\cdot128\cdot4=64\) KiB, or 128 TMEM columns. A raw BF16 A+B stage at K=64 contains \(2(128\cdot64+128\cdot64)=32\) KiB. Neither number is the whole resource budget: barriers, padded/swizzled layouts, and output staging matter. The runner prints the reference's actual stage count and TMEM allocation after compilation; do not force an arbitrary stage count without recomputing its storage layouts.</p>
+
+  <h3 id="epilogue">A first edit: fuse ReLU without changing the contract</h3>
+<pre><code>def relu(x):
+    return cute.where(x &gt; 0, x, cute.full_like(x, 0))
+
+compiled = cute.compile(gemm, *views, stream, relu)
+# Runtime arguments do not include the compile-time epilogue callback.
+compiled(*views, stream)</code></pre>
+  <p><code>--relu</code> selects this already-wired experiment. Importantly, this pinned reference calls the callback <strong>after conversion to the output dtype</strong>. For the finite BF16 values used here, the reference is <code>relu(BF16(FP32_AB))</code>. It is not a general FP32 residual+bias+activation epilogue, and it does not define a NaN/Inf contract. Adding scalars, bias tensors, or reductions requires changing the reference's signature, partitioned loads, predicates, and possibly staging; an elementwise lambda alone does not supply those duties.</p>
+  <p>For a source edit beyond the supplied configurations, use a separately reviewed copy and a new source pin. The runner intentionally rejects edits to its reference file. Never bypass a checksum failure merely to make an experiment run.</p>
+
+  <h2 id="correctness">4 · Pass correctness gates before recording speed</h2>
+  <p>The runner compares <em>both</em> the CuTe output and the BF16 library output against a separate FP32 PyTorch multiply of the actual BF16 operands, followed by BF16 rounding and optional ReLU. TF32 and reduced-precision BF16 reductions are disabled. Random A is scaled by \(1/\sqrt K\), so output magnitudes stay roughly stable as K changes. This avoids making a fixed absolute tolerance meaningless just by increasing K.</p>
+  <p>Random inputs use <code>atol=0.01</code>, <code>rtol=0.02</code>, with maximum absolute error printed. These are declared lab tolerances, not a universal BF16 guarantee. Zeros and the rectangular identity pattern require exact equality; identity means \(A_{ik}=1\) only for \(i=k\), so it also works for non-square shapes. Outputs start as NaNs to expose unwritten cells, and <code>assert_close</code> does not accept matching NaNs.</p>
+<pre><code># Accumulation, output initialization, and coordinate ownership:
+for pattern in random zeros identity; do
+  python blackwell-gemm-lab.py --cutlass-root "$CUTLASS_ROOT" \
+    --pattern "$pattern"
+done
+
+# Aligned but partial output/K tiles: retain TMA stores.
+python blackwell-gemm-lab.py --cutlass-root "$CUTLASS_ROOT" \
+  --m 1032 --n 520 --k 264
+
+# Epilogue and a different reduction depth:
+python blackwell-gemm-lab.py --cutlass-root "$CUTLASS_ROOT" \
+  --m 512 --n 1024 --k 4096 --relu
+
+# This MUST fail before launch: N is not a legal 16-byte BF16 stride.
+python blackwell-gemm-lab.py --cutlass-root "$CUTLASS_ROOT" --n 513</code></pre>
+  <p>The reference's TMA output path supports boundary tiles, while its direct register-store path has <strong>no output predication</strong>. The runner rejects <code>--direct-store</code> unless M and N completely cover each 128×tile-N CTA output tile. This is a supported-example constraint, not evidence that all CuTe kernels handle tails automatically. Repeat the partial-tile gate for every 2-CTA configuration you plan to use.</p>
+<pre><code>compute-sanitizer --tool memcheck --error-exitcode 1 \
+  python blackwell-gemm-lab.py --cutlass-root "$CUTLASS_ROOT" \
+  --m 1032 --n 520 --k 264
+
+compute-sanitizer --tool synccheck --error-exitcode 1 \
+  python blackwell-gemm-lab.py --cutlass-root "$CUTLASS_ROOT"</code></pre>
+  <p>Use a tool release that understands SM100 and the generated instructions. Numerical success plus a clean sanitizer run is stronger evidence than either alone; it still does not prove an asynchronous protocol correct. Tool coverage for TMA/TMEM and races is version-dependent. Diagnose unsupported-instruction/tool errors instead of suppressing them, and inspect the pipeline invariants when a kernel hangs.</p>
+
+  <h2 id="benchmark">5 · Compare the same work, outside compilation</h2>
+  <p>The baseline is CUDA <code>torch.mm</code> on the same BF16 A/B storage with a preallocated BF16 output, dispatched through PyTorch's BLAS backend. The runner reports the backend preference; inspect the actual kernels in a profile rather than assuming a particular cuBLASLt algorithm. With <code>--relu</code>, the baseline includes a separate in-place ReLU kernel; the CuTe callback is fused. This is then a fused-vs-unfused comparison, not GEMM-only throughput.</p>
+<pre><code>python blackwell-gemm-lab.py --cutlass-root "$CUTLASS_ROOT" \
+  --m 4096 --n 4096 --k 4096 --iterations 100 --trials 5
+
+python blackwell-gemm-lab.py --cutlass-root "$CUTLASS_ROOT" \
+  --m 4096 --n 4096 --k 4096 --iterations 100 --trials 5 --relu</code></pre>
+  <p>After correctness, both implementations receive 10 warmup launches. Each trial averages 100 launches between CUDA events on the same stream; the runner alternates implementation order and reports all trial samples plus their median. Compile time is reported separately. Allocation, DLPack conversion, FP32 reference calculation, and result copies are outside the timed batches.</p>
+  \[
+    \mathrm{TFLOP/s} = \frac{2MNK}{t_{\mathrm{ms}}\cdot10^9},
+    \qquad
+    \mathrm{time\ ratio} = \frac{t_{\mathrm{PyTorch}}}{t_{\mathrm{CuTe}}}.
+  \]
+  <p>The numerator counts GEMM arithmetic only, even when ReLU is included in elapsed time. A ratio above 1 means CuTe was faster for <em>that measured configuration</em>. The page supplies no expected TFLOP/s or claimed speedup. Preserve correctness/error outputs beside the samples; rejecting a failing candidate is part of tuning, not an inconvenient outlier.</p>
+  <div class="note"><strong>Declare the timing regime.</strong> These are warm, repeated same-buffer, non-graph launches, not cold-HBM measurements. Reuse can hit L2. Short kernels can be starved by Python launch overhead; CUDA-event batches then include GPU idle gaps. Nsight Systems tells you when to switch to matched graph-replay measurements. Do not graph only one side, flush only one side's cache, or use profiler-replay duration as an ordinary benchmark.</div>
+
+  <h3 id="cost-model">Before tuning, predict which resource could matter</h3>
+  <p>For an ideal cold-input BF16 GEMM with every matrix transferred once, compare a compute bound, a global-memory traffic bound, and a chosen launch floor:</p>
+  \[
+    t_{\mathrm{compute}}=\frac{2MNK}{P},\quad
+    t_{\mathrm{memory}}=\frac{2(MK+KN+MN)}{B},\quad
+    t_{\mathrm{model}}=\max(t_{\mathrm{compute}},t_{\mathrm{memory}},t_{\mathrm{launch}}).
+  \]
+  <div class="figure">
+    <div class="controls">
+      <label for="model-mn">Square output M = N
+        <select id="model-mn"><option value="512">512</option><option value="2048" selected>2048</option><option value="4096">4096</option></select>
+      </label>
+      <label for="model-p">Assumed compute rate (TFLOP/s)
+        <input id="model-p" type="range" min="100" max="2000" step="100" value="1000">
+      </label>
+      <label for="model-b">Assumed bandwidth (TB/s)
+        <input id="model-b" type="range" min="1" max="8" step="0.5" value="4">
+      </label>
+      <label for="model-launch">Assumed launch floor (µs)
+        <input id="model-launch" type="range" min="1" max="20" step="1" value="5">
+      </label>
+    </div>
+    <p id="model-readout" aria-live="polite"></p>
+    <canvas id="plot-gemm-bound" role="img" aria-label="Analytical GEMM time bounds versus K" aria-describedby="model-readout model-caption">For M=N=2048, P=1000 TFLOP/s, B=4 TB/s, and a 5 µs floor, the model is launch-limited at K=128 and compute-limited at K=8192. This is not a GPU benchmark.</canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-compute);"></span> Compute</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-memory);"></span> Ideal cold traffic</span>
+      <span class="legend-item"><span class="lg dash"></span> Launch floor</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-bound);"></span> Maximum of bounds</span>
+    </div>
+    <p class="figure-caption" id="model-caption"><strong>Different shapes justify different experiments.</strong> Horizontal axis: reduction depth K; vertical axis: model time in µs. Rates are illustrative inputs, not B200 specifications or measured utilization. This optimistic model omits tile reloads, shared-memory bandwidth, barriers, TMEM limits, occupancy, and epilogue costs; hot-cache timing has a different traffic model. Use it to form a profiling hypothesis, never to claim kernel performance.</p>
+    <noscript><p>The equations give the same model without JavaScript; take the largest of the three bounds at each K.</p></noscript>
+  </div>
+
+  <h2 id="profiling">6 · Isolate one validated launch, then read the generated code</h2>
+  <p><code>--profile</code> still compiles, checks correctness, and warms both paths, but opens a CUDA profiler capture range around <strong>one CuTe launch only</strong>. It skips the benchmark trials. This keeps reference GEMMs and warmup kernels out of the intended profile.</p>
+<pre><code>nsys profile --trace=cuda,nvtx --capture-range=cudaProfilerApi \
+  --capture-range-end=stop --output=blackwell-timeline \
+  python blackwell-gemm-lab.py --cutlass-root "$CUTLASS_ROOT" \
+  --m 4096 --n 4096 --k 4096 --profile
+
+ncu --profile-from-start off --set full --export blackwell-kernel \
+  python blackwell-gemm-lab.py --cutlass-root "$CUTLASS_ROOT" \
+  --m 4096 --n 4096 --k 4096 --profile</code></pre>
+  <p>For launch-starvation diagnosis, also capture the <em>ordinary benchmark</em> with Nsight Systems and no capture-range restriction; the isolated profile above intentionally removes repeated host launches. Match the profiler version, GPU permissions, and available section names to your environment. A profiling-permission failure is not a slow-kernel result.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Evidence</th><th>Next question</th><th>A bounded experiment</th></tr></thead>
+    <tbody>
+      <tr><td>GPU gaps between short launches</td><td>Is host dispatch feeding the device too slowly?</td><td>Increase work per launch; only then compare matched graph replay on both paths. A bigger SMEM pipeline cannot hide missing host launches.</td></tr>
+      <tr><td>High DRAM traffic / bandwidth pressure</td><td>Are tiles reloaded, or is the working set cold?</td><td>Compare tile-N choices and later cluster multicast while holding the cache regime fixed. Check actual bytes, not just logical matrix sizes.</td></tr>
+      <tr><td>Weak tensor-core utilization with staging stalls</td><td>Does TMA arrive late, or are A/B stages waiting for reuse?</td><td>Inspect the A/B handoff and the source-computed stage count. More stages trade latency hiding against SMEM residency.</td></tr>
+      <tr><td>High shared-memory activity / lower residency</td><td>Is operand delivery or the output exchange dominating?</td><td>Compare TMA/direct stores on complete tiles; then test a legal 2-CTA multiply. Read per-CTA SMEM and per-SM TMEM allocations together.</td></tr>
+      <tr><td>Low utilization only on small/skinny shapes</td><td>Are there enough output tiles for a full wave?</td><td>Try a smaller output tile; persistent/split-K scheduling is a follow-on kernel change, not a launch flag in this runner.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Read Nsight Compute's Speed of Light, memory workload, launch/resource, and occupancy views first. Exact counter names change across GPU/tool releases; follow the available report's bottleneck rather than pasting an old architecture's metric list. Inspect Source/SASS where line correlation is available.</p>
+<pre><code>mkdir -p blackwell-artifacts
+CUTE_DSL_LINEINFO=1 CUTE_DSL_KEEP=ptx,cubin \
+CUTE_DSL_DUMP_DIR=blackwell-artifacts \
+  python blackwell-gemm-lab.py --cutlass-root "$CUTLASS_ROOT" \
+  --m 1024 --n 1024 --k 1024 --profile
+
+grep -nE '\.target|tcgen05|mbarrier|cp\.async' blackwell-artifacts/*.ptx
+# Inspect a specific dumped cubin, using a compatible approved nvdisasm:
+# nvdisasm -g blackwell-artifacts/EXACT_FILE.cubin</code></pre>
+  <p>Confirm a compatible SM100 target and <code>tcgen05</code> operations in PTX, then trace MMA issue/completion, TMEM load/wait, and output stores. PTX logical instruction counts do not predict SASS issue cost. The pinned <a href="https://github.com/NVIDIA/cutlass/blob/2c85f497547eb441f0fe80bfb0fb2e6f9add1719/media/docs/pythonDSL/guides/debugging.rst">debugging guide</a> documents these dump variables, <code>CUTE_DSL_DEBUG=1</code>, and optional compiler diagnostics. Debug settings can alter the JIT cache key and generated code: return to normal settings for final timing.</p>
+
+  <h2 id="tuning">7 · Change one supported configuration at a time</h2>
+<pre><code># Same problem and timing regime; each candidate checks correctness first.
+for tile_n in 64 128 256; do
+  python blackwell-gemm-lab.py --cutlass-root "$CUTLASS_ROOT" \
+    --m 4096 --n 4096 --k 4096 --tile-n "$tile_n"
+done
+
+# Same 128x128 per-CTA output, but 256x128 logical MMA across a CTA pair:
+python blackwell-gemm-lab.py --cutlass-root "$CUTLASS_ROOT" \
+  --m 4096 --n 4096 --k 4096 --tile-n 128 --two-cta
+
+# Complete tiles only: compare output-store choreography.
+python blackwell-gemm-lab.py --cutlass-root "$CUTLASS_ROOT" \
+  --m 4096 --n 4096 --k 4096 --tile-n 128 --direct-store</code></pre>
+  <p>A larger N tile increases reuse but also accumulator footprint, output staging, and often register pressure. <code>--two-cta</code> changes <em>both</em> the MMA tiler to (256,N) and the cluster to (2,1); each CTA still owns 128×N output values. Keeping only the old cluster while enabling a pair violates the source's constraints. Two CTAs cooperate through an architecture-specific protocol; this is not simply doubling block count.</p>
+  <p>Record candidate, GPU/versions, shape, actual A/B stages and TMEM columns, correctness/error values, timing samples, and the profiler evidence that motivated it. Recheck the winner on different K values and the partial-tile gate, not only the square shape used for tuning. Close candidates need repeated runs under matched clocks, power limits, and competing workload; do not declare a win from one noisy median.</p>
+  <div class="note"><strong>Completion gate:</strong> a configuration is ready only after its declared input/layout domain passes numerical checks and applicable sanitizer checks, its generated target/instructions are inspected, and its speed is measured against the same-work baseline under a declared timing regime. Until those GPU checks are recorded, this remains a source-verified lab, not an execution-validated performance claim.</div>
+
+  <h2 id="next">8 · Where to extend the kernel</h2>
+  <p><strong>Persistent/warp-specialized GEMM:</strong> start from the pinned <a href="https://github.com/NVIDIA/cutlass/blob/2c85f497547eb441f0fe80bfb0fb2e6f9add1719/examples/python/CuTeDSL/cute/blackwell/kernel/dense_gemm/dense_gemm_persistent.py">persistent source</a> after the baseline protocol is understood. Scheduler state, warp roles, and overlapping output lifetimes require a different kernel; the runner does not pretend to expose them as a stage-count knob.</p>
+  <p><strong>Block-scaled operands:</strong> use the separate <a href="https://github.com/NVIDIA/cutlass/blob/2c85f497547eb441f0fe80bfb0fb2e6f9add1719/examples/python/CuTeDSL/cute/blackwell/kernel/blockscaled_gemm/dense_blockscaled_gemm_persistent.py">block-scaled reference</a>. Add packed payloads, scale tensors with prescribed layouts, scale staging/TMEM budget, and a reference computed from the <em>quantized-and-dequantized</em> inputs. Replacing BF16 with an FP4 dtype in this lab does not establish those contracts. Read <a href="blackwell-kernels.html#block-scaled">block-scaled MMA</a> and <a href="../inference/inference-quantization.html">quantization</a> before porting the experiment.</p>
+  <p><strong>Attention:</strong> <a href="../inference/flash-attention.html#fa4">FlashAttention-4</a> adds two matmuls, online-softmax/correction work, different dominant resources, and more overlapping crews. The reusable lesson is the experiment loop: declare the contract → preserve ownership and completion → prove the answer → profile → change one hypothesis.</p>
+</main>
+<footer>Personal ML notes · <a href="blackwell-gemm-lab.py" download>Download the reviewed-source runner</a> · <a href="https://github.com/yueyiming2009/ai-learning">source on GitHub</a></footer>
+<script>
+(function () {
+  'use strict';
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const canvas = document.getElementById('plot-gemm-bound');
+  const mn = document.getElementById('model-mn');
+  const p = document.getElementById('model-p');
+  const b = document.getElementById('model-b');
+  const launch = document.getElementById('model-launch');
+  const readout = document.getElementById('model-readout');
+
+  function drawPlot(canvas, cfg) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+    const mL = 55, mR = 14, mT = 20, mB = 35;
+    const pw = cssW - mL - mR, ph = cssH - mT - mB;
+    const { xMin, xMax, yMin, yMax } = cfg;
+    const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
+    const Y = y => mT + (yMax - y) / (yMax - yMin) * ph;
+    ctx.font = '11px sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(t => {
+      const px = X(t);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.fillText(String(t), px, mT + ph + 6);
+    });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(t => {
+      const py = Y(t);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+      ctx.fillText(t.toFixed(1), mL - 8, py);
+    });
+    ctx.textAlign = 'left';
+    ctx.fillText('µs', 5, 10);
+    ctx.strokeStyle = cssVar('--plot-axis');
+    ctx.lineWidth = 1.25;
+    if (yMin <= 0 && yMax >= 0) {
+      ctx.beginPath(); ctx.moveTo(mL, Y(0)); ctx.lineTo(mL + pw, Y(0)); ctx.stroke();
+    }
+    if (xMin <= 0 && xMax >= 0) {
+      ctx.beginPath(); ctx.moveTo(X(0), mT); ctx.lineTo(X(0), mT + ph); ctx.stroke();
+    }
+    ctx.save();
+    ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    ctx.lineJoin = 'round';
+    cfg.series.forEach(s => {
+      ctx.beginPath();
+      ctx.lineWidth = s.width || 2;
+      ctx.strokeStyle = cssVar(s.color);
+      ctx.setLineDash(s.dash || []);
+      for (let i = 0; i <= 260; i++) {
+        const x = xMin + (xMax - xMin) * i / 260;
+        const px = X(x), py = Y(s.fn(x));
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  function render() {
+    const size = Number(mn.value);
+    const rate = Number(p.value);
+    const bandwidth = Number(b.value);
+    const floor = Number(launch.value);
+    const compute = k => 2 * size * size * k / (rate * 1e6);
+    const memory = k => 2 * (2 * size * k + size * size) / (bandwidth * 1e6);
+    const bound = k => Math.max(compute(k), memory(k), floor);
+    const yMax = Math.max(1, Math.ceil(bound(8192) * 1.15 / 5) * 5);
+    readout.textContent = `M=N=${size}; P=${rate} TFLOP/s; B=${bandwidth} TB/s; floor=${floor} µs. Model at K=8192: ${bound(8192).toFixed(2)} µs, not a measurement.`;
+    drawPlot(canvas, {
+      xMin: 128, xMax: 8192, yMin: 0, yMax,
+      xTicks: [128, 2048, 4096, 6144, 8192],
+      yTicks: [0, yMax / 4, yMax / 2, 3 * yMax / 4, yMax],
+      series: [
+        { fn: bound, color: '--plot-bound', width: 5 },
+        { fn: compute, color: '--plot-compute', width: 2 },
+        { fn: memory, color: '--plot-memory', width: 2 },
+        { fn: () => floor, color: '--plot-floor', width: 2, dash: [5, 4] }
+      ]
+    });
+  }
+  [mn, p, b, launch].forEach(control => control.addEventListener('input', render));
+  let raf;
+  window.addEventListener('resize', () => {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(render);
+  });
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq.addEventListener) mq.addEventListener('change', render);
+  render();
+})();
+</script>
+</body>
+</html>
