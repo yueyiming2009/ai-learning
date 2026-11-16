@@ -109,7 +109,9 @@ The engineering substrate that trains it across many devices, built bottom-up �
 execution model (operators, dispatch, eager vs. graph), CUDA streams and events (ordering,
 cross-stream dependencies, copy/compute overlap, default-stream semantics, and PyTorch stream
 lifetimes), CUDA Graphs (capture, instantiation, static-address replay, PyTorch APIs, and shape
-bucketing), the kernel-programming ladder —
+bucketing), and [megakernels](docs/systems/megakernels.html) (cross-operator task scheduling,
+2026 serving and MoE-training systems, TPU pipelines, correctness contracts, and an illustrative
+overlap-granularity model), the kernel-programming ladder —
 the CUDA SIMT model (threads/warps/coalescing/occupancy plus barriers, fences, and mbarrier),
 cuBLAS (BLAS levels, cublasLt,
 batched GEMM, determinism), Triton kernels, CUTLASS (the GEMM

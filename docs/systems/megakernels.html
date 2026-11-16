@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Megakernels as cross-operator execution systems: 2026 serving, MoE training, TPU pipelines, scheduling, synchronization, and scoped performance evidence.">
+  <title>Megakernels — GPU Task Runtimes, TPU Pipelines, and MoE Training</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #ffffff; --surface: #f8f9fa; --border: #e8eaed;
+      --text: #1a1a2e; --muted: #6b7280; --ink: #374151;
+      --accent: #b45309; --accent-light: #fef3c7; --accent-border: #fcd34d;
+      --nav-bg: rgba(255,255,255,0.94); --code-bg: #1e1b4b; --code-text: #e2e8f0;
+      --note-bg: #eff6ff; --note-border: #93c5fd; --icode-bg: #f1f5f9;
+      --plot-grid: #eceef1; --plot-axis: #9ca3af; --plot-line: #0d9488; --plot-ref: #b45309;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115; --surface: #171b21; --border: #333a44;
+        --text: #e5e7eb; --muted: #a7b0bd; --ink: #cbd5e1;
+        --accent: #fbbf24; --accent-light: #251c0b; --accent-border: #92400e;
+        --nav-bg: rgba(15,17,21,0.94); --code-bg: #221f3d; --code-text: #e2e8f0;
+        --note-bg: #101a2b; --note-border: #1e40af; --icode-bg: #1c2531;
+        --plot-grid: #28303b; --plot-axis: #9aa1ab; --plot-line: #2dd4bf; --plot-ref: #fbbf24;
+      }
+    }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); line-height: 1.75; }
+    nav { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 20px; height: 52px; padding: 0 24px; background: var(--nav-bg); border-bottom: 1px solid var(--border); backdrop-filter: blur(8px); }
+    .nav-brand { display: inline-flex; align-items: center; gap: 7px; color: var(--accent); font-weight: 600; text-decoration: none; white-space: nowrap; }
+    .nav-links { display: flex; gap: 16px; overflow-x: auto; white-space: nowrap; font-size: 0.82rem; }
+    .nav-links a { color: var(--muted); text-decoration: none; }
+    .hero { padding: 54px 24px 46px; text-align: center; color: white; background: linear-gradient(135deg, #78350f, #b45309); }
+    .hero h1 { font-size: clamp(1.8rem, 5vw, 2.6rem); margin: 8px 0; letter-spacing: -0.025em; }
+    .hero p { max-width: 760px; margin: 12px auto 0; opacity: 0.92; }
+    .hero-pill { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; }
+    .page-wrap { max-width: 960px; margin: auto; padding: 36px 24px 72px; }
+    h2 { margin: 2.6em 0 0.9em; padding-bottom: 8px; border-bottom: 2px solid var(--border); font-size: 1.3rem; scroll-margin-top: 68px; }
+    h3 { margin: 1.7em 0 0.5em; font-size: 1.06rem; color: var(--ink); scroll-margin-top: 68px; }
+    p { margin: 0.8em 0; }
+    a { color: var(--accent); }
+    a:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+    li { margin-bottom: 0.5em; }
+    code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; }
+    p code, li code, td code { background: var(--icode-bg); padding: 2px 5px; border-radius: 4px; }
+    pre { overflow-x: auto; padding: 20px; border-radius: 9px; background: var(--code-bg); color: var(--code-text); line-height: 1.6; }
+    .xref, .note, .equation { padding: 14px 18px; border-radius: 8px; margin: 1.3em 0; }
+    .xref { background: var(--accent-light); border: 1px solid var(--accent-border); }
+    .note { background: var(--note-bg); border-left: 3px solid var(--note-border); }
+    .equation { background: var(--surface); border: 1px solid var(--border); overflow-x: auto; text-align: center; }
+    .table-wrap { overflow-x: auto; margin: 1.3em 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+    th, td { padding: 11px 13px; border: 1px solid var(--border); text-align: left; vertical-align: top; }
+    th { background: var(--surface); font-size: 0.8rem; }
+    .flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 1.3em 0; }
+    .flow > div { border: 1px solid var(--accent-border); background: var(--accent-light); border-radius: 8px; padding: 14px; }
+    .flow strong { display: block; color: var(--accent); }
+    .flow p { font-size: 0.86rem; margin: 6px 0 0; }
+    .figure { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 18px 16px 14px; margin: 1.6em 0; }
+    .figure canvas { width: 100%; height: 300px; display: block; }
+    .legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px 20px; margin-top: 12px; }
+    .legend-item { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 0.82rem; }
+    .lg { width: 24px; height: 3px; border-radius: 2px; background: var(--c); display: inline-block; }
+    .lg.dash { height: 0; border-top: 2px dashed var(--c); background: none; }
+    .controls { display: flex; flex-wrap: wrap; gap: 16px 28px; margin: 18px 0; }
+    .control { flex: 1 1 240px; }
+    .control label { display: block; font-size: 0.85rem; font-weight: 600; }
+    .control input { width: 100%; accent-color: var(--accent); }
+    .figure-caption, .dated { font-size: 0.87rem; color: var(--muted); }
+    .readout { padding: 12px; border: 1px solid var(--border); border-radius: 7px; font-size: 0.9rem; }
+    footer { padding: 24px; border-top: 1px solid var(--border); text-align: center; color: var(--muted); font-size: 0.85rem; }
+    @media (max-width: 650px) {
+      nav { padding: 0 14px; gap: 14px; }
+      .page-wrap { padding: 26px 16px 48px; }
+      .flow { grid-template-columns: 1fr 1fr; }
+      .figure canvas { height: 280px; }
+    }
+  </style>
+</head>
+<body>
+<nav>
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes">
+    <svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+    Megakernels
+  </a>
+  <div class="nav-links">
+    <a href="../index.html#systems-performance">Systems · Performance</a>
+    <a href="#landscape">2026 landscape</a><a href="#meaning">Meaning</a>
+    <a href="#execution">Execution</a><a href="#designs">Design choices</a>
+    <a href="#granularity">Granularity</a><a href="#correctness">Correctness</a>
+    <a href="#evaluation">Evaluation</a><a href="#sources">Sources</a>
+  </div>
+</nav>
+<header class="hero">
+  <span class="hero-pill">Systems · Cross-operator execution</span>
+  <h1>Megakernels</h1>
+  <p>From GPU-resident task runtimes to TPU whole-decoder pipelines: keep useful work moving across operator boundaries, while taking ownership of dependencies, memory lifetimes, and scheduling.</p>
+</header>
+<main class="page-wrap">
+  <p class="dated"><strong>Evidence reviewed November 15, 2026.</strong> A curated, dated landscape—not an exhaustive survey or a continuously updated leaderboard. Results below are author-reported, not reproduced here; the interactive model is illustrative.</p>
+  <div class="xref"><strong>Prerequisites:</strong> <a href="cuda-graphs.html">CUDA Graphs</a> explains launch replay; <a href="cutlass.html#schedulers">CUTLASS scheduling</a> explains persistent tiles and partial waves; <a href="moe-parallelism.html">MoE parallelism</a> explains dispatch, experts, and combine. This page owns what changes when those operations share an execution runtime.</div>
+
+  <h2 id="landscape">1 · Start with the 2026 developments</h2>
+  <p>The field has moved beyond the 2025 single-sequence Llama demonstration. The strongest recent lessons are <strong>serving integration, training-scale communication overlap, hardware-specific scheduling, and rapid optimization</strong>. They do not converge on one universal interpreter or memory allocator.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Source date / system</th><th>What it adds</th><th>What the evidence does—and does not—show</th></tr></thead>
+      <tbody>
+        <tr><td>Nov 4, 2026<br><a href="#tkcc">Together Compiler</a></td><td>Continual agent-driven optimization using persistent <em>engines</em> and tiered measurements.</td><td>Reports up to 1.7× TPS over hand-written megakernels on Llama-1B. This is an optimization system and comparison, not proof that all its generated forward passes are megakernels.</td></tr>
+        <tr><td>Sep 28, 2026 paper<br><a href="#mok">Mixture-of-Kittens</a></td><td>Deterministic distributed MoE training; joint dispatch/FFN/combine scheduling on NVL72.</td><td>Up to 2.37× MXFP8 MoE forward throughput versus the strongest evaluated public baseline; separately 1.41× end-to-end training throughput on 512 GB300 GPUs. Layer speedup is not whole-run speedup.</td></tr>
+        <tr><td>Sep 23, 2026 release<br><a href="#tpu">Inferact TPU megakernels</a></td><td>Pallas whole-decoder programs, cross-layer VMEM prefetch, multi-host collectives, speculative decoding.</td><td>Kimi K3: 709 accepted tokens/s at acceptance length 6 on 16 TPU v7 chips versus 452 on 16 GB200 GPUs. Hardware, runtime, and speculation are part of this comparison—not an isolated fusion ablation.</td></tr>
+        <tr><td>Sep 8, 2026<br><a href="#cohere">Cohere North Mini Code</a></td><td>An API server around a decode megakernel: ragged batches, paged KV, prefix caching, and host ownership handoffs.</td><td>1.58× decode throughput at batch 1 and 8K context; 1.25–1.41× reported throughput on real-prompt serving workloads versus vLLM v0.24. Single H100, BF16, batch 1–8; prefill still pauses decode.</td></tr>
+        <tr><td>Jun 10, 2026 revision<br><a href="#mpk">Mirage Persistent Kernel</a></td><td>Compiler-generated SM task graphs; hybrid static/dynamic scheduling and in-kernel request/KV management.</td><td>Revised paper reports 1.0–1.7× single-batch serving improvement. Experiments use offline requests with 64-token prompts and 1,024-token outputs. Do not substitute the older launch post's 1.2–6.7× range.</td></tr>
+        <tr><td>Apr 15, 2026 preprint<br><a href="#fleet">Fleet</a></td><td>Chiplet-local tasks and hierarchical synchronization for AMD multi-die GPUs.</td><td>On MI350/Qwen3-8B, 1.27–1.30× over a chiplet-unaware megakernel at larger batches. Its separate 1.3–1.5× comparison with vLLM includes persistent execution as well as locality.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p><strong>Foundational, not the current endpoint:</strong> <a href="https://hazyresearch.stanford.edu/blog/2025-05-27-no-bubbles">HazyResearch's May 2025 Llama-1B work</a> demonstrated a whole-forward-pass instruction interpreter, shared-memory paging, and dependency counters. Its over-1.5× advantage over SGLang used BF16, one sequence, a 32-token prompt, and 128 generated tokens without speculation. Those conditions do not establish a general production-serving advantage.</p>
+
+  <h2 id="meaning">2 · What “megakernel” means</h2>
+  <p>A megakernel keeps a substantial multi-operator computation inside one device program, so scheduling and data movement can cross boundaries that would otherwise separate kernels. On GPUs, this often means persistent thread blocks executing a task graph. On TPU, it can instead mean a sequential Pallas program with explicitly overlapped DMA. <strong>The shared idea is cross-operator control, not a particular GPU interpreter.</strong></p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Technique</th><th>Unit being optimized</th><th>Boundary that remains</th></tr></thead>
+      <tbody>
+        <tr><td>Ordinary fusion</td><td>A small operator group, such as GEMM plus activation.</td><td>Other operators remain separate; the main gain may be avoided intermediate reads/writes.</td></tr>
+        <tr><td>CUDA Graphs</td><td>Submission/replay of a recorded graph.</td><td>Kernel nodes remain kernels. Graph replay does not itself create tile-level producer/consumer synchronization.</td></tr>
+        <tr><td>Persistent GEMM</td><td>Tiles of one matrix operation or grouped operation.</td><td>Persistence alone does not imply a multi-operator runtime.</td></tr>
+        <tr><td>Megakernel</td><td>A decoder, forward pass, MoE block, or other substantial multi-operator region.</td><td>Explicit internal dependencies, buffers, and host/application boundaries still exist.</td></tr>
+        <tr><td>Persistent serving engine</td><td>Worker/process/model-state lifetime across requests or experiments.</td><td>Its forward pass may execute many kernels; engine persistence is not kernel persistence.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>“One launch” is scoped: per participating device and per selected region. A decode megakernel need not include prefill, sampling, or the whole autoregressive loop. A training megakernel need not include routing setup, every model layer, weight quantization, optimizer updates, or checkpointing.</p>
+  <p>Also avoid a false dichotomy: independent kernels can overlap on streams, and programmatic dependent launch can overlap preparation of dependent kernels. The target is unnecessary synchronization and pipeline gaps in the actual execution graph—not a claim that CUDA always serializes every kernel on the device.</p>
+
+  <h2 id="execution">3 · Replace operator barriers with actual dependencies</h2>
+  <p>Suppose a GEMM produces tiles \(Y_i\), followed by an all-reduce. A coarse schedule waits for the entire GEMM. A finer schedule can start reducing tile \(i\) once every participating rank has produced its required contribution, while other tiles are still computing. Reducing synchronization scope does <em>not</em> remove the mathematical dependency.</p>
+  <div class="flow" role="group" aria-label="Four stages of a GPU megakernel runtime">
+    <div><strong>1. Lower</strong><p>Split operators into tasks with explicit input/output regions and dependencies.</p></div>
+    <div><strong>2. Place</strong><p>Assign predictable work; reserve queues for runtime-dependent attention or routing.</p></div>
+    <div><strong>3. Execute</strong><p>Prefetch independent weights, wait for valid activations, compute, and finish stores.</p></div>
+    <div><strong>4. Publish</strong><p>Signal completed regions with the required visibility; release buffers and successors.</p></div>
+  </div>
+  <p>This exposes three opportunities: fill a partially idle wave with other ready work; prefetch the next operation's immutable weights before its activations arrive; and overlap computation with communication at a smaller granularity. None is automatic if the next task is not ready or all tasks contend for the same saturated resource.</p>
+  <pre><code>Conceptual worker protocol — not executable CUDA:
+
+task = select_ready_task_or_prefetchable_candidate()
+reserve_buffers(task)
+start_independent_weight_copies(task)
+wait_for_required_input_regions(task, current_epoch)
+wait_for_copy_completion(task)
+compute(task)
+complete_output_stores(task)
+publish_output_readiness(task, required_memory_scope)
+release_buffers_after_all_users_and_async_operations_finish(task)</code></pre>
+  <p>The host can prepare a schedule ahead of time; GPU-resident execution does not require every scheduling decision to happen dynamically on the GPU. Likewise, one kernel does not keep all intermediate tensors in registers or SRAM: global-memory activations and readiness counters remain important in the HazyResearch and Cohere designs.</p>
+
+  <h2 id="designs">4 · Current designs disagree in useful ways</h2>
+  <h3 id="cohere">Cohere: a task ABI plus a real serving boundary</h3>
+  <p>The <a href="https://cohere.com/blog/megakernels">September serving-engine report</a> uses a common task calling convention: fixed-size descriptors, a common block shape, and producer/consumer/storer roles. Static waves fix most placement; attention and MoE claimers steal from stage-specific queues because live sequence lengths and routing change task counts.</p>
+  <p>North Mini Code's <strong>parallel attention and FFN branches</strong> offer unusually strong opportunities to fill idle SMs with ready work. That is a model-architecture advantage, not a dependency pattern to assume in a sequential attention-then-MLP transformer.</p>
+  <p><strong>A revision to the foundational recipe:</strong> Cohere reports rejecting shared-memory paging because its bookkeeping and bugs outweighed the gains. It instead uses per-op static shared-memory layouts, carries pipeline state across same-type GEMM tiles, and prefetches immutable weights before activation waits. Paging is a design option, not a megakernel requirement.</p>
+  <p>The serving boundary is equally important. Python admits requests and runs prefill; a native C++ thread drives decode. Python parks decode before changing batch/KV state, then resumes it with a matching schedule. The <a href="https://github.com/cohere-ai/cohere-megakernel/blob/67d0b9ca22ea3652796b715d1d1863459e0e2c3c/src/decode/abi.h">pinned launch ABI</a> carries separate instruction buffers, context variants, dynamic queue metadata, and barrier pointers. An OpenAI-compatible endpoint does not make this a general-purpose replacement: the release is model-specific, H100/BF16-only, and tuned for batches 1–8.</p>
+
+  <h3 id="mok">Mixture-of-Kittens: training and communication are first-class</h3>
+  <p><a href="https://arxiv.org/abs/2609.36070v1">MoK's September paper</a> targets scale-up NVLink domains, not just launch-bound inference. Its MoE forward/backward designs coordinate shared and routed expert computation with token transfers. A reusable device-generated schedule supports pull-based dispatch and push-based combine, with corresponding reverse operations during backward.</p>
+  <p>Two sizes have different jobs: a <strong>minibatch</strong> sets computation/communication overlap granularity; a <strong>macrobatch ring buffer</strong> bounds token-buffer storage. Slot reuse must wait for all consumers; backward may recompute forward intermediates overwritten by ring reuse. This addresses data-dependent token counts without a host round-trip to allocate an exact-sized token buffer.</p>
+  <p>Compute and communication get tunable SM allocations. The <a href="https://cursor.com/blog/mixture-of-kittens">implementation report</a> also describes Blackwell Cluster Launch Control so work can yield to higher-priority kernels needed for inter-rack communication. A permanently resident grid that monopolizes resources can lose end-to-end even when its isolated MoE timing improves.</p>
+  <p>Keep the API scope honest: schedule construction and optional weight prequantization are separate from the fused forward/backward paths. The reported 1.41× production throughput improvement includes an entire training stack; the 2.37× figure is a layer-level MXFP8 forward result. Neither proves equal gains on another topology, routing distribution, or model.</p>
+
+  <h3 id="tpu">TPU: the concept does not require SM task queues</h3>
+  <p><a href="https://inferact.ai/news/tpu-megakernels">Inferact's Pallas design</a> expresses the decoder as a grid-less program, using scoped VMEM allocations and explicit asynchronous HBM-to-VMEM copies across layer boundaries. On the targeted TPU v7 hardware, each TensorCore has a 64 MiB software-managed VMEM pool. Activations can remain resident while upcoming weight transfers are staged; collectives and buffer lifetimes are part of the same program.</p>
+  <p>For the reported Kimi K3 setup, <strong>16 physical chips expose 32 TensorCore device ranks</strong>; the repository's 32-device launch is not a 32-chip result. The topology and attention/expert partitioning are tuned together. The current <a href="https://github.com/Inferact/tpu-megakernels/tree/a120ca43175604d092c95fb4125be5df4cb07771">October 15 source snapshot</a> also includes Qwen3.8 and Muse-Spark-Open paths; their supported modes should not be inferred from the original Kimi benchmark.</p>
+  <p>The 709-token/s result includes DSpark speculation at a declared acceptance length. The reported roughly 1.4–2× non-speculative decode advantage also compares different accelerators and software stacks. Neither number isolates the causal contribution of megakernel fusion. A CPU interpreter can check equations, but cannot validate TPU DMA ordering, VMEM capacity, lowering, or hardware speed.</p>
+
+  <h3 id="mpk">MPK: compiler-generated graphs with hybrid dispatch</h3>
+  <p>The <a href="https://arxiv.org/html/2512.22219v2">June 2026 revision</a> lowers operators to SM-level tasks and events, fuses redundant events, and normalizes/linearizes the task graph for cheap dispatch. Predictable tasks can be queued ahead of time; variable-duration work uses just-in-time dispatch. Workers prefer ready JIT tasks over blocked AOT work, balancing dispatch cost against load imbalance.</p>
+  <p>Unlike the June 2025 announcement's roadmap, the revised paper describes MoE support, continuous batching, paged attention, and batch-specialized graphs selected at runtime. Its evaluation still uses controlled offline traffic. Capability descriptions and benchmark coverage are different kinds of evidence.</p>
+
+  <h3 id="fleet">Fleet: “any free worker” can ignore the memory hierarchy</h3>
+  <p>The <a href="https://arxiv.org/html/2604.15379v1">Fleet preprint</a> adds chiplet-scoped tasks and per-chiplet scheduling on AMD MI350. Workers within an XCD cooperate on tiles with shared weight locality, while hierarchical signaling distinguishes local coordination from cross-chiplet visibility. This improves cache reuse within the working set; it does not imply that a model's weights fit permanently in chiplet L2.</p>
+  <p>The general lesson is to match task placement and synchronization scope to the actual memory hierarchy. Do not transfer an H100 round-robin policy, AMD fence sequence, or TPU collective topology unchanged to another device. Treat Fleet as a 2026 preprint; a repository's future conference citation is not evidence of an accepted publication.</p>
+
+  <h2 id="granularity">5 · Finer tasks are not always faster</h2>
+  <p>Consider a deliberately simplified two-stage pipeline: total compute time \(C\), total communication time \(D\), and \(n\) equal chunks. Assume the two stages can overlap without bandwidth/resource contention, and each chunk adds an unhidden coordination cost \(h\). Then:</p>
+  <div class="equation">
+    \[
+      T_{\mathrm{serial}} = C+D,\qquad
+      T_{\mathrm{pipe}}(n) = \frac{C+D}{n}
+        +(n-1)\frac{\max(C,D)}{n}+nh
+        = \max(C,D)+\frac{\min(C,D)}{n}+nh.
+    \]
+    \[
+      n^*_{\mathrm{continuous}}=\sqrt{\frac{\min(C,D)}{h}}\quad(h&gt;0).
+    \]
+  </div>
+  <p>Smaller chunks shorten ramp/drain, but add more coordination. Choose an integer near \(n^*\) within the allowed range. When \(h=0\), the toy model improves toward the bottleneck-stage limit as chunks increase. Real kernels add partial waves, smaller GEMMs, queue contention, routing skew, and buffer constraints, so this is a reasoning aid—not an autotuner or an estimate of a named system.</p>
+  <div class="figure">
+    <canvas id="plot-granularity" aria-label="Illustrative pipeline latency versus chunk count, compared with serialized execution">Pipeline latency equals max(C,D) + min(C,D)/n + n times coordination overhead.</canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-line)"></span>Pipelined + coordination</span>
+      <span class="legend-item"><span class="lg dash" style="--c:var(--plot-ref)"></span>Serialized C + D</span>
+    </div>
+    <div class="controls">
+      <div class="control"><label for="coordination">Unhidden coordination per chunk: <span id="coordination-value">6</span> µs</label><input id="coordination" type="range" min="0" max="30" step="1" value="6"></div>
+      <div class="control"><label for="communication">Total communication: <span id="communication-value">600</span> µs</label><input id="communication" type="range" min="100" max="1600" step="100" value="600"></div>
+    </div>
+    <div class="readout" id="granularity-readout" aria-live="polite"></div>
+    <p class="figure-caption"><strong>Removing boundaries moves the optimization problem; it does not remove overhead.</strong> Compute is fixed at 800 µs. The curve relaxes chunk count continuously; the readout searches integer counts 1–64. Common launch costs are omitted. The serial reference has no per-chunk coordination, so one pipelined chunk is slower by \(h\). These are synthetic numbers, not GPU/TPU benchmarks.</p>
+  </div>
+  <p>MoK provides a practical counterpart: communication that is too fine-grained repeatedly interrupts efficient Tensor Core work, while overly coarse transfer batches delay the first compute and final combine. Tune task/transfer size <em>with</em> the compute/communication SM split, not as independent constants.</p>
+
+  <h2 id="correctness">6 · The runtime contracts you now own</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Contract</th><th>Required reasoning</th><th>Failure to look for</th></tr></thead>
+      <tbody>
+        <tr><td>Readiness and epochs</td><td>Signal exactly the expected producers for the correct step; reset or version counters before reuse.</td><td>A stale count releases a consumer early; a missing arrival hangs later work.</td></tr>
+        <tr><td>Memory visibility</td><td>Complete asynchronous stores and publish data at the correct CTA/cluster/device/system scope before readiness; consumers observe it with a matching protocol.</td><td>A counter is visible before its payload. A raw atomic or <code>volatile</code> load alone is not a portable publication protocol.</td></tr>
+        <tr><td>Forward progress</td><td>Blocked workers must not monopolize the resources required by producers. Scheduling must avoid circular waits, including buffer-allocation waits.</td><td>A naive grid-wide spin barrier waits for blocks that cannot become resident.</td></tr>
+        <tr><td>Buffer lifetime</td><td>Reuse shared pages, VMEM, ring slots, and descriptors only after every consumer and asynchronous transfer is finished.</td><td>Prefetch overwrites live activations; an old descriptor points to repurposed storage.</td></tr>
+        <tr><td>Host ownership</td><td>Change batch metadata, KV tables, and pointers only across an explicit handoff/quiescence boundary.</td><td>The device observes half-updated batch state.</td></tr>
+        <tr><td>Numerical behavior</td><td>Specify accumulation order, precision, tolerances, and any deterministic mode. Check logits/gradients as well as task-level scores.</td><td>Reordering or quantization changes results; “same benchmark score” is mistaken for bitwise equality.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>These contracts also explain why megakernelizing an arbitrary set of existing kernels is not just concatenating their source. Their block shapes, register/shared-memory assumptions, asynchronous operations, and barrier participation must fit a compatible execution convention. See <a href="cuda.html">CUDA's synchronization and memory model</a> before adapting any source-specific fence recipe.</p>
+
+  <h2 id="evaluation">7 · Evaluate the whole system, not the slogan</h2>
+  <p>Start with a profile that distinguishes host submission, kernel-switch/pipeline gaps, low occupancy, memory bandwidth, and exposed collectives. Megakernels are promising when those boundaries leave useful resources idle; fewer launches do not repair slow GEMMs or remove irreducible memory traffic.</p>
+  <ol>
+    <li><strong>Freeze the comparison:</strong> source revisions, checkpoint, precision, hardware count and topology, backend versions, prompt/output distributions, routing skew, concurrency, and sampling/speculation policy.</li>
+    <li><strong>Separate metrics:</strong> kernel/forward time, per-user inter-token latency, aggregate accepted tokens/s, prefill/TTFT, tail latency under arrivals, peak memory, and end-to-end training throughput. Include schedule/reset/sampling work where the claimed scope requires it.</li>
+    <li><strong>Isolate changes:</strong> use graph-enabled and tuned baselines; ablate scheduling, communication, fusion, quantization, and parallelism rather than attributing their combined gain to one mechanism.</li>
+    <li><strong>Exercise boundaries:</strong> ragged sequences, skewed experts, empty/finished slots, graph/batch transitions, ring wraparound, and intended multi-device communication. Compare numerical outputs and gradients at declared tolerances.</li>
+    <li><strong>Measure integration:</strong> whether prefill blocks decode, whether the kernel prevents other communication from progressing, and whether compilation/tuning cost amortizes before traffic changes again.</li>
+  </ol>
+  <p>Cohere makes the scope issue concrete: the 1.58× decode benchmark disables prefill and uses a synthetic KV cache; the real-prompt serving runs include prefill and report smaller gains. Generated token counts differ between engines, so throughput ratios are not automatically ratios of time to complete identical outputs.</p>
+
+  <h3 id="tkcc">The newest connection: optimizing the optimizer's turnaround</h3>
+  <p><a href="https://www.together.ai/blog/together-compiler-continual-compilation-for-ai-inference">Together Compiler</a> retains an engine while agents replace candidate forward passes, using few-layer screening and more representative many-layer measurements. Engine hot reload still entails graph recapture; it is not replaying an unchanged graph with magically replaced code.</p>
+  <p>This connects two distinct time scales: megakernel design improves <em>execution</em>, while persistent experiment infrastructure improves how rapidly useful designs can be found. TKCC's reported 252× experiment throughput, up-to-2.6× frontier-model TPS, and up-to-1.7× result against Llama-1B megakernels are different measurements. None should be multiplied together.</p>
+  <p>Inferact separately reports sub-90-second cold compilation for its hand-scheduled TPU decoder versus 30-plus-minute compilation that large XLA model programs can incur. That is a development-loop observation with different programs, not a serving speedup or a universal Pallas/XLA benchmark.</p>
+  <div class="note"><strong>Current decision rule:</strong> retain competitive operator implementations, identify specific cross-operator waste, then choose the least complex runtime that removes it. Static waves plus local queues, a compiler-generated graph, chiplet cooperation, and a sequential TPU pipeline are alternatives—not successive levels of an inevitable single design.</div>
+
+  <h2 id="sources">8 · Reading path and source snapshots</h2>
+  <p>Read Cohere for a recent end-to-end implementation, MoK for training/communication, and Inferact for the contrasting TPU model. Use MPK for the compiler formulation and HazyResearch for the foundational interpreter. Publication dates below are source dates, not repository activity timestamps.</p>
+  <ul>
+    <li><strong>2026-11-04 · Together Compiler:</strong> <a href="https://www.together.ai/blog/together-compiler-continual-compilation-for-ai-inference">official article</a> and <a href="https://www.alphaxiv.org/abs/2611.together-compiler-continual-ai-inference">paper landing page</a>. Adjacent continual-optimization system; not a megakernel specification.</li>
+    <li><strong>2026-09-28 · Mixture-of-Kittens:</strong> <a href="https://arxiv.org/abs/2609.36070v1">paper v1</a>, <a href="https://cursor.com/blog/mixture-of-kittens">implementation walkthrough</a>, and <a href="https://github.com/cursor/mixture-of-kittens/tree/f3a8bd2432457c5a2a2ea13915f0dcd0224581e4">source snapshot</a>. Date is the paper submission; the blog displays a different earlier date.</li>
+    <li><strong>2026-09-23 · TPU megakernels:</strong> <a href="https://inferact.ai/news/tpu-megakernels">official article</a> and <a href="https://github.com/Inferact/tpu-megakernels/tree/a120ca43175604d092c95fb4125be5df4cb07771">October 15 source snapshot</a>, including <a href="https://github.com/Inferact/tpu-megakernels/blob/a120ca43175604d092c95fb4125be5df4cb07771/kimi/decode_megakernel.py">Kimi decoder</a>. Keep physical chips, TensorCore ranks, and accepted tokens distinct.</li>
+    <li><strong>2026-09-08 · Cohere:</strong> <a href="https://cohere.com/blog/megakernels">North Mini Code serving engine</a>, <a href="https://github.com/cohere-ai/cohere-megakernel/blob/67d0b9ca22ea3652796b715d1d1863459e0e2c3c/README.md">release scope and benchmark definitions</a>, <a href="https://github.com/cohere-ai/cohere-megakernel/blob/67d0b9ca22ea3652796b715d1d1863459e0e2c3c/src/decode/schedule.py">scheduler</a>, and <a href="https://github.com/cohere-ai/cohere-megakernel/blob/67d0b9ca22ea3652796b715d1d1863459e0e2c3c/src/decode/megakernel.cuh">device runtime</a>.</li>
+    <li><strong>2026-06-10 · MPK:</strong> <a href="https://arxiv.org/html/2512.22219v2">revised paper v2</a> and <a href="https://github.com/mirage-project/mirage/tree/d2189e50063b54ed410cf7b8390b2c784114c7a2">repository snapshot</a>. Prefer this paper over the older announcement for evaluated capabilities and speedup ranges.</li>
+    <li><strong>2026-04-15 · Fleet:</strong> <a href="https://arxiv.org/html/2604.15379v1">primary preprint</a> and <a href="https://github.com/ROCm/fleet-chiplet-megakernel/tree/0275d466c89bc3158e19118b62ad9b02d7f2a364">public implementation snapshot</a>. Use the paper for authorship and benchmark scope; repository reproduction numbers and citation metadata differ.</li>
+    <li><strong>2025-05-27 · HazyResearch:</strong> <a href="https://hazyresearch.stanford.edu/blog/2025-05-27-no-bubbles">Look Ma, No Bubbles!</a> and <a href="https://github.com/HazyResearch/Megakernels/blob/7309cec801537b61fea3b50d7dfe454a6cde578e/include/megakernel.cuh">interpreter source snapshot</a>. Foundational execution pattern, not the latest serving landscape.</li>
+  </ul>
+  <div class="xref"><strong>Continue:</strong> <a href="cuda-graphs.html">capture and replay</a> · <a href="cutlass.html">operator pipelines</a> · <a href="moe-parallelism.html">expert communication</a> · <a href="../hardware/tpu-hardware.html">TPU hardware</a> · <a href="../inference/online-inference.html">serving SLOs</a> · <a href="blackwell-gemm-lab.html">a source-pinned GEMM investigation</a>.</div>
+</main>
+<footer>Personal ML notes · <a href="https://github.com/yueyiming2009/ai-learning">source on GitHub</a></footer>
+<script>
+function pipelineTime(chunks, compute, communication, overhead) {
+  return Math.max(compute, communication) + Math.min(compute, communication) / chunks + chunks * overhead;
+}
+
+(function () {
+  const canvas = document.getElementById('plot-granularity');
+  const overhead = document.getElementById('coordination');
+  const communication = document.getElementById('communication');
+  const ctx = canvas.getContext('2d');
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+  function drawPlot(canvas, cfg) {
+    if (!ctx) return;
+    const width = canvas.getBoundingClientRect().width;
+    const height = canvas.getBoundingClientRect().height;
+    if (!width || !height) return;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    const box = { left: 62, top: 24, width: width - 80, height: height - 72 };
+    const x = value => box.left + (value - cfg.xMin) / (cfg.xMax - cfg.xMin) * box.width;
+    const y = value => box.top + (cfg.yMax - value) / (cfg.yMax - cfg.yMin) * box.height;
+    ctx.font = '12px system-ui';
+    ctx.fillStyle = cssVar('--muted');
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.lineWidth = 1;
+    ctx.textAlign = 'right';
+    cfg.yTicks.forEach(value => {
+      ctx.beginPath(); ctx.moveTo(box.left, y(value)); ctx.lineTo(box.left + box.width, y(value)); ctx.stroke();
+      ctx.fillText(String(value), box.left - 8, y(value) + 4);
+    });
+    ctx.textAlign = 'center';
+    cfg.xTicks.forEach(value => {
+      ctx.beginPath(); ctx.moveTo(x(value), box.top); ctx.lineTo(x(value), box.top + box.height); ctx.stroke();
+      ctx.fillText(String(value), x(value), box.top + box.height + 20);
+    });
+    ctx.strokeStyle = cssVar('--plot-axis');
+    ctx.beginPath(); ctx.moveTo(box.left, box.top); ctx.lineTo(box.left, y(0)); ctx.lineTo(box.left + box.width, y(0)); ctx.stroke();
+    ctx.textAlign = 'left'; ctx.fillText('Time (µs)', box.left, 14);
+    ctx.textAlign = 'center'; ctx.fillText('Chunks', box.left + box.width / 2, height - 5);
+    ctx.save();
+    ctx.beginPath(); ctx.rect(box.left, box.top, box.width, box.height); ctx.clip();
+    cfg.series.forEach(series => {
+      ctx.strokeStyle = series.color;
+      ctx.lineWidth = series.width || 2;
+      ctx.setLineDash(series.dash || []);
+      ctx.beginPath();
+      for (let i = 0; i <= 260; i++) {
+        const value = cfg.xMin + (cfg.xMax - cfg.xMin) * i / 260;
+        if (i === 0) ctx.moveTo(x(value), y(series.fn(value)));
+        else ctx.lineTo(x(value), y(series.fn(value)));
+      }
+      ctx.stroke();
+    });
+    ctx.restore();
+  }
+
+  function render() {
+    const C = 800, D = Number(communication.value), h = Number(overhead.value);
+    const serial = C + D;
+    const fn = n => pipelineTime(n, C, D, h);
+    let best = 1;
+    for (let n = 2; n <= 64; n++) if (fn(n) < fn(best)) best = n;
+    document.getElementById('coordination-value').textContent = String(h);
+    document.getElementById('communication-value').textContent = String(D);
+    document.getElementById('granularity-readout').textContent =
+      'Best integer choice in this model: ' + best + ' chunks, ' + fn(best).toFixed(1) +
+      ' µs versus ' + serial + ' µs serialized (' + (serial / fn(best)).toFixed(2) +
+      '×). At 64 chunks: ' + fn(64).toFixed(1) + ' µs.';
+    const yMax = Math.ceil(Math.max(serial, fn(1), fn(64)) / 500) * 500;
+    const yTicks = [];
+    for (let tick = 0; tick <= yMax; tick += 500) yTicks.push(tick);
+    drawPlot(canvas, {
+      xMin: 1, xMax: 64, yMin: 0, yMax,
+      xTicks: [1, 8, 16, 32, 48, 64], yTicks,
+      series: [
+        { fn, color: cssVar('--plot-line'), width: 2.5 },
+        { fn: () => serial, color: cssVar('--plot-ref'), dash: [6, 4] }
+      ]
+    });
+  }
+  overhead.addEventListener('input', render);
+  communication.addEventListener('input', render);
+  let frame;
+  window.addEventListener('resize', () => {
+    window.cancelAnimationFrame(frame);
+    frame = window.requestAnimationFrame(render);
+  });
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
+  render();
+}());
+</script>
+</body>
+</html>
