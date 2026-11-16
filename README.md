@@ -110,7 +110,8 @@ execution model (operators, dispatch, eager vs. graph), CUDA streams and events 
 cross-stream dependencies, copy/compute overlap, default-stream semantics, and PyTorch stream
 lifetimes), CUDA Graphs (capture, instantiation, static-address replay, PyTorch APIs, and shape
 bucketing), and [megakernels](docs/systems/megakernels.html) (cross-operator task scheduling,
-2026 serving and MoE-training systems, TPU pipelines, correctness contracts, and an illustrative
+2026 serving and MoE-training systems, backward/activation-memory contracts, FSDP coexistence,
+TPU pipelines, fusion limits, and an illustrative
 overlap-granularity model), the kernel-programming ladder —
 the CUDA SIMT model (threads/warps/coalescing/occupancy plus barriers, fences, and mbarrier),
 cuBLAS (BLAS levels, cublasLt,

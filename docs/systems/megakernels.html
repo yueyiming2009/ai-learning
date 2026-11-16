@@ -99,7 +99,7 @@
     <a href="../index.html#systems-performance">Systems · Performance</a>
     <a href="#landscape">2026 landscape</a><a href="#meaning">Meaning</a>
     <a href="#execution">Execution</a><a href="#designs">Design choices</a>
-    <a href="#granularity">Granularity</a><a href="#correctness">Correctness</a>
+    <a href="#training">Training</a><a href="#granularity">Granularity</a><a href="#correctness">Correctness</a>
     <a href="#evaluation">Evaluation</a><a href="#sources">Sources</a>
   </div>
 </nav>
@@ -110,7 +110,7 @@
 </header>
 <main class="page-wrap">
   <p class="dated"><strong>Evidence reviewed November 15, 2026.</strong> A curated, dated landscape—not an exhaustive survey or a continuously updated leaderboard. Results below are author-reported, not reproduced here; the interactive model is illustrative.</p>
-  <div class="xref"><strong>Prerequisites:</strong> <a href="cuda-graphs.html">CUDA Graphs</a> explains launch replay; <a href="cutlass.html#schedulers">CUTLASS scheduling</a> explains persistent tiles and partial waves; <a href="moe-parallelism.html">MoE parallelism</a> explains dispatch, experts, and combine. This page owns what changes when those operations share an execution runtime.</div>
+  <div class="xref"><strong>Prerequisites:</strong> <a href="cuda-graphs.html">CUDA Graphs</a> explains launch replay; <a href="cutlass.html#schedulers">CUTLASS scheduling</a> explains persistent tiles and partial waves; <a href="moe-parallelism.html">MoE parallelism</a> explains dispatch, experts, and combine. This page owns what changes when those operations share an execution runtime. For training, start with the <a href="#training">backward graph, memory ledger, and FSDP integration</a>.</div>
 
   <h2 id="landscape">1 · Start with the 2026 developments</h2>
   <p>The field has moved beyond the 2025 single-sequence Llama demonstration. The strongest recent lessons are <strong>serving integration, training-scale communication overlap, hardware-specific scheduling, and rapid optimization</strong>. They do not converge on one universal interpreter or memory allocator.</p>
@@ -194,7 +194,123 @@ release_buffers_after_all_users_and_async_operations_finish(task)</code></pre>
   <p>The <a href="https://arxiv.org/html/2604.15379v1">Fleet preprint</a> adds chiplet-scoped tasks and per-chiplet scheduling on AMD MI350. Workers within an XCD cooperate on tiles with shared weight locality, while hierarchical signaling distinguishes local coordination from cross-chiplet visibility. This improves cache reuse within the working set; it does not imply that a model's weights fit permanently in chiplet L2.</p>
   <p>The general lesson is to match task placement and synchronization scope to the actual memory hierarchy. Do not transfer an H100 round-robin policy, AMD fence sequence, or TPU collective topology unchanged to another device. Treat Fleet as a 2026 preprint; a repository's future conference citation is not evidence of an accepted publication.</p>
 
-  <h2 id="granularity">5 · Finer tasks are not always faster</h2>
+  <h2 id="training">5 · Training: backward is a different dependency graph</h2>
+  <p>Small-batch decode primarily exposes weight-streaming and boundary costs. Training adds saved activations, input and parameter gradients, gradient accumulation, distributed reductions, and optimizer state. Large dense GEMMs can already be compute-efficient; fine-grained MoE can still be IO-, communication-, or scheduling-bound. <strong>The opportunity is to shorten the training critical path, not simply to reduce the kernel count.</strong></p>
+  <p>A practical scope is one distributed layer or operator region, with separate forward and backward implementations. Attention, router setup, loss, optimizer updates, and checkpointing can remain outside that region. A forward-only fused MoE implementation is not a training backend until its backward, saved-state contract, and distributed integration exist.</p>
+
+  <h3 id="training-backward">Backward branches: dgrad is not wgrad</h3>
+  <p>Consider one bias-free SwiGLU expert, or a dense FFN, using row-major activations. Let \(X\in\mathbb{R}^{T\times D}\), \(W_u,W_g\in\mathbb{R}^{D\times I}\), and \(W_d\in\mathbb{R}^{I\times D}\). Here \(T\) is the number of tokens assigned to this expert; in MoE it varies at runtime. With \(s=\mathrm{SiLU}\):</p>
+  <div class="equation">
+    \[
+      U=XW_u,\quad V=XW_g,\quad H=s(V)\odot U,\quad Y=HW_d.
+    \]
+    \[
+      G=\frac{\partial L}{\partial Y},\qquad
+      dH=GW_d^\top,\qquad dW_d=H^\top G,
+    \]
+    \[
+      dU=dH\odot s(V),\qquad dV=dH\odot U\odot s'(V),
+    \]
+    \[
+      dX=dU\,W_u^\top+dV\,W_g^\top,\qquad
+      dW_u=X^\top dU,\qquad dW_g=X^\top dV.
+    \]
+  </div>
+  <p><strong>Dgrad</strong> means the input/activation gradients that continue backward through the model; <strong>wgrad</strong> means parameter gradients consumed by accumulation, reduction, and the optimizer. The equations create branches, not one mandatory order in which every wgrad finishes before dgrad can continue.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Branch</th><th>Needs</th><th>What completion makes possible</th></tr></thead>
+      <tbody>
+        <tr><td>\(G\rightarrow dH\rightarrow(dU,dV)\rightarrow dX\)</td><td>Forward-version weights and saved or reconstructed gate/up activations.</td><td>Return token gradients to their source ranks; continue earlier-layer backward when the surrounding runtime exposes readiness.</td></tr>
+        <tr><td>\((H,G)\rightarrow dW_d\)</td><td>Gated activations and this expert's output gradient.</td><td>Accumulate the down-projection parameter gradient. It does not depend on completing \(dX\).</td></tr>
+        <tr><td>\((X,dU,dV)\rightarrow(dW_u,dW_g)\)</td><td>Original expert inputs and gate/up gradients.</td><td>Accumulate the remaining parameter gradients; release saved inputs only after their final reader.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Ignoring elementwise work, the three forward GEMMs cost about \(6TDI\) FLOPs; the six backward GEMMs cost about \(12TDI\). Forward/dgrad GEMMs vary along the token/output-row dimension, whereas wgrad reduces over tokens. A forward tile size, queue order, or compute/communication SM split is therefore not automatically a good backward configuration.</p>
+  <p>In the <a href="https://cursor.com/blog/mixture-of-kittens#scheduling-the-overlaps">MoK backward schedule</a>, reverse-combine supplies output gradients, dgrad produces expert input gradients, and reverse-dispatch returns them. Wgrad can overlap the final reverse-dispatch because the token-gradient transfer does not depend on it. MoK delays weight-gradient GEMMs until dgrads for the minibatches are ready, also preserving a larger token reduction for numerical behavior. This is a particular schedule, not a universal instruction to defer all wgrads: doing so can delay FSDP reduce-scatter and lengthen the final training tail.</p>
+  <div class="note"><strong>Mathematical readiness is not framework readiness.</strong> A monolithic custom autograd backward that returns all gradients together does not automatically let PyTorch schedule the preceding layer as soon as an internal \(dX\) tile is ready. Cross-layer overlap requires an execution interface that exposes the relevant completion events. Intra-kernel reverse-dispatch overlap alone does not demonstrate that capability.</div>
+
+  <h3 id="training-memory">Activation lifetime is a scheduling constraint</h3>
+  <p>Fusion may remove temporary IO while leaving long-lived saved state untouched. For \(N\) original tokens, top-\(K\) routing, and width \(D\), one materialized BF16 expert-expanded tensor costs \(2NKD\) bytes. An illustrative \(N=8192,\ K=8,\ D=4096\) tensor is <strong>512 MiB</strong>, before counting other layers or gradients. Avoiding a retained copy and bounding a transient buffer solve different problems.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Memory class</th><th>Lifetime / release condition</th><th>Optimization and its cost</th></tr></thead>
+      <tbody>
+        <tr><td>Inputs and routing metadata</td><td>Retain until all backward gathers, wgrads, and any replay have consumed them.</td><td>Gather directly from original inputs rather than save repeated expert-expanded inputs. Preserve forward routing and any stochastic state needed for equivalent replay.</td></tr>
+        <tr><td>Gate/up preactivations and gated output</td><td>Needed by activation derivatives and parameter gradients.</td><td>Save selected intermediates; reconstruct cheap elementwise results or replay missing GEMMs. Replay saves memory but can add FLOPs, weight reads, and distributed parameter materialization.</td></tr>
+        <tr><td>Dispatch/combine ring and scratch</td><td>A slot cannot be reused until every local/remote consumer and asynchronous transfer is done.</td><td>Fixed capacity bounds transient token storage. It does not bound all saved activations, gradients, or optimizer state.</td></tr>
+        <tr><td>Unsharded/prefetched parameters</td><td>Valid from all-gather completion through the last compute or asynchronous reader.</td><td>Earlier prefetch increases overlap and peak memory. Resharding saves memory but may require another all-gather for backward/replay.</td></tr>
+        <tr><td>Gradients and optimizer state</td><td>Persist through required accumulation/reduction and the update.</td><td>Shard and reduce at the intended boundaries; kernel fusion does not itself eliminate these allocations.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p><strong>Two distinct solutions:</strong> MoK uses ring-aware replay inside backward to reconstruct intermediates overwritten by forward's ring reuse. <a href="https://arxiv.org/html/2512.14080v2#S3">SonicMoE</a> instead demonstrates how algebra and IO-aware kernels reduce saved state without replaying the forward GEMMs: retain original inputs and up/gate preactivations, regenerate the gated activation during backward, and avoid retaining every expert's full-width output for router gradients.</p>
+  <p>The router-gradient identity makes the latter concrete. For one token, let \(y_e=h_eW_{d,e}\), combined output \(o=\sum_e a_e y_e\), and \(g=\partial L/\partial o\). Then:</p>
+  <div class="equation">
+    \[
+      \frac{\partial L}{\partial a_e}
+      =\langle g,y_e\rangle
+      =\langle gW_{d,e}^{\top},h_e\rangle.
+    \]
+  </div>
+  <p>This avoids retaining \(y_e\) solely for that gradient. Use the <em>unweighted</em> projection \(gW_{d,e}^{\top}\); the expert activation gradient contains the additional factor \(a_e\), so substituting it directly gives the wrong result. Chain the coefficient gradient through router normalization/projection separately. No division by a potentially zero routing weight is necessary.</p>
+  <p>SonicMoE's described computation still uses <strong>three forward and five backward kernels</strong>. Its reported 45% activation-memory reduction is a scoped MoE result, not proof that fewer kernels or one megakernel is necessary for memory efficiency. Its token-rounding proposal is a separate routing change; do not count it as a semantics-preserving scheduling optimization.</p>
+
+  <h3 id="training-fsdp">FSDP overlap must survive the fused region</h3>
+  <p>Expert-parallel dispatch exchanges tokens within an EP group. FSDP exchanges parameter shards and gradients across the relevant data-parallel/sharding group. These groups and fabrics need not coincide. A faster intra-rack MoE region can still slow training if it prevents inter-rack parameter or gradient communication from progressing.</p>
+  <p>The <a href="https://docs.pytorch.org/docs/2.15/distributed.fsdp.fully_shard.html">PyTorch 2.15 FSDP2 contract</a> provides the outer schedule: all-gather a parameter group before use; optionally reshard after forward; re-gather for backward when needed; and reduce-scatter completed gradients. Each <code>fully_shard</code> application determines a communication group. Per-block grouping exposes overlap; grouping the entire model into one unit delays those opportunities. See <a href="torchtitan.html#fsdp2">TorchTitan's FSDP2 integration</a> for the surrounding model structure.</p>
+  <pre><code>Illustrative backward dependencies — not a measured timeline:
+
+compute:    [backward B3]  [backward B2]  [backward B1]
+weight AG:  [prefetch B2]  [prefetch B1]
+grad RS:    start RS(B3) when its group gradients are ready,
+            then RS(B2), then RS(B1), respecting collective order
+
+AG completion  -> first read of gathered weights
+last reader    -> release gathered storage
+wgrad completion + accumulation policy -> reduce-scatter
+reduction/update prerequisites         -> optimizer step</code></pre>
+  <p>Three integration requirements follow:</p>
+  <ol>
+    <li><strong>Preserve parameter and hook boundaries.</strong> Call through the framework's supported module/unshard interface; do not silently run a cached whole-model pointer schedule across multiple FSDP groups whose weights may be reshaped, freed, or re-gathered. Keep the forward parameter version valid for backward.</li>
+    <li><strong>Leave communication resources and scheduling opportunities.</strong> A separate CUDA stream does not reserve SMs or guarantee overlap. MoK uses Blackwell CLC to yield work to higher-priority communication kernels. Other hardware needs an explicit supported strategy; stream priority alone is not a universal preemption mechanism.</li>
+    <li><strong>Honor gradient readiness and accumulation policy.</strong> Delayed wgrads postpone reduce-scatter; earlier all-gathers extend parameter lifetimes. Accumulating microbatches or suppressing intermediate synchronization changes reduction timing and memory. Do not expose partial gradients as complete or update weights while old-version reads remain outstanding.</li>
+  </ol>
+  <p>A useful starting boundary is one FSDP-managed block containing a fused MoE region, leaving inter-block all-gather/reduce-scatter scheduling to the framework. It is a design starting point, not a claim that an arbitrary custom kernel can be dropped into FSDP without verifying hooks, streams, aliases, and completion ordering.</p>
+
+  <h3 id="training-limits">When training fusion loses</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Failure mode</th><th>Why a smaller/faster-looking kernel graph can lose</th><th>Measure</th></tr></thead>
+      <tbody>
+        <tr><td>Compute efficiency falls</td><td>Tiny transfer chunks force undersized GEMMs, poor tile packing, or frequent synchronization. Common block/register layouts may be worse than per-op specialization.</td><td>Effective GEMM FLOP/s, partial waves, register spills, and forward versus dgrad/wgrad timings.</td></tr>
+        <tr><td>Communication is displaced</td><td>Persistent work occupies resources needed by parameter all-gather or gradient reduction; local EP overlap improves while the global tail grows.</td><td>Concurrent streams, exposed FSDP time, slowest-rank step time, and final reduce-scatter tail.</td></tr>
+        <tr><td>Memory saving adds expensive replay</td><td>Recomputing missing activations can require extra GEMMs, HBM reads, or parameter gathers; aggressive prefetch may erase the saved capacity.</td><td>Peak allocated/reserved memory, actual replay work, gather count, and the same global-batch training step.</td></tr>
+        <tr><td>One schedule serves incompatible phases</td><td>Backward has more arithmetic, token-axis wgrad reductions, and different readiness than forward. Routing skew also changes the best partition.</td><td>Separate forward/backward SM splits and chunk sizes under realistic routing distributions.</td></tr>
+        <tr><td>The optimized region is not dominant</td><td>Attention, loss, data input, optimizer work, or other communication sets the whole-run limit.</td><td>End-to-end tokens/s and time to a comparable quality target, not just MoE TFLOP/s.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>For a normalized baseline step, if fraction \(f\) improves by factor \(s\) and the change adds unhidden overhead \(r\), a simple Amdahl model gives:</p>
+  <div class="equation">\[S_{\mathrm{step}}=\frac{1}{(1-f)+f/s+r}.\]</div>
+  <p>For example, doubling a region that occupies half the step gives only \(1.33\times\) whole-step speedup when \(r=0\). This is an illustrative serial-fraction model; real overlap changes the critical path. Do not plug a forward-only speedup into the whole forward-plus-backward fraction.</p>
+
+  <h3 id="training-evidence">Training evidence and adjacent building blocks</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>System / evidence</th><th>Training lesson</th><th>Scope limit</th></tr></thead>
+      <tbody>
+        <tr><td>MoK, Sep 2026 paper</td><td>Joint forward/backward EP execution, deterministic reductions, ring-aware replay, and RDMA coexistence. Main layer comparison reports up to 2.37×/1.78× MXFP8 forward/backward and 1.92×/1.58× BF16 forward/backward.</td><td>Those maxima use EP=64 and 2,048 input tokens/GPU across four shapes with synthetic inputs/router logits. The separate 1.41× whole-training result uses 512 GB300 GPUs and EP=32. Do not combine maxima or treat them as one configuration.</td></tr>
+        <tr><td>SonicMoE, revised v2</td><td>Training-aware algebra, gather fusion, and operator-specific kernels can reduce retained activations and improve forward/backward efficiency.</td><td>Not an all-operator megakernel. Its 45% activation-memory result and 1.86× compute-throughput comparison are model/baseline-specific; separate token-rounding changes from fixed-routing results.</td></tr>
+        <tr><td>FLUX / COMET</td><td>Dense TP and MoE building blocks: all-gather with GEMM, GEMM with reduce-scatter, and grouped-GEMM overlap can fit existing training frameworks.</td><td>Communication-overlapped operator groups are not evidence that a complete transformer backward or optimizer runs in one kernel. Older results are not head-to-head NVL72/MoK comparisons.</td></tr>
+        <tr><td>Triton-distributed, Sep 2026 source snapshot</td><td>Distributed primitives and FlashComm developments include fixed-buffer chunked EP, caller-owned buffers, and fused MXFP8 dispatch.</td><td>These are reusable mechanisms. A megakernel inference demo does not certify complete backward, autograd, accumulation, or FSDP support for every path.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p><strong>Training acceptance gate:</strong> compare input, parameter, and router gradients with a trusted reference; exercise zero-token experts, routing skew, partial tiles, ring wrap, accumulation, recomputation, and precision modes; then evaluate the actual distributed step at the same effective global batch. Numerical agreement, deterministic execution, throughput, and convergence are separate claims. No distributed training run is reproduced by this page.</p>
+
+  <h2 id="granularity">6 · Finer tasks are not always faster</h2>
   <p>Consider a deliberately simplified two-stage pipeline: total compute time \(C\), total communication time \(D\), and \(n\) equal chunks. Assume the two stages can overlap without bandwidth/resource contention, and each chunk adds an unhidden coordination cost \(h\). Then:</p>
   <div class="equation">
     \[
@@ -223,7 +339,7 @@ release_buffers_after_all_users_and_async_operations_finish(task)</code></pre>
   </div>
   <p>MoK provides a practical counterpart: communication that is too fine-grained repeatedly interrupts efficient Tensor Core work, while overly coarse transfer batches delay the first compute and final combine. Tune task/transfer size <em>with</em> the compute/communication SM split, not as independent constants.</p>
 
-  <h2 id="correctness">6 · The runtime contracts you now own</h2>
+  <h2 id="correctness">7 · The runtime contracts you now own</h2>
   <div class="table-wrap">
     <table>
       <thead><tr><th>Contract</th><th>Required reasoning</th><th>Failure to look for</th></tr></thead>
@@ -239,7 +355,7 @@ release_buffers_after_all_users_and_async_operations_finish(task)</code></pre>
   </div>
   <p>These contracts also explain why megakernelizing an arbitrary set of existing kernels is not just concatenating their source. Their block shapes, register/shared-memory assumptions, asynchronous operations, and barrier participation must fit a compatible execution convention. See <a href="cuda.html">CUDA's synchronization and memory model</a> before adapting any source-specific fence recipe.</p>
 
-  <h2 id="evaluation">7 · Evaluate the whole system, not the slogan</h2>
+  <h2 id="evaluation">8 · Evaluate the whole system, not the slogan</h2>
   <p>Start with a profile that distinguishes host submission, kernel-switch/pipeline gaps, low occupancy, memory bandwidth, and exposed collectives. Megakernels are promising when those boundaries leave useful resources idle; fewer launches do not repair slow GEMMs or remove irreducible memory traffic.</p>
   <ol>
     <li><strong>Freeze the comparison:</strong> source revisions, checkpoint, precision, hardware count and topology, backend versions, prompt/output distributions, routing skew, concurrency, and sampling/speculation policy.</li>
@@ -256,7 +372,7 @@ release_buffers_after_all_users_and_async_operations_finish(task)</code></pre>
   <p>Inferact separately reports sub-90-second cold compilation for its hand-scheduled TPU decoder versus 30-plus-minute compilation that large XLA model programs can incur. That is a development-loop observation with different programs, not a serving speedup or a universal Pallas/XLA benchmark.</p>
   <div class="note"><strong>Current decision rule:</strong> retain competitive operator implementations, identify specific cross-operator waste, then choose the least complex runtime that removes it. Static waves plus local queues, a compiler-generated graph, chiplet cooperation, and a sequential TPU pipeline are alternatives—not successive levels of an inevitable single design.</div>
 
-  <h2 id="sources">8 · Reading path and source snapshots</h2>
+  <h2 id="sources">9 · Reading path and source snapshots</h2>
   <p>Read Cohere for a recent end-to-end implementation, MoK for training/communication, and Inferact for the contrasting TPU model. Use MPK for the compiler formulation and HazyResearch for the foundational interpreter. Publication dates below are source dates, not repository activity timestamps.</p>
   <ul>
     <li><strong>2026-11-04 · Together Compiler:</strong> <a href="https://www.together.ai/blog/together-compiler-continual-compilation-for-ai-inference">official article</a> and <a href="https://www.alphaxiv.org/abs/2611.together-compiler-continual-ai-inference">paper landing page</a>. Adjacent continual-optimization system; not a megakernel specification.</li>
@@ -266,6 +382,14 @@ release_buffers_after_all_users_and_async_operations_finish(task)</code></pre>
     <li><strong>2026-06-10 · MPK:</strong> <a href="https://arxiv.org/html/2512.22219v2">revised paper v2</a> and <a href="https://github.com/mirage-project/mirage/tree/d2189e50063b54ed410cf7b8390b2c784114c7a2">repository snapshot</a>. Prefer this paper over the older announcement for evaluated capabilities and speedup ranges.</li>
     <li><strong>2026-04-15 · Fleet:</strong> <a href="https://arxiv.org/html/2604.15379v1">primary preprint</a> and <a href="https://github.com/ROCm/fleet-chiplet-megakernel/tree/0275d466c89bc3158e19118b62ad9b02d7f2a364">public implementation snapshot</a>. Use the paper for authorship and benchmark scope; repository reproduction numbers and citation metadata differ.</li>
     <li><strong>2025-05-27 · HazyResearch:</strong> <a href="https://hazyresearch.stanford.edu/blog/2025-05-27-no-bubbles">Look Ma, No Bubbles!</a> and <a href="https://github.com/HazyResearch/Megakernels/blob/7309cec801537b61fea3b50d7dfe454a6cde578e/include/megakernel.cuh">interpreter source snapshot</a>. Foundational execution pattern, not the latest serving landscape.</li>
+  </ul>
+  <h3>Training-specific references</h3>
+  <ul>
+    <li><a href="https://arxiv.org/html/2609.36070v1#S3">MoK design</a> and <a href="https://arxiv.org/html/2609.36070v1#S4">evaluation</a>: backward/replay, deterministic execution, CLC-based RDMA coexistence, and separate layer/production protocols.</li>
+    <li><a href="https://docs.pytorch.org/docs/2.15/distributed.fsdp.fully_shard.html">PyTorch 2.15 FSDP2</a>: versioned parameter lifetimes, communication grouping, prefetching, and gradient reduction contracts; not an endorsement of a particular megakernel integration.</li>
+    <li><a href="https://arxiv.org/html/2512.14080v2#S3">SonicMoE v2, memory-efficient backward</a> and <a href="https://github.com/Dao-AILab/sonic-moe/tree/7396f3e604827d8186c2e16e64b28ee33d3defd0">August 17 source snapshot</a>. The arXiv metadata dates v2 to March 26, 2026, while the rendered manuscript displays August 24; identify the version rather than infer release chronology from the disagreement.</li>
+    <li><a href="https://github.com/ByteDance-Seed/Triton-distributed/blob/7908e4ea9010bb2238f9f05b28c904fd4b71c60a/README.md">Triton-distributed, September 18 source snapshot</a>: distributed-kernel primitives and dated FlashComm updates, distinguished from its inference demonstrations.</li>
+    <li><a href="https://github.com/bytedance/flux/blob/19831ca2d820e3e782ed1d15d8b52d0898b78b26/README.md">FLUX source snapshot</a> and <a href="https://arxiv.org/abs/2502.19811v3">COMET, March 2025 revision</a>: communication-overlapped TP/EP building blocks and their earlier research context.</li>
   </ul>
   <div class="xref"><strong>Continue:</strong> <a href="cuda-graphs.html">capture and replay</a> · <a href="cutlass.html">operator pipelines</a> · <a href="moe-parallelism.html">expert communication</a> · <a href="../hardware/tpu-hardware.html">TPU hardware</a> · <a href="../inference/online-inference.html">serving SLOs</a> · <a href="blackwell-gemm-lab.html">a source-pinned GEMM investigation</a>.</div>
 </main>
