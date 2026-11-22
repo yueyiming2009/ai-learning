@@ -97,6 +97,7 @@
     <a href="#mismatch">The problem</a><a href="#policies">Policies</a><a href="#gradient">Token update</a>
     <a href="#comparison">Correction map</a><a href="#interactive">Compare gradients</a>
     <a href="#drift">Drift</a><a href="#score-centering">Score centering</a>
+    <a href="#stable-reinforce">StableReinforce</a>
     <a href="#mitigation">Mitigation</a><a href="#references">Sources</a>
   </div>
 </nav>
@@ -466,6 +467,33 @@ q_y = 0.050, p_y = 0.500: r = 10, binary TV = 0.450 -> drop</code></pre>
     30B comparisons. Some figures report training accuracy rather than held-out accuracy.
     Preserve those limits when applying the result to long-horizon agents or production
     workloads. Table 1 is an algorithmic map, not a deployment recommendation.</p>
+
+  <h3 id="stable-reinforce">StableReinforce: a production score-centering variant</h3>
+  <p>TML's <a href="https://thinkingmachines.ai/news/inkling-2-small/">Inkling 2 Small launch</a>
+    describes StableReinforce as a score-centering variant for asynchronous, low-precision RL.
+    The equations above explain the published score-centering method, <strong>not the complete
+    StableReinforce objective</strong>. Keep the shared idea separate from its implementation.</p>
+  <ul>
+    <li><strong>Advantages are external.</strong> The loss accepts already-computed advantages,
+      so it can be used with group-relative reward centering. Subtracting a group's mean reward
+      and centering the gradient score are different operations; one does not replace the other.</li>
+    <li><strong>Sampler–learner KL is configurable.</strong> The API offers <code>k1</code>
+      (default) and <code>k3</code>, with <code>kl_coeff=0.01</code> by default; zero disables it.
+      This term compares sampler and learner, not the learner and a separate fixed reference model.</li>
+    <li><strong>Sampling provenance is required.</strong> Enable <code>record_stability_info=True</code>
+      and preserve sequence IDs and both provenance span lists. Nonzero advantages must identify
+      stability-recorded sampled tokens. Ordinary token/log-probability records alone do not supply
+      the required server-side information.</li>
+    <li><strong>The core estimator remains undisclosed.</strong> The inspected public sources
+      do not specify the recorded information, exact centering approximation, or additional
+      stabilization details. Do not equate it with this paper's top-k estimator or TIS/MIS composition.</li>
+  </ul>
+  <p>The default <code>k1</code> KL term adds an advantage-independent pull toward sampled tokens.
+    Even if centering removes reward-driven drift, the complete loss can still update the policy
+    through KL regularization.</p>
+  <p>See the <a href="https://tinker-docs.thinkingmachines.ai/tinker/losses/stable-reinforce/">alpha API documentation</a>
+    (checked November 22, 2026) and the
+    <a href="../models/inkling-2.html#stable-reinforce">Inkling usage discussion</a>.</p>
 
   <h2 id="mitigation">7. Choose the intervention after diagnosing the mismatch</h2>
   <div class="table-wrap">
