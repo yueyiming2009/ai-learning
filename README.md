@@ -180,6 +180,8 @@ and score-centering drift removal, with interactive gradient comparisons.
 Continue to [Async RL](docs/rl/async-rl.html) for scheduling and staleness, then
 its monitoring and reward pipelining. Algorithm derivations and framework-specific recipes
 remain on their own pages and link to the TIM guide.
+[RL Scaling Laws](docs/rl/rl-scaling.html) is a short decision guide to interpreting gains,
+allocating compute across updates, rollouts and task diversity, and checking extrapolation.
 [Agentic RL Observability](docs/rl/agentic-rl-observability.html) connects metrics to individual
 episodes, verifier evidence, training samples and updates. It includes industry-backed tracing
 recipes, collection infrastructure, an interactive synthetic trace lab and an offline
