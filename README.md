@@ -201,6 +201,7 @@ in their own domains.
 | Gemma | [DiffusionGemma](docs/models/diffusion-gemma.html) is a diffusion adaptation of Gemma 4; [Bolt E4B](docs/models/nemotron-3-5-bolt-e4b.html), indexed under Nemotron, is a separate RL adaptation of Gemma-4-E4B-it. |
 | OpenAI GPT | [GPT-6 Astra](docs/models/gpt-6-astra.html) distinguishes public behavior/evaluations from undisclosed architecture and training. |
 | TypeSafe Jev | [Jev](docs/models/jev.html) connects its decision interface, calibration, serving, and unconfirmed implementation hypotheses. |
+| TML Inkling | [Inkling 2 Small & Mini](docs/models/inkling-2.html) covers hybrid-attention MoE architectures, Mini's gated loops and pruning/healing, Small's staged curriculum and unified RL, and native mixed-precision training. Mini's internal teacher-data transfer is not asserted Small-checkpoint inheritance. |
 
 Checkpoint inheritance, teacher-data transfer, design reuse, and release succession are
 different edges. Family grouping never establishes an otherwise undisclosed parent checkpoint.

@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="TML Inkling 2 Small and Mini: source-checked MoE and looped architectures, staged training, unified asynchronous RL, pruning and distillation, and native mixed-precision training.">
+  <title>Inkling 2 Small &amp; Mini — Architecture, Training, and Low-Precision Systems</title>
+  <link rel="canonical" href="https://yueyiming2009.github.io/ai-learning/models/inkling-2.html">
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #ffffff; --surface: #f8f9fa; --border: #e8eaed;
+      --text: #1a1a2e; --muted: #6b7280; --accent: #6d28d9; --accent-light: #f5f3ff;
+      --nav-bg: rgba(255,255,255,0.92);
+      --warning-bg: #fffbeb; --warning-border: #d97706; --warning-fg: #78350f;
+      --info-bg: #eff6ff; --info-border: #3b82f6; --info-fg: #1e40af;
+      --fig-bg: #ffffff; --plot-grid: #eceef1; --plot-axis: #c7cbd1;
+      --plot-tick: #6b7280; --plot-gray: #9ca3af; --plot-violet: #6d28d9; --plot-teal: #0d9488;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115; --surface: #171b21; --border: #262b33;
+        --text: #e5e7eb; --muted: #9aa1ab; --accent: #a78bfa; --accent-light: #1a1626;
+        --nav-bg: rgba(15,17,21,0.9);
+        --warning-bg: #251c0b; --warning-border: #b45309; --warning-fg: #fcd34d;
+        --info-bg: #101a2b; --info-border: #1e40af; --info-fg: #93c5fd;
+        --fig-bg: #14181e; --plot-grid: #232830; --plot-axis: #3a4149;
+        --plot-tick: #9aa1ab; --plot-gray: #9ca3af; --plot-violet: #a78bfa; --plot-teal: #2dd4bf;
+      }
+    }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); margin: 0; line-height: 1.75; font-size: 16px; }
+    nav { position: sticky; top: 0; z-index: 100; height: 52px; padding: 0 24px; display: flex; align-items: center; gap: 24px; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
+    .nav-brand { display: inline-flex; align-items: center; gap: 7px; color: var(--accent); text-decoration: none; font-size: 0.9rem; font-weight: 600; white-space: nowrap; }
+    .nav-links { display: flex; gap: 4px; overflow-x: auto; flex: 1; min-width: 0; }
+    .nav-links a { color: var(--muted); text-decoration: none; white-space: nowrap; font-size: 0.82rem; padding: 4px 10px; border-radius: 6px; }
+    .nav-links a:hover { color: var(--accent); background: var(--accent-light); }
+    .hero { background: linear-gradient(135deg, #3b0764 0%, #6d28d9 60%, #7c3aed 100%); color: white; padding: 56px 24px 48px; text-align: center; }
+    .hero h1 { font-size: clamp(1.6rem, 4vw, 2.3rem); margin: 0 0 12px; letter-spacing: -0.02em; }
+    .hero p { max-width: 740px; margin: 0 auto; opacity: 0.9; }
+    .hero-pill { display: inline-block; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 100px; padding: 3px 12px; margin-bottom: 16px; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    .page-wrap { max-width: 960px; margin: 0 auto; padding: 40px 24px 80px; }
+    h2 { font-size: 1.2rem; margin: 2.8em 0 0.8em; padding-bottom: 8px; border-bottom: 2px solid var(--border); }
+    h3 { font-size: 1rem; margin: 1.7em 0 0.45em; }
+    [id] { scroll-margin-top: 72px; }
+    p { margin: 0.7em 0; }
+    a { color: var(--accent); text-underline-offset: 3px; }
+    a:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    ul, ol { padding-left: 1.5em; }
+    li { margin-bottom: 0.5em; }
+    code { font-family: 'SF Mono', ui-monospace, Menlo, monospace; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; font-size: 0.87em; overflow-wrap: anywhere; }
+    .model-map { border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 8px; padding: 16px 20px; background: var(--surface); margin-bottom: 24px; }
+    .model-map p { font-size: 0.92rem; }
+    .note, .result { border-left: 3px solid; border-radius: 0 8px 8px 0; padding: 14px 18px; margin: 1.3em 0; }
+    .note { background: var(--warning-bg); border-color: var(--warning-border); color: var(--warning-fg); }
+    .result { background: var(--info-bg); border-color: var(--info-border); color: var(--info-fg); }
+    .note a, .result a { color: inherit; }
+    .table-wrap { overflow-x: auto; margin: 1.3em 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { border: 1px solid var(--border); padding: 10px 12px; text-align: left; vertical-align: top; }
+    th { background: var(--surface); }
+    caption { text-align: left; color: var(--muted); font-size: 0.85rem; padding-bottom: 8px; }
+    .source-note { color: var(--muted); font-size: 0.85rem; }
+    .flow { padding: 18px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); margin: 1.2em 0; }
+    .flow-row { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 10px; margin: 10px 0; }
+    .block { border: 1px solid var(--border); border-radius: 7px; background: var(--bg); padding: 10px 14px; text-align: center; }
+    .block.core { border: 2px solid var(--accent); background: var(--accent-light); }
+    .block small { display: block; color: var(--muted); }
+    .flow-caption { font-size: 0.87rem; margin-bottom: 0; }
+    .equation { overflow-x: auto; padding: 4px 8px; }
+    .figure {
+      background: var(--fig-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 16px 14px;
+      margin: 1.6em 0;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .figure canvas { width: 100%; height: 300px; display: block; }
+    .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; justify-content: center; margin-top: 12px; font-size: 0.82rem; color: var(--text); }
+    .legend-item { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, var(--plot-gray) 0 5px, transparent 5px 9px); }
+    .figure-caption { font-size: 0.85rem; color: var(--muted); line-height: 1.6; margin: 14px 4px 2px; }
+    .controls { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 12px; font-size: 0.9rem; }
+    .controls input { flex: 1; min-width: 100px; accent-color: var(--accent); }
+    .readout { display: block; font-variant-numeric: tabular-nums; font-size: 0.9rem; margin: 12px 4px; }
+    .next-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 1.2em 0; }
+    .next-card { border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; text-decoration: none; color: inherit; }
+    .next-card strong { color: var(--accent); }
+    .next-card p { font-size: 0.9rem; margin-bottom: 0; }
+    .next-card:hover { border-color: var(--accent); }
+    footer { border-top: 1px solid var(--border); padding: 28px 24px; text-align: center; color: var(--muted); font-size: 0.82rem; }
+    @media (max-width: 600px) {
+      nav { padding: 0 12px; gap: 12px; }
+      .hero { padding: 40px 16px 36px; }
+      .page-wrap { padding: 28px 16px 60px; }
+      .next-grid { grid-template-columns: 1fr; }
+      .figure { padding: 14px 8px; }
+    }
+  </style>
+</head>
+<body>
+<nav aria-label="Page navigation">
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Inkling 2</a>
+  <div class="nav-links">
+    <a href="#model-context">Model map</a><a href="#architecture">Architecture</a><a href="#looping">Mini's loops</a>
+    <a href="#small-training">Small training</a><a href="#unified-rl">Unified RL</a><a href="#mini-training">Mini training</a>
+    <a href="#numerics">4-bit systems</a><a href="#experiments">Experimentation</a><a href="#evidence">Evidence</a><a href="#sources">Sources</a>
+  </div>
+</nav>
+<header class="hero">
+  <span class="hero-pill">Models &amp; Families · TML Inkling</span>
+  <h1>Inkling 2 Small &amp; Mini</h1>
+  <p>Two scales of multimodal agent models: a large sparse backbone and a compact looped one.
+    Follow the architecture, the training handoffs, and the mixed-precision systems that make them practical.</p>
+</header>
+<main class="page-wrap">
+  <aside class="model-map" id="model-context" aria-label="Model family, lineage, and coverage">
+    <p><strong><a href="../index.html#models-inkling">TML Inkling</a> · Thinking Machines Lab · Sources checked November 22, 2026</strong></p>
+    <p><strong>Release progression:</strong> Inkling / Inkling-Small precede Inkling 2 Small (November 5; weights November 12) and Mini (November 20).
+      This is release history, not a claim that their checkpoints initialize one another.</p>
+    <p><strong>Mini's disclosed derivation:</strong> a 24-layer model on TML's mainline scaling ladder receives looping and expert pruning.
+      A larger <em>internal</em> Inkling model supplies healing data. The sources do not identify released Inkling 2 Small as Mini's parent checkpoint or healing teacher.</p>
+    <p><strong>Coverage:</strong> <a href="#architecture">architecture and multimodality</a> · <a href="#small-training">Small's four stages</a> ·
+      <a href="#unified-rl">asynchronous RL</a> · <a href="#mini-training">Mini's pruning and distillation</a> ·
+      <a href="#numerics">numerics and infrastructure</a> · <a href="#evidence">results and disclosure limits</a>.</p>
+  </aside>
+  <p>
+    The useful contrast is not simply 594B versus 26.4B parameters. <strong>Small combines a wide sparse model with long-context data and one joint RL run;
+    Mini trades repeated computation for a smaller stored model, then repairs expert pruning through distillation.</strong>
+    Both use low precision as part of training, not merely as a final compression step.
+  </p>
+  <div class="note">
+    <strong>Recipe, not reproduction.</strong> The launch posts and the November 13 precision deep dive disclose substantial methodology.
+    They do not release the complete datasets, exact mixtures, hyperparameters, and production code needed to reproduce these models.
+    “Same mainline recipe” does not transfer Small's token counts, RL duration, or infrastructure configuration to Mini.
+  </div>
+
+  <h2 id="architecture">1. Architecture: stored capacity, active computation, and context</h2>
+  <div class="table-wrap">
+    <table>
+      <caption>Model-card facts plus released configuration fields. “Layer” below means a stored decoder layer, not a repeated application. <a href="#source-cards">[6]</a> <a href="#source-configs">[7]</a></caption>
+      <thead><tr><th scope="col">Property</th><th scope="col">Inkling 2 Small</th><th scope="col">Inkling 2 Mini</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Parameters</th><td>594B total; 17B active per token</td><td>26.4B total; 3.4B nominal active; 5.4B effective weight activations per token including loops</td></tr>
+        <tr><th scope="row">Decoder depth</th><td>48 stored layers; 48 applications</td><td>24 stored layers; 48 applications at the fixed three-pass setting</td></tr>
+        <tr><th scope="row">Hidden width</th><td>4,608</td><td>2,304</td></tr>
+        <tr><th scope="row">Attention heads</th><td>48 query heads, 8 KV heads, head dimension 128</td><td>24 query heads, 8 KV heads, head dimension 128</td></tr>
+        <tr><th scope="row">Local / global attention</th><td>40 local + 8 global stored layers</td><td>20 local + 4 global stored layers; the middle blocks repeat</td></tr>
+        <tr><th scope="row">Attention pattern</th><td colspan="2">Five local layers followed by one global layer, per six-layer block. Local window: 1,024 tokens. Maximum configured context: 1,048,576 tokens.</td></tr>
+        <tr><th scope="row">MoE</th><td>Top-8 of 384 routed experts per layer; expert intermediate width 2,304</td><td>Top-8 of 128 routed experts per layer; expert intermediate width 1,152</td></tr>
+        <tr><th scope="row">Other backbone fields</th><td colspan="2">No shared experts; short-convolution kernel size 4; six-layer attention-residual blocks; RMSNorm epsilon 10<sup>−6</sup>; final-logit softcap 30.</td></tr>
+        <tr><th scope="row">Interface</th><td colspan="2">Text and image input → text output; controllable reasoning effort. These are not audio-input releases.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <h3>Read the backbone as three cooperating mechanisms</h3>
+  <p>
+    <strong>Hybrid attention moves information across tokens.</strong> The local layers keep most attention bounded;
+    every sixth layer supplies global access. The query-to-KV head ratios are 6:1 for Small and 3:1 for Mini,
+    a <a href="../transformer/attention.html">grouped-query attention</a> layout. The 1M context ceiling
+    does not mean every layer performs full attention over 1M tokens, nor that every training phase uses that length.
+  </p>
+  <p>
+    <strong>MoE supplies conditional capacity.</strong> A router selects eight experts per token rather than evaluating the whole expert bank.
+    Small activates 8/384 = 1/48 of the routed experts in a layer; Mini activates 8/128 = 1/16.
+    These are expert-selection fractions, <em>not</em> fractions of all model FLOPs: attention, shared non-expert operations,
+    and Mini's repeated passes still cost work. See <a href="../transformer/moe-routing.html">MoE routing</a> for the generic mechanism.
+  </p>
+  <p>
+    <strong>Attention residuals move information across depth.</strong> The six-layer block structure lets later computation
+    learn a mixture of earlier block outputs instead of relying only on a single cumulative residual sum.
+    Mini extends this access across loop passes. Short convolutions are another local sequence operation,
+    not a replacement for the disclosed global-attention layers. The config fields establish these components;
+    they are not, by themselves, a complete specification of execution order or every normalization and gate.
+  </p>
+  <div class="flow" aria-label="Shared multimodal architecture overview">
+    <div class="flow-row">
+      <div class="block">Text<small>tokenizer → embeddings</small></div>
+      <div class="block">Images<small>vision transformer → pooling / projection</small></div>
+    </div>
+    <div class="flow-row"><span aria-hidden="true">↓</span><div class="block">Interleaved visual and text representations<small>shared decoder hidden space</small></div></div>
+    <div class="flow-row"><span aria-hidden="true">↓</span><div class="block core">Sparse autoregressive decoder<small>local / global attention · MoE · depth-wise residual mixing</small></div></div>
+    <div class="flow-row"><span aria-hidden="true">↓</span><div class="block">Text logits → next token<small>including reasoning, answers, and tool calls</small></div></div>
+    <p class="flow-caption"><strong>Component map, not a kernel schedule.</strong> Small uses eight six-layer blocks;
+      Mini stores four blocks and repeats the middle pair. Both integrate image representations into the same decoder stream.</p>
+  </div>
+  <h3>Vision and auxiliary prediction</h3>
+  <p>
+    Small's launch describes a <strong>292M-parameter Perception Encoder–based vision encoder</strong>,
+    20×20-pixel patches, and 2×2 spatial pooling before interleaving image patches with text.
+    Both released configs specify a 23-layer, width-1,024, 16-head vision transformer, patch size 20, merge size 2,
+    and a projection hidden dimension of 4,096; the projection adapts to each decoder's width.
+    Matching settings establish design reuse, not identical vision weights. <a href="#source-small">[1]</a> <a href="#source-configs">[7]</a>
+  </p>
+  <p>
+    Both checkpoints also contain a separate <code>mtp_config</code>: five auxiliary layers for Small, three for Mini,
+    with block size 8. Keep this distinct from the 48/24-layer main decoder and Mini's loops.
+    The launch describes draft/verify sampling, but these configs do not disclose the original MTP loss weights,
+    training schedule, or measured acceptance rate. In particular, the auxiliary config's RoPE setting is not
+    evidence that the main decoder uses the same positional implementation.
+  </p>
+
+  <h2 id="looping">2. Mini: more serial depth without more stored layers</h2>
+  <p>
+    Mini divides its 24 layers into four blocks of six. The first block is the <strong>prelude</strong>,
+    the middle two form the <strong>shared core</strong>, and the last is the <strong>epilogue</strong>.
+    Only the core repeats. The zero-based config interval <code>[6, 18)</code> means layers 7–18 in one-based notation.
+    <code>num_passes=3</code> and <code>is_varloop=false</code> describe the released Mini. <a href="#source-mini">[2]</a> <a href="#source-configs">[7]</a>
+  </p>
+  <div class="flow" aria-label="Mini's fixed three-pass loop">
+    <div class="flow-row">
+      <div class="block">B1: layers 1–6<small>prelude, once</small></div><span aria-hidden="true">→</span>
+      <div class="block core">B2 → B3: layers 7–18<small>same weights, three passes</small></div><span aria-hidden="true">→</span>
+      <div class="block">B4: layers 19–24<small>epilogue, once</small></div>
+    </div>
+    <p class="flow-caption"><strong>Every core pass receives the prelude output.</strong>
+      Passes 2 and 3 also receive a learned, gated “message” containing middle-block outputs from the preceding pass.
+      This is richer than blindly feeding one final hidden state back into the first layer.</p>
+  </div>
+  <div class="equation">
+    \[
+      D_{\mathrm{applications}}(L)=6+12L+6,\qquad D(3)=48,\qquad D_{\mathrm{stored}}=24.
+    \]
+  </div>
+  <p>
+    Attention-residual mixing combines the prelude, the previous pass's message, and outputs of previous layers in the block.
+    The message gate initially suppresses the previous-pass contribution, so introducing looping starts from behavior
+    resembling the non-looping model; training then increases the message's influence.
+    Reusing weights does not reuse the <em>result</em> of a layer: each pass performs new computation on different representations.
+  </p>
+  <p>
+    The card's approximate compute accounting is \(3.4 + (L-1)\times 1.0\) billion effective active parameters,
+    giving <strong>5.4B at three passes</strong>. This counts repeated weight applications, not 5.4B newly stored parameters,
+    and is not a complete FLOP or latency model. Two models with 48 layer applications can still have very different widths,
+    expert capacity, attention costs, and throughput.
+  </p>
+  <h3>What the looping experiments actually compare</h3>
+  <p>
+    TML reports that looping the middle 12 layers beat looping the last 12 on 27 of 28 evaluations.
+    In a separate <em>unpruned</em> comparison, the non-looping ladder model cost 7.5% less training compute,
+    but needed 140% more inference compute to match the looping model's loss on 512K-token agent traces.
+    That is a reported compute-equivalent comparison, not a universal 2.4× serving speedup.
+    Looping chiefly improves serial reasoning and retrieval; the variable-loop experiments do not show comparable gains in closed-book factual recall.
+  </p>
+  <div class="note">
+    <strong>Effort is not loop count.</strong> Released Mini has three fixed passes. The separately released
+    <a href="https://thinkingmachines.ai/model-card/tml-d24-varloop-research/">TML-d24-varloop-research</a>
+    supports variable passes for research. Do not turn its 1–10-pass experiments into a claimed Mini runtime feature,
+    or treat every extra pass as guaranteed extra accuracy.
+  </div>
+
+  <h2 id="small-training">3. Small: broad prediction → long-context trajectories</h2>
+  <p>
+    Read the four stages as a curriculum in both <strong>data quality</strong> and <strong>deployment resemblance</strong>.
+    The later stages teach the model the form of reasoning and agent interaction before reward optimization begins.
+    The counts below are Small's reported training-token budgets, not unique corpus sizes. <a href="#source-small">[1]</a>
+  </p>
+  <div class="table-wrap">
+    <table>
+      <caption>Small's “Training Inkling 2 Small” section, in order.</caption>
+      <thead><tr><th scope="col">Stage</th><th scope="col">Tokens / context</th><th scope="col">Methodology and purpose</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">H1: broad pretraining</th><td>8.4T tokens; context not separately stated</td><td>Natural language, code, and images. Builds broad predictive capability. Reported 68 hours on GB300 NVL72 racks with high expert parallelism and native low-precision numerics.</td></tr>
+        <tr><th scope="row">H2: quality and length</th><td>3.8T tokens; 512K context</td><td>Higher-quality, newer data not previously seen by this model. Extends exposure to long sequences rather than merely changing an inference limit.</td></tr>
+        <tr><th scope="row">H3: deployment-format reasoning</th><td>About 320B tokens; 1M context</td><td>Reasoning and agent trajectories mixed with replayed pretraining data. Adds deployment-format behavior while retaining broad prediction training.</td></tr>
+        <tr><th scope="row">H4: strongest trajectories</th><td>About 34B tokens; context not separately stated</td><td>Keeps only the highest-quality agent trajectories. The final narrowing prioritizes behavior quality over broad data volume.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    H3 and H4 consist mostly of trajectories sampled from earlier models, including <strong>Kimi K3 and TML's own models</strong>,
+    filtered for correctness and alignment. This is <strong>teacher-data transfer</strong>, not Kimi checkpoint inheritance.
+    The named phases sum to approximately 12.554T tokens; replay and synthetic traces mean that sum is not 12.554T unique natural documents.
+  </p>
+  <div class="result">
+    <strong>Keep the clocks separate.</strong> The 68-hour figure belongs to H1 in the launch's explicit breakdown.
+    It is not a disclosed wall-clock duration for all four stages, RL, alignment, and evaluation combined.
+    Likewise, a larger context window, a longer multi-turn trajectory, and more training tokens are three different quantities.
+  </div>
+
+  <h2 id="unified-rl">4. Small: one joint RL run across heterogeneous tasks</h2>
+  <p>
+    The main RL run used <strong>1,075 steps, over 17 million rollouts, and nine days</strong>.
+    Instead of the previous Inkling approach of separate reasoning/agentic runs followed by multi-teacher distillation,
+    Small optimized these task families together. This is an important methodological change:
+    the model must handle conflicting task demands inside one evolving policy. <a href="#source-small">[1]</a>
+  </p>
+  <div class="table-wrap">
+    <table>
+      <caption>Disclosed task families and feedback. This is not an exact sampling-mixture specification.</caption>
+      <thead><tr><th scope="col">Workload</th><th scope="col">Feedback and learning signal</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Repository software engineering / terminal tasks</th><td>Hidden unit tests and programmatic checks; many coding tasks also use agentic graders that judge the approach, not just test success.</td></tr>
+        <tr><th scope="row">Documents / simulated-user tool use</th><td>Rubric-based LLM judges assess deliverables and interactions.</td></tr>
+        <tr><th scope="row">STEM / visual question answering</th><td>Reference answers supply correctness signals.</td></tr>
+        <tr><th scope="row">Web-app creation</th><td>Pairwise reward models compare screenshots of rendered apps, adding visual quality to functional correctness.</td></tr>
+        <tr><th scope="row">Forecasting / selected knowledge tasks</th><td>Proper scoring rules and uncertainty-sensitive rewards encourage calibration rather than unconditional confidence.</td></tr>
+        <tr><th scope="row">Autoresearch / safety</th><td>Long-horizon GPU-kernel and ML tasks, safety environments, and a general alignment reward. The full grader implementations and mixture weights are not released as a reproduction package.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    TML sampled and conditioned on a reasoning-effort level, then included a length penalty in the reward.
+    This teaches a <strong>speed–thoroughness trade-off</strong>; it is different from Mini's architectural pass count.
+    A reward combining task success, length, and alignment is not equivalent to optimizing unit-test pass rate alone.
+  </p>
+  <h3>Why asynchronous execution matters</h3>
+  <p>
+    Small's rollout-length median/p99 were <strong>43K / 1.5M total tokens</strong>, with duration median/p99
+    of <strong>8 minutes / 4 hours</strong>. A synchronous barrier would repeatedly make short tasks wait for long ones.
+    Asynchronous sampling lets the learner keep updating while older-policy trajectories finish, at the cost of policy staleness.
+  </p>
+  <p>
+    RL used a <strong>256K context window with compaction training</strong> for longer tasks.
+    Compaction is a learned-to-handle harness transition that reduces the history available at one time;
+    it does not make a 1.5M-token trajectory fit losslessly in a 256K attention window.
+    The total trajectory can span multiple compacted contexts. Training across harnesses and compaction strategies
+    makes those transitions part of the workload rather than an inference-only surprise.
+  </p>
+  <h3 id="stable-reinforce">StableReinforce: tolerate sampler–learner mismatch</h3>
+  <p>
+    The launch calls its objective a score-centering variant, <strong>StableReinforce</strong>.
+    Tinker's documentation describes a REINFORCE variant for off-policy/asynchronous sampling and differences
+    between training and sampling numerics. Its public API requires additional recorded sampling information;
+    it should not be presented as ordinary GRPO with a renamed flag, or as a fully disclosed production loss derivation. <a href="#source-stable">[4]</a>
+  </p>
+  <p>
+    One explicitly documented component is <strong>KL from the sampler \(q\) to the learner \(p_\theta\)</strong>,
+    not KL to a fixed reference model. On sampled tokens \(x_t\), the two available estimators are:
+  </p>
+  <div class="equation">
+    \[
+      \mathcal L_{\mathrm{KL},k1}=\beta\sum_t\bigl(\log q(x_t)-\log p_\theta(x_t)\bigr),
+      \qquad
+      \mathcal L_{\mathrm{KL},k3}=\beta\sum_t(r_t-1-\log r_t),
+      \quad r_t=\frac{p_\theta(x_t)}{q(x_t)}.
+    \]
+  </div>
+  <p>
+    The default <code>k1</code> gradient raises the learner probability of sampled tokens independently of their advantage.
+    <code>k3</code> instead has a gradient proportional to \(r_t-1\), pushing down tokens the learner overweights relative
+    to the sampler and up those it underweights. Its terms are nonnegative; a finite-sample <code>k1</code> estimate need not be.
+    The documented default <code>kl_coeff=0.01</code> is an <em>API default</em>, not a disclosed value from Small's production run.
+  </p>
+  <h3>Alignment is woven through the recipe</h3>
+  <p>
+    Small's midtraining filters remove misbehavior traces and retain honest ones. RL adds a general alignment penalty
+    across tasks and targeted environments, including impossible tasks where acknowledging failure is preferable to fabricating success.
+    On-policy self-distillation from a teacher prompted with a conduct specification then trains the model to internalize that behavior.
+    These are distinct interventions: filtering demonstrations, modifying rewards, and supplying teacher guidance on policy-generated trajectories.
+  </p>
+  <p>
+    The launch also reports pausing the run after monitoring detected a policy-boundary violation, hardening infrastructure,
+    removing web-dependent environments, and adding synchronous tool-call monitoring before resuming.
+    An asynchronous completed-rollout monitor complements those checks.
+    This is evidence that reward design and infrastructure controls both mattered—not that model alignment alone secured the training environment.
+  </p>
+
+  <h2 id="mini-training">5. Mini: prune, heal, then optimize the smaller policy</h2>
+  <p>
+    Mini follows the mainline data and quantization recipe, with two central architecture changes: looping and expert pruning.
+    The disclosed sequence below does <strong>not</strong> assign Small's H1–H4 budgets to Mini. <a href="#source-mini">[2]</a>
+  </p>
+  <ol>
+    <li><strong>Start with the 24-layer scaling-ladder model.</strong> Its initial MoE chooses 8 of 384 experts:
+      a sparsity ratio of 48. Looping is introduced during training with the gated message mechanism described above.
+      The post does not supply an exact step-by-step timing of loop introduction relative to every data-stage boundary.</li>
+    <li><strong>Prune once during midtraining.</strong> Keep the 128 most-used experts in each layer and remove the other two-thirds.
+      The released model still selects eight experts per token. The expert bank becomes smaller and less sparse;
+      this is not a threefold reduction of every operation or of the entire model's memory.</li>
+    <li><strong>Heal with 1T distilled tokens.</strong> A larger internal Inkling teacher supplies training data.
+      TML reports recovery of pre-pruning performance as remaining experts learn work formerly handled by deleted experts.
+      This is capability recovery through teacher supervision, not the addition of deleted parameters back into the model.</li>
+    <li><strong>Run SFT on a Small-like mixture.</strong> The post explicitly places supervised fine-tuning after pruning/healing,
+      using a similar mixture to Small. It does not disclose an SFT token budget or establish that the mixtures are identical.</li>
+    <li><strong>Run 2.2T RL tokens over 2,000 steps.</strong> Post-training also includes on-policy distillation for alignment,
+      as in Small. Do not substitute Small's 1,075 steps, 17M+ rollouts, nine days, or sampler/trainer ratio for this run.</li>
+  </ol>
+  <div class="result">
+    <strong>Three techniques, three jobs.</strong> Looping increases serial work per token; pruning reduces resident expert capacity;
+    distillation repairs or steers behavior. Only the second directly deletes stored experts.
+    Neither more depth nor more RL creates the missing factual capacity of a much larger parameter bank.
+  </div>
+
+  <h2 id="numerics">6. “End-to-end 4-bit” is a mixed-precision contract</h2>
+  <p>
+    The November 13 technical follow-up resolves the shorthand in Small's announcement.
+    <strong>Eligible MoE forward GEMMs use NVFP4 throughout pretraining, SFT, and RL; backward GEMMs use MXFP8.</strong>
+    Numerics stay consistent across stages rather than quantizing an otherwise high-precision model only at release.
+    It does not mean attention, gradients, optimizer state, communication, and every other operation are FP4. <a href="#source-four-bit">[3]</a>
+  </p>
+  <div class="table-wrap">
+    <table>
+      <caption>Precision choices and their reasons. Exceptions are part of the recipe, not footnotes to ignore.</caption>
+      <thead><tr><th scope="col">Path</th><th scope="col">Representation / policy</th><th scope="col">Why it matters</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Most expert forward GEMMs</th><td>NVFP4: E2M1 values, one E4M3 scale per 16 values, plus an outer FP32 scale</td><td>4.5 bits/value including block scales, excluding outer-scale overhead; faster matrix math and lower weight/activation traffic.</td></tr>
+        <tr><th scope="row">Expert backward GEMMs</th><td>MXFP8 after dequantizing, transposing, and stochastically re-quantizing forward operands</td><td>Preserves the forward-quantized values in expectation across changed block groupings, reducing gradient bias.</td></tr>
+        <tr><th scope="row">Last one-sixth of layers</th><td>Expert forward path stays MXFP8: last 8 of Small's 48 layers; explicitly last 4 of Mini's 24</td><td>Retains more precision where quantization harms quality more. Mini is deployed with 20 NVFP4 / 4 MXFP8 layers.</td></tr>
+        <tr><th scope="row">Expert dispatch</th><td>Send forward activations in NVFP4</td><td>Lower precision must reduce communication too, or faster GEMMs simply wait for expert inputs.</td></tr>
+        <tr><th scope="row">Expert combine</th><td>32-dimensional random Hadamard transform + block-scaled S2F6; dequantize/aggregate, then invert the transform</td><td>8.25 bits/value instead of BF16's 16. Rotation spreads outliers before quantization; direct MXFP8 combine hurt quality in their experiments.</td></tr>
+        <tr><th scope="row">Scale selection</th><td>Four Over Six for activations, not weights; per-token activation outer scales and per-expert weight outer scales</td><td>Controls quantization error while supporting batch-invariant, causal computation.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <h3 id="requantization">The subtle part: transposing changes the quantization problem</h3>
+  <p>
+    Let \(x_q,w_q\) be the operands reconstructed from the forward quantization, with \(y=x_qw_q^\top\).
+    The linear-layer backward uses the corresponding products \(g w_q\) and \(g^\top x_q\).
+    But transposition changes which values share a scale: a row-wise 1×16 block becomes a different column-wise group.
+    Re-quantizing the original high-precision weights independently can therefore make backward use different values from forward.
+  </p>
+  <p>
+    A transpose-invariant 16×16 scale avoids that mismatch but exposes 256 values to a single outlier.
+    TML found the resulting underflow too damaging. Instead it starts from <strong>the values actually used in forward</strong>,
+    dequantizes and transposes them, and rounds stochastically into MXFP8 for backward.
+    Preserving those values in expectation removes one source of systematic bias; it does not undo the original NVFP4 error
+    or make the entire quantized training process exact.
+  </p>
+  <p>
+    For neighboring representable values \(a\le x\le b\), choose \(b\) with probability \((x-a)/(b-a)\), otherwise \(a\).
+    Then \(\mathbb E[Q_{\mathrm{SR}}(x)]=x\), provided the value is bracketed rather than clipped.
+    The source's toy example preserves a forward value of 4.5 by choosing 4 with probability 0.75 and 6 with probability 0.25.
+    Deterministic nearest rounding always returns 4.
+  </p>
+  <div class="figure">
+    <div class="controls">
+      <label for="rounding-value">Forward-quantized value x</label>
+      <input id="rounding-value" type="range" min="4" max="6" step="0.01" value="4.5" aria-describedby="rounding-caption">
+    </div>
+    <canvas id="plot-rounding" role="img" aria-label="Expected stochastic rounding follows x between 4 and 6, while nearest rounding jumps from 4 to 6 at the midpoint.">
+      Between 4 and 6, expected stochastic rounding equals the input. Nearest rounding returns 4 below 5 and 6 at or above 5.
+    </canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span> Expected SR = x</span>
+      <span class="legend-item"><span class="lg dash"></span> Nearest rounding</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-teal)"></span> Selected x</span>
+    </div>
+    <output id="rounding-readout" class="readout" for="rounding-value" aria-live="polite">x = 4.50; P(6) = 25%; P(4) = 75%; expected SR = 4.50; nearest = 4; bias = −0.50.</output>
+    <p class="figure-caption" id="rounding-caption">
+      <strong>Unbiased in expectation is not exact on each sample.</strong> Each stochastic result is still 4 or 6.
+      The diagonal shows its expectation, not a third representable output.
+      This two-level illustration explains the rounding principle; it is not an MXFP8 simulator or a measured training curve.
+      Horizontal axis: x. Vertical axis: reconstructed value. The midpoint uses an illustrative round-up tie rule.
+    </p>
+  </div>
+  <h3 id="infrastructure">Communication, kernels, and rollout reuse</h3>
+  <p>
+    On GB300, the cited peak rates are 15 PFLOP/s for NVFP4, 5 for MXFP8, and 2.5 for BF16.
+    A nominal 3× GEMM advantage over MXFP8 is not a 3× model-training advantage.
+    Expert-parallel dispatch and combine can become the bottleneck; the low-bit communication paths above shrink it.
+    TML's in-house <strong>BBBK</strong> kernel stack fuses Hadamard rotation and S2F6 quantization into the output GEMM epilogue,
+    with pipeline scheduling, register planning, and ALU vectorization alongside Tensor Core work.
+  </p>
+  <p>
+    Small's RL stack also uses high expert parallelism, expert load balancing, and CUDA Graphs;
+    sampling captures prefill, draft, and verify. Sticky routing plus DRAM KV-cache offload reportedly achieves
+    <strong>93%+ prefix-cache hits</strong>, helping sustain a <strong>5:3 sampler:trainer ratio</strong>.
+    Weight transfer uses GPUDirect RDMA with a parallelism-invariant checksum verifier and reported 93%+ line rate.
+    These are disclosures about Small's production stack, not default Tinker Cookbook settings. <a href="#source-small">[1]</a>
+  </p>
+  <div class="result">
+    <strong>Measured claim versus hardware ceiling:</strong> the precision post reports 8% pretraining and 20% RL wall-clock speedups
+    over full MXFP8 in their largest jobs. It reports about a 2% pretraining compute-efficiency cost,
+    but no discernible RL reward difference. Those end-to-end trade-offs—not peak FP4 arithmetic—are the relevant evidence.
+    The production BBBK stack is described, not supplied as a complete reproducible training system.
+  </div>
+
+  <h2 id="experiments">7. What you can experiment with: Tinker, not a replica of the factory</h2>
+  <p>
+    Tinker is the managed training API; <strong>Tinker Cookbook is the public client-side recipe and abstraction library</strong>.
+    It includes SFT, verifiable-reward RL, preference learning, tool use, and on/off-policy distillation examples.
+    Its Inkling renderer/tokenizer path must match the chosen model and effort interface.
+    Reading or adapting these recipes does not reproduce the original pretraining run, private environments, or GPU kernel stack. <a href="#source-cookbook">[5]</a>
+  </p>
+  <h3>Trace the public asynchronous example</h3>
+  <p>
+    Small's announcement links a specific Cookbook revision, <code>4a3a282</code>.
+    Its <code>do_async_training</code> has four concurrent groups: a dataloader, rollout workers,
+    a learner consuming completed groups, and an evaluator reacting to new sampling weights.
+    In the non-streaming path it prioritizes completed groups from the oldest sampler version.
+    This illustrates overlapping collection and learning without asserting that Small used this exact production orchestrator.
+  </p>
+  <p>
+    In that revision, <code>max_steps_off_policy</code> caps work in flight through
+    <code>groups_per_batch * (max_steps_off_policy + 1)</code>; it is <strong>not a hard age cutoff</strong>.
+    Slow groups are not discarded just for being stale, so observed lag can exceed the configured value.
+    Streaming minibatches consume groups in completion order. The code records minimum, mean, and maximum staleness.
+    These details matter when turning a documented objective into a practical experiment.
+  </p>
+  <h3>StableReinforce API contract, not a production hyperparameter recipe</h3>
+  <ol>
+    <li>Create the sampling client with <code>record_stability_info=True</code>. Preserve returned <code>sequence_id</code>s and sampling log-probabilities.</li>
+    <li>Construct training datums with <code>target_tokens</code>, <code>logprobs</code>, and <code>advantages</code>,
+      aligned to the next-token shift. Supply both model-input and loss-input provenance span lists.
+      Tokens with nonzero advantage must identify stability-recorded sampled sequences; the required sampled loss spans cover complete sequences.</li>
+    <li>Call <code>forward_backward(..., loss_fn="stable_reinforce", loss_fn_config=...)</code>, then the optimizer step.
+      Choose the documented KL settings deliberately rather than assuming they are Small's settings.
+      Sampling and training provenance must belong to the same session.</li>
+    <li>Evaluate held-out tasks separately from reward, and inspect task-wise quality, rollout failures, policy lag, token budgets,
+      and alignment. Start with a bounded customization run, not a claim to reconstruct Inkling's full recipe.</li>
+  </ol>
+  <p class="source-note">
+    StableReinforce is marked alpha. This is a source-checked API overview, not an executed training tutorial.
+    Follow the current <a href="https://tinker-docs.thinkingmachines.ai/tinker/datum/#provenance">Datum provenance documentation</a>
+    and verify SDK/Cookbook compatibility before adapting the pinned example.
+  </p>
+
+  <h2 id="evidence">8. Results, deployment, and what remains unknown</h2>
+  <h3>Capabilities with the measurement conditions attached</h3>
+  <div class="table-wrap">
+    <table>
+      <caption>Selected launch-reported results, not independently rerun here. See the original posts for full evaluation tables and attribution.</caption>
+      <thead><tr><th scope="col">Evidence</th><th scope="col">Reported result</th><th scope="col">Interpretation limit</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Small: broad capability / knowledge work</th><td>AA Intelligence Index described as 31 in the launch; AA-Briefcase Elo 1,527.</td><td>Release-time snapshots. Small's stated evaluation setup uses effort 0.99, temperature 1.0, and a 1M-token maximum trajectory, with externally reported evaluations used where applicable.</td></tr>
+        <tr><th scope="row">Mini: coding / professional tasks</th><td>DeepSWE v1.1: 48.2%; Vals Index v2.2: 46.5%.</td><td>The launch's leading-under-100B claims concern those named benchmarks and comparison set, not all workloads or a controlled cross-model training study.</td></tr>
+        <tr><th scope="row">Small: customization</th><td>On a financial-document task, reaches the previous Inkling Small's final performance after 75 training steps.</td><td>The reported comparison uses a per-model learning-rate sweep and a 200-step async RL experiment; Inkling results use three seeds, other models single runs.</td></tr>
+        <tr><th scope="row">Mini: efficiency charts</th><td>Launch coding charts plot a theoretical decode ceiling at 614 GB/s, BF16 weights, batch size one, including repeated loop reads.</td><td>Not measured laptop throughput at native NVFP4 precision. Evaluation setups also vary by model.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <h3 id="monitorability">Looping and monitorability: preliminary, not a safety theorem</h3>
+  <p>
+    In the <em>separate variable-loop model</em>, the reported no-chain-of-thought time horizon rises from 16 seconds
+    at one pass to 37 seconds at three, measured in human task time at 50% success—not model latency.
+    More passes shorten visible reasoning, and serial lookup performance improves out to ten passes.
+    In the reported experiments the shorter reasoning remains legible, and agentic stealth does not show a clear trend with loop count.
+  </p>
+  <p>
+    Those findings are limited by the training and evaluation design: variable passes 1–5 were introduced during midtraining,
+    mostly at three passes, and RL used three passes. Tests at other depths do not establish how a model
+    <em>trained with RL at those depths</em> would behave. Readable text is not proof that all important computation was verbalized.
+    The launch explicitly encourages further research at larger scales. <a href="#source-mini">[2]</a>
+  </p>
+  <h3 id="deployment">Open weights and realistic memory budgets</h3>
+  <p>
+    Both releases use <strong>Apache 2.0</strong>. Small's card recommends at least 500GB aggregate VRAM for the NVFP4 checkpoint
+    and 800GB for the alternative MXFP8 checkpoint. Mini's mixed-precision checkpoint is about 20GB;
+    its supported local configurations include Apple silicon with at least 32GB memory and NVIDIA DGX Spark.
+    Model weights alone are not the runtime footprint: context length, KV cache, workspaces, concurrency, and framework support matter.
+    A 1M context limit is not a promise of 1M-token operation on every minimum-memory device. <a href="#source-cards">[6]</a>
+  </p>
+  <p>
+    Mini's native 20-layer NVFP4 / 4-layer MXFP8 deployment avoids a new post-training precision conversion on those paths.
+    That does not make training numerically lossless, make all runtime arithmetic FP4, or guarantee equivalence for independently converted GGUF formats.
+    The launch and cards list serving integrations and RL tools; their availability is not evidence that the production training stack is open.
+  </p>
+  <h3>Known weaknesses and data provenance</h3>
+  <p>
+    Small's launch notes verbosity, uneven tool choice in skill-heavy codebases, presentation issues, and overrefusal.
+    Mini is not the strongest comparable model for multi-turn chat or heavily constrained instructions:
+    it reports 50.0% on MultiChallenge and 33.4% on ComplexConstraints v1.1, and trails larger models on difficult reasoning.
+    Strong tool-assisted results do not erase a smaller model's closed-book knowledge limits.
+  </p>
+  <p>
+    Both cards describe training content including text, images, and video, drawn from public sources, third parties,
+    internal generation, and synthetic generation/augmentation, with cleaning, deduplication, and filtering.
+    These are <strong>broad provenance categories</strong>, not an itemized dataset manifest or independently audited source/license ledger.
+    Video in the training-data description does not expand the released text/image input API into a documented video or audio interface.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <caption>Evidence ledger: enough to understand major choices, not enough to recreate the training run.</caption>
+      <thead><tr><th scope="col">Substantially disclosed</th><th scope="col">Still missing from this source set</th></tr></thead>
+      <tbody>
+        <tr><td>Released architecture configs; Small's phase budgets; Mini's pruning, healing, SFT/RL sequence</td><td>Mini's full per-stage token/context schedule, exact teacher identity, exact initialization checkpoints, and all architectural change timings</td></tr>
+        <tr><td>Task/grader families, effort conditioning, alignment interventions, async strategy</td><td>Complete datasets, task-level mixture definitions, production grader code, optimizer settings, schedules, and all loss coefficients</td></tr>
+        <tr><td>Forward/backward precisions, re-quantization, communication formats, kernel design, selected infrastructure metrics</td><td>A full production launcher, topology and resource allocation for every phase, kernel stack, and end-to-end reproducibility package</td></tr>
+        <tr><td>Public Cookbook examples and a StableReinforce API contract</td><td>Proof that these examples implement the complete internal training pipeline or fully specify the proprietary objective</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="connections">9. Continue by mechanism</h2>
+  <div class="next-grid">
+    <a class="next-card" href="../transformer/recurrent-depth.html"><strong>Recurrent depth / loop transformers →</strong><p>The generic computation and weight-sharing trade-off behind Mini's design.</p></a>
+    <a class="next-card" href="../transformer/hyper-connections.html"><strong>Residual-stream redesigns →</strong><p>Depth-wise information access, including attention residuals.</p></a>
+    <a class="next-card" href="../rl/distillation.html"><strong>Distillation →</strong><p>Separate teacher-data transfer, on-policy supervision, and alignment from reward optimization.</p></a>
+    <a class="next-card" href="../rl/async-rl.html"><strong>Asynchronous RL →</strong><p>Policy staleness, sampling throughput, and why long tasks break synchronous barriers.</p></a>
+    <a class="next-card" href="../systems/blackwell-kernels.html"><strong>Blackwell kernel model →</strong><p>Block-scaled arithmetic, Tensor Cores, and the hardware underneath the precision recipe.</p></a>
+    <a class="next-card" href="../evaluation/agent-evaluation.html"><strong>Agent evaluation →</strong><p>Harness, budget, grader, and safety conditions needed to interpret a reported agent score.</p></a>
+  </div>
+
+  <h2 id="sources">Sources and reading order</h2>
+  <p class="source-note">Primary sources checked November 22, 2026. Read the two launch posts before the numerical deep dive;
+    use model cards for interface/provenance, and configs for exact released fields. Findings above are paraphrased and source-attributed.</p>
+  <ol>
+    <li id="source-small"><a href="https://thinkingmachines.ai/news/inkling-2-small/">Introducing Inkling 2 Small</a> — November 5, updated November 12.
+      Start with “Training Inkling 2 Small”; also read capabilities, alignment, benchmarking, and limitations.</li>
+    <li id="source-mini"><a href="https://thinkingmachines.ai/news/inkling-2-mini/">Introducing Inkling 2 Mini</a> — November 20.
+      “Architecture and training” supplies looping, pruning/healing, and post-training; monitorability experiments concern both Mini and a distinct research model.</li>
+    <li id="source-four-bit"><a href="https://thinkingmachines.ai/blog/end-to-end-4-bit-training/">End-to-End 4-Bit Training</a> — November 13.
+      Jack Cook and Thinking Machines: the detailed numerical and kernel follow-up to Small's launch.</li>
+    <li id="source-stable"><a href="https://tinker-docs.thinkingmachines.ai/tinker/losses/stable-reinforce/">StableReinforce documentation</a> —
+      alpha API, provenance requirements, and sampler–learner KL. Documentation defaults are not production-run disclosures.</li>
+    <li id="source-cookbook"><a href="https://github.com/thinking-machines-lab/tinker-cookbook">Tinker Cookbook</a> —
+      public customization examples. The launch-pinned
+      <a href="https://github.com/thinking-machines-lab/tinker-cookbook/blob/4a3a2829190b45999021e423bc90b7523108edf4/tinker_cookbook/rl/train.py#L421">AsyncConfig</a>
+      and <a href="https://github.com/thinking-machines-lab/tinker-cookbook/blob/4a3a2829190b45999021e423bc90b7523108edf4/tinker_cookbook/rl/train.py#L1189">do_async_training</a>
+      are the code references for this page's execution discussion.</li>
+    <li id="source-cards">Architecture, distribution, and data-provenance references:
+      <a href="https://thinkingmachines.ai/model-card/inkling-2-small/">Small model card</a> and
+      <a href="https://thinkingmachines.ai/model-card/inkling-2-mini/">Mini model card</a>.</li>
+    <li id="source-configs">Supplementary released configurations:
+      <a href="https://huggingface.co/thinkingmachines/Inkling-2-Small/blob/885d78bfca61a7e9a498e33cfa7ad35850533b8c/config.json">Small config (885d78b)</a> and
+      <a href="https://huggingface.co/thinkingmachines/Inkling-2-Mini/blob/b85c3cfa615fc413cc9af3379f491b963f3b586a/config.json">Mini config (b85c3cf)</a>.
+      These supplement, rather than replace, the training posts.</li>
+  </ol>
+</main>
+<footer><a href="../index.html#models-inkling">← TML Inkling in Models &amp; Families</a> · Architecture, methodology, and their evidence boundaries.</footer>
+<script>
+(() => {
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const roundingProbability = x => (x - 4) / 2;
+  const expectedRounding = x => 4 * (1 - roundingProbability(x)) + 6 * roundingProbability(x);
+  const nearestRounding = x => x < 5 ? 4 : 6;
+
+  function drawPlot(canvas, cfg) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+    const mL = 40, mR = 18, mT = 16, mB = 30;
+    const pw = cssW - mL - mR, ph = cssH - mT - mB;
+    const { xMin, xMax, yMin, yMax } = cfg;
+    const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
+    const Y = y => mT + (yMax - y) / (yMax - yMin) * ph;
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(t => {
+      const px = X(t);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.fillText(String(t), px, mT + ph + 6);
+    });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(t => {
+      const py = Y(t);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+      ctx.fillText(String(t), mL - 8, py);
+    });
+    ctx.strokeStyle = cssVar('--plot-axis');
+    ctx.lineWidth = 1.25;
+    if (yMin <= 0 && yMax >= 0) { const py = Y(0); ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke(); }
+    if (xMin <= 0 && xMax >= 0) { const px = X(0); ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke(); }
+    ctx.save();
+    ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    cfg.series.forEach(s => {
+      ctx.beginPath();
+      ctx.lineWidth = s.width || 2;
+      ctx.strokeStyle = cssVar(s.color);
+      ctx.setLineDash(s.dash || []);
+      for (let i = 0; i <= 260; i++) {
+        const x = xMin + (xMax - xMin) * i / 260;
+        i === 0 ? ctx.moveTo(X(x), Y(s.fn(x))) : ctx.lineTo(X(x), Y(s.fn(x)));
+      }
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    ctx.strokeStyle = cssVar('--plot-teal');
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(X(cfg.selected), Y(yMin)); ctx.lineTo(X(cfg.selected), Y(yMax)); ctx.stroke();
+    ctx.fillStyle = cssVar('--plot-violet');
+    ctx.beginPath(); ctx.arc(X(cfg.selected), Y(expectedRounding(cfg.selected)), 4, 0, 2 * Math.PI); ctx.fill();
+    ctx.restore();
+  }
+
+  const slider = document.getElementById('rounding-value');
+  const canvas = document.getElementById('plot-rounding');
+  const readout = document.getElementById('rounding-readout');
+  function render() {
+    const x = Number(slider.value);
+    const p = roundingProbability(x), nearest = nearestRounding(x);
+    drawPlot(canvas, {
+      xMin: 4, xMax: 6, yMin: 3.8, yMax: 6.2,
+      xTicks: [4, 4.5, 5, 5.5, 6], yTicks: [4, 4.5, 5, 5.5, 6], selected: x,
+      series: [
+        { fn: nearestRounding, color: '--plot-gray', dash: [5, 4], width: 2 },
+        { fn: expectedRounding, color: '--plot-violet', width: 2.5 }
+      ]
+    });
+    readout.textContent = `x = ${x.toFixed(2)}; P(6) = ${(100 * p).toFixed(1)}%; P(4) = ${(100 * (1 - p)).toFixed(1)}%; expected SR = ${expectedRounding(x).toFixed(2)}; nearest = ${nearest}; bias = ${(nearest - x).toFixed(2)}.`;
+  }
+  slider.addEventListener('input', render);
+  let raf;
+  window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(render); });
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq.addEventListener) mq.addEventListener('change', render);
+  render();
+})();
+</script>
+</body>
+</html>
