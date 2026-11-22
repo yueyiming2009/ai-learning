@@ -1440,12 +1440,11 @@ tail    = prompt_ids[n][len(prev):]               # if extends: the new tool/tem
   <!-- ── §7 ─────────────────────────────────────── -->
   <h2 id="behavior">7. The Proxy's Logprobs Are the Behavior Policy</h2>
 
-  <p>The <a href="async-rl.html#tim">async RL page</a> treats the rollout-engine-vs-trainer logprob
-  gap as an <em>engine numerics</em> problem: vLLM and FSDP compute different
-  \(\log\pi\) on the same weights because of kernel, batch-size and TP accumulation order, and the
-  fix is truncated importance sampling with the engine's logprob in the denominator (Yao et al.,
-  "Your Efficient RL Framework Secretly Brings You Off-Policy RL Training"). Harnessed RL also
-  requires separate context-fidelity and version checks:</p>
+  <p>The <a href="training-inference-mismatch.html">central TIM guide</a> explains why
+  rollout and training engines can compute different logprobs on the same weights, and compares
+  alignment, weighting/masking, and score centering. TIS is one correction option, not the
+  definition of the fix. A harness must first preserve the probability contract, including
+  separate context-fidelity and version checks:</p>
 
   <ol>
     <li><strong>Do not change the conditioning context after sampling.</strong> Exact-prefix
@@ -1464,12 +1463,15 @@ tail    = prompt_ids[n][len(prev):]               # if extends: the new tool/tem
   policies explicitly — \(\mu\) the behavior policy (engine, at sampling time),
   \(\pi_{\text{prox}}\) the proximal policy (trainer's recompute at the start of the update,
   if any), and \(\pi_\theta\) the policy being updated:</p>
+  <p>For example, a per-token <em>maximized surrogate</em> with TIS and PPO is:</p>
   \[
-    \underbrace{\frac{\pi_\theta(a_t\mid s_t)}{\pi_{\text{prox}}(a_t\mid s_t)}}_{\text{PPO ratio, clipped}}
-    \;\cdot\;
-    \underbrace{\min\!\Big(\frac{\pi_{\text{prox}}(a_t\mid s_t)}{\mu(a_t\mid s_t)},\,C\Big)}_{\text{behavior correction, stop-grad}}
-    \;\cdot\; \hat A_t \;\cdot\; m_t
+    m_t\,\operatorname{sg}\!\left[\min\!\left(
+      \frac{\pi_{\text{prox}}(a_t\mid s_t)}{\mu(a_t\mid s_t)},C\right)\right]
+    \min\!\left(u_t\hat A_t,\operatorname{clip}(u_t,l,h)\hat A_t\right),
+    \qquad u_t=\frac{\pi_\theta(a_t\mid s_t)}{\pi_{\text{prox}}(a_t\mid s_t)}.
   \]
+  <p>The PPO clip acts on the objective, not on a detached gradient weight; the
+  <a href="training-inference-mismatch.html#clip-vs-weight">distinction matters in the backward pass</a>.</p>
   <p>with \(m_t\) the loss mask. Every framework in §9 now exposes this in one of two forms:</p>
 
   <div class="table-wrap">

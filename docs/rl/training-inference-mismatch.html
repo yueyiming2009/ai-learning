@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Why training and inference probabilities disagree, how that changes RL gradients, and how IS, TIS, MIS, PPO, DAPO, GSPO, TOPR, DPPO and score centering respond.">
+  <title>Training–Inference Mismatch — Gradients, Corrections &amp; Drift</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light;
+      --bg: #fff; --surface: #f8f9fa; --border: #e8eaed; --text: #1a1a2e;
+      --muted: #596273; --accent: #0f766e; --accent-light: #f0fdfa;
+      --nav-bg: rgba(255,255,255,0.94); --note-bg: #eff6ff; --note-fg: #1e40af;
+      --fig-bg: #fff; --plot-grid: #eceef1; --plot-axis: #a3aab5; --plot-tick: #596273;
+      --plot-gray: #6b7280; --plot-violet: #6d28d9; --plot-teal: #0d9488;
+      --plot-orange: #d97706; --plot-blue: #2563eb;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115; --surface: #171b21; --border: #303640; --text: #e5e7eb;
+        --muted: #a8b0bc; --accent: #5eead4; --accent-light: #102522;
+        --nav-bg: rgba(15,17,21,0.94); --note-bg: #101a2b; --note-fg: #93c5fd;
+        --fig-bg: #14181e; --plot-grid: #262d36; --plot-axis: #697483; --plot-tick: #a8b0bc;
+        --plot-gray: #a8b0bc; --plot-violet: #a78bfa; --plot-teal: #2dd4bf;
+        --plot-orange: #fb923c; --plot-blue: #60a5fa;
+      }
+    }
+    body { margin: 0; font: 16px/1.75 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+    a { color: var(--accent); text-underline-offset: 3px; }
+    nav { position: sticky; top: 0; z-index: 100; display: flex; align-items: center; gap: 20px; height: 52px; padding: 0 24px; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
+    .nav-brand { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 0.9rem; text-decoration: none; white-space: nowrap; }
+    .nav-links { display: flex; gap: 14px; overflow-x: auto; }
+    .nav-links a { white-space: nowrap; font-size: 0.82rem; text-decoration: none; }
+    .hero { background: linear-gradient(135deg, #042f2e, #0f766e); color: white; padding: 52px 24px 44px; text-align: center; }
+    .hero h1 { font-size: clamp(1.6rem, 4vw, 2.3rem); line-height: 1.3; margin: 12px 0; }
+    .hero p { max-width: 700px; margin: auto; opacity: 0.9; }
+    .hero-pill { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; }
+    .page-wrap { max-width: 960px; margin: auto; padding: 32px 24px 72px; }
+    h2, h3, [id] { scroll-margin-top: 72px; }
+    h2 { font-size: 1.3rem; margin: 2.6em 0 0.8em; border-bottom: 2px solid var(--border); padding-bottom: 8px; }
+    h3 { font-size: 1.05rem; margin: 1.6em 0 0.4em; }
+    p { margin: 0.7em 0; }
+    li { margin-bottom: 0.4em; }
+    code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; font-size: 0.88em; }
+    pre { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; overflow-x: auto; line-height: 1.55; }
+    pre code { padding: 0; border: 0; }
+    .note, .step { padding: 14px 18px; margin: 18px 0; border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; background: var(--accent-light); }
+    .note { background: var(--note-bg); border-color: var(--note-fg); color: var(--note-fg); }
+    .note a { color: inherit; }
+    .table-wrap { overflow-x: auto; margin: 18px 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.88rem; }
+    caption { text-align: left; color: var(--muted); margin-bottom: 8px; }
+    th, td { border: 1px solid var(--border); text-align: left; vertical-align: top; padding: 10px 12px; }
+    th { background: var(--surface); }
+    .comparison { min-width: 750px; }
+    .figure { border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin: 20px 0; background: var(--fig-bg); }
+    .figure canvas { width: 100%; height: 300px; display: block; }
+    .legend { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 10px 0; font-size: 0.85rem; }
+    .legend-item { display: inline-flex; align-items: center; gap: 6px; }
+    .lg { display: inline-block; width: 22px; height: 3px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(to right, var(--c) 0 5px, transparent 5px 8px); }
+    .figure-caption { font-size: 0.9rem; color: var(--muted); }
+    .controls { display: flex; gap: 14px 22px; flex-wrap: wrap; margin-bottom: 16px; }
+    .controls label { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 0.9rem; }
+    input[type="range"] { max-width: 150px; accent-color: var(--accent); }
+    output { font-variant-numeric: tabular-nums; }
+    .readout { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.85rem; }
+    .math-scroll { overflow-x: auto; }
+    mjx-container[display="true"] { overflow-x: auto; overflow-y: hidden; padding: 4px 0; }
+    :focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+    @media (max-width: 600px) {
+      nav { padding: 0 12px; gap: 12px; }
+      .page-wrap { padding: 24px 16px 56px; }
+      .figure { padding: 12px 8px; }
+      .hero { padding: 36px 16px; }
+    }
+  </style>
+</head>
+<body>
+<nav aria-label="Page sections">
+  <a class="nav-brand" href="../index.html" aria-label="Home — all notes"><svg class="nav-home" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>TIM</a>
+  <div class="nav-links">
+    <a href="../index.html#rl-rl-efficiency">RL Efficiency</a>
+    <a href="#mismatch">The problem</a><a href="#policies">Policies</a><a href="#gradient">Token update</a>
+    <a href="#comparison">Correction map</a><a href="#interactive">Compare gradients</a>
+    <a href="#drift">Drift</a><a href="#score-centering">Score centering</a>
+    <a href="#mitigation">Mitigation</a><a href="#references">Sources</a>
+  </div>
+</nav>
+<header class="hero">
+  <span class="hero-pill">Reinforcement Learning · Probability contracts</span>
+  <h1>Training–Inference Mismatch</h1>
+  <p>Why sampler and trainer disagree, what that does to a token's gradient,
+    and how weighting, clipping, masking, and score centering differ.</p>
+</header>
+<main class="page-wrap">
+  <div class="note">
+    <strong>The central reference, not an async-only problem.</strong>
+    Start with <a href="../foundations/importance-sampling.html">Importance Sampling</a> and
+    <a href="policy-gradient.html#weighted-likelihood">signed weighted likelihood</a>.
+    This page owns mismatch and correction semantics; <a href="async-rl.html">Async RL</a>
+    owns scheduling and staleness, <a href="ppo-grpo-backward.html">PPO/GRPO Backward</a>
+    owns the full derivative, and <a href="async-rl-monitoring.html">Monitoring</a> owns diagnostics.
+    The comparison below decodes <a href="https://arxiv.org/html/2609.20807v1#A2.T1">Table 1 of
+    <em>Score Centering Stabilizes Off-policy Reinforcement Learning</em>, v1</a>.
+  </div>
+
+  <h2 id="mismatch">1. Same checkpoint does not imply the same policy</h2>
+  <p>An RL rollout engine samples tokens, then a training engine recomputes their
+    log-probabilities with gradients enabled. Even with identical weights, those two forward
+    passes need not define identical distributions. A policy includes its numerical execution
+    and sampling transformations, not just its checkpoint.</p>
+  <div class="table-wrap">
+    <table>
+      <caption>Separate the cause before choosing a correction.</caption>
+      <thead><tr><th>Difference</th><th>Example</th><th>What must be preserved?</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Numerical TIM</strong></td><td>Quantized rollout weights/KV cache versus BF16 training; different kernels, reduction order, TP layout, or MoE routing.</td><td>The same prefix and sampled token, with the sampler's actual probabilities.</td></tr>
+        <tr><td><strong>Temporal staleness</strong></td><td>An inference worker samples from an older checkpoint while training continues.</td><td>Behavior-policy probabilities and version provenance, potentially per token or segment.</td></tr>
+        <tr><td><strong>Sampling-distribution change</strong></td><td>Temperature, top-k/top-p filtering, or a different sampling mask.</td><td>Know whether logged probabilities include those transformations; hard filtering can remove support.</td></tr>
+        <tr><td><strong>Trajectory reconstruction error</strong></td><td>Retokenization or rewritten tool history changes what the trainer conditions on.</td><td>Exact context/action fidelity. A probability ratio cannot repair a different state/action pair.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p><strong>Vocabulary note.</strong> Here “numerical TIM” means the same-checkpoint engine
+    discrepancy. The score-centering paper uses TIM more broadly, including staleness.
+    They are related sources of off-policy data, but need different operational fixes.
+    Synchronous sampling removes checkpoint lag; it does not automatically remove numerical TIM.</p>
+  <p>Batch-dependent floating-point reductions, fused operators, quantization, sparse selection,
+    and expert routing can all change next-token probabilities. Not every discrepancy is small
+    roundoff: a routing flip can change which computation runs.
+    <a href="harnessed-agentic-rl.html#text">Token fidelity</a> is a prerequisite before analyzing
+    any of these probability differences.</p>
+
+  <h2 id="policies">2. Name the policies before naming the algorithm</h2>
+  <p>At a fixed prefix \(h\), let \(p_\theta(v\mid h)\) be the current trainer distribution
+    and \(q(v\mid h)\) the sampler distribution that generated the data. Both refer to
+    the same vocabulary, prefix, and action. During an update, \(q\) is frozen.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Role</th><th>Notation</th><th>What it controls</th></tr></thead>
+      <tbody>
+        <tr><td>Behavior/sampler</td><td>\(q=\mu\)</td><td>How often the stored token was actually sampled.</td></tr>
+        <tr><td>Proximal anchor</td><td>\(\pi_{\mathrm{prox}}\)</td><td>A frozen policy against which optimizer movement can be measured.</td></tr>
+        <tr><td>Current trainer</td><td>\(p_\theta=\pi_\theta\)</td><td>The differentiable policy being optimized.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="math-scroll">
+    \[
+      r_t=\frac{p_\theta(y_t\mid h_t)}{q(y_t\mid h_t)}
+      =\underbrace{\frac{p_\theta(y_t\mid h_t)}{\pi_{\mathrm{prox}}(y_t\mid h_t)}}_{u_t:\ \text{update movement}}
+       \underbrace{\frac{\pi_{\mathrm{prox}}(y_t\mid h_t)}{q(y_t\mid h_t)}}_{b_t:\ \text{behavior correction}}.
+    \]
+  </div>
+  <p>A <strong>three-policy</strong> recipe can put detached TIS/MIS on \(b_t\) and PPO's
+    objective clip on \(u_t\). A <strong>bypass/two-policy</strong> recipe sets
+    \(\pi_{\mathrm{prox}}=q\), merging those controls into \(r_t\).
+    The paper's Table 1 uses the sampler directly in the denominator of every method.
+    Our <a href="async-rl.html#is">Async RL summary</a> calls the update ratio \(q_t\);
+    do not confuse that scalar with this page's sampler distribution \(q\).</p>
+  <p>For a decoupled recipe, a schematic minimized policy loss is:</p>
+  \[
+    L=-\mathbb E_{\mu}\left[
+      \operatorname{sg}[\widetilde b_t]\,
+      \min\left(u_t A_t,\operatorname{clip}(u_t,l,h)A_t\right)
+    \right].
+  \]
+  <p>\(\operatorname{sg}\) means stop-gradient. The frozen reference policy used for a
+    reference-KL penalty is a <em>different role</em> from the sampler or proximal anchor.
+    Loss masks, advantage estimation, KL/entropy terms, and token/response reduction are
+    additional choices, not consequences of the correction's name.</p>
+
+  <h2 id="gradient">3. What one sampled token contributes</h2>
+  <div class="step">
+    <strong>Read the update as a direction and a coefficient.</strong>
+    \[
+      g_t=A_t\,w_t\,\underbrace{\nabla_\theta\log p_\theta(y_t\mid h_t)}_{s_{y_t}:\ \text{score vector}}.
+    \]
+    <p>The score is a vector over model parameters, not a reward or confidence score.
+      Positive \(A_t\) reinforces the sampled behavior; negative \(A_t\) reverses that push.
+      A nonnegative \(w_t\) rescales or removes it. For plain gradient ascent,
+      \(\theta\leftarrow\theta+\eta\,\operatorname{aggregate}_t g_t\).
+      A minimized loss has the opposite gradient sign.</p>
+  </div>
+  <p>For a softmax over vocabulary logits, the score at the logit level is
+    \(\nabla_z\log p_y=e_y-p\). If \(p=[0.2,0.5,0.3]\) and the first token is sampled,
+    its score is \([0.8,-0.5,-0.3]\). With \(A=2\) and \(w=1.5\), the contribution is
+    \([2.4,-1.5,-0.9]\), before learning rate and batch reduction. Backpropagation carries
+    that vector into model parameters; other tokens and auxiliary losses can oppose it.</p>
+  <p>In group-relative training, an entire response often shares one advantage. That is a
+    credit-assignment approximation, not evidence that every token caused the reward.
+    The <a href="ppo-grpo-backward.html#weights">backward walkthrough</a> follows the full chain.</p>
+  <pre><code># Schematic minimized loss for a detached importance weight:
+loss = -advantage * stop_gradient(weight) * log_p
+
+# Its policy gradient is -advantage * weight * gradient(log_p).
+# Do not differentiate through a second copy of the weight.</code></pre>
+
+  <h3 id="importance">Which expectation does importance sampling correct?</h3>
+  <p>At a fixed prefix, the identity
+    \(\mathbb E_p[f(v)]=\mathbb E_q[(p(v)/q(v))f(v)]\) changes the next-token distribution
+    exactly when the usual support and integrability assumptions hold. For a <em>complete
+    response</em>, exact trajectory IS instead uses:</p>
+  \[
+    W(y)=\frac{P_p(y\mid x)}{P_q(y\mid x)}
+        =\prod_t r_t
+        =\exp\left(\sum_t \log r_t\right).
+  \]
+  <p>A token ratio does not by itself correct the distribution of prefixes or the continuation
+    rewards sampled under another policy. With terminal response rewards, token-local IS is
+    not full trajectory IS. Products, however, can have prohibitive variance on long responses.
+    Clipping or masking adds further bias; it does not make that distinction disappear.</p>
+  <div class="note">
+    <strong>No support, no reweighting.</strong> If \(q(v\mid h)=0\) where the target needs
+    probability mass, no finite ratio reconstructs the missing samples. Log-space arithmetic
+    helps numerical range, not support or trajectory fidelity.
+  </div>
+
+  <h2 id="comparison">4. Table 1, translated into gradient behavior</h2>
+  <p>This is a comparison of <strong>isolated correction rules</strong>, not a leaderboard of
+    complete algorithms. The paper holds the base objective, group-centered advantages,
+    sampler, trainer, and optimizer fixed, with one SGD step per batch.
+    Its superscripts <strong>P</strong> and <strong>V</strong> indicate original-paper and
+    verl defaults. The numbers below describe <em>that experiment</em>, not universal settings.</p>
+  <p>“Level” chooses the token or sequence statistic. “Low/High” define the safeguard's
+    interval. Read “Outside” together with “Sign”: <strong>a capped detached weight,
+    a zero mask, and an objective plateau are three different operations.</strong></p>
+  <div class="table-wrap">
+    <table class="comparison">
+      <caption>Adapted from Table 1; \(w\) below multiplies the score vector, with \(A\) outside it.</caption>
+      <thead><tr><th>Method / statistic</th><th>Rule in this comparison</th><th>When does its policy contribution vanish?</th><th>Experiment-specific caveat</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Naive IS</strong><br>Token \(r=p/q\)</td><td>\(w=r\), no algorithmic cap.</td><td>No finite positive-ratio gate; large ratios can amplify variance.</td><td>Token-local, not exact response-level IS.</td></tr>
+        <tr><td><strong>TIS / CISPO</strong><br>Token \(r\)</td><td>\(w=\min(r,2)\), both advantage signs.</td><td>It does not vanish just because \(r&gt;2\): the weight stays 2.</td><td>CISPO's dynamic sampling and length penalty are omitted. Shared correction, not identical full recipes.</td></tr>
+        <tr><td><strong>MIS / IcePop</strong><br>Token \(r\)</td><td>\(w=r\,\mathbf1[0.5\le r\le5]\), both signs.</td><td>Outside the interval, weight is zero rather than capped.</td><td>IcePop's separate PPO surrogate between policy versions is omitted.</td></tr>
+        <tr><td><strong>PPO</strong><br>Token \(r\)</td><td>Objective bounds \(l=0.8,\ h=1.2\); active regions retain weight \(r\).</td><td>\(A&gt;0,r&gt;h\) or \(A&lt;0,r&lt;l\): objective plateau. Added dual clip also stops \(A&lt;0,r&gt;3\).</td><td>The table's “drop” describes the gradient, not a zero objective value.</td></tr>
+        <tr><td><strong>DAPO</strong><br>Token \(r\)</td><td>PPO-style gate, \(l=0.8,\ h=1.28\).</td><td>Same directional rule, with more upward room; added dual clip at 3.</td><td>Dynamic sampling and overlong reward penalty omitted; common reduction replaces full-recipe differences.</td></tr>
+        <tr><td><strong>GSPO</strong><br>Geometric sequence score \(S\)</td><td>PPO-style gate, \(l=0.9997,\ h=1.0004\).</td><td>Gate the whole response by advantage sign; added dual clip at \(S&gt;3\) for negative advantages.</td><td>Token gradients summed rather than response-averaged. Do not copy these bounds to token PPO.</td></tr>
+        <tr><td><strong>TOPR</strong><br>Trajectory ratio \(W\)</td><td>For \(A&lt;0\), \(w=\min(W,1)\); for \(A&gt;0\), \(w=1\).</td><td>No finite positive-ratio rejection gate. Negative responses can be downweighted; positive ones stay unweighted.</td><td>Uses a sequence product, not GSPO's length-normalized root.</td></tr>
+        <tr><td><strong>DPPO</strong><br>Token binary TV \(d=|p_y-q_y|\)</td><td>Use weight \(r\), with a directional divergence gate at \(d=0.2\).</td><td>Drop if \(d&gt;0.2\) and \(A(p_y-q_y)&gt;0\). Keep the corrective direction.</td><td>No importance-ratio clipping in this row; not “Decoupled PPO.” Other implementations can add a weight cap.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Zero advantage always removes the policy contribution. “Zero” here does not remove
+    a token from its context, nor necessarily remove its KL/entropy gradient. Boundary
+    derivatives of clipped objectives depend on the implementation's subgradient convention.
+    The rules above describe open regions.</p>
+  <p>The formulas are cross-checked against the authors'
+    <a href="https://github.com/martin-marek/score-centering/blob/fdca22b19793babdf08e33e5ba51537e82cbed2f/losses.py">pinned
+    correction implementation</a>. Its additional log-ratio clamp to \([-20,20]\) is a numerical
+    safeguard, separate from the conceptual grid. The
+    <a href="ppo.html#loss-variants">PPO variants page</a> describes a different pinned verl
+    implementation, including capped weights in its DPPO variants.</p>
+
+  <h3 id="clip-vs-weight">Why PPO “drops” a good token at ratio 1.5</h3>
+  <p>PPO <em>does</em> clip at 1.2: it clips the objective's incentive, not a detached
+    gradient weight. For \(A&gt;0\), its maximized surrogate is \(J=A\min(r,1.2)\).
+    It is flat beyond 1.2, so the derivative vanishes:</p>
+  \[
+    \frac{\partial J_{\mathrm{PPO}}}{\partial\log p_y}
+      = A\,r\,C(A,r),\qquad
+    C(A,r)=
+    \begin{cases}
+      1 &amp; A&gt;0,\ r&lt;1.2,\\
+      1 &amp; A&lt;0,\ r&gt;0.8,\\
+      0 &amp; \text{otherwise}.
+    \end{cases}
+  \]
+  <p>This expression is ordinary PPO <em>before</em> the table's additional dual clip.
+    A good action whose probability fell too far still receives a push; a bad action whose
+    probability rose too far still receives a corrective push. PPO does not drop both tails
+    regardless of advantage sign.</p>
+  <pre><code>A = +1, r = 1.5:
+PPO objective = 1.2       gradient coefficient = 0
+TIS weight   = 1.5       gradient coefficient = 1.5
+
+Even with a TIS cap of 1.2:
+TIS weight   = 1.2       gradient coefficient = 1.2</code></pre>
+  <p><strong>Cap the push</strong> and <strong>stop the incentive to push farther</strong>
+    solve different problems. PPO's original motivation is controlled reuse of old evidence;
+    bounded IS weights limit a sample's influence. Numerical TIM can produce \(r=1.5\)
+    before any optimizer movement, so PPO can suppress a signal without the trainer having
+    already taken a large learning step. Neither clipping rule imposes a hard bound on the
+    final parameter step or every token's probability.</p>
+
+  <h3 id="interactive">Try the same token under four corrections</h3>
+  <div class="figure">
+    <div class="controls">
+      <label for="advantage">Advantage <input id="advantage" type="range" min="-2" max="2" step="0.5" value="1"><output id="advantage-value" for="advantage">1.00</output></label>
+      <label for="ratio">Ratio <input id="ratio" type="range" min="0.05" max="6" step="0.05" value="1.5"><output id="ratio-value" for="ratio">1.50</output></label>
+      <label for="dual"><input id="dual" type="checkbox" checked>Table 1 dual clip at 3</label>
+    </div>
+    <p><strong>Vertical axis:</strong> ascent coefficient \(\partial J/\partial\log p_y\).
+      <strong>Horizontal axis:</strong> sampled-token ratio \(r\).</p>
+    <canvas id="plot-corrections" aria-label="Ascent gradient coefficient versus token ratio for IS, TIS, MIS and PPO; numeric values follow in the readout.">At positive advantage and ratio 1.5, IS, TIS and MIS retain coefficient 1.5; PPO has zero coefficient.</canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg dash" style="--c:var(--plot-gray)"></span>Naive IS</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-teal)"></span>TIS, cap 2</span>
+      <span class="legend-item"><span class="lg dash" style="--c:var(--plot-orange)"></span>MIS, [0.5, 5]</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span>PPO, [0.8, 1.2]</span>
+    </div>
+    <p><strong>Separate view:</strong> PPO's maximized objective value, not its gradient.</p>
+    <canvas id="plot-ppo-objective" aria-label="PPO objective versus ratio, showing a nonzero plateau where the policy gradient is zero.">For advantage +1, the objective plateaus at 1.2 above ratio 1.2.</canvas>
+    <pre class="readout"><output id="correction-result" for="advantage ratio dual" aria-live="polite">A = +1, r = 1.5: IS 1.5; TIS 1.5; MIS 1.5; PPO 0. PPO objective = 1.2.</output></pre>
+    <p class="figure-caption"><strong>A flat objective is not a capped gradient weight.</strong>
+      Flip the advantage sign, then move the ratio below 0.8 or above 3. Turning off dual
+      clipping exposes ordinary PPO's unbounded negative-advantage upper tail.
+      Gaps mark discontinuous gradient gates; the selected ratio is the dashed cursor.
+      At exact boundaries, the readout uses inclusive gates, not a claim of a unique objective derivative.</p>
+  </div>
+
+  <h3 id="sequence">Sequence-level is not one formula</h3>
+  \[
+    W=\prod_t r_t,\qquad S=W^{1/T}=\exp\left(\frac{1}{T}\sum_t\log r_t\right).
+  \]
+  <p>TOPR uses \(W\); GSPO uses \(S\). One hundred ratios of 1.01 give
+    \(W\approx2.70\), but \(S=1.01\). The geometric root removes the raw product's
+    multiplicative length scale; it does not guarantee a score near 1 or exact unbiased IS.
+    Ratios 2 and 0.5 have both product and geometric mean 1, hiding opposite token-level
+    shifts from a sequence gate. See <a href="grpo.html#gspo">GSPO and GSPO-token</a>
+    for gradient routing and reduction choices.</p>
+
+  <h3 id="dppo">DPPO needs probabilities, not just a ratio</h3>
+  <p>Binary TV groups the vocabulary into “sampled token” and “everything else.” Its
+    total-variation distance is \(|p_y-q_y|\). For a positive advantage:</p>
+  <pre><code>q_y = 0.001, p_y = 0.010: r = 10, binary TV = 0.009 -> keep
+q_y = 0.050, p_y = 0.500: r = 10, binary TV = 0.450 -> drop</code></pre>
+  <p>The same ratio can move very different amounts of probability mass. In the Table 1
+    variant, a retained rare-token contribution can still have a very large IS weight:
+    the divergence gate is not an importance-weight cap. Its motivation and binary/top-k
+    approximations are developed in the <a href="https://arxiv.org/abs/2602.04879">DPPO paper</a>.</p>
+
+  <h2 id="drift">5. Why a small mismatch can create persistent drift</h2>
+  <p>Fix a prefix and write \(s_v=\nabla_\theta\log p_\theta(v)\). The
+    <a href="policy-gradient.html#baseline">zero-mean score identity</a> holds under
+    the trainer's own distribution:</p>
+  \[
+    \mathbb E_p[s_v]=\sum_v p_v\nabla_\theta\log p_v
+      =\nabla_\theta\sum_v p_v=0.
+  \]
+  <p>Under a different sampler, \(\bar s=\mathbb E_q[s_v]\) need not be zero.
+    For a raw return \(R\), the paper decomposes the expected update at that prefix:</p>
+  \[
+    \mathbb E_q[R\,s_v]
+      =\underbrace{\mathbb E_q[R]\,\bar s}_{\text{drift}}
+       +\underbrace{\operatorname{Cov}_q(R,s_v)}_{\text{reward-dependent signal}}.
+  \]
+  <p>The drift term depends on the <em>mean</em> reward, not which token led to success.
+    With positive mean reward it pulls the trainer toward the sampler like distillation.
+    A fixed teacher does not keep chasing the student; a biased sampler periodically
+    refreshed from the trainer can turn that pull into a feedback loop. This is the
+    paper's explanation for instability in its online mismatch experiments, not a claim
+    that every RL collapse has this cause.</p>
+
+  <h3 id="constant-reward">The “nothing to learn” experiment</h3>
+  <p>Use two tokens and a constant <strong>raw reward \(R=1\)</strong>. Every outcome is equally
+    good, so the true reward gradient is zero. Let \(p\) and \(q\) denote the first
+    token's trainer and sampler probabilities. At the first logit,
+    \(s_1=1-p,\ s_2=-p\), so the uncorrected expected gradient is \(q-p\).</p>
+  <div class="figure">
+    <div class="controls">
+      <label for="trainer-prob">Trainer p <input id="trainer-prob" type="range" min="0.05" max="0.95" step="0.05" value="0.5"><output id="trainer-value" for="trainer-prob">0.50</output></label>
+      <label for="sampler-prob">Sampler q <input id="sampler-prob" type="range" min="0.01" max="0.99" step="0.01" value="0.95"><output id="sampler-value" for="sampler-prob">0.95</output></label>
+    </div>
+    <p><strong>Vertical axis:</strong> expected first-logit ascent gradient with \(R=1\).
+      <strong>Horizontal axis:</strong> sampler probability \(q\), holding trainer \(p\) fixed.</p>
+    <canvas id="plot-drift" aria-label="Constant-reward expected gradient under uncorrected policy gradient, capped IS, and exact IS or score centering.">At p=0.5 and q=0.95, uncorrected drift is 0.45; TIS with cap 2 leaves 0.20; exact IS and exact score centering give zero.</canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-orange)"></span>Uncorrected PG</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-teal)"></span>TIS, cap 2</span>
+      <span class="legend-item"><span class="lg dash" style="--c:var(--plot-violet)"></span>Exact IS / exact SC (both zero)</span>
+    </div>
+    <pre class="readout"><output id="drift-result" for="trainer-prob sampler-prob" aria-live="polite">p=0.50, q=0.95: PG = 0.450; TIS = 0.200; exact IS = 0; exact SC = 0.</output></pre>
+    <p class="figure-caption"><strong>Mismatch can move a policy without any reward preference.</strong>
+      This is an exact, one-prefix expectation, not a simulated training curve or a benchmark.
+      The second logit's gradient is the negative of the first. TIS leaves drift only where
+      its cap changes the exact weights. Exact IS and exact SC have equal means here,
+      but need not have equal finite-sample variance.</p>
+  </div>
+  <p>Group-centering a constant reward would trivially set all advantages to zero; that is
+    deliberately <em>not</em> this experiment. In real group-centered training, advantages
+    average to zero across responses to a prompt, but not necessarily conditional on each
+    later prefix. A promising prefix can have positive expected advantage and a failed
+    prefix negative expected advantage. Prompt-level centering therefore need not remove
+    prefix-level drift.</p>
+
+  <h2 id="score-centering">6. Score centering: subtract a vector, not just change a weight</h2>
+  <p>Score centering replaces \(s_y\) by its centered version under the sampler:</p>
+  \[
+    g_{\mathrm{SC}}=A\left(s_y-\bar s\right),\qquad
+    \bar s=\sum_v q_v s_v,\qquad
+    \mathbb E_q[g_{\mathrm{SC}}]=\operatorname{Cov}_q(A,s).
+  \]
+  <p>The correction is deterministic given the prefix and distributions, rather than
+    depending on which next token was sampled. It cancels the mean-score drift exactly
+    when that expectation is computed exactly. If \(p=q\), \(\bar s=0\) and the correction
+    is a no-op. Unlike a classical on-policy reward baseline, it deliberately changes
+    the off-policy update's mean.</p>
+  <p>A scalar loss can produce this gradient; there is no need to materialize a
+    vocabulary-sized collection of parameter-gradient vectors:</p>
+  \[
+    L_{\mathrm{SC}}=-A\left(\log p_y-\sum_v\operatorname{sg}[q_v]\log p_v\right).
+  \]
+  <p><strong>It is not full off-policy correction.</strong> The remaining covariance is
+    measured under the sampler, not the trainer, and prefix distributions can still differ.
+    An exact conditional value baseline could also cancel drift in expectation; score
+    centering obtains this effect without estimating a critic.</p>
+
+  <h3 id="composition">Why it can compose with TIS or MIS</h3>
+  <p>For a token-local ratio weight \(w_v=w(p_v/q_v)\), such as TIS or MIS, center the
+    <em>weighted score</em>, not the unweighted one:</p>
+  \[
+    g_{\mathrm{SC}+w}
+      =A\left(w_y s_y-\sum_v q_v w_v s_v\right).
+  \]
+  <p>The centering mass \(q_v w_v\) is <strong>not normalized</strong>. Exact IS makes
+    \(q_vw_v=p_v\), so its expected weighted score already vanishes. Truncation or masking
+    can break that cancellation; the additive term removes the residual mean.
+    This formula is for the stated token-local weights, not an automatic recipe for
+    every sequence-level or advantage-dependent gate.</p>
+
+  <h3 id="top-k">The practical cost: more sampler information</h3>
+  <p>Ordinary token IS only needs the sampled token's behavior log-probability. Exact score
+    centering requires the full next-token distribution. The paper instead logs sampler
+    top-k token IDs and log-probabilities and models the remaining tail as a rescaled
+    trainer distribution:</p>
+  \[
+    \widetilde q_v=
+    \begin{cases}
+      q_v &amp; v\in H,\\
+      \rho p_v &amp; v\notin H,
+    \end{cases}
+    \qquad
+    \rho=\frac{1-\sum_{v\in H}q_v}{1-\sum_{v\in H}p_v}.
+  \]
+  <p>This preserves the sampler's tail mass but assumes the trainer's relative tail shape.
+    It is an approximation to centering under the real sampler. Its efficient loss uses
+    detached coefficients \(q_v-\rho p_v\) on the top-k head; gradients must not flow
+    through those coefficients. The main experiments use \(k=128\); \(k=32\) also matches
+    full centering in the reported ablation, not necessarily every task.
+    <a href="https://arxiv.org/html/2609.20807v1#A1">Appendix A</a> gives the tail derivation,
+    numerical safeguards, and weighted composition.</p>
+
+  <h3 id="evidence">What the experiments establish—and what they do not</h3>
+  <p>In the reported severe quantization settings, score centering matches or outperforms the
+    IS baselines; under severe staleness, its composition with TIS/MIS performs best.
+    That supports treating drift removal and distribution correction as complementary.
+    It does not establish that score centering universally replaces PPO, engine alignment,
+    or importance sampling.</p>
+  <p>The evidence comes from Countdown and math training with Qwen models, deliberately severe
+    mismatch, short sequences, a shared objective, and uneven seed counts in the expensive
+    30B comparisons. Some figures report training accuracy rather than held-out accuracy.
+    Preserve those limits when applying the result to long-horizon agents or production
+    workloads. Table 1 is an algorithmic map, not a deployment recommendation.</p>
+
+  <h2 id="mitigation">7. Choose the intervention after diagnosing the mismatch</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Intervention</th><th>What it addresses</th><th>What it cannot promise</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Align engines</strong><br>Batch-invariant kernels, matched precision/topology, routing replay.</td><td>Reduce same-checkpoint numerical discrepancy at its source.</td><td>Does not remove async checkpoint age. Support and performance depend on the model/runtime.</td></tr>
+        <tr><td><strong>Reduce exposure</strong><br>Fresher weight publication, bounded queues, less aggressive quantization.</td><td>Reduce staleness or numerical distortion before correction.</td><td>Can cost throughput; FP16 or a particular TP layout is not a universal fix.</td></tr>
+        <tr><td><strong>Weight, gate, or reject</strong><br>TIS, MIS, PPO-style control, sequence/divergence gates.</td><td>Trade bias, variance, movement incentives, and sample retention.</td><td>Does not reconstruct missing support or altered trajectories. A capped weight is not a bound on the full gradient.</td></tr>
+        <tr><td><strong>Center the score</strong><br>Alone or with supported token-local corrections.</td><td>Remove mean-score drift; exact with the true full distribution.</td><td>Needs richer sampler metadata; top-k is approximate; covariance and prefix-distribution mismatch remain.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>First preserve the exact tokens and probability provenance. Next use a
+    <strong>same-checkpoint, same-prefix replay</strong> to isolate numerical TIM from
+    staleness. Track log-probability errors, ratio tails, effective sample size, and
+    correction activation by advantage sign. Label whether a metric compares \(p/q\),
+    \(p/\pi_{\mathrm{prox}}\), or \(\pi_{\mathrm{prox}}/q\).</p>
+  <p>A high Pearson correlation does not exclude a dangerous rare tail; a low correlation
+    does not alone establish large probability error or a causal drift mechanism.
+    Clipped-token fraction counts interventions, not their vector-valued gradient bias.
+    Continue to <a href="async-rl-monitoring.html#clipfrac">PPO versus correction metrics</a>,
+    <a href="async-rl-monitoring.html#is-stats">ratio statistics</a>, and
+    <a href="async-rl.html#knobs">queue/version controls</a> for operational diagnosis.</p>
+
+  <h2 id="references">8. Sources and next steps</h2>
+  <ul>
+    <li>Marek &amp; Ryabinin, <a href="https://arxiv.org/html/2609.20807v1">Score Centering Stabilizes Off-policy Reinforcement Learning</a>:
+      <a href="https://arxiv.org/html/2609.20807v1#A2.T1">correction grid</a>,
+      <a href="https://arxiv.org/html/2609.20807v1#S4">drift and centering</a>,
+      <a href="https://arxiv.org/html/2609.20807v1#A1">top-k implementation</a>,
+      <a href="https://arxiv.org/html/2609.20807v1#A2.SS3">seed counts and reported metrics</a>.
+      Correction formulas checked against <a href="https://github.com/martin-marek/score-centering/blob/fdca22b19793babdf08e33e5ba51537e82cbed2f/losses.py">authors' code at fdca22b</a>.</li>
+    <li>Original mechanisms:
+      <a href="https://arxiv.org/abs/1707.06347">PPO</a>,
+      <a href="https://arxiv.org/abs/2503.14476">DAPO</a>,
+      <a href="https://arxiv.org/abs/2506.13585">CISPO / MiniMax-M1</a>,
+      <a href="https://arxiv.org/abs/2510.18855">IcePop</a>,
+      <a href="https://arxiv.org/abs/2507.18071">GSPO</a>,
+      <a href="https://arxiv.org/abs/2503.14286">TOPR</a>,
+      <a href="https://arxiv.org/abs/2602.04879">DPPO</a>.</li>
+    <li>Engine mitigation:
+      <a href="https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/">batch-invariant execution</a>,
+      <a href="https://arxiv.org/abs/2510.26788">FP16 mismatch study</a>,
+      <a href="slime-miles-walkthrough.html">slime/Miles implementation walkthrough</a>.</li>
+    <li>Learning path:
+      <a href="../foundations/importance-sampling.html">Importance Sampling</a> →
+      this guide →
+      <a href="ppo-grpo-backward.html">PPO/GRPO Backward</a> or
+      <a href="async-rl.html">Async RL</a> →
+      <a href="async-rl-monitoring.html">Monitoring</a>.</li>
+  </ul>
+</main>
+<script>
+(function () {
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const element = id => document.getElementById(id);
+  const fixed = x => (Math.abs(x) < 0.0005 ? 0 : x).toFixed(3);
+
+  function ppoObjective(r, a, dual) {
+    const clipped = Math.max(0.8, Math.min(1.2, r));
+    const ordinary = Math.min(a * r, a * clipped);
+    return dual && a < 0 ? Math.max(ordinary, 3 * a) : ordinary;
+  }
+
+  function coefficient(method, r, a, dual) {
+    if (method === 'IS') return a * r;
+    if (method === 'TIS') return a * Math.min(r, 2);
+    if (method === 'MIS') return r >= 0.5 && r <= 5 ? a * r : 0;
+    if (a > 0 && r > 1.2) return 0;
+    if (a < 0 && (r < 0.8 || (dual && r > 3))) return 0;
+    return a * r;
+  }
+
+  function drift(p, q) {
+    const s1 = 1 - p, s2 = -p;
+    const r1 = p / q, r2 = (1 - p) / (1 - q);
+    const meanScore = q * s1 + (1 - q) * s2;
+    return {
+      pg: meanScore,
+      tis: q * Math.min(r1, 2) * s1 + (1 - q) * Math.min(r2, 2) * s2,
+      is: q * r1 * s1 + (1 - q) * r2 * s2,
+      sc: q * (s1 - meanScore) + (1 - q) * (s2 - meanScore)
+    };
+  }
+
+  function drawPlot(canvas, cfg) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+    const mL = 48, mR = 14, mT = 14, mB = 30;
+    const pw = cssW - mL - mR, ph = cssH - mT - mB;
+    const { xMin, xMax, yMin, yMax } = cfg;
+    const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
+    const Y = y => mT + (yMax - y) / (yMax - yMin) * ph;
+    ctx.font = '11px sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(t => {
+      ctx.beginPath(); ctx.moveTo(X(t), mT); ctx.lineTo(X(t), mT + ph); ctx.stroke();
+      ctx.fillText(String(t), X(t), mT + ph + 6);
+    });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(t => {
+      ctx.beginPath(); ctx.moveTo(mL, Y(t)); ctx.lineTo(mL + pw, Y(t)); ctx.stroke();
+      ctx.fillText(String(t), mL - 8, Y(t));
+    });
+    ctx.strokeStyle = cssVar('--plot-axis');
+    ctx.lineWidth = 1.25;
+    if (yMin <= 0 && yMax >= 0) {
+      ctx.beginPath(); ctx.moveTo(mL, Y(0)); ctx.lineTo(mL + pw, Y(0)); ctx.stroke();
+    }
+    if (xMin <= 0 && xMax >= 0) {
+      ctx.beginPath(); ctx.moveTo(X(0), mT); ctx.lineTo(X(0), mT + ph); ctx.stroke();
+    }
+    ctx.save();
+    ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    ctx.lineJoin = 'round';
+    cfg.series.forEach(s => {
+      ctx.lineWidth = s.width || 2.5;
+      ctx.strokeStyle = cssVar(s.color);
+      ctx.setLineDash(s.dash || []);
+      const edges = [xMin, ...(s.breaks || []).filter(x => x > xMin && x < xMax), xMax];
+      for (let j = 0; j < edges.length - 1; j++) {
+        const lo = edges[j] + (j ? 1e-6 : 0);
+        const hi = edges[j + 1] - (j < edges.length - 2 ? 1e-6 : 0);
+        ctx.beginPath();
+        for (let i = 0; i <= 260; i++) {
+          const x = lo + (hi - lo) * i / 260;
+          const px = X(x), py = Y(s.fn(x));
+          i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+        }
+        ctx.stroke();
+      }
+    });
+    ctx.setLineDash([4, 4]);
+    ctx.lineWidth = 1.25;
+    ctx.strokeStyle = cssVar('--plot-axis');
+    ctx.beginPath(); ctx.moveTo(X(cfg.cursor), mT); ctx.lineTo(X(cfg.cursor), mT + ph); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  function renderCorrections() {
+    const a = Number(element('advantage').value);
+    const r = Number(element('ratio').value);
+    const dual = element('dual').checked;
+    element('advantage-value').value = a.toFixed(2);
+    element('ratio-value').value = r.toFixed(2);
+    const scale = Math.max(1, Math.abs(a));
+    const yMin = a < 0 ? -6.5 * scale : -0.5 * scale;
+    const yMax = a > 0 ? 6.5 * scale : 0.5 * scale;
+    const ticks = a < 0 ? [-6, -4, -2, 0] : a > 0 ? [0, 2, 4, 6] : [0];
+    const common = { xMin: 0.05, xMax: 6, yMin, yMax, xTicks: [1, 2, 3, 4, 5, 6],
+      yTicks: ticks.map(t => t * scale), cursor: r };
+    drawPlot(element('plot-corrections'), { ...common, series: [
+      { fn: x => coefficient('IS', x, a, dual), color: '--plot-gray', dash: [5, 4], width: 4 },
+      { fn: x => coefficient('TIS', x, a, dual), color: '--plot-teal', width: 3.5 },
+      { fn: x => coefficient('MIS', x, a, dual), color: '--plot-orange', breaks: [0.5, 5], dash: [7, 3] },
+      { fn: x => coefficient('PPO', x, a, dual), color: '--plot-violet', breaks: [0.8, 1.2, 3] }
+    ] });
+    drawPlot(element('plot-ppo-objective'), { ...common,
+      series: [{ fn: x => ppoObjective(x, a, dual), color: '--plot-violet' }] });
+    const lines = ['A = ' + a.toFixed(2) + ', r = ' + r.toFixed(2),
+      'Ascent coefficient (NOT objective value):'];
+    ['IS', 'TIS', 'MIS', 'PPO'].forEach(m => lines.push(m + ': ' + fixed(coefficient(m, r, a, dual))));
+    lines.push('PPO objective: ' + fixed(ppoObjective(r, a, dual)));
+    if (a !== 0 && [0.8, 1.2, 3].some(x => Math.abs(r - x) < 1e-8)) {
+      lines.push('Boundary: inclusive gate convention; see caption about derivatives.');
+    }
+    element('correction-result').value = lines.join('\n');
+  }
+
+  function renderDrift() {
+    const p = Number(element('trainer-prob').value);
+    const q = Number(element('sampler-prob').value);
+    const g = drift(p, q);
+    element('trainer-value').value = p.toFixed(2);
+    element('sampler-value').value = q.toFixed(2);
+    drawPlot(element('plot-drift'), {
+      xMin: 0.01, xMax: 0.99, yMin: -1, yMax: 1,
+      xTicks: [0.2, 0.4, 0.6, 0.8], yTicks: [-1, -0.5, 0, 0.5, 1], cursor: q,
+      series: [
+        { fn: x => drift(p, x).pg, color: '--plot-orange' },
+        { fn: x => drift(p, x).tis, color: '--plot-teal' },
+        { fn: x => drift(p, x).sc, color: '--plot-violet', dash: [5, 4] }
+      ]
+    });
+    element('drift-result').value = 'p = ' + p.toFixed(2) + ', q = ' + q.toFixed(2) +
+      '\nFirst-logit gradient: PG ' + fixed(g.pg) + '; TIS ' + fixed(g.tis) +
+      '; exact IS ' + fixed(g.is) + '; exact SC ' + fixed(g.sc) +
+      '\nToken IS weights: ' + fixed(p / q) + ', ' + fixed((1 - p) / (1 - q));
+  }
+
+  ['advantage', 'ratio', 'dual'].forEach(id => element(id).addEventListener('input', renderCorrections));
+  ['trainer-prob', 'sampler-prob'].forEach(id => element(id).addEventListener('input', renderDrift));
+  function renderAll() { renderCorrections(); renderDrift(); }
+  renderAll();
+  let raf;
+  window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(renderAll); });
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', renderAll);
+})();
+</script>
+</body>
+</html>

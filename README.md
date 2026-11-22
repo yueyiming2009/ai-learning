@@ -173,8 +173,13 @@ policy lag, sampling replay, shard-transfer planning, and recovery; not an estab
 [RL Training Basics & Metrics](docs/rl/rl-training-metrics.html) — one prompt and three answers
 through a GRPO update, introducing dashboard fields as they arise. Equations, PPO/critic
 details, and the source-pinned metric glossary are expandable references.
-Continue to PPO/GRPO training walkthroughs, then async RL and
-its monitoring, and reward pipelining.
+Continue to PPO/GRPO training walkthroughs.
+**Efficiency:** [Training–Inference Mismatch](docs/rl/training-inference-mismatch.html)
+is the canonical guide to numerical mismatch, probability contracts, correction methods,
+and score-centering drift removal, with interactive gradient comparisons.
+Continue to [Async RL](docs/rl/async-rl.html) for scheduling and staleness, then
+its monitoring and reward pipelining. Algorithm derivations and framework-specific recipes
+remain on their own pages and link to the TIM guide.
 [Agentic RL Observability](docs/rl/agentic-rl-observability.html) connects metrics to individual
 episodes, verifier evidence, training samples and updates. It includes industry-backed tracing
 recipes, collection infrastructure, an interactive synthetic trace lab and an offline

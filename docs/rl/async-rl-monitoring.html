@@ -312,8 +312,10 @@
   </div>
 
   <div class="note">
-    This page is a companion to <a href="async-rl.html">Async RL — Policy Lag, IS Correction, and TIM</a>.
-    The concepts below (IS ratios, TIM, TIS, entropy collapse) are derived there.
+    This page is a companion to <a href="training-inference-mismatch.html">Training–Inference
+    Mismatch</a> (probability contracts, correction rules, and drift) and
+    <a href="async-rl.html">Async RL</a> (scheduling and staleness).
+    It owns the diagnostic procedures rather than repeating those mechanisms.
     Applies to any async RL system — verl, slime/Miles, or otherwise.
   </div>
 
@@ -333,9 +335,10 @@
       \qquad
       b_t = \frac{\pi_{\mathrm{prox}}(a_t|s_t)}{\mu(a_t|s_t)}.
     \]
-    PPO clipping constrains \(q_t\), the movement made <em>inside the optimizer update</em>.
-    TIS clips or masks \(b_t\), the mismatch already present when a rollout reaches the
-    trainer because of policy lag, engine numerics, quantization, or token reconstruction.
+    PPO's objective clip acts on \(q_t\), the movement made <em>inside the optimizer update</em>.
+    TIS caps \(b_t\); MIS masks it. This ratio measures the mismatch already present when a
+    rollout reaches the trainer because of policy lag, engine numerics, or quantization.
+    Changed tokens/context are a separate fidelity failure that these ratios cannot repair.
     Older two-policy implementations may set \(\pi_{\mathrm{prox}}=\mu\) or log only one
     combined ratio, which is why the same metric name can have different diagnostic meaning.
   </div>
@@ -433,23 +436,20 @@
   <!-- ── §2 Pearson ─────────────────────────── -->
   <h2 id="pearson">2. Pearson Correlation — Log-prob Alignment</h2>
 
-  <p>Measures how well the rollout behavior log-probs \(\log \mu\) and the recomputed
-  proximal/training log-probs \(\log \pi_{\mathrm{prox}}\) agree in <em>relative ordering</em>
-  across all tokens in a batch:</p>
+  <p>Measures the <em>linear association</em> between rollout behavior log-probs \(\log \mu\)
+  and recomputed proximal/training log-probs \(\log \pi_{\mathrm{prox}}\) across tokens.
+  Pearson is not a rank-correlation metric:</p>
   \[
     \rho = \frac{\mathrm{Cov}(\log\mu,\;\log\pi_{\mathrm{prox}})}
                {\mathrm{Std}(\log\mu)\cdot\mathrm{Std}(\log\pi_{\mathrm{prox}})}
   \]
   <p>where the vectors run over all \((sequence, position)\) pairs in the batch.</p>
 
-  <p><strong>Why not just KL?</strong> KL divergence
-  \(\mathbb{D}_{KL}(\mu\|\pi_{\mathrm{prox}})\) is dominated by high-probability tokens and
-  averages over the full batch — a few badly misaligned low-probability tokens produce
-  extreme IS ratios but barely move aggregate KL. Pearson is scale-invariant: a constant
-  offset between the two log-prob vectors (e.g., from a different softmax temperature or
-  calibration shift) doesn't change \(\rho\), but does change IS ratios. Falling \(\rho\)
-  means the <em>ranking</em> of tokens by probability is diverging, which is what actually
-  drives IS ratio variance.</p>
+  <p><strong>Why not just KL?</strong> A mean divergence can hide rare ratio outliers.
+  Pearson is complementary, but also incomplete: positive affine changes to one vector
+  preserve correlation while changing probability ratios. Temperature changes need not
+  be a single batch-wide affine transform because normalization depends on the prefix.
+  Falling correlation alone does not identify a causal failure or quantify ratio tails.</p>
 
   <h3>Connection to IS ratio variance</h3>
 
@@ -459,13 +459,13 @@
     \mathrm{Var}(\log b_t) = \mathrm{Var}(\log\pi_{\mathrm{prox}} - \log\mu)
     = 2\sigma^2(1 - \rho)
   \]
-  <p>At \(\rho = 0.97\): \(\mathrm{Var}(\log b_t) \approx 0.06\sigma^2\) — behavior-correction
-  ratios tightly clustered around 1. At \(\rho = 0.80\):
-  \(\mathrm{Var}(\log b_t) \approx 0.40\sigma^2\) — ratios scattered widely; many tokens can
-  enter the TIS tails even when the separate PPO ratio \(q_t\) remains near 1.</p>
-
-  <p><strong>Healthy:</strong> \(\rho \geq 0.97\). Below 0.90 is a warning; sustained drop
-  below 0.85 typically precedes training collapse.</p>
+  <p>At fixed \(\sigma^2\), changing \(\rho\) from 0.97 to 0.80 changes the log-ratio
+  variance from \(0.06\sigma^2\) to \(0.40\sigma^2\). Across training, however, the variances
+  themselves can change. This formula neither fixes the mean log-ratio nor says that the
+  ratios cluster around 1. Measure the errors and tails directly.</p>
+  <p><strong>Calibration:</strong> compare with same-checkpoint replay for this
+  model, dataset, and metric scale. There is no universal Pearson cutoff for safe RL;
+  correlation is undefined when either input has zero variance.</p>
 
   <p><strong>Metric keys —</strong>
     verl: <code>training/rollout_actor_probs_pearson_corr</code> — logged automatically whenever
@@ -474,8 +474,8 @@
     <code>verl/utils/debug/metrics.py</code> via <code>torch.corrcoef</code> over valid response
     tokens. <em>Note:</em> verl computes this on the probability scale
     (\(\pi_{actor}\) vs \(\pi_{rollout}\), i.e., <code>exp(log_probs)</code>), not on
-    log-probs directly — the interpretation is the same but the numeric value will differ slightly
-    from a log-space Pearson. Companion metrics from the same call:
+    log-probs directly. Its value can differ materially from log-space Pearson, and the
+    log-ratio variance identity above cannot be applied to it. Companion metrics from the same call:
     <code>training/rollout_probs_diff_mean</code>, <code>training/rollout_probs_diff_max</code>,
     <code>training/rollout_probs_diff_std</code> (mean/max/std of \(|\pi_{actor} - \pi_{rollout}|\)
     per token, on probability scale) ·
@@ -489,73 +489,60 @@
 
   <div class="table-wrap">
     <table>
-      <tr><th>Pattern</th><th>What it looks like</th><th>Root cause</th><th>Fix</th></tr>
+      <tr><th>Pattern</th><th>What it looks like</th><th>Hypothesis to check</th><th>Checks / actions</th></tr>
       <tr>
         <td><strong>Low floor at \(K=0\), step 0</strong></td>
         <td>\(\rho\) starts at 0.8 or below before any training</td>
-        <td>Baseline TIM — engines disagree on the initial weights. FP8 rollout, TP degree
-        mismatch, or different attention kernel are the usual culprits.</td>
-        <td>Fix the engine mismatch (FP16, match TP). TIS on top of this is a band-aid.</td>
+        <td>Same-checkpoint engine mismatch, probability-provenance error, or a narrow input range.</td>
+        <td>Replay identical tokens and inspect absolute log-prob errors. Compare precision,
+        TP, and kernel contracts before choosing alignment or correction.</td>
       </tr>
       <tr>
         <td><strong>Gradual drop at \(K=0\) over steps</strong></td>
         <td>Starts at 0.8, falls to 0.3 over ~50 steps with no lag change</td>
-        <td>Entropy collapse amplifying existing TIM. The TIM itself is not growing — the
-        metric is becoming more sensitive as the policy sharpens.</td>
-        <td>Fix the baseline TIM first. Entropy collapse cannot be arrested without reducing
-        the TIM that is driving the gradient instability.</td>
+        <td>Changing log-prob variance, changing engine error, data mix, or unstable training.
+        Correlation alone does not distinguish them.</td>
+        <td>Jointly track entropy, log-prob variance, direct error tails, and gradient norms;
+        repeat same-checkpoint replay.</td>
       </tr>
       <tr>
         <td><strong>Sudden drop correlated with \(K\) increase</strong></td>
         <td>\(\rho\) was healthy, drops when sync interval widens or lag grows</td>
-        <td>Policy lag — the rollout policy is genuinely behind the training policy.</td>
+        <td>Policy lag is a candidate; check whether dataset mix or engine settings also changed.</td>
         <td>Tighten <code>trigger_parameter_sync_step</code> or lower
         <code>staleness_threshold</code>.</td>
       </tr>
       <tr>
         <td><strong>Stabilized with TIS but not recovering</strong></td>
         <td>\(\rho\) stops falling after TIS enabled, holds at 0.8</td>
-        <td>TIS broke the entropy-collapse feedback loop but the baseline TIM is unchanged.
-        TIS is now firing constantly, not occasionally.</td>
-        <td>Fix the TIM source. TIS should be a safety net, not a constant corrector.</td>
+        <td>Correction may have stabilized updates; this does not establish that the engine
+        discrepancy stayed fixed or reveal how often clipping activates.</td>
+        <td>Measure TIS activation, error tails, and held-out reward. Compare alignment and
+        alternative corrections rather than diagnosing from Pearson alone.</td>
       </tr>
     </table>
   </div>
 
   <!-- ── §3 Entropy collapse ───────────────── -->
-  <h2 id="entropy-collapse">3. Entropy Collapse — How TIM Compounds Over Training</h2>
-
-  <p>The "gradual drop at \(K=0\)" pattern has a specific mechanism. At initialization, the
-  policy is relatively diffuse — log-probs span a wide range (e.g., \([-12, 0]\)). As training
-  proceeds and the policy learns to prefer correct actions, the distribution sharpens: sampled
-  tokens cluster toward \(\log p \approx 0\), while rejected tokens fall to \(-10\) or below.</p>
-
-  <p>The two engines have a fixed absolute numerical discrepancy \(\delta\) per token from TIM.
-  When log-probs are spread across a wide range, \(\delta\) rarely causes rank inversions —
-  token A is still more probable than B even with small errors. When log-probs are clustered
-  tightly near 0, the same \(\delta\) frequently swaps the relative ordering of tokens within
-  the dense cluster. Pearson, which measures rank agreement, collapses.</p>
-
-  <pre><code>Step 0:  policy diffuse, log-probs span [-12, 0]
-         engine difference δ ≈ ±0.01 per token
-         δ rarely exceeds gaps between tokens → few rank inversions → ρ = 0.80
-
-Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
-         same δ ≈ ±0.01, but now many tokens are within δ of each other
-         frequent rank inversions within the dense cluster → ρ = 0.30</code></pre>
-
-  <p>This creates a <strong>self-reinforcing feedback loop</strong>:</p>
-
-  <ol>
-    <li>TIM causes IS ratios to scatter from 1</li>
-    <li>Scattered ratios produce large, noisy gradient updates</li>
-    <li>Large updates push the policy into sharper, more confident weight regimes</li>
-    <li>Sharper policy amplifies TIM's rank-inversion effect on \(\rho\)</li>
-    <li>Lower \(\rho\) → wider IS ratio scatter → back to step 2</li>
-  </ol>
-
-  <p>This is a runaway loop. \(\rho\) falls not because TIM is growing but because entropy
-  collapse makes the existing TIM increasingly visible.</p>
+  <h2 id="entropy-collapse">3. Entropy, Drift, and Changing Metric Sensitivity</h2>
+  <p>The <a href="training-inference-mismatch.html#drift">central TIM guide</a> derives
+  mean-score drift and its possible feedback through refreshed samplers. Large importance
+  weights can also increase variance. Those mechanisms are not interchangeable, and neither
+  is established just by observing falling entropy or correlation.</p>
+  <p>For example, write the trainer's sampled log-probs as \(X+\delta\), where \(X\)
+  denotes sampler log-probs and \(\delta\) is independent zero-mean error. Then:</p>
+  \[
+    \operatorname{Corr}(X,X+\delta)
+      =\sqrt{\frac{\operatorname{Var}(X)}
+                    {\operatorname{Var}(X)+\operatorname{Var}(\delta)}}.
+  \]
+  <p>A narrower \(X\) distribution lowers this correlation even if the error distribution
+  is unchanged. But the ratio is still \(b=\exp(\delta)\): its spread need not grow.
+  This illustrative model is not a claim that real engine errors are independent.</p>
+  <p><strong>Operationally:</strong> log input variances, absolute log-prob errors,
+  ratio quantiles, entropy, and update norms together. Check reward and behavior on held-out
+  prompts. Use controlled engine/correction ablations to investigate causality rather than
+  treating any one curve as proof of the feedback mechanism.</p>
 
   <!-- ── §4 TIS trap ───────────────────────── -->
   <h2 id="tis-trap">4. TIS Constant-Corrector Trap</h2>
@@ -566,14 +553,13 @@ Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
   \[
     \tilde{b}_t = \operatorname{clip}(b_t,\; c_{\mathrm{low}},\; c_{\mathrm{high}}).
   \]
-  <p>When TIS is enabled and \(\rho\) stops falling and holds at its step-0 value (e.g., 0.8),
-  TIS has <strong>broken the feedback loop</strong> — not fixed TIM. By bounding \(b_t\), TIS
-  bounds the gradient updates, which slows entropy collapse, which prevents further amplification
-  of TIM's Pearson effect. The Pearson stabilizes at exactly the baseline TIM level from step 0.</p>
-
-  <p>But at \(\rho = 0.80\), behavior-correction ratios are widely scattered, so a large
-  fraction of tokens can exceed the TIS bounds on every batch. TIS is doing significant corrective work on
-  <em>every training step</em>, not occasionally. The gradient being computed is:</p>
+  <p>TIS caps a coefficient, not the complete gradient: advantage magnitudes, score-vector
+  norms, and other losses still matter. It can stabilize a run without aligning the engines,
+  but a stable Pearson value does not prove a particular cause or clipping frequency.
+  The <a href="training-inference-mismatch.html#constant-reward">constant-reward example</a>
+  shows why capped IS can retain mean drift.</p>
+  <p>When correction activates persistently, inspect its actual effect on the update.
+  The corrected gradient and the difference from uncapped weighting are:</p>
 
   \[
     \tilde{g} = \sum_t \tilde{b}_t \cdot \nabla\log\pi_\theta \cdot A_t
@@ -588,18 +574,18 @@ Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
   systematically. This introduces:</p>
 
   <ul>
-    <li><strong>Reduced effective learning rate</strong> — the policy moves more slowly than
-    the configured LR implies, because the largest updates are capped.</li>
-    <li><strong>Directional bias</strong> — TIS consistently underweights high-ratio tokens,
-    skewing the gradient toward smaller, more conservative policy changes. The converged policy
-    reflects a truncated objective, not the true PPO objective.</li>
-    <li><strong>Compounding bias</strong> — each step's truncation accumulates; over hundreds
-    of steps the policy drifts toward a different optimum than intended.</li>
+    <li><strong>Changed influence</strong> — upper truncation reduces affected token coefficients,
+    but cancellation between token gradients means the aggregate norm need not decrease.</li>
+    <li><strong>Directional bias</strong> — changed weights can rotate the expected update;
+    this is not equivalent to turning down the learning rate.</li>
+    <li><strong>Repeated bias</strong> — repeated distortion can change the training trajectory.
+    It does not guarantee a particular direction, convergence point, or reward outcome.</li>
   </ul>
 
   <p><strong>Diagnostic:</strong> log <code>tis_clipfrac</code> — the fraction of response tokens
-  where \(b_t\) leaves the configured correction interval. If consistently above ~20–30%, TIS
-  is in constant-corrector mode and the gradient bias is substantial.</p>
+  where \(b_t\) leaves the configured interval. A persistent high fraction deserves investigation,
+  but there is no universal 20–30% failure threshold. The fraction counts changed coefficients;
+  it does not measure their advantage-weighted, vector-valued gradient bias.</p>
 
   <h3>TIS tail × advantage-sign decomposition</h3>
 
@@ -647,11 +633,11 @@ Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
   </p>
 
   <div class="note">
-    <strong>The tell:</strong> TIS stabilizing \(\rho\) at its step-0 value is a confirmation
-    that the Pearson drop was entropy-collapse amplification of pre-existing TIM, not a new
-    problem introduced by training. The stabilization level reveals the true baseline TIM. Fix
-    that baseline (FP16 precision, matched TP) and the entire loop — runaway drop, TIS
-    constant-correction, gradient bias — resolves at once.
+    <strong>A hypothesis, not a proof.</strong> If TIS stabilizes training but direct
+    same-version replay still shows engine error, investigate alignment and
+    <a href="training-inference-mismatch.html#mitigation">other correction choices</a>.
+    Neither the Pearson plateau nor a precision switch guarantees that all instability
+    or gradient bias has been removed.
   </div>
 
   <!-- ── §5 IS ratio stats ──────────────────── -->
@@ -985,15 +971,15 @@ Step 50: policy sharp, sampled tokens cluster in [-0.5, 0]
       </tr>
       <tr>
         <td>Pearson \(\rho\)</td>
-        <td>≥ 0.97</td>
-        <td>See <a href="#pearson-patterns">pattern table</a>; low floor → fix TIM; gradual drop → entropy collapse; sudden drop → policy lag</td>
+        <td>Calibrate to model, data, and metric scale</td>
+        <td>See <a href="#pearson-patterns">hypothesis table</a>; pair correlation with same-version replay and direct errors, not a universal cutoff</td>
         <td><code>training/rollout_actor_probs_pearson_corr</code><br><small style="color:var(--muted);">auto-logged when rollout_log_probs in batch; probability scale</small></td>
         <td style="color:var(--muted);font-size:0.88em;">Not built-in; use <code>train/train_rollout_kl</code> as proxy</td>
       </tr>
       <tr>
         <td><code>tis_clipfrac</code></td>
-        <td>Low and stable (safety net)</td>
-        <td>&gt;20–30% = TIS in constant-corrector mode; gradient bias is substantial; fix TIM source</td>
+        <td>Track with reward and error tails</td>
+        <td>Persistent activation warrants investigation; the changed-token fraction alone does not quantify gradient bias</td>
         <td><code>rollout_corr/rollout_is_ratio_fraction_high</code></td>
         <td><code>train/tis_clipfrac</code><br><code>train/tis_abs</code></td>
       </tr>
