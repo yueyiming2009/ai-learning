@@ -237,23 +237,65 @@
     \]
   </div>
   <p>
-    Attention-residual mixing combines the prelude, the previous pass's message, and outputs of previous layers in the block.
-    The message gate initially suppresses the previous-pass contribution, so introducing looping starts from behavior
-    resembling the non-looping model; training then increases the message's influence.
-    Reusing weights does not reuse the <em>result</em> of a layer: each pass performs new computation on different representations.
-  </p>
-  <p>
     The card's approximate compute accounting is \(3.4 + (L-1)\times 1.0\) billion effective active parameters,
     giving <strong>5.4B at three passes</strong>. This counts repeated weight applications, not 5.4B newly stored parameters,
     and is not a complete FLOP or latency model. Two models with 48 layer applications can still have very different widths,
     expert capacity, attention costs, and throughput.
   </p>
-  <h3>What the looping experiments actually compare</h3>
+  <h3 id="gated-feedback">How a closed gate learns to use feedback</h3>
+  <p>
+    Mini's attention-residual mixing combines the prelude, the previous pass's message, and outputs of earlier
+    layers in the current block. Initially, the gate blocks the previous-pass message: each pass starts from
+    familiar prelude information, as in the non-looping model. Training gradually increases the message's influence,
+    turning repeated computation into refinement without abruptly introducing full-strength feedback.
+    <a href="#source-mini">[2]</a>
+  </p>
+  <p>
+    <strong>A zero value can still have a nonzero gradient.</strong> Consider a scalar illustration, not Mini's
+    exact gate formula: \(b\) is the base state, \(m\) the previous message, \(g\) a trainable gate, and \(t\) a target.
+  </p>
+  <div class="equation">
+    \[
+      \begin{aligned}
+        h &= b + gm, &amp; \mathcal{L} &= \tfrac12(h-t)^2,\\
+        \frac{\partial h}{\partial g} &= m, &amp;
+        \frac{\partial\mathcal{L}}{\partial g} &= (h-t)m.
+      \end{aligned}
+    \]
+  </div>
+  <p>
+    With \(b=10\), \(m=4\), \(t=12\), and \(g=0\), the message contributes nothing, but
+    \(\partial\mathcal{L}/\partial g=(10-12)\times4=-8\).
+    Gradient descent therefore increases \(g\), moving the prediction toward the target.
+    Autograd tracks how changing the gate would affect the loss; it does not discard a multiplication
+    just because its current value is zero. Removing the message branch entirely would remove this learning path.
+  </p>
+  <p>
+    In this example, the message initially receives zero gradient through the closed connection because
+    \(\partial\mathcal{L}/\partial m=(h-t)g\). Once the gate opens, feedback also trains the earlier pass
+    to produce more useful messages. The shared layers can learn through their other uses throughout.
+    <strong>The gate learns how much to use; the layers learn what to send and how to use it.</strong>
+    The gate's influence can rise or fall on individual updates.
+  </p>
+  <h3 id="looping-efficiency">Compare compute at the same quality</h3>
   <p>
     TML reports that looping the middle 12 layers beat looping the last 12 on 27 of 28 evaluations.
     In a separate <em>unpruned</em> comparison, the non-looping ladder model cost 7.5% less training compute,
     but needed 140% more inference compute to match the looping model's loss on 512K-token agent traces.
-    That is a reported compute-equivalent comparison, not a universal 2.4× serving speedup.
+    Both models retained their full expert banks, separating this comparison from Mini's later size reduction
+    through pruning. <a href="#source-mini">[2]</a>
+  </p>
+  <p>
+    Normalize each comparison separately: <strong>training costs 100 units for looping versus 92.5 without it;
+    inference at matched loss costs 100 versus 240</strong>. “140% more” means 2.4× as much.
+    Loss here measures prediction quality on recorded agent trajectories, not the fraction of tasks completed.
+  </p>
+  <p>
+    <strong>A cheaper training run can produce a more expensive model to use at the desired quality.</strong>
+    Repeating a fixed stack adds work per token, but can deliver quality that would otherwise require more
+    expensive non-looping computation. The useful comparison is compute needed to reach the same quality,
+    not merely the cost of one pass. The reported 2.4× is a matched-loss compute comparison, not measured
+    wall-clock speed.
   </p>
   <h3 id="compute-vs-knowledge">Reasoning, stored knowledge, and tools</h3>
   <p>
