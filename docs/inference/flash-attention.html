@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light dark">
+  <meta name="description" content="FlashAttention's IO-aware tiling, online softmax, and hardware evolution, with numerical stability evidence, saved-output and backward-gradient failure modes, and an interactive key-offset demonstration.">
   <title>FlashAttention — IO-Aware Exact Attention</title>
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
   <link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
@@ -50,6 +51,7 @@
       --plot-gray: #9ca3af;
       --plot-green: #059669;
       --plot-amber: #d97706;
+      --plot-violet: #6d28d9;
     }
 
     @media (prefers-color-scheme: dark) {
@@ -83,6 +85,7 @@
         --plot-gray: #6b7280;
         --plot-green: #34d399;
         --plot-amber: #fbbf24;
+        --plot-violet: #a78bfa;
       }
     }
     body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 0; line-height: 1.75; font-size: 16px; }
@@ -148,6 +151,12 @@
     .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
     .lg.dash { background: repeating-linear-gradient(90deg, var(--plot-gray) 0 5px, transparent 5px 9px); }
     .figure-caption { font-size: 0.85rem; color: var(--muted); line-height: 1.6; margin: 14px 4px 2px; }
+    .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin-bottom: 16px; }
+    .controls label { font-size: 0.85rem; }
+    .controls input { display: block; width: 100%; accent-color: var(--accent); }
+    .plot-readout { font-size: 0.85rem; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+    .figure :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    h2[id], h3[id] { scroll-margin-top: 72px; }
     footer { border-top: 1px solid var(--border); padding: 28px 24px; text-align: center; font-size: 0.82rem; color: var(--muted); }
     @media (max-width: 600px) { .hero { padding: 40px 16px 36px; } .page-wrap { padding: 32px 16px 60px; } }
   </style>
@@ -166,6 +175,7 @@
     <a href="#io-complexity">IO complexity</a>
     <a href="#fa2-fa3">FA-2 &amp; FA-3</a>
     <a href="#fa4">FA-4 &amp; Blackwell</a>
+    <a href="#numerical-stability">Numerical stability</a>
     <a href="#inference">Inference vs. training</a>
     <a href="#summary">Summary</a>
   </div>
@@ -181,7 +191,11 @@
 <div class="page-wrap">
 
 <p>
-  The attention operation is the single most memory-bandwidth-intensive part of a transformer at long context. Most of the cost is not arithmetic — it is the cost of writing and reading back the intermediate \(N \times N\) score matrix. FlashAttention's contribution is entirely algorithmic: the same exact output, computed without ever materializing that matrix, by fusing the three attention steps (QK^T, softmax, and PV) into a single kernel that operates in tiles small enough to live in SRAM.
+  Standard attention's large intermediate score matrix creates a major memory-traffic bottleneck
+  at long context. FlashAttention avoids materializing that matrix by fusing QK^T, softmax, and PV
+  into a tiled kernel. “Exact attention” distinguishes the underlying algorithm from sparse or
+  low-rank approximations: it does <strong>not</strong> promise bitwise-identical floating-point
+  outputs, identical arithmetic ordering, or identical training dynamics across implementations.
 </p>
 
 <!-- ═══════════════════════════════════════════ NOTATION -->
@@ -205,7 +219,7 @@
       <tr><td>\(M\)</td><td>SRAM capacity in elements; tiles are sized so \(B_rB_c + B_rd + B_cd \leq M\)</td></tr>
       <tr><td>\(m^{(j)}\)</td><td>Running row maximum after \(j\) tiles — the stability shift of the online softmax</td></tr>
       <tr><td>\(\ell^{(j)}\)</td><td>Running softmax normalizer \(\sum e^{\tilde{S} - m^{(j)}}\), rescaled whenever \(m\) grows</td></tr>
-      <tr><td>\(O^{(j)}\)</td><td>Running partial output after \(j\) tiles; \(O^{(N/B_c)}\) is the exact final row of \(O\)</td></tr>
+      <tr><td>\(O^{(j)}\)</td><td>Running partial output after \(j\) tiles; \(O^{(N/B_c)}\) is the final row of \(O\) in exact arithmetic</td></tr>
       <tr><td>\(I\)</td><td>Arithmetic intensity — FLOPs per byte of HBM traffic; \(I \approx 1\) for untiled softmax + PV</td></tr>
       <tr><td>\(T_p\)</td><td>Prompt length at prefill — the \(N\) that produces a \(T_p \times T_p\) score matrix</td></tr>
       <tr><td>\(T\)</td><td>Cached context length at decode; the new query scores a \(1 \times T\) vector</td></tr>
@@ -304,13 +318,18 @@
     <li>\(O^{(j)} = \frac{e^{m^{(j-1)} - m^{(j)}} \cdot \ell^{(j-1)}}{\ell^{(j)}} \cdot O^{(j-1)} + \frac{1}{\ell^{(j)}} \sum_k e^{\tilde{S}_{ij,k} - m^{(j)}} V_{j,k}\) — partial weighted sum of \(V\), updated as each tile arrives.</li>
   </ul>
   <p style="margin-bottom:0">
-    After the last tile \(j = N/B_c\): \(O^{(N/B_c)}\) equals the exact softmax attention output for row \(i\). No approximation — the final normalization is baked into each update step.
+    After the last tile \(j = N/B_c\): \(O^{(N/B_c)}\) equals softmax attention for row \(i\)
+    in exact arithmetic. No sparse or low-rank approximation is introduced; final normalization
+    is baked into each update step. Finite-precision rescaling and reductions can still round differently.
   </p>
 </div>
 
 <div class="result">
   <div class="result-label">Key property</div>
-  The online recurrence produces <em>exactly</em> the same result as standard softmax, computed one tile at a time, with all intermediate values (\(m, \ell, O\)) held in SRAM. The \(N \times N\) score matrix \(S\) is never written to HBM.
+  The online recurrence is algebraically equivalent to standard softmax, computed one tile at
+  a time with intermediate values (\(m, \ell, O\)) held in SRAM. The \(N \times N\) score
+  matrix \(S\) is never written to HBM. Algebraic equivalence is not a bitwise-equality guarantee;
+  see <a href="#numerical-stability">numerical accuracy and training stability</a>.
 </div>
 
 <!-- ═══════════════════════════════════════════ IO COMPLEXITY -->
@@ -348,7 +367,11 @@
 </p>
 
 <div class="note">
-  FlashAttention does not reduce FLOPs — it computes exactly the same arithmetic as standard attention. All gains come from eliminating HBM reads and writes of the \(N \times N\) intermediate. This is the definition of an IO-aware algorithm: the bottleneck is memory traffic, not compute, so the optimization target is memory traffic.
+  FlashAttention retains the dense attention problem and its leading quadratic arithmetic
+  complexity; it does not obtain its IO advantage by dropping attention pairs. Actual operation
+  counts and grouping differ because of rescaling, fusion, and backward recomputation.
+  Avoiding intermediate HBM traffic is the original optimization; later versions also improve
+  non-matmul work and scheduling.
 </div>
 
 <p>
@@ -448,7 +471,11 @@
   <li><strong>Bit-shift recombination:</strong> apply the \(2^n\) factor by adding \(n\) directly into the exponent field.</li>
 </ol>
 <p>
-  Accuracy: max relative error \(8.77 \times 10^{-5}\) in FP32, and after rounding to BF16 it matches the hardware instruction to within 1 ULP on 99% of inputs — well inside the noise floor of BF16 attention. FA-4 also explicitly <em>staggers</em> its two softmax warpgroups so they never issue to the MUFU at the same instant, removing SFU contention.
+  Reported approximation accuracy: max relative error \(8.77 \times 10^{-5}\) in FP32, and after
+  rounding to BF16 it matches the hardware instruction to within 1 ULP on 99% of tested inputs.
+  That is a local approximation result, not a bound on full-model gradient error or training
+  stability. FA-4 also explicitly <em>staggers</em> its two softmax warpgroups so they never
+  issue to the MUFU at the same instant, removing SFU contention.
 </p>
 
 <h3>Conditional softmax rescaling</h3>
@@ -461,7 +488,9 @@
     \text{if } m_j - m_{j-1} \leq \tau: \ \text{keep } m_{j-1}, \text{ skip the accumulator rescale}
   \]
   <div style="font-size:0.85rem;color:var(--muted);margin-top:6px">
-    With \(\tau = \log_2 256 = 8\), the un-normalized numerators may run up to 256× above unity — harmless in FP32 — and the final division by \(\ell\) restores the exact answer. Most tiles now skip the rescale entirely.
+    In the base-2 implementation, \(\tau = \log_2 256 = 8\) permits unnormalized numerators
+    up to 256× above unity. Final division by \(\ell\) preserves the algebraic normalization;
+    the implementation still incurs finite-precision rounding. Most tiles now skip the rescale entirely.
   </div>
 </div>
 <p>
@@ -495,11 +524,135 @@
 </div>
 
 <div class="note">
-  These margins are against cuDNN 9.13; later cuDNN releases absorbed many of the same ideas and are now roughly comparable. The durable lesson is not the benchmark number but the shape of the problem: <em>which</em> resource is scarce is a property of the specific silicon, and an "IO-aware" algorithm has to be re-derived each time the ratios move. FA-2 chased non-matmul FLOPs, FA-3 chased asynchrony, FA-4 chases exponentials and shared memory — all computing the identical exact output of §3.
+  These margins are against cuDNN 9.13; later cuDNN releases absorbed many of the same ideas and are now roughly comparable. The durable lesson is not the benchmark number but the shape of the problem: <em>which</em> resource is scarce is a property of the specific silicon, and an "IO-aware" algorithm has to be re-derived each time the ratios move. FA-2 chased non-matmul FLOPs, FA-3 chased asynchrony, FA-4 chases exponentials and shared memory — targeting the same dense attention operation, not promising identical rounded outputs or gradients.
+</div>
+
+<h2 id="numerical-stability">7 · Numerical accuracy is not one stability guarantee</h2>
+<p>
+  Separate <strong>forward deviation</strong>, <strong>backward correctness</strong>, and
+  <strong>training behavior</strong>. A small forward error need not produce a small gradient
+  error; two implementations can agree bitwise and still share an inaccurate backward; a
+  run without NaNs can still learn worse. The studies below address different parts of this
+  chain. Their results should not be collapsed into “FlashAttention is unstable.”
+</p>
+<div class="table-wrap">
+  <table>
+    <caption>Evidence map, checked November 24, 2026. Reported measurements are scoped to each experiment.</caption>
+    <thead><tr><th>Study</th><th>What it establishes</th><th>What it does not establish</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><a href="https://arxiv.org/html/2405.02803v1">Golden et al., 2024<br>Is Flash Attention Stable?</a></td>
+        <td>About 10× greater BF16 forward-output deviation than baseline attention against an FP64 reference in the microbenchmark. Text-to-image experiments on A100 use maximum weight difference and Wasserstein distance to contextualize drift; reported weight deviation is 2–5× smaller than the FP16-versus-FP32 training comparison.</td>
+        <td>A causal explanation of loss spikes or a universal stability bound. Weight-distance comparisons are empirical proxies, not a proof of equivalent learned behavior.</td>
+      </tr>
+      <tr>
+        <td><a href="https://arxiv.org/html/2510.04212v4">Qiu &amp; Yao<br>October 2025; ICLR 2026, v4</a></td>
+        <td>Dissects a reproduced GPT-2-class failure: saved-output error enters an attention-backward correction term, and biased, structurally aligned updates drive spectral growth. Higher-precision output paths or a modified softmax shift stabilize the studied case.</td>
+        <td>That every BF16 vendor kernel has this failure. Kernel versus reimplementation precision is material; the later study below narrows that boundary.</td>
+      </tr>
+      <tr>
+        <td><a href="https://arxiv.org/html/2608.02091v2">One QK Channel, Many Sources<br>August 2026; September v2 preprint</a></td>
+        <td>Localizes collapse in an analyzed reimplementation to BF16 streaming carries; the FP32-core and vendor paths do not collapse within the tested horizons. Controlled errors from multiple locations can amplify through the same QK spectral channel; QK-local intervention contains the tested failures.</td>
+        <td>That tiling or BF16 operands alone cause collapse, or that QK normalization repairs all kernel errors. Containing a failure channel is different from correcting the source computation.</td>
+      </tr>
+      <tr>
+        <td><a href="https://arxiv.org/html/2609.34272v1">Broken Symmetry in BF16 Attention<br>September 2026 preprint</a></td>
+        <td>A 450M model trained with FA3 on 50B tokens deteriorates after about 25B tokens without NaNs. Forward repair does not remove a backward score-gradient conservation error. GProj restores the relevant constraint, matching FP32-attention final loss in the reported runs at 4.7% extra step time.</td>
+        <td>A reproduced failure in FA4 or Rocket, or a universal overhead/accuracy claim. Its kernel, model, and numerical reference must travel with the result.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="saved-output-error">Saved forward error can become a biased backward update</h3>
+<p>
+  For a row of attention, write \(O=PV\) and let \(dO\) be its incoming gradient. The softmax
+  backward needs a centering term
+  \(D=\mathrm{rowsum}(P\odot dP)\), where \(dP=dOV^\top\).
+  In exact arithmetic, the identity \(D=\mathrm{rowsum}(dO\odot O)\) avoids materializing
+  the full \(P\). If the stored output is \(O+E\), using that copy adds
+  \(\mathrm{rowsum}(dO\odot E)\) to the centering term.
+</p>
+<p>
+  Small \(E\) is not automatically harmless: its interaction with \(dO\) can be biased,
+  and similarly directed errors can reinforce across tokens and training steps.
+  Qiu &amp; Yao analyze that mechanism in their failure case. A BF16
+  <em>output tensor</em> and a BF16 <em>running accumulator</em> are different choices;
+  One QK Channel's reimplementation comparison shows why that distinction cannot be omitted.
+  For rounded-forward gradient semantics more generally, see
+  <a href="../systems/pytorch-execution.html#backward-state">the per-use saved-state contract</a>.
+</p>
+
+<h3 id="zero-sum-gradient">A backward cast can break a conservation law</h3>
+<p>
+  Consider one query \(q\), scalar values \(v_j\), and incoming derivative \(dO=1\);
+  take the attention scale as 1 for this illustration. Let
+  \(p_j=\mathrm{softmax}(q^\top k)_j\), \(o=\sum_j p_jv_j\), and
+  \(g_j=\partial o/\partial s_j=p_j(v_j-o)\). Then:
+</p>
+<div class="result">
+  <div class="result-label">Zero row sum makes the query gradient translation-invariant</div>
+  \[
+    \sum_j g_j=0,\qquad
+    d q=\sum_j g_j k_j,\qquad
+    \sum_j g_j(k_j+c)=d q.
+  \]
+</div>
+<p>
+  Adding the same vector \(c\) to every unmasked key adds the same scalar \(q^\top c\) to
+  every score, leaving the softmax unchanged. It should also leave the query gradient unchanged.
+  If a BF16 cast produces \(\widehat g\) with row sum \(\rho=\sum_j\widehat g_j\ne0\),
+  the resulting contraction instead changes by \(\rho c\). A small nonzero row sum can
+  therefore become a large spurious gradient when the common key component is large.
+  This error occurs <em>after</em> the forward pass, so improving forward accuracy alone
+  cannot eliminate it.
+</p>
+<div class="figure">
+  <div class="controls">
+    <label for="key-offset">Common key offset:
+      <output id="key-offset-value" for="key-offset">1024</output>
+      <input id="key-offset" type="range" min="0" max="4096" step="64" value="1024">
+    </label>
+    <label for="query-scale">Scalar query (attention sharpness):
+      <output id="query-scale-value" for="query-scale">1</output>
+      <input id="query-scale" type="range" min="0.5" max="8" step="0.5" value="1">
+    </label>
+  </div>
+  <canvas id="plot-key-offset" role="img" aria-label="Reference and BF16 score-gradient query derivatives as the same offset is added to every key" aria-describedby="key-offset-caption key-offset-result"></canvas>
+  <div class="legend">
+    <span class="legend-item"><span class="lg dash"></span>High-precision reference</span>
+    <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span>BF16-cast score gradient</span>
+  </div>
+  <p class="plot-readout" id="key-offset-result" aria-live="polite">At query 1, the BF16 row sum is -0.0009765625. An offset of 1024 adds -1 to the computed query gradient.</p>
+  <p class="figure-caption" id="key-offset-caption">
+    <strong>The forward distribution is unchanged, but the rounded backward depends on the offset.</strong>
+    Four scalar keys are [-1, -0.25, 0.5, 1.25], with values [-1, 0.5, 0.25, 2].
+    Softmax and the reference use JavaScript double precision. Only the score-gradient cast
+    is emulated as FP32-to-BF16 round-to-nearest-even; the offset effect is evaluated
+    analytically. No key quantization, GPU matmul rounding, training run, or GProj implementation
+    is simulated. The dot marks the selected offset; the vertical scale adapts to the query.
+  </p>
+  <noscript><p>At query 1, the reference derivative is about 0.59617 for every offset.
+    The BF16-cast derivative is about 0.59570 at offset 0 and -0.40430 at offset 1024.
+    JavaScript enables the parameter sweep.</p></noscript>
+</div>
+<p>
+  GProj addresses the post-cast conservation defect with rank-one corrections to the gradient
+  contractions using the actual consumed probability mass. It is not merely a higher-precision
+  forward or a different order for summing expert outputs. Its reported gradient improvements
+  and cost belong to that study's FA3 implementation and experiments.
+</p>
+<div class="note">
+  <strong>Three separate acceptance questions:</strong> do the forward paths agree, does
+  backward implement the declared gradient reference, and does training remain stable and
+  learn effectively? Test all three. The studies above do not demonstrate these failures in
+  <a href="../rl/rocket.html#base2-parity">Rocket</a> or FA4. Conversely,
+  <a href="../rl/training-inference-mismatch.html#parity-vs-backward">sampler/learner forward parity</a>
+  alone does not certify a backward implementation.
 </div>
 
 <!-- ═══════════════════════════════════════════ INFERENCE VS TRAINING -->
-<h2 id="inference">7 · Inference vs. training — where FlashAttention matters most</h2>
+<h2 id="inference">8 · Inference vs. training — where FlashAttention matters most</h2>
 
 <p>
   FlashAttention applies to both training and inference, but its relative impact differs between the two phases:
@@ -541,7 +694,7 @@
 </div>
 
 <!-- ═══════════════════════════════════════════ SUMMARY -->
-<h2 id="summary">8 · Summary</h2>
+<h2 id="summary">9 · Summary</h2>
 
 <div class="summary-grid">
   <div class="summary-card">
@@ -550,15 +703,15 @@
   </div>
   <div class="summary-card">
     <div class="summary-card-label">The insight</div>
-    <p>Process Q, K, V in SRAM tiles. Accumulate the output using an online softmax recurrence that maintains running max, sum, and partial output — exact result, no HBM writes for S or P.</p>
+    <p>Process Q, K, V in SRAM tiles. Online softmax maintains a running max, sum, and partial output without HBM writes for S or P; the recurrence is exact in real arithmetic.</p>
   </div>
   <div class="summary-card">
     <div class="summary-card-label">IO reduction</div>
     <p>HBM I/O drops from \(O(N^2)\) to \(O(Nd)\). Reduction factor = \(N/d\): 32× at N=4K, d=128; 256× at N=32K.</p>
   </div>
   <div class="summary-card">
-    <div class="summary-card-label">Exact output</div>
-    <p>No approximation — FlashAttention computes mathematically identical results to standard attention. Same FLOPs; all wins are from reduced memory traffic.</p>
+    <div class="summary-card-label">Numerical contract</div>
+    <p>Dense attention without a sparse/low-rank approximation is not a promise of identical floating-point results. Check forward accuracy, the backward reference, and training behavior separately.</p>
   </div>
   <div class="summary-card">
     <div class="summary-card-label">FA-2 / FA-3</div>
@@ -633,18 +786,23 @@
     cfg.yTicks.forEach(t => {
       const py = Y(t);
       ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
-      ctx.fillText(String(t), mL - 8, py);
+      ctx.fillText(cfg.yTickFormat ? cfg.yTickFormat(t) : String(t), mL - 8, py);
     });
 
     // axis titles
     ctx.fillStyle = cssVar('--plot-tick');
     ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.fillText('head dimension d', mL + pw / 2, cssH - 1);
+    ctx.fillText(cfg.xLabel || 'head dimension d', mL + pw / 2, cssH - 1);
     ctx.save();
     ctx.translate(11, mT + ph / 2); ctx.rotate(-Math.PI / 2);
     ctx.textBaseline = 'top';
-    ctx.fillText('cycles per 128×128 tile', 0, 0);
+    ctx.fillText(cfg.yLabel || 'cycles per 128×128 tile', 0, 0);
     ctx.restore();
+
+    ctx.strokeStyle = cssVar('--plot-axis');
+    ctx.lineWidth = 1.25;
+    if (yMin <= 0 && yMax >= 0) { const py = Y(0); ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke(); }
+    if (xMin <= 0 && xMax >= 0) { const px = X(0); ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke(); }
 
     // curves (clipped to plot area)
     ctx.save();
@@ -665,10 +823,10 @@
     });
     ctx.setLineDash([]);
 
-    // mark the d = 128 crossing on B200
-    const cx = X(128), cy = Y(expCycles);
-    ctx.fillStyle = cssVar('--plot-green');
-    ctx.beginPath(); ctx.arc(cx, cy, 4, 0, 2 * Math.PI); ctx.fill();
+    if (cfg.point) {
+      ctx.fillStyle = cssVar(cfg.point.color);
+      ctx.beginPath(); ctx.arc(X(cfg.point.x), Y(cfg.point.y), 4, 0, 2 * Math.PI); ctx.fill();
+    }
     ctx.restore();
   }
 
@@ -678,6 +836,7 @@
     xMin: 0, xMax: 256, yMin: 0, yMax: 4300,
     xTicks: [0, 64, 128, 192, 256],
     yTicks: [0, 1024, 2048, 3072, 4096],
+    point: { x: 128, y: expCycles, color: '--plot-green' },
     series: [
       { fn: d => mmaCycles(d, 4096), color: '--plot-gray',  width: 1.75, dash: [5, 4] },
       { fn: d => mmaCycles(d, 8192), color: '--plot-green', width: 2.75 },
@@ -685,7 +844,70 @@
     ]
   }]);
 
-  function renderAll() { plots.forEach(([c, cfg]) => drawPlot(c, cfg)); }
+  const keys = [-1, -0.25, 0.5, 1.25];
+  const values = [-1, 0.5, 0.25, 2];
+  const castBuffer = new ArrayBuffer(4);
+  const castFloat = new Float32Array(castBuffer);
+  const castBits = new Uint32Array(castBuffer);
+  const sum = xs => xs.reduce((total, x) => total + x, 0);
+  const dot = (xs, ys) => sum(xs.map((x, i) => x * ys[i]));
+
+  function roundBF16(x) {
+    castFloat[0] = x;
+    const bits = castBits[0];
+    castBits[0] = (bits + 0x7fff + ((bits >>> 16) & 1)) & 0xffff0000;
+    return castFloat[0];
+  }
+
+  function attentionState(query) {
+    const scores = keys.map(key => query * key);
+    const maximum = Math.max(...scores);
+    const exponentials = scores.map(score => Math.exp(score - maximum));
+    const mass = sum(exponentials);
+    const probabilities = exponentials.map(value => value / mass);
+    const output = dot(probabilities, values);
+    const gradient = probabilities.map((p, j) => p * (values[j] - output));
+    const rounded = gradient.map(roundBF16);
+    return {
+      probabilities, output, gradient, rounded,
+      reference: dot(gradient, keys),
+      roundedBase: dot(rounded, keys),
+      rho: sum(rounded)
+    };
+  }
+
+  const offsetCanvas = document.getElementById('plot-key-offset');
+  const offsetInput = document.getElementById('key-offset');
+  const queryInput = document.getElementById('query-scale');
+  const format = value => Number(value.toPrecision(6)).toString();
+
+  function renderKeyOffset() {
+    const query = Number(queryInput.value), offset = Number(offsetInput.value);
+    const state = attentionState(query);
+    const roundedAt = shift => state.roundedBase + shift * state.rho;
+    document.getElementById('key-offset-value').value = String(offset);
+    document.getElementById('query-scale-value').value = String(query);
+    document.getElementById('key-offset-result').textContent =
+      `BF16 row sum = ${format(state.rho)}. Reference dQ = ${format(state.reference)}; rounded dQ = ${format(roundedAt(offset))}. The common offset contributes ${format(offset * state.rho)} to the rounded gradient.`;
+    const low = Math.min(0, state.reference, roundedAt(0), roundedAt(4096));
+    const high = Math.max(0, state.reference, roundedAt(0), roundedAt(4096));
+    const pad = Math.max(0.0001, (high - low) * 0.12);
+    drawPlot(offsetCanvas, {
+      xMin: 0, xMax: 4096, yMin: low - pad, yMax: high + pad,
+      xTicks: [0, 1024, 2048, 3072, 4096],
+      yTicks: Array.from({ length: 5 }, (_, i) => low + (high - low) * i / 4),
+      yTickFormat: value => Number(value.toPrecision(3)).toString(),
+      xLabel: 'Common key offset', yLabel: 'Query gradient dQ',
+      point: { x: offset, y: roundedAt(offset), color: '--plot-violet' },
+      series: [
+        { fn: () => state.reference, color: '--plot-gray', width: 1.75, dash: [5, 4] },
+        { fn: roundedAt, color: '--plot-violet', width: 2.5 }
+      ]
+    });
+  }
+
+  [offsetInput, queryInput].forEach(input => input.addEventListener('input', renderKeyOffset));
+  function renderAll() { plots.forEach(([c, cfg]) => drawPlot(c, cfg)); renderKeyOffset(); }
   renderAll();
   let raf;
   window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(renderAll); });

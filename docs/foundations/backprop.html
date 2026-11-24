@@ -493,7 +493,15 @@
     <li><strong>Accumulate</strong> into each leaf's <code>.grad</code> — the fan-out-sums rule means a parameter used in several places receives <code>+=</code> from each, which is why you must <code>zero_grad()</code> between steps.</li>
   </ol>
   <div class="note">
-    This is where backprop meets systems. The tape's captured activations are the dominant training-memory cost, and <em>activation checkpointing</em> drops most of them, re-running a forward segment during the backward pass to regenerate the inputs a VJP needs — spending compute to buy memory. The recompute is the same forward you just saw; it is purely a storage trade, and it is the lever that decides MFU-vs-HFU on the <a href="../systems/mfu.html" style="color:var(--accent);">MFU</a> page.
+    This is where backprop meets systems. The tape's captured activations are the dominant
+    training-memory cost, and <em>activation checkpointing</em> drops most of them, re-running
+    a forward segment during backward to regenerate the inputs a VJP needs. This spends
+    compute to buy memory, as accounted for by <a href="../systems/mfu.html" style="color:var(--accent);">MFU versus HFU</a>.
+    It preserves the intended gradient only if recomputation preserves the relevant forward
+    values and numerical and stochastic behavior. A differently rounded or resampled activation
+    can change what backward computes. See the
+    <a href="../systems/pytorch-execution.html#backward-state" style="color:var(--accent);">per-use saved-state contract</a>
+    for the distinction between original, rounded, and independently re-rounded values.
   </div>
 
   <h2 id="summary">8. Summary</h2>

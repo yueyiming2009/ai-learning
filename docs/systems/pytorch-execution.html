@@ -195,6 +195,7 @@
     <a href="#what-runs">What runs</a>
     <a href="#tensors">Tensors</a>
     <a href="#autograd">Autograd</a>
+    <a href="#backward-state">Saved-state contract</a>
     <a href="#eager-vs-graph">Eager vs. graph</a>
     <a href="#dispatch">Dispatch</a>
     <a href="#cost">The cost of eager</a>
@@ -308,6 +309,50 @@
   </div>
 
   <p>So “run a model” is never a single pass. It is a forward sweep that <em>also</em> builds and feeds a graph, followed by a backward sweep that replays it. Every cost discussed below — the per-op launch, the round-trip to HBM — is paid on both.</p>
+
+  <h3 id="backward-state">Saved tensors are part of the backward contract</h3>
+  <p>A saved tensor is not just a memory allocation: it supplies a specific value to a
+    specific gradient computation. In low-precision execution, the original, the forward's
+    rounded copy, and an independently re-rounded copy need not be interchangeable.
+    <a href="https://arxiv.org/html/2609.39813v1">Backward-State Policy Is Part of the Learning
+    Algorithm</a> (September 2026 preprint) argues that the choice must be specified
+    <strong>per use</strong>, not justified only by small copy error or a normal final loss.</p>
+  <p>First declare which gradient is intended. The paper uses the realized forward computation
+    with a <strong>straight-through convention</strong>: rounding changes forward values,
+    but its backward derivative is treated as the identity. This is a chosen surrogate
+    gradient, not the literal derivative of a discontinuous rounding function.</p>
+  <div class="step">
+    <div class="step-label">One tensor, two consumers: an illustrative attention operator</div>
+    <p>Let \(P=\mathrm{softmax}(S)\), \(\widehat P=Q(P)\), and \(O=\widehat PV\), where
+      \(Q\) rounds probabilities and its backward uses the straight-through convention.
+      Given \(dO\), the reference rules are:</p>
+    \[
+      dV=\widehat P^\top dO,\qquad dP=dOV^\top,\qquad
+      dS=P\odot\left(dP-\mathrm{rowsum}(P\odot dP)\right).
+    \]
+    <p>The value-gradient contraction needs <strong>rounded \(\widehat P\)</strong>, because
+      that is what multiplied \(V\). The softmax VJP needs <strong>original \(P\)</strong>,
+      because that is what softmax produced before rounding. Using one copy for both changes
+      the declared gradient. This is an operator example, not a complete production
+      FlashAttention kernel or a proposal to materialize its full probability matrix.</p>
+  </div>
+  <p>For this example, substituting the saved rounded-forward output into
+    \(\mathrm{rowsum}(dO\odot O)\) gives \(\mathrm{rowsum}(\widehat P\odot dP)\), not the
+    original-\(P\) centering term above. Algebraic shortcuts must be checked against the
+    actual precision path. See <a href="../inference/flash-attention.html#saved-output-error">saved-output
+    error in attention backward</a> for the related numerical failure mechanism.</p>
+  <p><strong>Unbiased rounding alone is insufficient.</strong> If downstream computation saw
+    the forward's rounding error, its incoming gradient can depend on that error. Reusing
+    that same rounded copy can therefore behave differently from an independent draw with
+    the same marginal distribution. The paper reports opposite training outcomes for these
+    choices in paired 390M runs with an <em>emulated</em> FP8 attention backward. This does not
+    imply that independently re-rounding every saved tensor is correct; conditional
+    unbiasedness must be established for each use and its chosen reference.</p>
+  <p>For saved-tensor compression, custom backward kernels, or checkpoint recomputation:
+    record which forward value each VJP consumes, preserve required precision and stochastic
+    state, and compare operator gradients against that reference. Then check training
+    behavior separately. A storage optimization is semantics-preserving only when it
+    preserves the required values or a justified estimator of their contribution.</p>
 
   <!-- ══════════════════════════════════════════ -->
   <h2 id="eager-vs-graph">Eager vs. graph execution</h2>
