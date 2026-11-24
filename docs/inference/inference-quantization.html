@@ -124,6 +124,7 @@
     <a href="../index.html#inference-inference-techniques" style="border-right: 1px solid var(--border); padding-right: 12px; margin-right: 4px;" title="Back to Inference › Inference Techniques">↑ Inference Techniques</a>
     <a href="#why-inference">Why inference</a>
     <a href="#weight-only">Weight-only</a>
+    <a href="#rocket-storage">Storage vs compute</a>
     <a href="#wawa">W+A quantization</a>
     <a href="#fp8">FP8</a>
     <a href="#fp4">FP4</a>
@@ -216,6 +217,41 @@
   </ul>
 </div>
 
+<h3 id="rocket-storage">Rocket: MXFP8 storage does not mean MXFP8 computation</h3>
+<p>
+  Microsoft's <a href="https://microsoft.ai/news/rl-infrastructure-at-microsoft-ai/">November 23 Base-2 RL account</a>
+  separates three decisions: how parameters are stored, how matrix multiplications execute,
+  and which quantization effects the learner reproduces. MoE experts account for over 95% of
+  Base-2's parameters, so compressing their weights nearly halves the sampler's weight footprint,
+  permitting fewer GPUs per replica and a smaller expert-parallel degree.
+</p>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Path</th><th>Reported precision contract</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td>Sampler MoE weights</td><td>Store in MXFP8; dequantize to BF16 for multiplication with BF16 activations.</td><td>Reduce storage while avoiding the larger sampler/learner discrepancy observed with native MXFP8 expert matrix multiplication.</td></tr>
+      <tr><td>Learner MoE forward</td><td>Quantize weights to MXFP8 and immediately dequantize to BF16 for computation.</td><td>Expose the learner to the sampler's quantized weight values rather than an unquantized alternative.</td></tr>
+      <tr><td>Selected sampler KV entries</td><td>Store in MXFP8; dequantize to BF16 inside the attention kernel.</td><td>Reduce cache footprint while retaining higher-precision computation.</td></tr>
+      <tr><td>Corresponding learner KV path</td><td>Apply matching KV fake quantization.</td><td>Reproduce the sampler's quantization effects in its forward computation.</td></tr>
+    </tbody>
+  </table>
+</div>
+<p>
+  Schematic forward values are
+  \(\widehat W=D_{\mathrm{BF16}}(Q_{\mathrm{MXFP8}}(W))\), with the same quantize/dequantize
+  contract on both sides. <strong>Fake quantization still changes numerical values</strong>;
+  it does not mean skipping rounding. This expression does not specify the backward estimator,
+  optimizer-state precision, or a released Rocket implementation.
+  Matching quantization is necessary here but insufficient for
+  <a href="../rl/training-inference-mismatch.html#rocket-parity">bitwise kernel parity</a>.
+</p>
+<p>
+  Contrast <a href="../models/inkling-2.html#numerics">Inkling 2's native NVFP4 expert forward passes</a>
+  with MXFP8 backward passes and layer exceptions. Compressed storage, native low-bit arithmetic,
+  and learner fake quantization are different mechanisms, not interchangeable meanings of
+  “low-precision RL.”
+</p>
+
 <!-- ═══════════════════════════════════════════ W+A QUANTIZATION -->
 <h2 id="wawa">3 · Weight + activation quantization (W8A8)</h2>
 
@@ -305,7 +341,10 @@
 <h2 id="kv-quant">6 · KV cache quantization</h2>
 
 <p>
-  The KV cache grows with context length and limits batch size (see <a href="kv-cache.html">KV Cache</a>). Quantizing K and V tensors from FP16 to INT8 or FP8 halves KV memory, enabling either 2× more concurrent requests or 2× longer contexts at the same request count.
+  The KV cache grows with context length and limits batch size (see <a href="kv-cache.html">KV Cache</a>).
+  Quantizing all K and V entries from 16 to 8 bits halves their payload bytes, before scales and
+  other overheads. That can approach 2× cache capacity if all relevant layers are quantized;
+  selective precision, fixed allocations, and other memory consumers reduce the realized gain.
 </p>
 
 <div class="step">
@@ -320,9 +359,39 @@
 </p>
 <ul>
   <li><strong>Per-head scales:</strong> use separate scale factors per attention head (rather than per-tensor) to capture the different value ranges across heads. This reduces quantization error significantly with minimal storage overhead.</li>
-  <li><strong>Key-only quantization:</strong> some deployments quantize only the V cache (less sensitive) and leave K in FP16, achieving 1.5× compression instead of 2× with better quality preservation.</li>
+  <li><strong>Value-only quantization:</strong> retaining K in 16 bits while storing V in 8 bits uses 75% of the original payload, or about 1.33× capacity for equal-sized K/V tensors before overheads. Whether this preserves quality better depends on the workload.</li>
   <li><strong>FP8 KV (vs. INT8):</strong> FP8's floating-point representation handles the dynamic range of K/V values better than INT8, with similar compression. Preferred when the hardware supports it.</li>
 </ul>
+
+<h3 id="selective-kv">Selective KV precision: local and global layers need not match</h3>
+<p>
+  Base-2 has five local-attention layers for each global-attention layer. MAI's ablations found
+  substantially larger sampler/learner log-probability discrepancies when quantizing both cache
+  types than when quantizing only global-attention caches. Its reported sampler policy is:
+</p>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Layers</th><th>KV storage</th><th>Computation</th></tr></thead>
+    <tbody>
+      <tr><td>All local-attention layers</td><td>BF16</td><td>BF16</td></tr>
+      <tr><td>Final three global-attention layers</td><td>BF16 as a numerical precaution</td><td>BF16</td></tr>
+      <tr><td>Other global-attention layers</td><td>MXFP8</td><td>Dequantize to BF16 inside attention</td></tr>
+    </tbody>
+  </table>
+</div>
+<p>
+  This accommodates approximately <strong>67% more global-context tokens</strong> than the
+  BF16-cache configuration while maintaining roughly the same local-cache capacity. It is a
+  measured configuration-specific capacity result, not 67% higher throughput or a universal
+  compression ratio. Selective high-precision layers and scale overhead are why “8-bit cache”
+  alone cannot predict end-to-end capacity.
+</p>
+<p>
+  Source: <a href="https://microsoft.ai/news/rl-infrastructure-at-microsoft-ai/">Numerical precision</a>.
+  The older <a href="../models/mai-thinking-1.html#rocket">Thinking-1 recipe</a> retained BF16
+  sampler weights and caches; the newer policy should not be retroactively assigned to it.
+  Framework context: <a href="../rl/rocket.html#base2-parity">Rocket</a>.
+</p>
 
 <!-- ═══════════════════════════════════════════ METHODS -->
 <h2 id="methods">7 · Calibration methods — AWQ, GPTQ, and SmoothQuant</h2>

@@ -98,7 +98,7 @@
     <a href="#comparison">Correction map</a><a href="#interactive">Compare gradients</a>
     <a href="#drift">Drift</a><a href="#score-centering">Score centering</a>
     <a href="#stable-reinforce">StableReinforce</a>
-    <a href="#mitigation">Mitigation</a><a href="#references">Sources</a>
+    <a href="#mitigation">Mitigation</a><a href="#rocket-parity">Numerical parity</a><a href="#references">Sources</a>
   </div>
 </nav>
 <header class="hero">
@@ -519,8 +519,107 @@ q_y = 0.050, p_y = 0.500: r = 10, binary TV = 0.450 -> drop</code></pre>
     <a href="async-rl-monitoring.html#is-stats">ratio statistics</a>, and
     <a href="async-rl.html#knobs">queue/version controls</a> for operational diagnosis.</p>
 
+  <h3 id="rocket-parity">Make the reduction structure part of the contract</h3>
+  <p><a href="https://microsoft.ai/news/rl-infrastructure-at-microsoft-ai/">MAI's November 23 Rocket article</a>
+    reports bitwise sampler/learner parity for identical checkpoints and inputs, with no noticeable
+    performance degradation in its setup. Matching dtypes alone is insufficient: both paths must
+    also agree on arithmetic grouping, intermediate rounding, and the values being combined.
+    The mechanisms below are reported design choices; the illustrative kernel contract is not
+    released Rocket source code.</p>
+
+  <h3 id="attention-projection-parity">Attention: gather inputs, rather than reduce projected outputs</h3>
+  <p>For one token, write its concatenated head outputs as \(z=[z_0,z_1]\), and partition the
+    rows of \(W_O\) into \(W_0,W_1\), using the convention \(y=zW_O\). Normal attention TP
+    computes \(y_0=z_0W_0\) and \(y_1=z_1W_1\) separately, then sums the full-width partial
+    outputs across GPUs:</p>
+  \[
+    y=zW_O=z_0W_0+z_1W_1 \qquad \text{in exact arithmetic}.
+  \]
+  <pre><code>Usual row-parallel projection:
+  GPU 0: z0 @ W0 -> y0
+  GPU 1: z1 @ W1 -> y1
+  AllReduce(sum): y = y0 + y1
+
+Rocket's reported change:
+  AllGather head outputs: z = concatenate(z0, z1)
+  Replicate W_O; compute each token's full z @ W_O locally</code></pre>
+  <p>AllGather transports values without summing them. Attention-head work stays distributed,
+    but the projection's entire contraction for a token can use the same local reduction
+    structure as the non-TP learner. This spends replicated projection-weight memory and
+    gathered activations; it does not remove communication. Replicated weights do not imply
+    that every GPU must redundantly project every token. See
+    <a href="../systems/tensor-parallelism.html#attention">standard head-split attention TP</a>.</p>
+
+  <h3 id="expert-combine-parity">MoE: return separate contributions, then combine in FP32</h3>
+  <p>Rocket distributes complete experts with EP, without TP inside each expert. A token still
+    selects several experts, so its MoE output is
+    \(y_t=\sum_{k=0}^{K-1}a_{t,k}e_{t,k}\), where \(e_{t,k}\) is an expert's output vector and
+    the normalized routing weights satisfy \(\sum_k a_{t,k}=1\).
+    An all-to-all returns <em>individual</em> expert outputs to the device that owned the token
+    at this layer's entry. That device performs the weighted sum locally in FP32. The exchange
+    is transport; the subsequent combination is arithmetic.</p>
+  <p>For example, routing weights \(0.75,0.25\) and expert vectors \([2,4],[10,0]\) yield
+    \([4,3]\). At real tensor sizes, differences in reduction grouping and precision can change
+    rounded results even when the mathematical sum is the same. The
+    <a href="../systems/moe-parallelism.html#dispatch">dispatch/combine walkthrough</a> explains
+    the token and expert ownership.</p>
+  <div class="step">
+    <strong>One way to enforce the contract, not Rocket's disclosed kernel:</strong>
+    <ol>
+      <li>Carry token and expert-slot IDs through dispatch. Restore outputs and corresponding
+        weights to one agreed slot order, independent of network arrival order or EP placement.</li>
+      <li>Wait for the required outputs. Give each token/hidden-coordinate pair a single
+        accumulator owner, and traverse its experts in that fixed order.</li>
+      <li>Convert operands to FP32 before multiplication; agree on fused versus separately
+        rounded multiply/add, accumulator precision, final cast, and subnormal handling.</li>
+      <li>Use the same arithmetic in both forward paths. Keep the reduction structure fixed
+        across batch sizes; a fixed parallel tree is also valid. Avoid unordered floating-point
+        atomic additions into the result.</li>
+    </ol>
+  </div>
+  <pre><code>// Illustrative CUDA kernel core: buffers are FP32.
+// One thread owns token t and hidden coordinate d.
+float acc = 0.0f;
+for (int k = 0; k &lt; K; ++k) {
+    float w = weights[t * K + k];
+    float v = outputs[(t * K + k) * D + d];
+    acc = __fmaf_rn(w, v, acc);
+}
+result[t * D + d] = acc;</code></pre>
+  <p><code>__fmaf_rn</code> specifies an FP32 fused multiply-add with round-to-nearest-even.
+    Matching compiler numerical modes, including flush-to-zero behavior, remains necessary.
+    Threads can run freely across tokens and hidden coordinates: no other thread changes a
+    coordinate's accumulator. A learner integration also needs a correct backward; this sketch
+    specifies only the forward combination. FP32 combining neither makes expert GEMMs FP32
+    nor restores information already lost in their outputs.</p>
+  <p>Verify with identical expert vectors and routing weights, comparing raw output bits while
+    varying batch size, token order, EP placement, and communication completion order.
+    A deterministic kernel can still disagree with another deterministic kernel. Likewise,
+    fixing the combine step cannot repair different routing choices, normalization, or expert outputs.</p>
+
+  <h3 id="attention-kernel-parity">Attention kernels: match tiles and split boundaries</h3>
+  <p>MAI uses a shared FA4 implementation across sampler decode, sampler prefill, and learner
+    forward. Sliding-window attention aligns sampler K-block boundaries with learner tiles and
+    masks positions outside the valid window. This prevents compact cache layouts from changing
+    the grouping in online-softmax and attention-value reductions. The stack jointly tunes the
+    number of KV tokens per split, then uses that fixed value and matching split boundaries
+    across all three paths. See <a href="../inference/flash-attention.html#online-softmax">the
+    online-softmax recurrence</a> for the arithmetic being grouped.</p>
+  <div class="note"><strong>Parity is scoped, not a universal on-policy switch.</strong>
+    The reported learning-curve comparison is on a smaller 180B-total/7B-active model, with
+    runs launched roughly a month apart from the same checkpoint. It does not isolate each
+    change. Same-checkpoint parity removes an implementation discrepancy; it does not make
+    old-checkpoint rollout data fresh. <a href="rocket.html#base2-parity">Rocket's case study</a>
+    keeps the precision, scheduling, and evidence context together.</div>
+
   <h2 id="references">8. Sources and next steps</h2>
   <ul>
+    <li><a href="https://microsoft.ai/news/rl-infrastructure-at-microsoft-ai/">RL infrastructure at Microsoft AI</a>,
+      November 23, 2026: reported projection, expert-combination, and attention-kernel parity mechanisms.</li>
+    <li><a href="https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/">Defeating Nondeterminism in LLM Inference</a>:
+      run-to-run determinism versus batch invariance; reduction structure matters even without atomics.</li>
+    <li><a href="https://docs.nvidia.com/cuda/cuda-math-api/cuda_math_api/group__CUDA__MATH__INTRINSIC__SINGLE.html">CUDA single-precision intrinsics</a>:
+      explicit FP32 arithmetic and rounding for the illustrative combine contract.</li>
     <li>Marek &amp; Ryabinin, <a href="https://arxiv.org/html/2609.20807v1">Score Centering Stabilizes Off-policy Reinforcement Learning</a>:
       <a href="https://arxiv.org/html/2609.20807v1#A2.T1">correction grid</a>,
       <a href="https://arxiv.org/html/2609.20807v1#S4">drift and centering</a>,

@@ -45,6 +45,12 @@
       --stall-fg: #b45309;
       --collapse-border: #ef4444;
       --collapse-fg: #b91c1c;
+      --fig-bg: #ffffff;
+      --plot-grid: #eceef1;
+      --plot-axis: #c7cbd1;
+      --plot-tick: #6b7280;
+      --plot-gray: #9ca3af;
+      --plot-violet: #6d28d9;
     }
 
     @media (prefers-color-scheme: dark) {
@@ -72,6 +78,12 @@
         --stall-fg: #fbbf24;
         --collapse-border: #b91c1c;
         --collapse-fg: #f87171;
+        --fig-bg: #14181e;
+        --plot-grid: #232830;
+        --plot-axis: #3a4149;
+        --plot-tick: #9aa1ab;
+        --plot-gray: #9ca3af;
+        --plot-violet: #a78bfa;
       }
     }
 
@@ -327,6 +339,19 @@
     .fix-card ul { padding-left: 1.2em; margin: 0; }
     .fix-card li { font-size: 0.85rem; margin-bottom: 4px; }
 
+    .figure { background: var(--fig-bg); border: 1px solid var(--border); border-radius: 10px; padding: 18px 16px 14px; margin: 1.6em 0; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+    .figure canvas { width: 100%; height: 300px; display: block; }
+    .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; justify-content: center; margin-top: 12px; font-size: 0.82rem; }
+    .legend-item { display: flex; align-items: center; gap: 7px; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, var(--plot-gray) 0 5px, transparent 5px 9px); }
+    .figure-caption { font-size: 0.85rem; color: var(--muted); line-height: 1.6; margin: 14px 4px 2px; }
+    .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-bottom: 14px; }
+    .controls label { font-size: 0.85rem; }
+    .controls input { display: block; width: 100%; accent-color: var(--accent); }
+    .plot-result { font-size: 0.88rem; margin: 12px 4px; }
+    .figure :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
     /* ── Responsive ──────────────────────────── */
     @media (max-width: 600px) {
       .hero { padding: 40px 16px 36px; }
@@ -495,8 +520,9 @@ separate async
   <h3>Where age comes from</h3>
 
   <ul>
-    <li><strong>Generation age:</strong> updates completed while a long trajectory was still producing tokens or waiting on tools.</li>
+    <li><strong>Generation age:</strong> updates completed after this token was sampled while its trajectory was still producing later tokens or waiting on tools.</li>
     <li><strong>Reward age:</strong> tests, judges or remote environments finished after generation.</li>
+    <li><strong>Group age:</strong> a finished rollout waited for sibling rollouts and group grading before its GRPO advantage was available.</li>
     <li><strong>Queue age:</strong> a completed group waited in the buffer before the trainer consumed it.</li>
     <li><strong>Publication age:</strong> rollout engines continued using an older checkpoint between weight synchronizations.</li>
   </ul>
@@ -507,12 +533,62 @@ separate async
     <div class="result-label">Operational approximation</div>
     \[
       K \approx K_{\mathrm{publication}}
-      +u\,(T_{\mathrm{generation}}+T_{\mathrm{reward}}+W_{\mathrm{queue}})
+      +u\,(T_{\mathrm{generation}}+T_{\mathrm{reward}}+W_{\mathrm{group}}+W_{\mathrm{queue}})
     \]
     <p style="font-size:0.88rem; color:var(--ink); margin-top:8px;">
       \(K_{\mathrm{publication}}\) = rollout engine's initial version lag ·
-      \(u\) = trainer updates per second. This estimates a distribution, not a guarantee.
+      \(u\) = trainer updates per second. Count non-overlapping delays after this token's
+      generation; put any remaining group-grading time in \(W_{\mathrm{group}}\).
+      This estimates a distribution, not a guarantee.
     </p>
+  </div>
+
+  <h3 id="group-staleness">The GRPO barrier can outlive a finished rollout</h3>
+  <p>A token in a fast rollout may finish generation and grading promptly but remain unusable
+    until its siblings finish and group-relative advantages can be computed.
+    <a href="https://microsoft.ai/news/rl-infrastructure-at-microsoft-ai/">Rocket's November account</a>
+    illustrates a 7.6-hour sibling wait followed by only 12 seconds in the learner queue.
+    Reducing the controller queue alone cannot remove that group barrier.</p>
+  <p>Rocket therefore prioritizes already-started rollouts, adjusts in-flight concurrency,
+    and drops failed rollouts rather than waiting for retries. Dropping failures trades
+    freshness against noise or selection bias in the GRPO baseline. Waiting <em>before the
+    first token</em> consumes no token-age budget yet, but can already hold a sandbox or consume
+    a timeout. See <a href="rocket.html#base2-freshness">the source-scoped scheduling policy</a>.</p>
+
+  <h3 id="update-rate-staleness">Faster training steps can make the same token older</h3>
+  <p>Hold a token's wall-clock delay and its initial sampler lag fixed. If an inference-bound
+    job collects the same batch size faster, more learner updates fit inside that delay.
+    Adding inference servers can therefore increase version age even when the trajectory
+    takes exactly as long. The relationship is through the <em>measured update rate</em>,
+    not a universal linear mapping from GPU count.</p>
+  <div class="figure">
+    <div class="controls">
+      <label for="token-delay">Token-to-training delay, minutes:
+        <output id="delay-value" for="token-delay">120</output>
+        <input id="token-delay" type="range" min="0" max="480" step="15" value="120">
+      </label>
+      <label for="initial-lag">Initial sampler lag, updates:
+        <output id="lag-value" for="initial-lag">2</output>
+        <input id="initial-lag" type="range" min="0" max="8" step="1" value="2">
+      </label>
+      <label for="update-rate">Learner update-rate multiplier:
+        <output id="rate-value" for="update-rate">2</output>
+        <input id="update-rate" type="range" min="1" max="4" step="0.25" value="2">
+      </label>
+    </div>
+    <canvas id="plot-update-age" role="img" aria-label="Illustrative token age in learner updates versus learner update-rate multiplier" aria-describedby="update-age-caption update-age-result"></canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-violet)"></span>Age at faster update rates</span>
+      <span class="legend-item"><span class="lg dash"></span>Age at the baseline rate</span>
+    </div>
+    <p class="plot-result" id="update-age-result" aria-live="polite">At 2x the update rate: approximately 10 updates old, versus 6 at baseline.</p>
+    <p class="figure-caption" id="update-age-caption"><strong>Same delay, more policy updates.</strong>
+      Synthetic baseline: one learner update every 30 minutes. Age is initial lag plus delay
+      times update rate; the dot marks the selected rate. The delay includes remaining rollout,
+      grading, group, and queue waits. Initial lag stays fixed, and fractional ages are a
+      continuous approximation, not measured Rocket data or a safe-staleness threshold.</p>
+    <noscript><p>With a 120-minute delay and initial lag 2, one update per 30 minutes gives age 6.
+      Doubling the update rate gives age 10 without changing the delay. JavaScript enables the sweep.</p></noscript>
   </div>
 
   <h3>Queue balance</h3>
@@ -536,6 +612,19 @@ separate async
   but it does not predict policy lag by itself. The age distribution also depends on rollout
   duration, reward latency, sync cadence, partial-rollout policy and whether the freshness gate
   uses each sample's newest, mean or <em>oldest</em> weight version.</p>
+  <p><strong>Utilization is not the sole objective.</strong> Rocket deliberately overallocates
+    learner capacity to keep the job inference-bound and the completed-group queue short.
+    Some learner idleness buys freshness. That is a recipe-specific trade-off, not a
+    recommendation to maximize idle GPUs or a contradiction of throughput matching.</p>
+  <div class="note"><strong>Tolerance is not a comparable scalar across systems.</strong>
+    <a href="https://thinkingmachines.ai/news/inkling-2-small/">Inkling 2 Small</a> reports median
+    staleness of 17 updates and uses StableReinforce; Rocket's Base-2 account emphasizes reducing
+    age but gives no directly comparable median or limit. An observed median is not a tolerance
+    ceiling. Update magnitude, batch size, task mix, and the age distribution matter;
+    neither report establishes that one system tolerates more policy drift.
+    <a href="training-inference-mismatch.html#stable-reinforce">Score centering</a> and
+    <a href="training-inference-mismatch.html#rocket-parity">same-checkpoint numerical parity</a>
+    address different aspects of the probability contract.</div>
 
   <!-- ── §4 IS ──────────────────────────────── -->
   <h2 id="is">4. Three Policies and Three Different “Sequence” Quantities</h2>
@@ -800,6 +889,14 @@ separate async
   <div class="table-wrap">
     <table>
       <tr>
+        <td><a href="https://microsoft.ai/news/rl-infrastructure-at-microsoft-ai/">RL infrastructure at Microsoft AI</a>, November 23, 2026</td>
+        <td>Token-age decomposition, GRPO sibling waits, active-rollout priority, failure dropping, and inference-bound operation</td>
+      </tr>
+      <tr>
+        <td><a href="https://thinkingmachines.ai/news/inkling-2-small/">Introducing Inkling 2 Small</a></td>
+        <td>Reported median staleness of 17 updates; not a maximum safe age or a controlled comparison with Rocket</td>
+      </tr>
+      <tr>
         <td><a href="https://verl.readthedocs.io/en/latest/advance/fully_async.html">verl Fully Async Policy Trainer</a></td>
         <td>Separate-pool streaming architecture, fractional stale-production allowance, partial rollout, metrics and 128-GPU experiments</td>
       </tr>
@@ -851,5 +948,106 @@ separate async
   </div>
 
 </div>
+<script>
+(() => {
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const tokenAge = (delayMinutes, initialLag, rateMultiplier) => initialLag + delayMinutes * rateMultiplier / 30;
+
+  function drawPlot(canvas, cfg) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+    const mL = 44, mR = 16, mT = 28, mB = 46;
+    const pw = cssW - mL - mR, ph = cssH - mT - mB;
+    const { xMin, xMax, yMin, yMax } = cfg;
+    const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
+    const Y = y => mT + (yMax - y) / (yMax - yMin) * ph;
+    ctx.font = '11px Inter, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--plot-grid');
+    ctx.fillStyle = cssVar('--plot-tick');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(t => {
+      const px = X(t);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.fillText(String(t), px, mT + ph + 6);
+    });
+    ctx.fillText('Learner update-rate multiplier', mL + pw / 2, cssH - 13);
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(t => {
+      const py = Y(t);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+      ctx.fillText(String(t), mL - 8, py);
+    });
+    ctx.textAlign = 'left';
+    ctx.fillText('Token age (learner updates)', mL, 12);
+    ctx.strokeStyle = cssVar('--plot-axis');
+    ctx.lineWidth = 1.25;
+    if (yMin <= 0 && yMax >= 0) { const py = Y(0); ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke(); }
+    if (xMin <= 0 && xMax >= 0) { const px = X(0); ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke(); }
+    ctx.save();
+    ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    cfg.series.forEach(s => {
+      ctx.beginPath();
+      ctx.lineWidth = s.width || 2;
+      ctx.strokeStyle = cssVar(s.color);
+      ctx.setLineDash(s.dash || []);
+      for (let i = 0; i <= 260; i++) {
+        const x = xMin + (xMax - xMin) * i / 260;
+        const px = X(x), py = Y(s.fn(x));
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    ctx.fillStyle = cssVar('--plot-violet');
+    ctx.beginPath(); ctx.arc(X(cfg.point.x), Y(cfg.point.y), 4, 0, 2 * Math.PI); ctx.fill();
+    ctx.restore();
+  }
+
+  const element = id => document.getElementById(id);
+  const canvas = element('plot-update-age');
+  const delayInput = element('token-delay');
+  const lagInput = element('initial-lag');
+  const rateInput = element('update-rate');
+
+  function render() {
+    const delay = Number(delayInput.value), lag = Number(lagInput.value), rate = Number(rateInput.value);
+    element('delay-value').value = String(delay);
+    element('lag-value').value = String(lag);
+    element('rate-value').value = String(rate);
+    const baseline = tokenAge(delay, lag, 1), age = tokenAge(delay, lag, rate);
+    element('update-age-result').textContent = `At ${rate}x the update rate: approximately ${Number(age.toFixed(2))} updates old, versus ${Number(baseline.toFixed(2))} at baseline.`;
+    const yMax = Math.max(8, Math.ceil(tokenAge(delay, lag, 4) / 4) * 4 + 2);
+    const tickStep = Math.max(1, Math.ceil(yMax / 6));
+    const yTicks = [];
+    for (let t = 0; t <= yMax; t += tickStep) yTicks.push(t);
+    drawPlot(canvas, {
+      xMin: 1, xMax: 4, yMin: 0, yMax,
+      xTicks: [1, 1.5, 2, 2.5, 3, 3.5, 4], yTicks,
+      series: [
+        { fn: () => baseline, color: '--plot-gray', width: 1.75, dash: [5, 4] },
+        { fn: multiplier => tokenAge(delay, lag, multiplier), color: '--plot-violet', width: 2.5 }
+      ],
+      point: { x: rate, y: age }
+    });
+  }
+
+  [delayInput, lagInput, rateInput].forEach(input => input.addEventListener('input', render));
+  let raf;
+  window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(render); });
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq.addEventListener) mq.addEventListener('change', render);
+  render();
+})();
+</script>
 </body>
 </html>

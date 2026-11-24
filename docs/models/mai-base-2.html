@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light dark">
-  <meta name="description" content="MAI-Base-2 as a frontier pre-training case study: source scaling, dropless MoE, distributed Muon, activation-gradient clipping, and the limits of reported efficiency gains.">
+  <meta name="description" content="MAI-Base-2: frontier pretraining co-design, the 5:1 local/global attention mix, Rocket post-training, selective precision, and the limits of reported scale and efficiency claims.">
   <title>MAI-Base-2 — Frontier Pre-training Through Model–Systems Co-design</title>
   <link rel="canonical" href="https://yueyiming2009.github.io/ai-learning/models/mai-base-2.html">
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
@@ -172,16 +172,18 @@
     <a href="#muon">Muon</a>
     <a href="#clipping">Clipping &amp; data</a>
     <a href="#evidence">Evidence</a>
+    <a href="#post-training">Rocket post-training</a>
     <a href="#connections">Read next</a>
     <a href="#sources">Sources</a>
   </div>
 </nav>
 
 <header class="hero">
-  <span class="hero-pill">Model case study · Transformer &amp; Pretraining</span>
+  <span class="hero-pill">Models &amp; Families · Microsoft MAI</span>
   <h1>MAI-Base-2</h1>
   <p>Frontier pre-training through model–systems co-design: make small experiments representative,
-    make the better model fast enough to train, and use optimization signals to repair the data.</p>
+    make the better model fast enough to train, use optimization signals to repair the data,
+    then sustain a long asynchronous RL climb with Rocket.</p>
 </header>
 
 <main class="page-wrap">
@@ -189,8 +191,8 @@
   <aside class="model-map" id="model-context" aria-label="Model identity, lineage, and coverage">
     <p><strong><a href="../index.html#models-mai">Microsoft MAI family</a> &middot; Model-centered reading map</strong></p>
     <p><strong>Lineage:</strong> Compare with <a href="mai-thinking-1.html#architecture">MAI-Base-1 inside the Thinking-1 page</a>. Base-2 follows it as a model generation; that ordering is not evidence of checkpoint initialization from Thinking-1.</p>
-    <p><a href="#snapshot">Architecture and unknowns</a> &middot; <a href="#scaling">Training design</a> &middot; <a href="#codesign">Systems</a> &middot; <a href="#evidence">Evidence</a></p>
-    <p><strong>Coverage:</strong> The cited account covers pre-training and co-design; post-training was still underway at its publication.</p>
+    <p><a href="#snapshot">Architecture and unknowns</a> &middot; <a href="#scaling">Training design</a> &middot; <a href="#codesign">Systems</a> &middot; <a href="#post-training">Post-training</a> &middot; <a href="#evidence">Evidence</a></p>
+    <p><strong>Coverage:</strong> The October account covers pre-training and co-design; the November account adds attention-layout details and ongoing Rocket post-training. Neither is a complete released training recipe.</p>
   </aside>
 
   <p>
@@ -202,24 +204,26 @@
   </p>
   <div class="note">
     <strong>Evidence boundary.</strong> This is a case study of Microsoft's
-    <a href="#source-microsoft">October 15, 2026 report</a>, checked October 16.
+    <a href="#source-microsoft">October 15 pretraining report</a> and
+    <a href="#source-rocket">November 23 RL infrastructure article</a>, checked November 24, 2026.
     Measurements and model facts below are author-reported, not independently reproduced.
-    Post-training was still underway at publication; this is not a released inference recipe
+    Post-training was still underway in the later account; this is not a released inference recipe
     or a complete architecture specification.
   </div>
 
   <h2 id="snapshot">1. The model — known versus undisclosed</h2>
   <div class="table-wrap">
     <table>
-      <caption>What the cited report establishes, and what it leaves open.</caption>
-      <thead><tr><th scope="col">Area</th><th scope="col">Disclosed</th><th scope="col">Not established by this report</th></tr></thead>
+      <caption>October pretraining disclosures, with the November attention and RL additions explicitly labeled.</caption>
+      <thead><tr><th scope="col">Area</th><th scope="col">Disclosed</th><th scope="col">Not established by these sources</th></tr></thead>
       <tbody>
         <tr><th scope="row">Scale</th><td>2.8T total parameters; 80B active per token. Larger and sparser than MAI-Base-1.</td><td>A complete production layer/configuration table.</td></tr>
         <tr><th scope="row">MoE</th><td>MoE in every layer, replacing Base-1's alternating dense/MoE FFNs.</td><td>Exact expert count, top-k, expert width, and complete routing specification.</td></tr>
         <tr><th scope="row">Vision</th><td>Native encoder-free vision pre-training, unlike Base-1.</td><td>Image tokenization, patch processing, multimodal attention layout, or a novel vision primitive.</td></tr>
-        <tr><th scope="row">Attention &amp; residuals</th><td>A depth-indexed scaling ladder with architectural scaling rules.</td><td>A new attention mechanism, positional scheme, residual design, or production context length.</td></tr>
+        <tr><th scope="row">Attention &amp; residuals</th><td>November: local and global attention in a 5:1 ratio. October: a depth-indexed scaling ladder with architectural scaling rules.</td><td>A complete layer ordering, local-window size, positional scheme, residual design, or production context length.</td></tr>
         <tr><th scope="row">Training data</th><td>50T training tokens; 4.5T unique VLM tokens, with repeated VLM data making up 18% of the training mixture.</td><td>A released corpus, exact source mixture, or independently audited provenance.</td></tr>
         <tr><th scope="row">Run</th><td>16K GB200 GPUs over 38 days in August–September 2026.</td><td>A reproducible end-to-end launcher, full parallelism configuration, or serving benchmark.</td></tr>
+        <tr><th scope="row">Post-training</th><td>November: ongoing asynchronous GRPO-based RL through Rocket, without distillation from third-party models; separate from MAI Code 2.</td><td>A complete Base-2 RL step/token/FLOP budget, exact GPU allocation, or finished-run duration.</td></tr>
       </tbody>
     </table>
   </div>
@@ -400,7 +404,42 @@
     See <a href="../systems/mfu.html#hfu">MFU versus HFU</a> for the FLOP-counting distinction.
   </p>
 
-  <h2 id="connections">7. Keep the case together; follow the mechanics outward</h2>
+  <h2 id="post-training">7. Rocket: scale the RL climb, not just the checkpoint</h2>
+  <p>
+    Rocket is the RL orchestration framework, not the pretrained model. MAI's November account
+    describes climbing from Base-2's capabilities through RL without a third-party distilled
+    head start. Its framing is many thousands of steps over weeks to months on thousands of
+    GPUs, not a disclosed completed-run budget. It explicitly separates this work from
+    <strong>MAI Code 2</strong>. The pretraining report's specific 2.8T-total/80B-active figures
+    remain the scale reference; the later “three-trillion-parameter” description is coarser,
+    not evidence of a newly disclosed architecture.
+  </p>
+  <p>
+    The 5:1 local/global attention mix creates two different cache budgets. Rocket retains BF16
+    local caches and the last three global caches, while storing other global caches and MoE
+    weights in MXFP8 and dequantizing for BF16 computation. Corresponding learner fake
+    quantization and matched reduction structures target same-checkpoint numerical consistency.
+    Do not describe this as native MXFP8 expert arithmetic.
+  </p>
+  <div class="next-grid">
+    <a class="next-card" href="../rl/rocket.html#base2-freshness"><strong>Orchestration and longevity</strong><p>GRPO group waits, two-stage weight transfer, component-local recovery, and topology-aware elasticity.</p></a>
+    <a class="next-card" href="../inference/inference-quantization.html#selective-kv"><strong>Precision and cache capacity</strong><p>Storage versus computation, learner fake quantization, and the reported 67% global-context capacity gain.</p></a>
+    <a class="next-card" href="../rl/training-inference-mismatch.html#rocket-parity"><strong>Numerical parity</strong><p>Replicated attention output projections, local FP32 expert combination, and aligned attention tiles.</p></a>
+    <a class="next-card" href="inkling-2.html#unified-rl"><strong>Compare disclosed RL scale carefully</strong><p>Inkling 2 Small reports a nine-day joint run. Missing Base-2 totals prevent an exact RL-compute comparison.</p></a>
+  </div>
+  <div class="note">
+    <strong>Evidence limits.</strong> The parity learning-curve comparison is on a smaller
+    180B-total/7B-active model, not Base-2, and the runs were launched roughly a month apart.
+    The later aggregate reasoning benchmark mixes public and private evaluations; reported
+    rankings and future extrapolations are not independent verification or a universal scaling
+    guarantee. The older Thinking-1 report's 4,864-chip allocation does not establish the
+    Base-2 RL fleet size.
+  </div>
+  <p class="source-note">Source: <a href="#source-rocket">November RL infrastructure article</a>.
+    Keep the generic scheduling and kernel explanations on the linked mechanism pages rather
+    than duplicating them here.</p>
+
+  <h2 id="connections">8. Keep the case together; follow the mechanics outward</h2>
   <p>
     The reusable lesson is not “use this exact architecture.” It is to preserve the final run's
     statistical conditions in small experiments, measure quality and elapsed time together,
@@ -416,14 +455,20 @@
 
   <h2 id="sources">Sources &amp; scope</h2>
   <p id="source-microsoft">
-    <strong>Primary source:</strong> Microsoft AI,
+    <strong>Pretraining source:</strong> Microsoft AI,
     <a href="https://microsoft.ai/news/frontier-pre-training-at-microsoft-ai/">Frontier Pre-training at Microsoft AI</a>,
     October 15, 2026. Relevant sections: “Robust scaling ladders,” “Scaling laws for
     hyperparameters,” “Codesigning our infrastructure and MAI-Base-2,” “Scaling Muon,”
     “Activation gradient clipping,” and “Scaling Data.”
   </p>
+  <p id="source-rocket">
+    <strong>Post-training source:</strong> Microsoft AI,
+    <a href="https://microsoft.ai/news/rl-infrastructure-at-microsoft-ai/">RL infrastructure at Microsoft AI</a>,
+    November 23, 2026. Supports ongoing Base-2 RL, the local/global attention ratio, selective
+    precision, and the Rocket systems choices; it does not disclose a complete post-training budget.
+  </p>
   <p class="source-note">
-    This page summarizes the article's disclosed mechanisms and distinguishes them from
+    This page summarizes the articles' disclosed mechanisms and distinguishes them from
     interpretation. It does not reproduce the experiments, audit the training/evaluation data,
     or fill undisclosed architecture fields from analogy with other models.
   </p>
