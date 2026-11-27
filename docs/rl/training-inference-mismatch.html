@@ -97,7 +97,7 @@
     <a href="#mismatch">The problem</a><a href="#policies">Policies</a><a href="#gradient">Token update</a>
     <a href="#comparison">Correction map</a><a href="#interactive">Compare gradients</a>
     <a href="#drift">Drift</a><a href="#offline-online">Offline vs online</a>
-    <a href="#score-centering">Score centering</a>
+    <a href="#score-centering">Score centering</a><a href="#top-k">Top-k implementation</a>
     <a href="#stable-reinforce">StableReinforce</a>
     <a href="#mitigation">Mitigation</a><a href="#rocket-parity">Numerical parity</a><a href="#references">Sources</a>
   </div>
@@ -518,9 +518,15 @@ Bad action sampled in 1.0% of fresh draws.</output></pre>
 
   <h3 id="top-k">The practical cost: more sampler information</h3>
   <p>Ordinary token IS only needs the sampled token's behavior log-probability. Exact score
-    centering requires the full next-token distribution. The paper instead logs sampler
-    top-k token IDs and log-probabilities and models the remaining tail as a rescaled
-    trainer distribution:</p>
+    centering requires the full next-token distribution at <em>every generated position</em>.
+    The paper estimates 608 KB per position for 152K FP32 logprobs, or roughly 20 TB for
+    1,024 rollouts of 32K tokens. It instead logs the sampler's top-k token IDs and their
+    original, full-vocabulary-normalized logprobs. Let \(H\) be those IDs and \(T\) their
+    complement; gather trainer logprobs at the <em>same IDs</em>, not at the trainer's
+    independently selected top-k.</p>
+  <p>The head gives the sampler's missing <em>total</em> tail mass exactly:
+    \(q(T)=1-\sum_Hq_v\). Approximate the individual tail probabilities using the
+    trainer's relative tail proportions, scaled to match that mass:</p>
   \[
     \widetilde q_v=
     \begin{cases}
@@ -530,13 +536,154 @@ Bad action sampled in 1.0% of fresh draws.</output></pre>
     \qquad
     \rho=\frac{1-\sum_{v\in H}q_v}{1-\sum_{v\in H}p_v}.
   \]
-  <p>This preserves the sampler's tail mass but assumes the trainer's relative tail shape.
-    It is an approximation to centering under the real sampler. Its efficient loss uses
-    detached coefficients \(q_v-\rho p_v\) on the top-k head; gradients must not flow
-    through those coefficients. The main experiments use \(k=128\); \(k=32\) also matches
-    full centering in the reported ablation, not necessarily every task.
-    <a href="https://arxiv.org/html/2609.20807v1#A1">Appendix A</a> gives the tail derivation,
-    numerical safeguards, and weighted composition.</p>
+  <p>This preserves tail mass, not necessarily tail shape. It is an approximation to the
+    real sampler, not a new sampling policy: <strong>logging top-k does not restrict
+    generation to top-k</strong>, and the sampled token \(y\) can be outside \(H\).
+    Do not renormalize the logged head to sum to one, which would erase the tail mass.</p>
+
+  <h3 id="top-k-reduction">Why a head-only sum still includes the tail</h3>
+  <p>We need the mean of the <em>trainer's scores</em> under the reconstructed sampler.
+    The <a href="#drift">zero-mean identity under the trainer</a> provides the shortcut:</p>
+  \[
+    \sum_Hp_vs_v+\sum_Tp_vs_v=0
+    \quad\Longrightarrow\quad
+    \sum_Tp_vs_v=-\sum_Hp_vs_v.
+  \]
+  <p>Substitute that equality into the reconstructed expectation:</p>
+  \[
+    \begin{aligned}
+      \bar s_{\widetilde q}
+        &=\sum_Hq_vs_v+\rho\sum_Tp_vs_v\\
+        &=\sum_Hq_vs_v-\rho\sum_Hp_vs_v\\
+        &=\sum_H(q_v-\rho p_v)s_v.
+    \end{aligned}
+  \]
+  <p><strong>The tail is represented, not discarded.</strong> Its modeled contribution is
+    the negative of the trainer-weighted head contribution, multiplied by \(\rho\).
+    The coefficients \(q_v-\rho p_v\) are not probabilities: they can be negative and
+    need not sum to one. This reduction is exact for \(\widetilde q\); the approximation
+    happened when reconstructing the tail.</p>
+
+  <h3 id="top-k-example">Four tokens, from probabilities to a gradient</h3>
+  <p>Use \(k=2\) only to make the arithmetic visible. The paper's default is \(k=128\).
+    At one fixed prefix, let the head be tokens A and B:</p>
+  <pre><code>Token:                 A       B       C       D
+Trainer p:            0.50    0.30    0.15    0.05
+Logged sampler head:  0.60    0.25      ?       ?
+
+Sampler tail mass = 1 - 0.85 = 0.15
+Trainer tail mass = 1 - 0.80 = 0.20
+rho = 0.15 / 0.20 = 0.75
+Reconstructed q = [0.60, 0.25, 0.1125, 0.0375]</code></pre>
+  <p>Probabilities are not scores. To compute actual numbers, focus on <strong>one gradient
+    component: the derivative with respect to A's logit \(z_{\mathrm A}\)</strong>, holding
+    the other logits fixed. Differentiate the trainer's softmax, not the reconstruction:</p>
+  \[
+    \log p_v=z_v-\log\sum_j e^{z_j},
+    \qquad
+    s_v^{(\mathrm A)}
+      =\frac{\partial\log p_v}{\partial z_{\mathrm A}}
+      =\mathbf1[v=\mathrm A]-p_{\mathrm A}.
+  \]
+  <p>Thus the scores for A, B, C, D are \(0.5,-0.5,-0.5,-0.5\). Increasing A's logit
+    increases A's log-probability and decreases the others. Now compute the same mean
+    score by both routes:</p>
+  <pre><code>Full reconstructed expectation:
+  0.60*(0.5) + 0.25*(-0.5) + 0.1125*(-0.5) + 0.0375*(-0.5)
+  = 0.300 - 0.125 - 0.05625 - 0.01875 = 0.10
+
+Why the tail can disappear from the computation:
+  trainer head = 0.50*(0.5) + 0.30*(-0.5) =  0.10
+  trainer tail = -trainer head            = -0.10
+  modeled sampler tail = 0.75*(-0.10)     = -0.075
+  sampler head + modeled tail = 0.175 - 0.075 = 0.10
+
+Head-only coefficients:
+  c_A = 0.60 - 0.75*0.50 = 0.225
+  c_B = 0.25 - 0.75*0.30 = 0.025
+  c_A*s_A + c_B*s_B = 0.225*(0.5) + 0.025*(-0.5) = 0.10</code></pre>
+  <p>With fixed reward \(R=1\), an A sample's corrected ascent direction is
+    \(0.5-0.1=0.4\); a B, C, or D sample gives \(-0.5-0.1=-0.6\).
+    Under \(\widetilde q\), their mean is \(0.6(0.4)+0.4(-0.6)=0\).
+    This is one coordinate of the score vector; the same head/tail identity holds
+    for every parameter.</p>
+
+  <div class="figure">
+    <div class="controls">
+      <label for="topk-prob">Sampler q(A) <input id="topk-prob" type="range" min="0.45" max="0.70" step="0.01" value="0.60"><output id="topk-value" for="topk-prob">0.60</output></label>
+      <label for="topk-token">Sampled token <select id="topk-token"><option value="0">A (head)</option><option value="1">B (head)</option><option value="2">C (tail)</option><option value="3">D (tail)</option></select></label>
+    </div>
+    <p><strong>Horizontal axis:</strong> sampler \(q(\mathrm A)\), with \(q(\mathrm B)=0.25\)
+      and trainer \(p\) fixed as above. <strong>Vertical axis:</strong> mean first-logit
+      score before centering, or expected ascent update after centering with \(R=1\).</p>
+    <canvas id="plot-topk" aria-label="Full reconstructed and head-only mean scores coincide as sampler probability varies; the centered expected update under the reconstruction is zero.">At q(A)=0.60, rho=0.75 and both mean-score calculations give 0.10. With reward 1, an A sample gives corrected ascent 0.40; the reconstructed expected update is zero.</canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-orange)"></span>Full reconstructed mean score</span>
+      <span class="legend-item"><span class="lg dash" style="--c:var(--plot-violet)"></span>Head-only mean score (same curve)</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-teal)"></span>Centered expected update</span>
+    </div>
+    <pre class="readout"><output id="topk-result" for="topk-prob topk-token" aria-live="polite">rho = 0.7500
+Reconstructed q = [0.6000, 0.2500, 0.1125, 0.0375]
+Head coefficients = [0.2250, 0.0250]
+Mean score: full 0.1000; head-only 0.1000
+Sample A: raw score 0.5000; corrected ascent 0.4000
+dL/dz_A = -0.4000; reconstructed expected ascent = 0.0000</output></pre>
+    <p class="figure-caption"><strong>The head-only calculation reproduces the modeled full sum.</strong>
+      Move the sampler probability to change tail mass and coefficients, or select a tail
+      token to see that it still gets a policy update. Selecting a token changes the
+      sample update, not the prefix's mean-score correction. The plotted zero is an
+      expectation under the reconstruction, not a guarantee under an unknown true tail.</p>
+  </div>
+
+  <h3 id="top-k-loss">Build a scalar loss with the required derivative</h3>
+  <p>Use \(R\) for the fixed signed training weight here (the advantage \(A\) in the
+    earlier equations). We want ascent direction \(R(s_y-\bar s_{\widetilde q})\).
+    Since each score is the gradient of a trainer logprob, choose the minimized loss:</p>
+  \[
+    c_v=\operatorname{sg}[q_v-\rho p_v],
+    \qquad
+    L=-R\left(\log p_y-\sum_Hc_v\log p_v\right),
+    \qquad
+    -\nabla_\theta L=R\left(s_y-\sum_Hc_vs_v\right).
+  \]
+  <p>For the default example, an A sample and \(R=1\) give
+    \(L=-[\log p_{\mathrm A}-0.225\log p_{\mathrm A}-0.025\log p_{\mathrm B}]\).
+    Its first-logit derivative is
+    \(-[0.5-0.225(0.5)-0.025(-0.5)]=-0.4\).
+    Gradient descent subtracts that derivative, producing the desired \(+0.4\) ascent
+    direction before learning rate. Autograd computes the full parameter vector without
+    explicitly materializing every token's score.</p>
+  <p><strong>Stop-gradient freezes coefficients, not the final logprobs.</strong>
+    Without it, the product rule adds an unwanted term:</p>
+  \[
+    \nabla_\theta(c_v\log p_v)
+      =c_vs_v+\log p_v\,\nabla_\theta c_v.
+  \]
+  <p>The second term differentiates through \(p_v\) and \(\rho\) inside the coefficient;
+    it is not part of the desired centered score. Recompute coefficients at each forward
+    pass, then treat the entire \(q_v-\rho p_v\) expression as constant for backward.</p>
+  <pre><code># Framework-neutral pseudocode for one prefix, with nonzero tail mass.
+# trainer_logp is normalized over the full vocabulary; R is detached.
+head_logp = trainer_logp[head_ids]
+q_head = exp(sampler_head_logp)
+p_head = exp(head_logp)
+rho = (1 - sum(q_head)) / (1 - sum(p_head))
+coeff = stop_gradient(q_head - rho * p_head)
+loss = -R * (trainer_logp[sampled_token] - sum(coeff * head_logp))</code></pre>
+  <p><strong>Numerical and batching boundaries.</strong> Accumulate probability masses in
+    adequate precision and handle tiny tails: the paper's
+    <a href="https://arxiv.org/html/2609.20807v1#A1.SS3">generalized implementation</a>
+    floors both tail masses at \(10^{-6}\). Such safeguards perturb the ideal mass
+    identity when active; a full-vocabulary head should use full centering rather than
+    divide zero by zero. Keep sampler IDs, logprobs, and sampled tokens aligned to the
+    same prefix, and apply the job's loss masks and reduction after per-token losses.
+    The head-only correction does not eliminate the trainer's vocabulary normalization.</p>
+  <p>The main experiments use \(k=128\); \(k=32\) also matches full centering in the
+    <a href="https://arxiv.org/html/2609.20807v1#A1.SS4">reported ablation</a>, not necessarily
+    every task. <a href="https://arxiv.org/html/2609.20807v1#A1.SS2">Composition with IS</a>
+    changes the head coefficient to \(q_vw_v-\alpha p_v\), with
+    \(\alpha=\rho f(1/\rho)\) for \(w_v=f(p_v/q_v)\); detach those coefficients and the
+    sampled-token weight. Do not apply vanilla centering unchanged to weighted scores.</p>
 
   <h3 id="evidence">What the experiments establish—and what they do not</h3>
   <p>In the reported severe quantization settings, score centering matches or outperforms the
@@ -769,6 +916,20 @@ result[t * D + d] = acc;</code></pre>
     return { replay: -(1 - p), fresh: -p * (1 - p) };
   }
 
+  function topKExample(qA, token) {
+    const p = [0.5, 0.3, 0.15, 0.05];
+    const qHead = [qA, 0.25];
+    const rho = (1 - qHead[0] - qHead[1]) / (1 - p[0] - p[1]);
+    const qHat = [...qHead, rho * p[2], rho * p[3]];
+    const coeff = qHead.map((q, i) => q - rho * p[i]);
+    const scores = p.map((_, i) => (i === 0 ? 1 : 0) - p[0]);
+    const fullMean = qHat.reduce((sum, q, i) => sum + q * scores[i], 0);
+    const headMean = coeff.reduce((sum, c, i) => sum + c * scores[i], 0);
+    const centeredMean = qHat.reduce((sum, q, i) => sum + q * (scores[i] - headMean), 0);
+    return { rho, qHat, coeff, fullMean, headMean, centeredMean,
+      raw: scores[token], ascent: scores[token] - headMean };
+  }
+
   function drift(p, q) {
     const s1 = 1 - p, s2 = -p;
     const r1 = p / q, r2 = (1 - p) / (1 - q);
@@ -916,10 +1077,37 @@ result[t * D + d] = acc;</code></pre>
       '\nToken IS weights: ' + fixed(p / q) + ', ' + fixed((1 - p) / (1 - q));
   }
 
+  function renderTopK() {
+    const qA = Number(element('topk-prob').value);
+    const token = Number(element('topk-token').value);
+    const result = topKExample(qA, token);
+    const format = x => (Math.abs(x) < 0.00005 ? 0 : x).toFixed(4);
+    const vector = values => '[' + values.map(format).join(', ') + ']';
+    element('topk-value').value = qA.toFixed(2);
+    drawPlot(element('plot-topk'), {
+      xMin: 0.45, xMax: 0.70, yMin: -0.1, yMax: 0.25,
+      xTicks: [0.45, 0.5, 0.55, 0.6, 0.65, 0.7], yTicks: [-0.1, 0, 0.1, 0.2], cursor: qA,
+      series: [
+        { fn: x => topKExample(x, token).fullMean, color: '--plot-orange', width: 4 },
+        { fn: x => topKExample(x, token).headMean, color: '--plot-violet', dash: [5, 4] },
+        { fn: x => topKExample(x, token).centeredMean, color: '--plot-teal' }
+      ]
+    });
+    element('topk-result').value = 'rho = ' + format(result.rho) +
+      '\nReconstructed q = ' + vector(result.qHat) +
+      '\nHead coefficients = ' + vector(result.coeff) +
+      '\nMean score: full ' + format(result.fullMean) + '; head-only ' + format(result.headMean) +
+      '\nSample ' + ['A', 'B', 'C', 'D'][token] + ': raw score ' + format(result.raw) +
+      '; corrected ascent ' + format(result.ascent) +
+      '\ndL/dz_A = ' + format(-result.ascent) +
+      '; reconstructed expected ascent = ' + format(result.centeredMean);
+  }
+
   ['advantage', 'ratio', 'dual'].forEach(id => element(id).addEventListener('input', renderCorrections));
   ['trainer-prob', 'sampler-prob'].forEach(id => element(id).addEventListener('input', renderDrift));
   element('negative-prob').addEventListener('input', renderNegativeUpdates);
-  function renderAll() { renderCorrections(); renderDrift(); renderNegativeUpdates(); }
+  ['topk-prob', 'topk-token'].forEach(id => element(id).addEventListener('input', renderTopK));
+  function renderAll() { renderCorrections(); renderDrift(); renderNegativeUpdates(); renderTopK(); }
   renderAll();
   let raf;
   window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(renderAll); });
