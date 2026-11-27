@@ -96,7 +96,8 @@
     <a href="../index.html#rl-rl-efficiency">RL Efficiency</a>
     <a href="#mismatch">The problem</a><a href="#policies">Policies</a><a href="#gradient">Token update</a>
     <a href="#comparison">Correction map</a><a href="#interactive">Compare gradients</a>
-    <a href="#drift">Drift</a><a href="#score-centering">Score centering</a>
+    <a href="#drift">Drift</a><a href="#offline-online">Offline vs online</a>
+    <a href="#score-centering">Score centering</a>
     <a href="#stable-reinforce">StableReinforce</a>
     <a href="#mitigation">Mitigation</a><a href="#rocket-parity">Numerical parity</a><a href="#references">Sources</a>
   </div>
@@ -366,6 +367,87 @@ q_y = 0.050, p_y = 0.500: r = 10, binary TV = 0.450 -> drop</code></pre>
     refreshed from the trainer can turn that pull into a feedback loop. This is the
     paper's explanation for instability in its online mismatch experiments, not a claim
     that every RL collapse has this cause.</p>
+
+  <h3 id="offline-online">Why offline and online fail differently</h3>
+  <p>In the paper's <a href="https://arxiv.org/html/2609.20807v1#S3.F2">controlled mismatch
+    experiment</a>, offline training is stable with \(+1/0\) rewards but unstable with
+    negative weights; online training under mismatch is <em>least</em> stable with
+    \(+1/0\) rewards. These are two different mechanisms, not a general rule that negative
+    rewards are bad offline or positive rewards are bad online.</p>
+
+  <p><strong>Offline negative updates: punishment without a stopping point.</strong>
+    Let \(A\) be a fixed signed training weight: a raw reward or a detached advantage.
+    For one saved response, the uncorrected surrogate is
+    \(L_A=-A\log p_\theta(y)\), without importance weighting, clipping, or regularization.
+    With \(A=+1\), minimizing \(-\log p_\theta(y)\) has a lower bound of zero.
+    With \(A=-1\), minimizing \(+\log p_\theta(y)\) can drive the loss toward
+    \(-\infty\) as the response probability approaches zero. Making an already unlikely
+    response another thousand times less likely still improves this surrogate.</p>
+  <p>The key is <strong>fixed replay frequency</strong>: the negative example remains in
+    the dataset regardless of its current probability. To see why its gradient need not
+    fade, use a one-step binary policy with \(p(y)=\sigma(z)\), reward \(-1\) for \(y\),
+    and reward zero for the other action. Gradient ascent on the negative example gives:</p>
+  \[
+    g_{\mathrm{replay}}
+      =-\frac{\partial\log p(y)}{\partial z}=-(1-p),
+    \qquad
+    g_{\mathrm{fresh}}
+      =p\,[-(1-p)]+(1-p)\,0=-p(1-p).
+  \]
+  <p>The first quantity is <em>per replayed negative example</em>; the second is the
+    expectation <em>per fresh on-policy draw</em>. As \(p\to0\), replay's logit push
+    approaches \(-1\), but fresh sampling's expected push approaches zero because the
+    bad action is rarely sampled. For comparison, a positive example's per-replay
+    push is \(1-p\), which fades as its probability approaches one.</p>
+
+  <div class="figure">
+    <div class="controls">
+      <label for="negative-prob">Bad-action probability p <input id="negative-prob" type="range" min="0.001" max="0.999" step="0.001" value="0.01"><output id="negative-value" for="negative-prob">0.010</output></label>
+    </div>
+    <p><strong>Vertical axis:</strong> signed logit ascent update, before learning rate.
+      <strong>Horizontal axis:</strong> current probability \(p\) of the negative action.</p>
+    <canvas id="plot-negative-updates" aria-label="Negative logit updates versus bad-action probability: offline replay approaches minus one at zero probability, while the fresh on-policy expected update approaches zero.">At p=0.01, one negative replay contributes -0.99000; one fresh on-policy draw contributes -0.00990 in expectation.</canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--plot-orange)"></span>Per negative replay: −(1 − p)</span>
+      <span class="legend-item"><span class="lg dash" style="--c:var(--plot-teal)"></span>Per fresh on-policy draw: −p(1 − p)</span>
+    </div>
+    <pre class="readout"><output id="negative-result" for="negative-prob" aria-live="polite">p = 0.010
+Per negative replay: -0.99000
+Per fresh on-policy draw (expected): -0.00990
+Bad action sampled in 1.0% of fresh draws.</output></pre>
+    <p class="figure-caption"><strong>Fresh sampling supplies the missing probability factor.</strong>
+      Move \(p\) toward zero: replay keeps pushing, while the fresh expected update fades.
+      The offline curve assumes negative-only replay; if negatives occupy a fixed
+      fraction \(f\) of a dataset whose other weights are zero, its per-record
+      expectation is \(-f(1-p)\), not \(-p(1-p)\). Endpoints show limits.
+      This is an exact binary illustration, not an LLM training trajectory.</p>
+  </div>
+
+  <p>Unbounded loss does <em>not</em> imply an exploding logit gradient: the replay
+    gradient above stays bounded. The risk is persistent pressure to sharpen the
+    distribution; shared model parameters can also change probabilities of useful
+    responses. Fresh sampling reduces this particular pressure only insofar as the
+    sampler tracks the current policy. Stale data need not supply the factor \(p\).
+    The paper cites prior work for offline degeneration rather than establishing a
+    universal collapse theorem; regularization or corrected objectives change this setup.</p>
+
+  <p><strong>Online positive updates: chasing a moving, biased teacher.</strong>
+    Now give <em>both</em> binary actions raw reward \(+1\): there is no preference to
+    learn. The expected uncorrected logit update is \(q-p\), as illustrated below.
+    A fixed teacher with \(q=0.51\) pulls a trainer at \(p=0.50\) toward \(0.51\);
+    the pull vanishes when they match. For an illustrative moving teacher,
+    \(p=\sigma(z)\) and \(q=\sigma(z+\delta)\) with a persistent \(\delta&gt;0\),
+    the sampler remains ahead at every finite \(z\). Repeated refreshes can keep
+    pushing the trainer toward a deterministic policy despite equal rewards.
+    This constant logit offset is an explanatory toy, not a model of every quantizer.</p>
+  <div class="note">
+    <strong>Different feedback, different failure.</strong> Offline negative replay keeps
+    pushing <em>away from fixed examples</em> without reducing their frequency.
+    Online positive training under systematic mismatch keeps pulling
+    <em>toward a teacher that moves with the student</em>.
+    <a href="#score-centering">Score centering</a> targets the latter's mismatch drift;
+    removing that drift is not a general solution to offline negative-loss degeneration.
+  </div>
 
   <h3 id="constant-reward">The “nothing to learn” experiment</h3>
   <p>Use two tokens and a constant <strong>raw reward \(R=1\)</strong>. Every outcome is equally
@@ -637,6 +719,7 @@ result[t * D + d] = acc;</code></pre>
       explicit FP32 arithmetic and rounding for the illustrative combine contract.</li>
     <li>Marek &amp; Ryabinin, <a href="https://arxiv.org/html/2609.20807v1">Score Centering Stabilizes Off-policy Reinforcement Learning</a>:
       <a href="https://arxiv.org/html/2609.20807v1#A2.T1">correction grid</a>,
+      <a href="https://arxiv.org/html/2609.20807v1#S3">offline versus online instability</a>,
       <a href="https://arxiv.org/html/2609.20807v1#S4">drift and centering</a>,
       <a href="https://arxiv.org/html/2609.20807v1#A1">top-k implementation</a>,
       <a href="https://arxiv.org/html/2609.20807v1#A2.SS3">seed counts and reported metrics</a>.
@@ -680,6 +763,10 @@ result[t * D + d] = acc;</code></pre>
     if (a > 0 && r > 1.2) return 0;
     if (a < 0 && (r < 0.8 || (dual && r > 3))) return 0;
     return a * r;
+  }
+
+  function negativeUpdates(p) {
+    return { replay: -(1 - p), fresh: -p * (1 - p) };
   }
 
   function drift(p, q) {
@@ -790,6 +877,24 @@ result[t * D + d] = acc;</code></pre>
     element('correction-result').value = lines.join('\n');
   }
 
+  function renderNegativeUpdates() {
+    const p = Number(element('negative-prob').value);
+    const g = negativeUpdates(p);
+    element('negative-value').value = p.toFixed(3);
+    drawPlot(element('plot-negative-updates'), {
+      xMin: 0, xMax: 1, yMin: -1.05, yMax: 0.05,
+      xTicks: [0, 0.2, 0.4, 0.6, 0.8, 1], yTicks: [-1, -0.75, -0.5, -0.25, 0], cursor: p,
+      series: [
+        { fn: x => negativeUpdates(x).replay, color: '--plot-orange' },
+        { fn: x => negativeUpdates(x).fresh, color: '--plot-teal', dash: [5, 4] }
+      ]
+    });
+    element('negative-result').value = 'p = ' + p.toFixed(3) +
+      '\nPer negative replay: ' + g.replay.toFixed(5) +
+      '\nPer fresh on-policy draw (expected): ' + g.fresh.toFixed(5) +
+      '\nBad action sampled in ' + (100 * p).toFixed(1) + '% of fresh draws.';
+  }
+
   function renderDrift() {
     const p = Number(element('trainer-prob').value);
     const q = Number(element('sampler-prob').value);
@@ -813,7 +918,8 @@ result[t * D + d] = acc;</code></pre>
 
   ['advantage', 'ratio', 'dual'].forEach(id => element(id).addEventListener('input', renderCorrections));
   ['trainer-prob', 'sampler-prob'].forEach(id => element(id).addEventListener('input', renderDrift));
-  function renderAll() { renderCorrections(); renderDrift(); }
+  element('negative-prob').addEventListener('input', renderNegativeUpdates);
+  function renderAll() { renderCorrections(); renderDrift(); renderNegativeUpdates(); }
   renderAll();
   let raf;
   window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(renderAll); });
