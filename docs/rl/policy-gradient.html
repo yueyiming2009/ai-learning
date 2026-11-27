@@ -147,6 +147,7 @@
     <a href="#notation">Notation</a>
     <a href="#pg">PG Theorem</a>
     <a href="#reinforce">REINFORCE</a>
+    <a href="#binary-reward-sft">Binary rewards</a>
     <a href="#loss-variants">Loss variants</a>
     <a href="#discount">Discounting</a>
     <a href="#advantage">Advantage</a>
@@ -282,6 +283,55 @@
     \qquad w_{i,t}=\gamma^t\big(G_{i,t}-b(s_{i,t})\big).
   \]
   <p>Here \(\operatorname{sg}\) means stop-gradient. This is weighted cross-entropy for categorical actions, or weighted squared-error regression of the mean for a fixed isotropic-variance Gaussian. Weights may be negative, so it is a signed gradient surrogate, not ordinary maximum likelihood with nonnegative example weights. Average episode sums across a batch; replacing them with a mean within each episode changes length weighting.</p>
+
+  <h3 id="binary-reward-sft">Binary rewards: when policy gradient becomes SFT</h3>
+  <p>Suppose an LLM samples \(B\) responses \(y_i\) to prompts \(x_i\), and a terminal
+  verifier returns \(R_i\in\{0,1\}\). With \(\gamma=1\), no baseline, and no reward
+  normalization, every response token receives the same weight \(\hat A_i=R_i\).
+  This is a raw REINFORCE return weight, even if an implementation calls its input
+  <code>advantages</code>; it is not the centered advantage \(Q^\pi-V^\pi\).
+  Define the response log-probability
+  \(\ell_i(\theta)=\sum_t\log\pi_\theta(y_{i,t}\mid x_i,y_{i,&lt;t})\).
+  Holding the sampled tokens and weights fixed, the surrogate reduces algebraically to</p>
+  <div class="result">
+    <div class="result-label">A 0/1 weight is a success mask</div>
+    \[
+      \mathcal{L}_{\mathrm{PG}}(\theta)
+      = -\frac{1}{B}\sum_{i=1}^{B}\operatorname{sg}[\hat A_i]\,\ell_i(\theta)
+      = -\frac{1}{B}\sum_{i:R_i=1}\ell_i(\theta)
+      = \frac{B_+}{B}\,\mathcal{L}_{\mathrm{SFT},+}(\theta),
+      \qquad B_+>0.
+    \]
+  </div>
+  <p>Here \(B_+\) is the number of successful responses and
+  \(\mathcal{L}_{\mathrm{SFT},+}=-B_+^{-1}\sum_{i:R_i=1}\ell_i\) is SFT on those
+  responses. <strong>Successful samples contribute ordinary cross-entropy; failed
+  samples contribute zero directly.</strong> Their probabilities can still change
+  through shared parameters and softmax normalization.</p>
+  <p>For weights \((1,0,1,0)\), the loss is \(-(\ell_1+\ell_3)/4\): half the
+  success-only SFT mean. Keeping the original denominator makes the losses and
+  gradients identical; averaging over successes rescales them by \(B/B_+\).
+  Preserve the same response-token masks and token/sequence weighting; per-response
+  token means are not the sequence sums above. If \(B_+=0\), the plain policy-loss
+  gradient is zero and there is no successful SFT target, so do not divide by \(B_+\).</p>
+  <div class="note">
+    <strong>Binary rewards alone are not enough.</strong> With a baseline
+    \(0&lt;b&lt;1\), success has weight \(1-b\) and failure has weight \(-b\), not
+    \(1\) and \(0\). <a href="grpo.html#advantage">GRPO's group-relative advantages</a>
+    likewise give failures negative weights in mixed-success groups. Clamping those
+    negative weights to zero changes the estimator; it is not a harmless rewrite.
+  </div>
+  <p><strong>Same batch loss does not mean the same training procedure.</strong>
+  The equality above concerns the plain log-likelihood surrogate, without importance
+  ratios, PPO clipping, KL penalties, or entropy bonuses. Its raw REINFORCE gradient
+  estimates the current-policy reward gradient when responses are sampled from that
+  policy. Repeatedly fitting a fixed filtered dataset remains SFT, but after the policy
+  changes it is no longer an uncorrected on-policy gradient estimate. See
+  <a href="#off-policy">rollout reuse</a> and
+  <a href="distillation.html#self-training">filtered self-training</a>.
+  <a href="https://arxiv.org/html/2312.06585v2#S3">ReST<sup>EM</sup>, Section 3</a>
+  gives the related generate/filter/SFT loop an EM interpretation; the same-batch
+  identity here does not equate its full recipe with REINFORCE or GRPO.</p>
 
   <h3 id="loss-variants">REINFORCE-style losses: what changes between variants?</h3>
   <p>The core loss is <strong>negative log-probability times a fixed learning signal</strong>.
