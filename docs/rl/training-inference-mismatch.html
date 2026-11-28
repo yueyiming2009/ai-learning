@@ -183,42 +183,157 @@ Ratio r = p(C) / q(C) = 1.5</code></pre>
     It does not say whether the difference came from numerics, checkpoint age, or optimizer
     movement. Nor is it an update by itself. We still need a <strong>direction</strong>
     and a <strong>signed strength</strong>.</p>
-  <h3 id="score-direction">Direction: differentiate the trainer's log-probability</h3>
-  <p>Write \(s_y=\nabla_\theta\log p_\theta(y\mid h)\), the <em>score vector</em>.
-    It is not a confidence score or a reward. For vocabulary logits \(z\):</p>
+  <h3 id="score-direction">Start with logits, then turn them into probabilities</h3>
+  <p>At the fixed prefix \(h\), the trainer's parameters \(\theta\) produce a vector
+    \(z=z_\theta(h)\) containing one real-valued <em>logit</em> per vocabulary token.
+    In this derivation, the trainer distribution is the ordinary softmax of those logits:</p>
   \[
-    \log p_y=z_y-\log\sum_v e^{z_v},
+    p=\operatorname{softmax}(z),
     \qquad
-    \nabla_z\log p_y=e_y-p,
+    p_i=\frac{\exp(z_i)}{Z},
     \qquad
-    s_y=J_{z,\theta}^{\mathsf T}(e_y-p).
+    Z=\sum_{k=1}^{V}\exp(z_k).
   \]
-  <p>The last equality is backpropagation through the logits. For our C sample,
-    \(e_{\mathrm C}-p=[-0.50,-0.30,0.85,-0.05]\). This is a logit-space gradient,
-    not a vector of probability increments.</p>
+  <p>Here \(V\) is the vocabulary size, \(p\) is the whole probability vector, and
+    \(p_y\) is the probability of the fixed sampled token \(y\). The denominator makes
+    the probabilities sum to one. Suppress \(h\) in the notation while following this chain:</p>
+  <pre><code>parameters theta → logits z → probabilities p = softmax(z) → log p_y
+                                                        fixed sampled token y ↑</code></pre>
+  <h3 id="logit-gradient">First derivative: how each logit changes log p_y</h3>
+  <p>Taking the natural logarithm turns the softmax quotient into a difference:</p>
+  \[
+    \log p_y=z_y-\log Z.
+  \]
+  <p>Differentiate with respect to one logit \(z_i\), holding the others and the sampled
+    token \(y\) fixed. The first term contributes one only when \(i=y\); the normalizer
+    depends on every logit:</p>
+  \[
+    \frac{\partial z_y}{\partial z_i}=\mathbf1[i=y],
+    \qquad
+    \frac{\partial\log Z}{\partial z_i}
+      =\frac{1}{Z}\frac{\partial Z}{\partial z_i}
+      =\frac{\exp(z_i)}{Z}=p_i.
+  \]
+  \[
+    \frac{\partial\log p_y}{\partial z_i}
+      =\mathbf1[i=y]-p_i
+      =
+      \begin{cases}
+        1-p_y &amp; i=y,\\
+        -p_i &amp; i\ne y.
+      \end{cases}
+  \]
+  <p>Collect these \(V\) derivatives into a vector. Let \(e_y\) be the one-hot vector:
+    one at the sampled token's position and zero elsewhere. Then:</p>
+  \[
+    \nabla_z\log p_y=e_y-p.
+  \]
+  <p>For our C sample, \(e_{\mathrm C}=[0,0,1,0]\), so the logit gradient is
+    \([-0.50,-0.30,0.85,-0.05]\). Increasing C's logit increases its log-probability;
+    increasing another token's logit decreases C's log-probability by increasing the
+    denominator. These are sensitivities to logits, not probability increments.
+    For the negative-log-likelihood loss, the sign reverses:
+    \(\nabla_z(-\log p_y)=p-e_y\).</p>
+
+  <h3 id="parameter-score">Then backpropagate the logit gradient into model parameters</h3>
+  <p>The optimizer changes model parameters, not independent vocabulary logits.
+    Define the <em>score vector</em> \(s_y=\nabla_\theta\log p_y\), with one component
+    per model parameter. It is not the same vector as \(\nabla_z\log p_y\).
+    A parameter \(\theta_j\) can affect many logits, so the chain rule sums their paths:</p>
+  \[
+    \frac{\partial\log p_y}{\partial\theta_j}
+      =\sum_{i=1}^{V}
+         \frac{\partial\log p_y}{\partial z_i}
+         \frac{\partial z_i}{\partial\theta_j}
+      =\sum_{i=1}^{V}(\mathbf1[i=y]-p_i)
+         \frac{\partial z_i}{\partial\theta_j}.
+  \]
+  <p>For example, suppose one parameter's local logit derivatives are
+    \(\partial z/\partial\theta_j=[0.2,-0.1,0.3,0]\).
+    Its score component for the same C sample is:</p>
+  <pre><code>d(log p_C)/d(theta_j)
+  = (-0.50)*0.2 + (-0.30)*(-0.1) + 0.85*0.3 + (-0.05)*0
+  = -0.100 + 0.030 + 0.255
+  = 0.185</code></pre>
+  <p>The Jacobian notation is just a compact way to collect those sums.
+    Flatten the model parameters into \(P\) entries and define
+    \(J_{z,\theta}[i,j]=\partial z_i/\partial\theta_j\).
+    This is a \(V\times P\) matrix: rows correspond to logits, columns to parameters.
+    Its transpose maps the \(V\)-component logit gradient into a \(P\)-component score:</p>
+  \[
+    s_y
+      =J_{z,\theta}^{\mathsf T}\nabla_z\log p_y
+      =J_{z,\theta}^{\mathsf T}(e_y-p).
+  \]
+  <p><strong>The Jacobian is notation, not a tensor to allocate.</strong>
+    Autograd computes this vector-Jacobian product by backpropagating through the model;
+    it does not construct the enormous full matrix.</p>
+
+  <h3 id="token-contribution">Derive g_t from the per-token training loss</h3>
+  <p>Why weight log-probabilities at all? In a one-decision example with fixed rewards
+    \(R_v\), differentiate the expected reward:</p>
+  \[
+    J(\theta)=\sum_vp_vR_v,
+    \qquad
+    \nabla_\theta J
+      =\sum_vR_v\nabla_\theta p_v
+      =\sum_vp_vR_v\nabla_\theta\log p_v
+      =\mathbb E_p[R_y s_y].
+  \]
+  <p>A sampled reward times its score is therefore a gradient estimator. For sequences,
+    the trajectory log-probability is a sum of token log-probabilities; returns and
+    advantages supply the chosen credit estimates. The
+    <a href="policy-gradient.html#weighted-likelihood">policy-gradient walkthrough</a>
+    develops that step. Here let \(A_t\) be the signed advantage supplied by the training recipe and \(w_t\) the
+    chosen nonnegative correction weight. For the weighted-logprob family, maximize
+    the following surrogate, or equivalently minimize its negative:</p>
+  \[
+    c_t=\operatorname{sg}[A_t w_t],
+    \qquad
+    J_t=c_t\log p_\theta(y_t\mid h_t),
+    \qquad
+    L_t=-J_t.
+  \]
+  <p>\(\operatorname{sg}\) means <em>stop-gradient</em>: use the coefficient's current
+    numerical value, but hold it fixed during backward. This matters even if \(w_t\)
+    was computed using the trainer's probabilities. Since \(\nabla_\theta c_t=0\),
+    differentiating the loss gives:</p>
+  \[
+    \nabla_\theta L_t
+      =-c_t\nabla_\theta\log p_\theta(y_t\mid h_t)
+      =-A_t w_t s_{y_t}.
+  \]
   <div class="step">
-    <strong>Strength: signed advantage times the chosen correction.</strong>
+    <strong>g_t is the ascent contribution: the negative of the loss gradient.</strong>
     \[
-      g_t=A_t\,w_t\,\underbrace{\nabla_\theta\log p_\theta(y_t\mid h_t)}_{s_{y_t}:\ \text{score vector}}.
+      g_t=-\nabla_\theta L_t
+        =A_t w_t s_{y_t}
+        =A_t w_t J_{z,\theta}^{\mathsf T}(e_{y_t}-p).
     \]
-    <p>The score is a vector over model parameters, not a reward or confidence score.
-      Positive \(A_t\) reinforces the sampled behavior; negative \(A_t\) reverses that push.
-      A nonnegative \(w_t\) rescales or removes it. For plain gradient ascent,
+    <p>Positive \(A_t\) follows the score direction; negative \(A_t\) reverses it.
+      A nonnegative \(w_t\) rescales or removes the contribution. This is not yet the
+      parameter change: plain SGD on an aggregated loss gives
       \(\theta\leftarrow\theta+\eta\,\operatorname{aggregate}_t g_t\).
-      A minimized loss has the opposite gradient sign.</p>
+      The learning rate, reduction and optimizer still matter.</p>
   </div>
   <p>Here \(A_t\) is a signed <em>advantage</em>, not the name of token A. Uncorrected
     policy gradient uses \(w=1\). Ordinary importance sampling uses \(w=p_y/q_y\).
     For our C sample, choose advantage \(+2\) and IS weight \(1.5\):</p>
   <pre><code>Ascent coefficient = 2 * 1.5 = 3
 Logit-space contribution = 3 * [-0.50, -0.30, 0.85, -0.05]
-                        = [-1.50, -0.90, 2.55, -0.15]</code></pre>
+                        = [-1.50, -0.90, 2.55, -0.15]
+Example parameter theta_j: g_t[j] = 3 * 0.185 = 0.555</code></pre>
   <p>Learning rate, aggregation, backpropagation into shared parameters, and the optimizer
     still follow. Other samples and auxiliary losses can oppose this contribution.
     A positive <em>raw reward</em> need not produce a positive advantage after centering.</p>
   <p>In group-relative training, an entire response often shares one advantage. That is a
     credit-assignment approximation, not evidence that every token caused the reward.
     The <a href="ppo-grpo-backward.html#weights">backward walkthrough</a> follows the full chain.</p>
+  <p>This derivation specifies the gradient of a detached weighted-logprob loss; it does
+    not prove that every advantage estimator is unbiased. PPO's clipped objective has
+    its own derivative, and score centering adds a vector correction. The
+    <a href="#treatments">treatment section</a> explains those modifications rather than
+    silently treating them all as the same loss.</p>
   <pre><code># Schematic minimized loss for a detached importance weight:
 loss = -advantage * stop_gradient(weight) * log_p
 
