@@ -259,6 +259,34 @@
     .episode-who { color: var(--accent); font-size: 0.79rem; font-weight: 600; text-transform: uppercase; }
     .episode-row p { margin: 0; font-size: 0.88rem; }
 
+    .figure {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 16px 14px;
+      margin: 1.6em 0;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    .figure canvas { width: 100%; height: 300px; display: block; }
+    .figure-controls { display: flex; flex-wrap: wrap; gap: 12px 24px; margin-bottom: 12px; }
+    .figure-controls label { display: grid; gap: 4px; font-size: 0.85rem; }
+    .figure-controls input { width: 180px; max-width: 100%; accent-color: var(--accent); }
+    .figure-controls input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    .figure output { display: block; margin: 10px 0; font-size: 0.85rem; }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      justify-content: center;
+      margin-top: 12px;
+      font-size: 0.82rem;
+      color: var(--text);
+    }
+    .legend-item { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .lg { display: inline-block; width: 22px; height: 3px; border-radius: 2px; background: var(--c); }
+    .lg.dash { background: repeating-linear-gradient(90deg, var(--c) 0 5px, transparent 5px 9px); }
+    .figure-caption { font-size: 0.85rem; color: var(--muted); line-height: 1.6; margin: 14px 4px 2px; }
+
     .relation {
       display: grid;
       grid-template-columns: minmax(0, 1fr) 64px minmax(0, 1fr);
@@ -394,6 +422,7 @@
     <a href="#axes">The Agent Loop</a>
     <a href="#choose">State &amp; Control</a>
     <a href="#compaction">Compaction</a>
+    <a href="#context-folding">Context Folding</a>
     <a href="#alternatives">Core Patterns</a>
     <a href="#deep-agents">Deep Agents</a>
     <a href="#boundary">Model vs. Harness</a>
@@ -596,6 +625,109 @@
     would train on a token history the policy never observed. See <a href="verl-agentic-training.html">verl
     Agentic Training</a> for that reconstruction problem.
   </div>
+
+  <h3 id="context-folding">Context folding: do the investigation, keep the result</h3>
+  <p>A debugging agent may need to read ten files and several failure logs to discover one useful
+  fact. An append-only <a href="react.html#control">ReAct loop</a> carries all those details into
+  every later decision. <a href="https://arxiv.org/abs/2510.11967v1">Sun et al., <em>Scaling
+  Long-Horizon LLM Agent via Context-Folding</em></a> instead give the policy two context-management
+  actions: <code>branch(description, prompt)</code> to enter a subtask, and
+  <code>return(message)</code> to resume the parent with its result. Think of a function call:
+  local work can be large even when its return value is small.</p>
+
+  <p><strong>The branch inherits the parent's context prefix; it is not a blank conversation.</strong>
+  The parent pauses while the same model works on the assigned subtask. On return, the runtime
+  restores the parent prefix and appends the returned result, removing the branch's intermediate
+  history from the active view. The main experimental design uses sequential branches and disables
+  branching inside a branch. It is neither a parallel worker swarm nor search over alternative
+  answers where only a winning branch survives.</p>
+
+  <div class="episode" aria-label="Illustrative context-folding debugging trace">
+    <div class="episode-row">
+      <div class="episode-who">Parent</div>
+      <p>Goal: fix the failing cache test. Plan: find the cause before editing.
+      Call <code>branch("Find the cause", ...)</code>.</p>
+    </div>
+    <div class="episode-row">
+      <div class="episode-who">Branch 1</div>
+      <p>Read cache code, run tests, inspect long logs, and reject two hypotheses.
+      Return: "Expired entries are returned because <code>lookup()</code> skips the expiry
+      check. No edits made."</p>
+    </div>
+    <div class="episode-row">
+      <div class="episode-who">Parent resumes</div>
+      <p>See the original goal and plan plus that finding, not the investigation transcript.
+      Call <code>branch("Implement and verify the expiry check", ...)</code>.</p>
+    </div>
+    <div class="episode-row">
+      <div class="episode-who">Branch 2</div>
+      <p>Edit the code, run focused tests, and refine the patch.
+      Return: "Expiry check added; focused tests pass. Full suite not yet run."</p>
+    </div>
+    <div class="episode-row">
+      <div class="episode-who">Parent resumes</div>
+      <p>Decide whether to run broader checks. The edits still exist: folding removes token
+      history from the prompt, not effects from the environment.</p>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Mechanism</th><th>When details leave the active context</th><th>What remains</th></tr></thead>
+      <tbody>
+        <tr><td>Append-only history</td><td>They do not, until a separate limit or truncation rule intervenes.</td><td>All earlier observations and reasoning.</td></tr>
+        <tr><td>Threshold compaction</td><td>A context-budget trigger selects an old region to summarize, potentially mid-investigation.</td><td>A rewritten checkpoint plus protected content and recent turns.</td></tr>
+        <tr><td>Context folding</td><td>The policy finishes a bounded subtask and calls <code>return</code>.</td><td>The preserved parent prefix plus the branch's returned result.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Both compaction and folding can use summaries. The distinction is the <em>boundary</em>:
+  folding keeps local reasoning visible while that subtask is active, then hides it at a deliberate
+  return point. Because the parent prefix is unchanged, the paper's implementation rolls the
+  KV cache back to the branch point and appends the result. That is reuse of an exact prefix,
+  not permission to reuse cached states after arbitrarily rewriting earlier tokens.</p>
+
+  <div class="figure">
+    <div class="figure-controls">
+      <label for="fold-branches"><span>Branches: <span id="fold-branches-value">4</span></span>
+        <input id="fold-branches" type="range" min="1" max="10" step="1" value="4"></label>
+      <label for="fold-detail"><span>Local detail per branch: <span id="fold-detail-value">16</span>K tokens</span>
+        <input id="fold-detail" type="range" min="4" max="24" step="1" value="16"></label>
+    </div>
+    <output id="folding-readout" for="fold-branches fold-detail" aria-live="polite">Final parent: 12K; folded peak: 28K; accumulated history: 76K. Folded run fits the illustrative 32K limit.</output>
+    <canvas id="plot-context-folding" role="img" aria-label="Accumulating history versus the rising and falling active context of sequential branches" aria-describedby="folding-caption folding-readout">With an 8K parent, four branches adding 16K detail and returning 1K each leave a 12K parent and a 28K peak active context, versus 76K accumulated history.</canvas>
+    <div class="legend">
+      <span class="legend-item"><span class="lg" style="--c:var(--violet)"></span>Accumulated history</span>
+      <span class="legend-item"><span class="lg" style="--c:var(--accent)"></span>Folded active context</span>
+      <span class="legend-item"><span class="lg dash" style="--c:var(--amber)"></span>32K active limit</span>
+    </div>
+    <p class="figure-caption" id="folding-caption"><strong>Small return values slow parent growth;
+    they do not make local work free.</strong> Illustrative accounting, not benchmark measurements:
+    initial parent 8K, each return 1K, no additional parent reasoning or tool-template overhead.
+    Horizontal: branch boundaries (the vertical drop is return, not elapsed time). Vertical:
+    active/history tokens in K. Both curves use the same hypothetical work. The 32K line does
+    not truncate the simulation; any curve crossing it requires a larger window or different
+    decomposition. The peak includes generating the return before discarding local detail.</p>
+  </div>
+
+  <p>For an initial parent of <code>B</code> tokens, <code>N</code> branches, local detail
+  <code>D</code> per branch and return size <code>S</code>, this toy model ends with
+  <code>B + N(D + S)</code> tokens if everything is retained, versus <code>B + NS</code>
+  in the folded parent. Its peak active context is still <code>B + NS + D</code>.
+  A long subtask can overflow the window, and enough summaries eventually fill the parent.</p>
+
+  <div class="callout warn">
+    <strong>Folding is lossy context selection, not lossless compression or durable memory.</strong>
+    If a later decision needs an omitted fact, the return must have preserved it or the runtime
+    must provide a way to retrieve the original evidence. Neither a summary nor this mechanism
+    alone guarantees that recovery. Good subtasks have large local investigations and small,
+    reliable outputs; tightly coupled work that repeatedly needs all the details is a poor fit.
+  </div>
+  <p>The research contribution is not simply exposing delegation tools: it is training the shared
+  policy to choose useful subtask boundaries and return results that support final success.
+  The <a href="agentic-rl.html#foldgrpo">FoldGRPO walkthrough</a> explains why tools alone were
+  insufficient, how the rewards teach this behavior, and why the reported 10-fold active-window
+  reduction is not a 10-fold total-cost reduction.</p>
 
   <h3>Control answers “who chooses the next transition?”</h3>
   <p>In a model-controlled loop, the model chooses among tools and decides when to stop. In a
@@ -895,7 +1027,7 @@
       <tr><th>Architecture feature</th><th>Training consequence</th></tr>
       <tr>
         <td>Context compaction or file offload</td>
-        <td>The post-compaction prompt may no longer extend the earlier token prefix; the compacted text is environment-produced context, not sampled policy output.</td>
+        <td>The post-compaction prompt may no longer extend the earlier token prefix. Runtime-authored context is masked; a policy-generated return remains a trainable action in the call that produced it, while its copied text is frozen context in later calls.</td>
       </tr>
       <tr>
         <td>Subagent delegation</td>
@@ -978,6 +1110,7 @@
   <h2 id="sources">Sources and Further Reading</h2>
   <ul class="source-list">
     <li><a href="https://arxiv.org/abs/2210.03629">Yao et al., “ReAct”</a> — the reason-and-act loop underneath the architectures on this page.</li>
+    <li><a href="https://arxiv.org/abs/2510.11967v1">Sun et al., “Scaling Long-Horizon LLM Agent via Context-Folding”</a> — Sections 2.2 and 2.4 define branch/return, prefix reuse, and the distinction from threshold summarization; the token plot and debugging trace here are illustrative, not reported experiments.</li>
     <li><a href="https://www.langchain.com/blog/deep-agents">LangChain, “Deep Agents”</a> · <a href="https://github.com/langchain-ai/deepagents">current repository</a> · <a href="https://github.com/langchain-ai/deepagents/blob/9e7d62ff6e7131505995a706d717e01837aa8617/libs/ARCHITECTURE.md">architecture</a> · <a href="https://github.com/langchain-ai/deepagents/blob/9e7d62ff6e7131505995a706d717e01837aa8617/libs/deepagents/CHANGELOG.md#L100-L108">0.7.0 planning change</a>.</li>
     <li><a href="https://docs.langchain.com/oss/python/deepagents/backends">Deep Agents backends</a> and <a href="https://docs.langchain.com/oss/python/langgraph/persistence">LangGraph persistence</a> — filesystem abstraction, thread state, stores, checkpoints, and durability.</li>
     <li><a href="https://www.anthropic.com/engineering/building-effective-agents">Anthropic, “Building Effective Agents”</a> — workflows versus agents and composable orchestration patterns.</li>
@@ -990,5 +1123,127 @@
 </main>
 
 <footer>AI Learning Notes · Reinforcement Learning · Agent Architectures</footer>
+<script>
+(function () {
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+  function contextTrace(branches, detail) {
+    const base = 8, summary = 1;
+    const accumulated = [[0, base]], folded = [[0, base]];
+    for (let i = 1; i <= branches; i++) {
+      accumulated.push([i, base + i * (detail + summary)]);
+      folded.push([i, base + i * summary + detail], [i, base + i * summary]);
+    }
+    return {
+      accumulated, folded,
+      parent: base + branches * summary,
+      peak: base + branches * summary + detail,
+      total: base + branches * (detail + summary)
+    };
+  }
+
+  function drawPlot(canvas, cfg) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const mL = 46, mR = 14, mT = 24, mB = 44;
+    const pw = cssW - mL - mR, ph = cssH - mT - mB;
+    const { xMin, xMax, yMin, yMax } = cfg;
+    const X = x => mL + (x - xMin) / (xMax - xMin) * pw;
+    const Y = y => mT + (yMax - y) / (yMax - yMin) * ph;
+    ctx.font = '11px Inter, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = cssVar('--border');
+    ctx.fillStyle = cssVar('--muted');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    cfg.xTicks.forEach(t => {
+      const px = X(t);
+      ctx.beginPath(); ctx.moveTo(px, mT); ctx.lineTo(px, mT + ph); ctx.stroke();
+      ctx.fillText(String(t), px, mT + ph + 6);
+    });
+    ctx.fillText('Branch boundaries', mL + pw / 2, cssH - 14);
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    cfg.yTicks.forEach(t => {
+      const py = Y(t);
+      ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(mL + pw, py); ctx.stroke();
+      ctx.fillText(String(t), mL - 8, py);
+    });
+    ctx.textAlign = 'left';
+    ctx.fillText('Tokens (K)', mL, 10);
+
+    ctx.strokeStyle = cssVar('--ink');
+    ctx.lineWidth = 1.25;
+    if (yMin <= 0 && yMax >= 0) {
+      ctx.beginPath(); ctx.moveTo(mL, Y(0)); ctx.lineTo(mL + pw, Y(0)); ctx.stroke();
+    }
+    if (xMin <= 0 && xMax >= 0) {
+      ctx.beginPath(); ctx.moveTo(X(0), mT); ctx.lineTo(X(0), mT + ph); ctx.stroke();
+    }
+    ctx.save();
+    ctx.beginPath(); ctx.rect(mL, mT, pw, ph); ctx.clip();
+    ctx.lineJoin = 'round';
+    cfg.series.forEach(s => {
+      ctx.beginPath();
+      ctx.lineWidth = s.width || 2;
+      ctx.strokeStyle = cssVar(s.color);
+      ctx.setLineDash(s.dash || []);
+      // Exact event points preserve the peak and instantaneous drop at each return.
+      const points = s.points || Array.from({ length: 261 }, (_, i) => {
+        const x = xMin + (xMax - xMin) * i / 260;
+        return [x, s.fn(x)];
+      });
+      points.forEach(([x, y], i) => {
+        i === 0 ? ctx.moveTo(X(x), Y(y)) : ctx.lineTo(X(x), Y(y));
+      });
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  const canvas = document.getElementById('plot-context-folding');
+  const branchesInput = document.getElementById('fold-branches');
+  const detailInput = document.getElementById('fold-detail');
+  function render() {
+    const branches = Number(branchesInput.value), detail = Number(detailInput.value);
+    const trace = contextTrace(branches, detail);
+    const tickStep = Math.ceil(Math.max(trace.total, 32) / 16) * 4;
+    document.getElementById('fold-branches-value').textContent = branches;
+    document.getElementById('fold-detail-value').textContent = detail;
+    document.getElementById('folding-readout').textContent =
+      `Final parent: ${trace.parent}K; folded peak: ${trace.peak}K; accumulated history: ${trace.total}K. ` +
+      (trace.peak <= 32 ? 'Folded run fits the illustrative 32K limit.' :
+        'Folded peak exceeds 32K: this run needs a larger window or smaller subtasks.');
+    drawPlot(canvas, {
+      xMin: 0, xMax: branches, yMin: 0, yMax: tickStep * 4,
+      xTicks: Array.from({ length: branches + 1 }, (_, i) => i),
+      yTicks: Array.from({ length: 5 }, (_, i) => i * tickStep),
+      series: [
+        { fn: () => 32, color: '--amber', width: 1.5, dash: [5, 4] },
+        { points: trace.accumulated, color: '--violet', width: 2 },
+        { points: trace.folded, color: '--accent', width: 2.75 }
+      ]
+    });
+  }
+  branchesInput.addEventListener('input', render);
+  detailInput.addEventListener('input', render);
+  render();
+  let raf;
+  window.addEventListener('resize', () => {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(render);
+  });
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq.addEventListener) mq.addEventListener('change', render);
+})();
+</script>
 </body>
 </html>

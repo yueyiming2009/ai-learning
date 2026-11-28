@@ -204,6 +204,8 @@
     <a href="#environment">Environments</a>
     <a href="#credit">Credit Assignment</a>
     <a href="#grpo">GRPO Adaptation</a>
+    <a href="#foldgrpo">FoldGRPO</a>
+    <a href="#folding-results">Folding Results</a>
     <a href="#challenges">Challenges</a>
   </div>
 </nav>
@@ -385,7 +387,11 @@
   <p>Adding the same constant to every \(R_i\) shifts the mean by that constant and leaves the numerator unchanged; the standard deviation is unaffected. The advantage is bit-identical with and without shaping. Under PPO with a learned critic the effect is not exactly zero, but by the Wiewiora equivalence it amounts to value-function initialization, which the critic re-learns within a few thousand steps.</p>
 
   <div class="note">
-    The corollary is uncomfortable but clarifying: <strong>any dense reward that measurably changes a GRPO run is, by construction, not policy-invariant.</strong> Practitioners are not choosing unprincipled shaping over principled shaping. In the dominant algorithm, principled shaping is a no-op, so every dense signal in production is one the theorem does not cover.
+    <strong>This cancellation applies when shaping is summed into one trajectory return and one
+    group-relative advantage is broadcast to every token.</strong> It does not establish a no-op
+    for every algorithm called GRPO: directly changing token-level advantages, as in
+    <a href="#foldgrpo">FoldGRPO</a>, is a different construction. Its behavioral penalties are
+    not presented as potential-based shaping and do not inherit the policy-invariance guarantee.
   </div>
 
   <h4>Denser terminal reward is not shaping</h4>
@@ -501,11 +507,16 @@
   \[
     \hat A_i = \frac{r_i - \text{mean}(\{r_j\}_{j=1}^G)}{\text{std}(\{r_j\}_{j=1}^G)}
   \]
-  <p>This advantage is applied uniformly to all tokens \(t \in [0, T_i]\) of trajectory \(i\). The policy gradient loss is then:</p>
+  <p>In the terminal-only version, this advantage is applied uniformly to the \(T_i\)
+  policy-generated tokens of trajectory \(i\); tool observations are excluded. A token-mean
+  clipped policy gradient loss is:</p>
   \[
-    \mathcal{L}_{\text{GRPO}} = -\frac{1}{\sum_i T_i} \sum_{i=1}^G \sum_{t=1}^{T_i} \hat A_i \cdot \min\!\left(\rho_{i,t} \hat A_i,\ \text{clip}(\rho_{i,t}, 1-\varepsilon, 1+\varepsilon)\hat A_i\right)
+    \mathcal{L}_{\text{GRPO}} = -\frac{1}{\sum_i T_i} \sum_{i=1}^G \sum_{t=1}^{T_i} \min\!\left(\rho_{i,t} \hat A_i,\ \text{clip}(\rho_{i,t}, 1-\varepsilon, 1+\varepsilon)\hat A_i\right)
   \]
-  <p>where \(\rho_{i,t} = \pi_\theta(a_{i,t} | s_{i,t}) / \pi_{\theta_\text{old}}(a_{i,t} | s_{i,t})\) is the per-token importance ratio. The normalization divides by total tokens (not number of trajectories) to avoid biasing toward shorter trajectories.</p>
+  <p>where \(\rho_{i,t} = \pi_\theta(a_{i,t} | s_{i,t}) / \pi_{\theta_\text{old}}(a_{i,t} | s_{i,t})\)
+  is the per-token importance ratio. Token-mean gives each included token equal weight, so longer
+  rollouts contribute more terms; it is not equal rollout weighting. The
+  <a href="harnessed-agentic-rl.html#lossnorm">loss-normalization comparison</a> separates these choices.</p>
 
   <h3>Tool call tokens vs. reasoning tokens</h3>
   <p>The policy generates two types of tokens: reasoning tokens inside <code>&lt;think&gt;</code> blocks and structured tool call tokens. There's an active debate about whether to mask reasoning tokens from the policy gradient (applying the loss only to tool call and response tokens). Arguments:</p>
@@ -515,8 +526,133 @@
   </ul>
   <p>In practice, most implementations include all tokens but weight tool-call tokens more heavily, or apply the loss equally to all tokens and rely on the overall gradient to separate good and bad reasoning patterns over many trajectories.</p>
 
-  <h3>Context management as part of the policy</h3>
-  <p>Long-horizon tool use hits the context window before it runs out of steps, and accuracy degrades well before the nominal limit — GLM-5 reports substantial degradation beyond ~100K tokens on a 200K-context model. The pragmatic answer is to make context management a fixed part of the agent loop and train with it in place, so the policy learns to act under the same folding it will see at inference. GLM-5's search-agent recipe on BrowseComp: <strong>keep-recent-\(k\)</strong> (fold tool observations older than the last \(k = 5\) rounds; 55.3 → 62.0) combined hierarchically with <strong>discard-all</strong> (when total context passes \(T = 32\)K, drop the entire tool-call history and restart with a fresh context, keeping the keep-recent rule active inside each segment), reaching 75.9. Two training consequences follow. Each fold changes the token prefix the policy conditions on, so one episode becomes several training samples with different prompts — the advantage-granularity and loss-normalization question the <a href="harnessed-agentic-rl.html">harnessed agentic RL</a> page treats. And the folded context was not generated by the policy, so it is masked from the loss like any other environment observation.</p>
+  <h3 id="context-management">Context management as part of the policy</h3>
+  <p>Long-horizon tool use hits the context window before it runs out of steps, and accuracy degrades well before the nominal limit — GLM-5 reports substantial degradation beyond ~100K tokens on a 200K-context model. One answer is to make context management a fixed part of the agent loop and train with it in place, so the policy learns to act under the same folding it will see at inference. GLM-5's search-agent recipe on BrowseComp: <strong>keep-recent-\(k\)</strong> (fold tool observations older than the last \(k = 5\) rounds; 55.3 → 62.0) combined hierarchically with <strong>discard-all</strong> (when total context passes \(T = 32\)K, drop the entire tool-call history and restart with a fresh context, keeping the keep-recent rule active inside each segment), reaching 75.9.</p>
+  <p>Another answer is to let the policy choose the context-management actions themselves.
+  In both cases, preserve the actual context/action pairs: a fold can break prefix continuity,
+  making one episode several training sequences. Mask runtime-authored context and tool observations,
+  but do not assume every summary is external text. If the trained policy generated a return
+  message, that generation is an action; its later appearance in a parent prompt is frozen context.
+  The <a href="harnessed-agentic-rl.html#advantage">harnessed agentic RL</a> page explains how
+  those sequences retain their rollout identity and advantages.</p>
+
+  <h3 id="foldgrpo">FoldGRPO: learn when to branch, what to do, and when to return</h3>
+  <p><a href="https://arxiv.org/abs/2510.11967v1">Sun et al. (2025)</a> train a shared policy for
+  both parent planning and branch execution. Start with the
+  <a href="agent-architectures.html#context-folding">branch/return walkthrough and context-growth
+  plot</a>: a branch inherits the parent prefix, performs a bounded investigation, and returns
+  a result; the parent resumes without the branch's intermediate transcript. This is task-boundary
+  summarization, not an architectural increase in the model's native context window.</p>
+
+  <h4>Why exposing the tools is not enough</h4>
+  <p>A model can ignore <code>branch</code> and fill the parent with file contents and logs.
+  Or it can enter one branch and keep solving every subsequent subtask there, never returning
+  enough to reclaim context. Final task success alone may not teach the intended decomposition
+  reliably. The paper therefore combines a binary final outcome \(R_i\in\{0,1\}\) with
+  token-level process adjustments \(Q_{i,t}\).</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Adjustment</th><th>Reported rule (Section 2.3.2)</th><th>Behavior it targets</th></tr></thead>
+      <tbody>
+        <tr><td>Unfolded-token penalty</td><td>When total main-thread context exceeds 50% of the working limit, \(Q=-1\) for main-thread tokens except turns that create a branch.</td><td>Do token-heavy work in branches instead of filling the parent.</td></tr>
+        <tr><td>Out-of-scope penalty</td><td>GPT-5-nano judges the branch prompt and returned message. If it judges the work out of scope, \(Q=-0.2\) for that branch's tokens.</td><td>Stay on the assigned subtask and return instead of continuing the whole task inside the branch.</td></tr>
+        <tr><td>Failure penalty</td><td>\(Q=-1\) for tokens in a failed tool-call turn.</td><td>Discourage failed tool calls.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>The optimization mask still excludes tool observations. These are the individual reported
+  penalty rules, not a claim about how overlapping penalties are combined. A scope judge that sees
+  a prompt and return message is a proxy for behavior, not a complete audit of the branch.</p>
+
+  <h4>How the process adjustment reaches the gradient</h4>
+  <p>For a group with nonzero outcome variance, the paper defines:</p>
+  \[
+    \hat A_{i,t}
+    = \frac{\operatorname{clip}(R_i+Q_{i,t},\,0,\,1)-\bar R}{\sigma_R},
+    \qquad
+    \bar R=\operatorname{mean}(\{R_j\}),\quad
+    \sigma_R=\operatorname{std}(\{R_j\}).
+  \]
+  <p><strong>The baseline and scale use the unadjusted final outcomes.</strong> The numerator's
+  token-specific adjustment is what breaks the uniform-advantage pattern above; it is not simply
+  another scalar added to every rollout's final reward. Illustratively, if
+  \(\bar R=\sigma_R=0.5\), an unpenalized token in a successful rollout gets advantage \(1\).
+  An out-of-scope token gets \((0.8-0.5)/0.5=0.6\), and a \(Q=-1\) token gets \(-1\).
+  Thus success does not give every action equally positive credit.</p>
+  <p>A consequence of the displayed clipping rule: when \(R_i=0\), a nonpositive \(Q_{i,t}\)
+  cannot reduce the clipped value below zero. Failed rollouts still have their negative
+  outcome-relative advantage, but these penalties do not add further punishment to it.
+  The displayed equation does not specify handling for zero-variance groups; the paper also
+  does not resolve overlapping-penalty composition. Those details need clarification for
+  an exact reproduction.</p>
+
+  <h4>Fold the inference context, not the training evidence</h4>
+  <p>Write \(F(\tau_{i,&lt;t})\) for the history visible after applying the branch/return
+  operations. Both policies in the importance ratio must condition on that same observed history:</p>
+  \[
+    \rho_{i,t}(\theta)=
+    \frac{\pi_\theta(a_{i,t}\mid q,F(\tau_{i,&lt;t}))}
+         {\pi_{\mathrm{old}}(a_{i,t}\mid q,F(\tau_{i,&lt;t}))}.
+  \]
+  <p>Branch actions are still trained using their branch contexts; later parent actions use the
+  returned result rather than the hidden branch transcript. Appendix A.1 keeps branches as
+  separate causally conditioned sequences instead of concatenating every action into one
+  fictitious conversation. A policy-generated return is trained where it was sampled, not again
+  merely because its text is copied into a later prompt. Keep the
+  <a href="harnessed-agentic-rl.html#advantage">group baseline at the rollout level</a> rather
+  than treating each branch as an independently sampled solution.</p>
+  <div class="note">
+    <strong>This learns context-management behavior, not perfect causal credit assignment.</strong>
+    The final task outcome still supplies the main learning signal. The penalties encourage a
+    chosen decomposition style; they do not establish which particular file read caused success
+    or guarantee that a return retained every fact needed later.
+  </div>
+
+  <h3 id="folding-results">What improved, and what “10 times smaller” actually means</h3>
+  <p>Table 1 of the <a href="https://arxiv.org/pdf/2510.11967v1">paper</a> compares
+  Seed-OSS-36B-Instruct variants. BrowseComp-Plus uses a custom 680-training/150-evaluation split
+  with a verified corpus and retriever, not an unrestricted web-browsing evaluation or the full
+  benchmark. SWE-bench Verified uses 500 evaluation tasks and 740 selected training tasks from
+  SWE-Gym/SWE-Rebench. Evaluation uses greedy decoding.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Agent / training</th><th>Active cap</th><th>BC-Plus pass@1</th><th>SWE Verified pass@1</th></tr></thead>
+      <tbody>
+        <tr><td>ReAct + GRPO</td><td>327K</td><td>54.0%</td><td>57.4%</td></tr>
+        <tr><td>Threshold summary + GRPO</td><td>32K</td><td>52.7%</td><td>55.0%</td></tr>
+        <tr><td>Folding, without RL</td><td>32K</td><td>42.0%</td><td>49.2%</td></tr>
+        <tr><td>Folding + ordinary GRPO</td><td>32K</td><td>56.7%</td><td>56.4%</td></tr>
+        <tr><td><strong>Folding + FoldGRPO</strong></td><td><strong>32K</strong></td><td><strong>62.0%</strong></td><td><strong>58.0%</strong></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>The configured windows are 32,768 versus 327,680 tokens. Folding allows up to ten branches;
+  the summary baseline allows ten sessions. The paper labels their maximum cumulative budgets
+  as \(32\mathrm{K}\times10\), comparable to the long-context ReAct cap, not ten times less
+  total work. Relative to RL-trained long-context ReAct, FoldGRPO gains <strong>8.0 percentage
+  points</strong> on this BC-Plus split and <strong>0.6 points</strong> on SWE Verified.
+  The latter is only three additional solved tasks out of 500, not evidence of a large or
+  statistically established coding advantage.</p>
+  <p>The direct folding ablation is also informative: training with FoldGRPO rather than ordinary
+  GRPO changes BC-Plus from 56.7% to 62.0% and SWE from 56.4% to 58.0%.
+  <strong>Source discrepancy:</strong> Section 4.1 says the BC-Plus gain is 7.7 points, but
+  Table 1 implies 5.3; the values here follow the table. Against untrained folding, the gains
+  are 20.0 and 8.8 points, which is a different comparison.</p>
+
+  <div class="warn">
+    <strong>Smaller active context does not mean a smaller model, fewer total tokens, or a
+    10-fold speedup.</strong> The folding agent actually makes more tool calls: 19.2 versus
+    10.2 on BC-Plus and 96.5 versus 55.4 on SWE, compared with RL-trained long-context ReAct.
+    It uses the smaller working context to sustain more investigation. Charge all branches,
+    summaries, failed attempts, and tool latency when comparing end-to-end cost; see
+    <a href="../evaluation/agent-evaluation.html#outcomes">agent evaluation</a>.
+  </div>
+  <p><strong>Practical impact:</strong> learned subtask boundaries can keep planning context
+  focused while supporting a much longer interaction history. They help most when detailed local
+  work yields compact, trustworthy results. They do not remove summary errors, parent growth,
+  per-branch context limits, or the need to retrieve omitted evidence. These experiments establish
+  results for one base model and two task settings, not universal superiority over summarization
+  or a solution to arbitrary long-horizon reasoning.</p>
 
   <h2 id="challenges">7. Open Challenges</h2>
 
@@ -553,7 +689,7 @@
     </div>
     <div class="summary-card">
       <div class="summary-card-label">GRPO adaptation</div>
-      <p>Trajectory-level z-score advantage, applied uniformly to all tokens. Normalize loss by total token count, not trajectory count, to avoid length bias.</p>
+      <p>Terminal-only GRPO broadcasts a rollout advantage to generated tokens. FoldGRPO adds token-specific adjustments; faithful contexts, masks, and explicit loss weighting still matter.</p>
     </div>
     <div class="summary-card">
       <div class="summary-card-label">Open problems</div>
@@ -592,7 +728,7 @@
 
 </div>
 
-<footer>Personal ML notes · Sources: <a href="https://arxiv.org/abs/2505.22638" style="color:inherit;">GLM-5 Agentic Stage</a> · <a href="https://swebench.com" style="color:inherit;">SWE-bench</a> · DeepSeek Coder-V3 · OpenAI CUA · <a href="https://github.com/yueyiming2009/ai-learning" style="color:inherit;">source on GitHub</a></footer>
+<footer>Personal ML notes · Sources: <a href="https://arxiv.org/abs/2505.22638" style="color:inherit;">GLM-5 Agentic Stage</a> · <a href="https://arxiv.org/abs/2510.11967v1" style="color:inherit;">Context-Folding / FoldGRPO</a> · <a href="https://swebench.com" style="color:inherit;">SWE-bench</a> · DeepSeek Coder-V3 · OpenAI CUA · <a href="https://github.com/yueyiming2009/ai-learning" style="color:inherit;">source on GitHub</a></footer>
 
 </body>
 </html>
